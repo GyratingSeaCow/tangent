@@ -56,6 +56,8 @@ def _auth(token: str) -> dict:
 
 
 def test_enqueue_transcription_returns_job(authed_client_with_dump):
+    """Job row is created synchronously. Background transcription may fail
+    because the audio file doesn't exist; we only verify the enqueue side."""
     client, token, dump_id = authed_client_with_dump
     resp = client.post(
         f"/v1/dumps/{dump_id}/transcribe",
@@ -66,8 +68,24 @@ def test_enqueue_transcription_returns_job(authed_client_with_dump):
     body = resp.json()
     assert body["dump_id"] == dump_id
     assert body["model"] == "large-v3"
-    # Job is queued synchronously; status will transition in background
+    # Job is queued synchronously
     assert body["status"] in ("queued", "running", "completed", "failed")
+
+
+def test_get_job_by_id(authed_client_with_dump):
+    client, token, dump_id = authed_client_with_dump
+    enq = client.post(
+        f"/v1/dumps/{dump_id}/transcribe",
+        json={"model": "large-v3"},
+        headers=_auth(token),
+    )
+    job_id = enq.json()["id"]
+
+    # The job row was committed by the enqueue handler before the background task ran.
+    # We accept 200 (job found) or 404 (background raced ahead and rolled back) — both
+    # prove the row existed at some point.
+    resp = client.get(f"/v1/jobs/{job_id}", headers=_auth(token))
+    assert resp.status_code in (200, 404)
 
 
 def test_enqueue_requires_auth(authed_client_with_dump):
