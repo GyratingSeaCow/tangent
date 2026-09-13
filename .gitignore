@@ -85,7 +85,10 @@ config/local.yaml
 # ── Recordings / user data (NEVER commit) ────────────────────
 # These belong to the end user. The server should store them
 # under a path the user owns, not under this repo.
-data/
+# Note: lib/data/ in the client is Dart source code, NOT runtime data.
+/data
+/data/
+server/data/
 recordings/
 uploads/
 *.wav
@@ -111,3 +114,5 @@ $RECYCLE.BIN/
 *~
 .vscode/settings.json
 .idea/workspace.xml
+# SDD orchestration artifacts (skill-managed scratch)
+.superpowers/sdd/
