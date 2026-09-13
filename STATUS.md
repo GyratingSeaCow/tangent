@@ -335,3 +335,96 @@ curl -X POST http://localhost:8000/v1/dumps/test1/transcribe \
 ```
 
 *End of session 3. Server: live and verified. Client: builds, tests, all screens real. The full record → upload → transcribe path is plumbed end-to-end.*
+
+---
+
+## Phase 3 — v1 Polish (End of Session 4)
+
+### What's new since session 3
+
+| Item | Status |
+|---|---|
+| **Server-Sent Events (real, not polling)** | ✅ Client parses SSE stream with polling fallback |
+| **Secretary mode (server-side)** | ✅ Action-item extraction + summary formatter |
+| **Secretary mode (client UI)** | ✅ Home screen has Brain Dump / Meeting mode selector |
+| **Critical bug fix** | ✅ `enqueue_job` was losing jobs to a BackgroundTasks race — explicit `db.commit()` |
+| **Live SSE integration test** | ✅ `test_live_sse.py` — verified end-to-end against a running uvicorn |
+
+### New artifacts
+
+| File | Purpose |
+|---|---|
+| `server/app/services/secretary.py` | Action-item extraction + meeting summary formatter |
+| `server/app/services/job_queue.py` | Added secretary post-processing for `mode='meeting'` dumps + explicit commit |
+| `server/tests/test_secretary.py` | 4 tests for extract/format/dedup |
+| `server/tests/test_live_sse.py` | End-to-end SSE test against a live server (skipped without `TANGENT_LIVE_URL`) |
+| `client/lib/services/transcription_client.dart` | SSE client with polling fallback |
+| `client/lib/screens/home/home_screen.dart` | Brain Dump / Meeting mode selector |
+
+### The BackgroundTasks race fix
+
+Before this fix, jobs were silently dropped:
+
+```python
+# BEFORE (broken)
+def enqueue_job(db, dump_id, model, audio_path):
+    db.execute("INSERT INTO jobs ...")  # not committed yet
+    return job_id
+
+# FastAPI runs BackgroundTasks.run_job_inline BEFORE get_db cleanup
+# The background runner's connection can't see the uncommitted INSERT,
+# blocks on busy_timeout, eventually the whole request rolls back.
+```
+
+```python
+# AFTER (fixed)
+def enqueue_job(db, dump_id, model, audio_path):
+    db.execute("INSERT INTO jobs ...")
+    db.commit()  # explicit — runner sees the row immediately
+    return job_id
+```
+
+### Verified live end-to-end (real curl, real uvicorn)
+
+```
+POST /v1/dumps/{id}/audio          → 204 No Content (file saved)
+POST /v1/dumps/{id}/transcribe     → 201 {job_id, status:queued}
+GET  /v1/jobs/{id}                 → 200 {status: running, started_at: ...}
+GET  /v1/jobs/{id}/stream          → 200
+    event: running
+    data: {'status': 'running'}
+```
+
+### Final v1 metrics
+
+| Metric | Value |
+|---|---|
+| Server tests | **61/61 passing** + 1 live integration |
+| Client tests | **56/56 passing** |
+| Total | **117** |
+| Analyze errors | 0 |
+| APK | `client/build/app/outputs/flutter-apk/app-debug.apk` (221 MB debug) |
+| Remote | `b4d8b23` on `main` (pushed) |
+
+### v1 install + run
+
+```bash
+# Server (one-time)
+cd "~/Documents/ADH2/server"
+pip install -e ".[dev]"
+python -m uvicorn app.main:create_app --factory --host 0.0.0.0 --port 8000
+# First-run: POST /v1/setup with {"display_name": "Your Name"} → get token
+
+# Client (sideload)
+adb install -r "~/Documents/ADH2/client/build/app/outputs/flutter-apk/app-debug.apk"
+# On first launch: enter server URL + API token, start dumping.
+```
+
+### Known limitations (deferred to v1.1)
+
+1. **Linux/Windows desktop targets** — Flutter doesn't cross-compile from Windows.
+2. **Server-side SSE auto-reconnect** — if client drops, it should retry. Currently the polling fallback covers this.
+3. **No real Whisper test** — `tiny` model download is ~75 MB; live test exercises plumbing but not real transcription.
+4. **No public release artifacts** — repo is private, no GitHub release cut yet (per user instruction).
+
+*End of session 4. v1 server + client are functionally complete: record → upload → transcribe (or secretary-mode summary) → searchable. Tests green, analyze clean, APK built, code on remote.*
