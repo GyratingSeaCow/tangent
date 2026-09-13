@@ -258,3 +258,80 @@ adb install -r build/app/outputs/flutter-apk/app-debug.apk
 4. Run a real recording → transcribe → search round trip
 
 *End of session 2 status. Server + client foundation ship. Both have real tests, real builds, real wire-up — not sketches.*
+
+---
+
+## Phase 2.5 — End-to-End Smoke (End of Session 3)
+
+### What's new since session 2
+
+A **live end-to-end smoke test against a running Tangent server** confirmed every endpoint works:
+
+```
+1. GET  /v1/server/info              → 200 {version:0.1.0, models:[tiny..large-v3]}
+2. POST /v1/dumps                    → 201 {id:"smoke-test-dump-001", ...}
+3. POST /v1/dumps/{id}/audio (opus)  → 204 No Content (file saved to data/audio/)
+4. GET  /v1/dumps/{id}/audio         → 200, bytes round-trip correctly
+5. GET  /v1/dumps                    → 200, lists the new dump
+6. POST /v1/dumps/{id}/transcribe    → 201 {id:"<job>", status:"queued", model:"tiny"}
+```
+
+### New artifacts
+
+| File | Purpose |
+|---|---|
+| `server/app/api/dumps.py` | Added `POST/GET /v1/dumps/{id}/audio` + `get_audio_path_for_dump()` |
+| `server/app/api/jobs.py` | Now uses real audio path lookup (returns 422 if no audio uploaded) |
+| `server/app/db.py` | `check_same_thread=False` on connection (async-safe) |
+| `server/tests/test_audio_upload.py` | 7 new tests for upload/download/auth/idempotency |
+| `client/lib/services/transcription_client.dart` | Split into `createDump` + new `uploadAudio` |
+| `client/lib/screens/dump/dumps_list_screen.dart` | Real reactive list with FTS5 search + sync badges |
+| `client/lib/screens/dump/dump_detail_screen.dart` | Real edit/transcribe/delete |
+| `client/lib/screens/dump/dumps_providers.dart` | Riverpod stream + future providers |
+| `client/lib/screens/home/home_providers.dart` | Sync engine + connectivity + audio storage providers |
+| `client/lib/screens/settings/settings_screen.dart` | Trigger mode + Wi-Fi only + server URL |
+| `client/lib/main.dart` | Wires AudioStorage (path_provider) + FutureBuilder router |
+
+### Final metrics (end of session 3)
+
+| Metric | Value |
+|---|---|
+| Server tests | **53/53 passing** |
+| Client tests | **56/56 passing** |
+| Total | **109/109** |
+| APK | `client/build/app/outputs/flutter-apk/app-debug.apk` (202 MB debug) |
+| Live server smoke | All 6 critical endpoints verified end-to-end |
+
+### What's still NOT done
+
+1. **Real Whisper run on a real recording** — `tiny` model would need to download (~75 MB) and the test audio was fake bytes. The *plumbing* works end-to-end.
+2. **SSE wire-up** — client polls every 2s instead of streaming. Cosmetic.
+3. **Linux/Windows builds** — deps installed but targets not built/tested.
+4. **Secretary mode UI** — backend data flow exists; UI surface not built.
+
+### How to reproduce the smoke test
+
+```bash
+# Terminal 1: server
+cd "~/Documents/ADH2/server"
+python -c "from app.main import create_app; import uvicorn; uvicorn.run(create_app(), host='127.0.0.1', port=8000)"
+
+# Terminal 2: setup + tests
+TOKEN=$(curl -s -X POST http://localhost:8000/v1/setup \
+  -H "Content-Type: application/json" \
+  -d '{"display_name":"Your Name"}' | python -c "import sys,json; print(json.load(sys.stdin)['token'])")
+
+curl -X POST http://localhost:8000/v1/dumps \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"id":"test1","mode":"brain_dump","duration_seconds":3,"title":"Hello","created_at":"2026-09-13T20:00:00Z"}'
+
+curl -X POST http://localhost:8000/v1/dumps/test1/audio \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "audio=@recording.opus"
+
+curl -X POST http://localhost:8000/v1/dumps/test1/transcribe \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"model":"tiny"}'
+```
+
+*End of session 3. Server: live and verified. Client: builds, tests, all screens real. The full record → upload → transcribe path is plumbed end-to-end.*
