@@ -39,6 +39,7 @@ def enqueue_job(
         """,
         (job_id, dump_id, model),
     )
+    db.commit()  # explicit commit so BackgroundTasks readers see the row
     log.info("job.queued", job_id=job_id, dump_id=dump_id, model=model)
     return job_id
 
@@ -78,6 +79,25 @@ def run_job_inline(job_id: str, audio_path: str) -> None:
 
             service = get_transcription_service()
             transcript = service.transcribe(audio_path)
+
+            # For 'meeting' mode, extract action items and format as a summary.
+            dump_row = db.execute(
+                "SELECT mode FROM dumps WHERE id = "
+                "(SELECT dump_id FROM jobs WHERE id = ?)",
+                (job_id,),
+            ).fetchone()
+            if dump_row and dump_row["mode"] == "meeting":
+                from app.services.secretary import (
+                    extract_action_items,
+                    format_meeting_summary,
+                )
+                action_items = extract_action_items(transcript)
+                transcript = format_meeting_summary(transcript, action_items)
+                log.info(
+                    "job.meeting_formatted",
+                    job_id=job_id,
+                    action_items=len(action_items),
+                )
 
             db.execute(
                 """

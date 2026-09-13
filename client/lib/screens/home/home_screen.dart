@@ -6,6 +6,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/audio_storage.dart';
 import '../../data/local_db.dart';
+import '../../models/dump_mode.dart';
+import '../../services/sync_engine.dart';
 import '../dump/dump_detail_screen.dart';
 import '../dump/dumps_list_screen.dart';
 import '../recording/recording_controller.dart';
@@ -26,6 +28,7 @@ class HomeScreen extends ConsumerStatefulWidget {
 class _HomeScreenState extends ConsumerState<HomeScreen> {
   int _seconds = 0;
   bool _syncing = false;
+  DumpMode _mode = DumpMode.brainDump;
 
   @override
   void initState() {
@@ -62,7 +65,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         id: id,
         createdAt: DateTime.now(),
         updatedAt: DateTime.now(),
-        mode: 'brain_dump',
+        mode: _mode.wireValue,
         durationSeconds: result.durationSeconds,
         title: '',
         audioPath: result.path,
@@ -179,9 +182,59 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               isRecording ? 'Tap to stop' : 'Tap to record',
               style: Theme.of(context).textTheme.titleMedium,
             ),
+            const SizedBox(height: 24),
+            _ModeSelector(
+              current: _mode,
+              onChanged: isRecording
+                  ? null
+                  : (m) => setState(() => _mode = m),
+            ),
+            const SizedBox(height: 16),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 32),
+              child: Text(
+                _modeDescription(_mode),
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ),
           ],
         ),
       ),
+    );
+  }
+
+  String _modeDescription(DumpMode m) => switch (m) {
+        DumpMode.brainDump => 'Quick voice memo — gets transcribed and searchable.',
+        DumpMode.meeting =>
+          'Secretary mode — meeting notes with action items extracted.',
+      };
+}
+
+class _ModeSelector extends StatelessWidget {
+  final DumpMode current;
+  final ValueChanged<DumpMode>? onChanged;
+
+  const _ModeSelector({required this.current, this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    return SegmentedButton<DumpMode>(
+      segments: const [
+        ButtonSegment(
+          value: DumpMode.brainDump,
+          label: Text('Brain Dump'),
+          icon: Icon(Icons.psychology),
+        ),
+        ButtonSegment(
+          value: DumpMode.meeting,
+          label: Text('Meeting'),
+          icon: Icon(Icons.groups),
+        ),
+      ],
+      selected: {current},
+      onSelectionChanged:
+          onChanged == null ? null : (s) => onChanged!(s.first),
     );
   }
 }

@@ -1,11 +1,20 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:dio/dio.dart';
 
 import '../models/api_exception.dart';
 import '../models/server_info.dart';
+
+/// Sentinel exception for when SSE fails — triggers polling fallback.
+class _SseUnavailable implements Exception {
+  final String reason;
+  const _SseUnavailable(this.reason);
+  @override
+  String toString() => '_SseUnavailable: $reason';
+}
 
 /// Job status events from the SSE stream.
 class JobEvent {
@@ -105,14 +114,87 @@ class TranscriptionClient {
     return resp['id'] as String;
   }
 
-  /// Stream job status. v1 polls; SSE upgrade is Phase 2.5.
-  Stream<JobEvent> streamJob(String jobId) async* {
-    for (var i = 0; i < 60; i++) {
+  /// Stream job status via Server-Sent Events.
+  ///
+  /// Yields events as the server emits them. The server sends:
+  /// - `queued` → `running` → `completed` (with `transcript`)
+  /// - or `queued` → `running` → `failed` (with `error`)
+  /// - `error` if the job disappears mid-stream
+  /// - `timeout` if no terminal event within 30 minutes
+  ///
+  /// Falls back to polling if SSE is unavailable (e.g. corporate proxies
+  /// that buffer/close SSE connections).
+  Stream<JobEvent> streamJob(String jobId, {Duration maxWait = const Duration(minutes: 30)}) async* {
+    try {
+      await for (final evt in _sseStream(jobId, maxWait: maxWait)) {
+        yield evt;
+      }
+    } on _SseUnavailable {
+      // Fallback to polling for environments that don't support SSE.
+      yield* _pollJob(jobId);
+    }
+  }
+
+  Stream<JobEvent> _sseStream(String jobId,
+      {required Duration maxWait}) async* {
+    final uri = Uri.parse('$_baseUrl/v1/jobs/$jobId/stream');
+    final request = await HttpClient().getUrl(uri);
+    final authHeader = _dio.options.headers['Authorization'];
+    if (authHeader is String) {
+      request.headers.set('Authorization', authHeader);
+    }
+    request.headers.set('Accept', 'text/event-stream');
+    request.headers.set('Cache-Control', 'no-cache');
+
+    final response = await request.close();
+    if (response.statusCode != 200) {
+      throw _SseUnavailable('SSE returned ${response.statusCode}');
+    }
+
+    final events = <String, String>{};
+    String? currentEvent;
+    final lines = response
+        .transform(utf8.decoder)
+        .transform(const LineSplitter());
+
+    await for (final line in lines.timeout(maxWait)) {
+      if (line.isEmpty) {
+        // End of event.
+        if (events.isNotEmpty) {
+          final ev = currentEvent ?? 'message';
+          final data = events['data'] ?? '';
+          Map<String, dynamic> parsed;
+          try {
+            parsed = jsonDecode(data) as Map<String, dynamic>;
+          } catch (_) {
+            parsed = {'raw': data};
+          }
+          yield JobEvent(ev, parsed);
+          events.clear();
+          currentEvent = null;
+        }
+        continue;
+      }
+      if (line.startsWith('event:')) {
+        currentEvent = line.substring(6).trim();
+      } else if (line.startsWith('data:')) {
+        events['data'] = (events['data'] ?? '') + line.substring(5).trim();
+      }
+      // Ignore comments (lines starting with ':') and other fields.
+    }
+  }
+
+  Stream<JobEvent> _pollJob(String jobId) async* {
+    for (var i = 0; i < 1800; i++) {
       await Future.delayed(const Duration(seconds: 2));
-      final resp = await _fetch('/v1/jobs/$jobId');
-      final status = resp['status'] as String;
-      yield JobEvent(status, resp);
-      if (status == 'completed' || status == 'failed') return;
+      try {
+        final resp = await _fetch('/v1/jobs/$jobId');
+        final status = resp['status'] as String;
+        yield JobEvent(status, resp);
+        if (status == 'completed' || status == 'failed') return;
+      } catch (_) {
+        // Ignore transient errors during poll.
+      }
     }
     yield const JobEvent('timeout', {});
   }
