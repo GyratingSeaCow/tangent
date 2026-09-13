@@ -19,8 +19,9 @@ from app.db import init_db
 def authed_client_with_dump(temp_data_dir: Path, monkeypatch):
     init_db(str(temp_data_dir))
 
-    # Stub out the background task runner so tests don't hit real Whisper
-    monkeypatch.setattr("app.services.job_queue.run_job_inline", lambda jid, ap: None)
+    # Stub out the background task runner so tests don't hit real Whisper.
+    # Patch the name as imported in app.api.jobs (not just the source module).
+    monkeypatch.setattr("app.api.jobs.run_job_inline", lambda jid, ap: None)
 
     token = generate_token()
     conn = sqlite3.connect(temp_data_dir / "tangent.db")
