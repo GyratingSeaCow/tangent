@@ -46,6 +46,7 @@ So we're building it.
 | Batched sync notification: "Confirm to Transcribe All" | Encryption at rest (v2) |
 | Searchable dump list | |
 | Model manager: "Need more accuracy? Download a bigger model!" | |
+| Secretary mode (on-device LLM, structured meeting notes) | |
 | Single-user server, AGPL-3 | |
 
 ---
