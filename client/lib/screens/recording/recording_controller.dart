@@ -15,8 +15,8 @@ class RecordingController extends StateNotifier<RecordingState> {
 
   RecordingController(this._service) : super(RecordingState.idle);
 
-  factory RecordingController.test({required Directory outputDir}) {
-    return RecordingController(RecordingService.test(outputDir: outputDir));
+  factory RecordingController.test() {
+    return RecordingController(StubRecordingService());
   }
 
   bool get isRecording => state == RecordingState.recording;
@@ -56,7 +56,7 @@ class RecordingController extends StateNotifier<RecordingState> {
 }
 
 final recordingServiceProvider = Provider<RecordingService>((ref) {
-  return RecordingService();
+  return DefaultRecordingService();
 });
 
 final recordingControllerProvider =

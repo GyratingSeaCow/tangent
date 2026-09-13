@@ -16,38 +16,52 @@ class RecordingResult {
   });
 }
 
-class RecordingService {
-  final AudioRecorder _recorder;
+/// Test-friendly abstraction. Production uses the default implementation;
+/// tests inject a stub.
+abstract class RecordingService {
+  bool get isRecording;
+  String? get currentPath;
+
+  Future<bool> requestPermission();
+  Future<String> start();
+  Future<RecordingResult?> stop();
+  Future<void> dispose();
+}
+
+class DefaultRecordingService implements RecordingService {
+  AudioRecorder? _recorder;
   final Directory _outputDir;
   String? _currentPath;
   DateTime? _startedAt;
   bool _isRecording = false;
 
-  RecordingService({Directory? outputDir, AudioRecorder? recorder})
-      : _recorder = recorder ?? AudioRecorder(),
+  DefaultRecordingService({Directory? outputDir, AudioRecorder? recorder})
+      : _recorder = recorder,
         _outputDir = outputDir ?? Directory.systemTemp;
 
-  RecordingService.test({required Directory outputDir, AudioRecorder? recorder})
-      : _recorder = recorder ?? AudioRecorder(),
-        _outputDir = outputDir;
+  AudioRecorder get _ensureRecorder => _recorder ??= AudioRecorder();
 
+  @override
   bool get isRecording => _isRecording;
+
+  @override
   String? get currentPath => _currentPath;
 
-  /// Request microphone permission. Returns true if granted.
-  Future<bool> requestPermission() => _recorder.hasPermission();
+  @override
+  Future<bool> requestPermission() => _ensureRecorder.hasPermission();
 
-  /// Start recording to a new file. Returns the path.
+  @override
   Future<String> start() async {
     if (_isRecording) {
       throw StateError('Already recording');
     }
-    if (!await _recorder.hasPermission()) {
+    final recorder = _ensureRecorder;
+    if (!await recorder.hasPermission()) {
       throw StateError('Microphone permission not granted');
     }
     final path =
         '${_outputDir.path}/${DateTime.now().microsecondsSinceEpoch}.opus';
-    await _recorder.start(
+    await recorder.start(
       const RecordConfig(
         encoder: AudioEncoder.opus,
         sampleRate: 16000,
@@ -62,10 +76,10 @@ class RecordingService {
     return path;
   }
 
-  /// Stop recording. Returns the result with duration and file size.
+  @override
   Future<RecordingResult?> stop() async {
     if (!_isRecording) return null;
-    final path = await _recorder.stop();
+    final path = await _ensureRecorder.stop();
     _isRecording = false;
     if (path == null || _startedAt == null) {
       _currentPath = null;
@@ -84,5 +98,50 @@ class RecordingService {
     );
   }
 
-  Future<void> dispose() => _recorder.dispose();
+  @override
+  Future<void> dispose() async {
+    await _recorder?.dispose();
+    _recorder = null;
+  }
+}
+
+/// Test-only stub: never touches platform channels.
+class StubRecordingService implements RecordingService {
+  bool _isRecording = false;
+  String? _path;
+  final List<String> events = [];
+
+  @override
+  bool get isRecording => _isRecording;
+  @override
+  String? get currentPath => _path;
+
+  @override
+  Future<bool> requestPermission() async {
+    events.add('permission');
+    return true;
+  }
+
+  @override
+  Future<String> start() async {
+    events.add('start');
+    _isRecording = true;
+    _path = '/tmp/stub.opus';
+    return _path!;
+  }
+
+  @override
+  Future<RecordingResult?> stop() async {
+    events.add('stop');
+    if (!_isRecording) return null;
+    _isRecording = false;
+    final p = _path!;
+    _path = null;
+    return RecordingResult(path: p, durationSeconds: 5, sizeBytes: 100);
+  }
+
+  @override
+  Future<void> dispose() async {
+    events.add('dispose');
+  }
 }
