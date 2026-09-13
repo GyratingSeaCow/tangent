@@ -24,11 +24,43 @@ log = get_logger(__name__)
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    """Startup: configure logging, init DB. Shutdown: log exit."""
+    """Startup: configure logging, init DB, print setup URL on first run.
+    Shutdown: log exit."""
     settings = get_settings()
     configure_logging(settings.log_level)
     log.info("server.starting", version=__version__, data_dir=settings.data_dir)
     init_db(settings.data_dir)
+
+    # Print setup URL on first run
+    from app.db import get_db
+    from app.api.setup import is_setup_complete
+
+    gen = get_db()
+    db = next(gen)
+    try:
+        if not is_setup_complete(db):
+            print("")
+            print("=" * 60)
+            print("Tangent first-run setup")
+            print("=" * 60)
+            print("")
+            print(f"Server will be available at http://{settings.host}:{settings.port}")
+            print("")
+            print("Open this URL in a browser to generate your API token:")
+            print(f"  http://localhost:{settings.port}/v1/setup")
+            print("")
+            print("POST with JSON body: {\"display_name\": \"Your Name\"}")
+            print("Save the returned token; it will not be shown again.")
+            print("=" * 60)
+            print("")
+        else:
+            log.info("server.setup_complete")
+    finally:
+        try:
+            next(gen)
+        except StopIteration:
+            pass
+
     yield
     log.info("server.stopping")
 
