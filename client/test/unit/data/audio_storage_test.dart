@@ -18,9 +18,9 @@ void main() {
       await tmp.delete(recursive: true);
     });
 
-    test('audioDir is under app docs with "audio" name', () {
+    test('audioDir is under app docs with "Tangent" name', () {
       expect(storage.audioDir.path, contains(tmp.path));
-      expect(storage.audioDir.path, endsWith('audio'));
+      expect(storage.audioDir.path, endsWith('Tangent'));
     });
 
     test('pathFor returns a .opus file under audioDir', () {

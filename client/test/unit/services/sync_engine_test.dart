@@ -90,12 +90,12 @@ void main() {
         mode: 'brain_dump',
         durationSeconds: 5,
         title: 'Test',
-        audioPath: '${tmp.path}/audio/test-dump.opus',
+        audioPath: '${tmp.path}/Tangent/test-dump.opus',
         audioSizeBytes: 100,
         syncStatus: SyncStatus.pending.wireValue,
         syncAttempts: 0,
       ));
-      await File('${tmp.path}/audio/test-dump.opus')
+      await File('${tmp.path}/Tangent/test-dump.opus')
           .writeAsBytes(Uint8List(100));
       when(
         () => client.createDump(

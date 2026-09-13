@@ -1,8 +1,35 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+          xmlns:tools="http://schemas.android.com/tools">
+    <!-- Microphone for voice recording. The 'record' plugin adds this automatically,
+         but we list it explicitly so the user sees the permission in app info. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <!-- Storage permissions so recordings live in the public Documents/Tangent/
+         folder and SURVIVE app uninstall. Without these, Android scopes our writes
+         to internal data dirs that get wiped when the user removes the app.
+
+         On Android 10 (API 29) and below, WRITE_EXTERNAL_STORAGE is granted at
+         install time (it's a "normal" permission).
+         On Android 11+ (API 30+), WRITE_EXTERNAL_STORAGE has no effect; the app
+         must hold MANAGE_EXTERNAL_STORAGE and the user must grant it via the
+         special "All files access" settings screen (handled at runtime, see
+         lib/data/storage_permission.dart). -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+                     android:maxSdkVersion="29" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+                     android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+                     tools:ignore="ScopedStorage" />
+
+    <!-- Internet for syncing with the Tangent server. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
     <application
         android:label="tangent"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:requestLegacyExternalStorage="true">
         <activity
             android:name=".MainActivity"
             android:exported="true"

@@ -4,7 +4,9 @@ import 'dart:io';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../data/audio_storage.dart';
 import '../../services/recording_service.dart';
+import '../home/home_providers.dart';
 
 enum RecordingState { idle, recording, saving }
 
@@ -39,11 +41,6 @@ class RecordingController extends StateNotifier<RecordingState> {
     state = RecordingState.recording;
     _ref.read(recordingTickProvider.notifier).state = 0;
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-      // Bump the tick counter so listeners watching recordingTickProvider
-      // can re-read elapsedSeconds and rebuild. We can't just set
-      // `state = RecordingState.recording` because StateNotifier suppresses
-      // notifications when the value is unchanged, which leaves the UI
-      // timer frozen at 00:00 even though the mic stream is alive.
       _ref.read(recordingTickProvider.notifier).state++;
     });
   }
@@ -69,7 +66,11 @@ class RecordingController extends StateNotifier<RecordingState> {
 }
 
 final recordingServiceProvider = Provider<RecordingService>((ref) {
-  return DefaultRecordingService();
+  // Use the AudioStorage directory so recordings land in the public
+  // Documents/Tangent/ folder (or wherever AudioStorage is configured to
+  // put them). This makes them survive app uninstall.
+  final audio = ref.watch(audioStorageProvider);
+  return DefaultRecordingService(outputDir: audio.audioDir);
 });
 
 final recordingControllerProvider =

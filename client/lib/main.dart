@@ -16,6 +16,13 @@ import 'services/transcription_client.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // Resolve the audio storage directory. This will land in the public
+  // Documents/Tangent/ folder if storage permissions are granted, otherwise
+  // it falls back to the app's internal directory (which is wiped on uninstall).
+  final audio = await AudioStorage.fromDirectoryFallback(
+    await getApplicationDocumentsDirectory(),
+  );
+
   final store = SecureStore();
   final url = await store.getServerUrl();
   final token = await store.getToken();
@@ -25,8 +32,11 @@ Future<void> main() async {
   );
 
   final db = LocalDb();
-  final docsDir = await getApplicationDocumentsDirectory();
-  final audio = AudioStorage.fromDirectory(docsDir);
+
+  // Import any audio files that already exist in the storage directory
+  // (e.g. from a previous install) into the local DB. Each orphan file
+  // becomes a 'pending' dump awaiting title + transcription.
+  await _importOrphanAudio(db, audio);
 
   runApp(
     ProviderScope(
@@ -39,6 +49,34 @@ Future<void> main() async {
       child: const TangentApp(),
     ),
   );
+}
+
+/// Walk the audio dir and register any .opus files that aren't in the DB.
+Future<void> _importOrphanAudio(LocalDb db, AudioStorage audio) async {
+  try {
+    final orphans = await audio.listAll();
+    if (orphans.isEmpty) return;
+    final known = <String>{
+      for (final row in await db.listDumps(limit: 10000)) row.id,
+    };
+    for (final o in orphans) {
+      if (known.contains(o.id)) continue;
+      await db.upsertDump(DumpRow(
+        id: o.id,
+        createdAt: o.modifiedAt,
+        updatedAt: o.modifiedAt,
+        mode: 'brain_dump',
+        durationSeconds: 0,
+        title: '',
+        audioPath: o.file.path,
+        audioSizeBytes: o.sizeBytes,
+        syncStatus: 'pending',
+        syncAttempts: 0,
+      ));
+    }
+  } catch (_) {
+    // Import is best-effort; missing storage access shouldn't crash startup.
+  }
 }
 
 class TangentApp extends StatelessWidget {
