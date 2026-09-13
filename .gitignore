@@ -1,0 +1,113 @@
+# ─────────────────────────────────────────────────────────────
+# ADH2 — Brain Dump Voice App
+# ─────────────────────────────────────────────────────────────
+# Built for ADHD brains. Voice → text → searchable second brain.
+# AGPL-3.0. See ./LICENSE.
+# ─────────────────────────────────────────────────────────────
+
+# ── Flutter / Dart ────────────────────────────────────────────
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+build/
+pubspec.lock
+*.iml
+*.ipr
+*.iws
+.idea/
+.vscode/
+*.log
+
+# ── Android build artifacts ───────────────────────────────────
+android/.gradle/
+android/captures/
+android/gradlew
+android/gradlew.bat
+android/local.properties
+android/**/GeneratedPluginRegistrant.java
+android/app/debug/
+android/app/profile/
+android/app/release/
+*.jks
+*.keystore
+key.properties
+
+# ── Linux / Windows desktop builds (Flutter) ──────────────────
+linux/flutter/
+linux/build/
+windows/flutter/
+windows/build/
+macos/Flutter/ephemeral/
+macos/Pods/
+macos/Runner.xcworkspace/
+
+# ── Python (server side, will live under server/) ─────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+env/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ── Whisper / model artifacts ─────────────────────────────────
+# Model weights are downloaded at runtime. Keep them OUT of git.
+*.bin
+*.gguf
+*.ggml
+models/*.pt
+models/*.onnx
+models/**/*.bin
+
+# ── Docker ────────────────────────────────────────────────────
+# Keep compose files tracked, ignore runtime artifacts.
+**/.dockerignore.bak
+docker-compose.override.yml
+
+# ── Local config / secrets ────────────────────────────────────
+.env
+.env.local
+.env.*.local
+*.local
+secrets/
+config/local.yaml
+
+# ── Recordings / user data (NEVER commit) ────────────────────
+# These belong to the end user. The server should store them
+# under a path the user owns, not under this repo.
+data/
+recordings/
+uploads/
+*.wav
+*.opus
+*.m4a
+*.mp3
+
+# ── Logs ──────────────────────────────────────────────────────
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+
+# ── OS junk ───────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+$RECYCLE.BIN/
+
+# ── Editor / IDE ──────────────────────────────────────────────
+*.swp
+*.swo
+*~
+.vscode/settings.json
+.idea/workspace.xml
