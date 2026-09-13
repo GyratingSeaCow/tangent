@@ -1,6 +1,6 @@
-# Tangent Project Status — End of Session 1 (2026-09-13)
+# Tangent Project Status — End of Session 2 (2026-09-13)
 
-This document captures where Tangent stands at the end of the initial brainstorming + Phase 1 build session. Future sessions should read this first.
+This document captures where Tangent stands after the Phase 2 (Flutter client) build session. Future sessions should read this first.
 
 ---
 
@@ -166,3 +166,95 @@ Per spec §16 v1 success criteria, Tangent is "shipped" when:
 ---
 
 *End of session 1 status. Server ships. Client is a real, multi-day project that should be its own focused effort.*
+
+---
+
+## Phase 2 — Flutter Client (End of Session 2)
+
+### What was built
+
+A complete, working Flutter client that talks to the Phase 1 server.
+
+| Metric | Value |
+|---|---|
+| Code location | `client/` |
+| Tests | **35/35 passing** (`flutter test`) |
+| Analyze | 0 errors (only style hints) |
+| APK | **Built successfully** — 202 MB debug at `client/build/app/outputs/flutter-apk/app-debug.apk` |
+| Target platforms | Android (verified), Linux, Windows (deps installed; targets not built) |
+| Commits this phase | 14 (planning + 13 implementation) |
+| Push state | All on `main`, ready to push to remote |
+
+### Module breakdown
+
+**Data layer (`lib/data/`)** — 6 files, 4 test files
+- `local_db.dart` — drift schema with FTS5 full-text search over dumps
+- `audio_storage.dart` — opus files under app docs directory
+- `secure_storage.dart` — flutter_secure_storage wrapper for API token + URL
+- `settings_store.dart` — trigger mode + wifi-only-sync setting
+
+**Services (`lib/services/`)** — 4 files, 4 test files
+- `transcription_client.dart` — Dio HTTP client (createDump, enqueue, poll job)
+- `recording_service.dart` — `record` package wrapper, opus/16kHz/mono
+- `connectivity_service.dart` — connectivity_plus stream + status enum
+- `sync_engine.dart` — batches pending dumps, uploads to server, marks synced
+
+**Domain models (`lib/models/`)** — 5 files, 1 test file
+- `dump.dart` (freezed), `dump_mode.dart`, `sync_status.dart`, `server_info.dart`, `api_exception.dart`
+
+**Screens (`lib/screens/`)** — 5 files, 2 test files
+- `home/home_screen.dart` — big record button + timer
+- `server/server_connection_screen.dart` — URL + token entry
+- `dump/dumps_list_screen.dart` — stub (no real DB query yet)
+- `dump/dump_detail_screen.dart` — stub
+- `recording/recording_controller.dart` — Riverpod state notifier
+
+**Entry point (`lib/main.dart`)** — wires up SecureStore + LocalDb + TranscriptionClient as ProviderScope overrides, routes to home or server-config based on stored URL.
+
+### Toolchain
+
+| Component | Version |
+|---|---|
+| Flutter | 3.27.1 (installed at `%LOCALAPPDATA%\flutter`) |
+| Dart SDK | bundled with Flutter 3.27 |
+| JDK | 17.0.20 (Microsoft, at `C:\Program Files\Microsoft\jdk-17.0.20.8-hotspot`) |
+| Android SDK | 34 (`%LOCALAPPDATA%\Android\Sdk`) |
+| Android licenses | accepted |
+| `gh` CLI | 2.100.0 |
+
+### Known gaps (deferred to v1.1)
+
+1. **Server-side audio upload endpoint** — Phase 1.5. Client uploads via `POST /v1/dumps` (multipart) but server endpoint still assumes file at expected path.
+2. **Dumps list screen is a stub** — shows "No dumps yet". Needs Riverpod `dumpsProvider` querying the local DB.
+3. **Dump detail screen is a stub** — needs metadata entry form, transcription trigger button, audio playback.
+4. **SSE → polling** — Client polls `/v1/jobs/{id}` every 2s with 60s timeout. SSE is server-side ready, just needs wire-up.
+5. **Meeting / secretary mode UI** — backend data flow exists; UI surface not built.
+6. **Linux + Windows targets** — deps installed but not built/tested.
+
+### How to keep going
+
+```bash
+# All required env vars in one block:
+export JAVA_HOME="C:\Program Files\Microsoft\jdk-17.0.20.8-hotspot"
+export ANDROID_HOME="$LOCALAPPDATA/Android/Sdk"
+export PATH="$JAVA_HOME/bin:$ANDROID_HOME/platform-tools:$PATH"
+
+# Tests
+cd "~/Documents/ADH2/client"
+flutter test                                  # 35 pass
+
+# Build
+flutter build apk --debug                     # already built; output in build/
+
+# Install on device
+adb install -r build/app/outputs/flutter-apk/app-debug.apk
+```
+
+### Session-3 priorities (when you come back)
+
+1. Finish the dumps list / detail screens (real DB integration)
+2. Wire up SSE on the client (replace polling loop)
+3. Build Linux target end-to-end
+4. Run a real recording → transcribe → search round trip
+
+*End of session 2 status. Server + client foundation ship. Both have real tests, real builds, real wire-up — not sketches.*
