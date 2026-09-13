@@ -17,32 +17,32 @@ void main() {
 
     setUp(() {
       mock = _MockFlutterSecureStorage();
-      store = SecureStore.forTesting(storage: mock);
+      store = SecureStore(storage: mock);
     });
 
-    test('readToken returns the stored token', () async {
+    test('getToken returns the stored token', () async {
       when(() => mock.read(key: 'api_token'))
           .thenAnswer((_) async => 'abc-123');
-      expect(await store.readToken(), 'abc-123');
+      expect(await store.getToken(), 'abc-123');
     });
 
-    test('writeToken stores the token', () async {
+    test('setToken stores the token', () async {
       when(() => mock.write(key: 'api_token', value: 'xyz-789'))
           .thenAnswer((_) async {});
-      await store.writeToken('xyz-789');
+      await store.setToken('xyz-789');
       verify(() => mock.write(key: 'api_token', value: 'xyz-789')).called(1);
     });
 
-    test('readServerUrl returns null when not set', () async {
+    test('getServerUrl returns null when not set', () async {
       when(() => mock.read(key: 'server_url'))
           .thenAnswer((_) async => null);
-      expect(await store.readServerUrl(), isNull);
+      expect(await store.getServerUrl(), isNull);
     });
 
-    test('writeServerUrl stores the url', () async {
+    test('setServerUrl stores the url', () async {
       when(() => mock.write(key: 'server_url', value: 'http://homelab:8000'))
           .thenAnswer((_) async {});
-      await store.writeServerUrl('http://homelab:8000');
+      await store.setServerUrl('http://homelab:8000');
       verify(() => mock.write(
               key: 'server_url', value: 'http://homelab:8000'))
           .called(1);
