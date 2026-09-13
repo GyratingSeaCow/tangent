@@ -6,7 +6,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/audio_storage.dart';
 import '../../data/local_db.dart';
-import '../../models/dump.dart';
 import '../../models/dump_mode.dart';
 import '../../models/sync_status.dart';
 import '../../services/transcription_client.dart';
