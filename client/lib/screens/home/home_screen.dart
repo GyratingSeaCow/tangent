@@ -26,29 +26,22 @@ class HomeScreen extends ConsumerStatefulWidget {
 }
 
 class _HomeScreenState extends ConsumerState<HomeScreen> {
-  int _seconds = 0;
   bool _syncing = false;
   DumpMode _mode = DumpMode.brainDump;
 
   @override
   void initState() {
     super.initState();
-    ref.listenManual<RecordingState>(
-      recordingControllerProvider,
-      (prev, next) {
-        if (next == RecordingState.recording) {
-          setState(() => _seconds = ref
-              .read(recordingControllerProvider.notifier)
-              .elapsedSeconds);
-        }
-      },
-    );
   }
 
-  String get _timeLabel {
-    final m = (_seconds ~/ 60).toString().padLeft(2, '0');
-    final s = (_seconds % 60).toString().padLeft(2, '0');
-    return '$m:$s';
+  /// Reads the elapsed-seconds counter. Wrapped in a method so the build()
+  /// below can call it after watching recordingTickProvider, which forces
+  /// a rebuild every second while recording.
+  int _readElapsedSeconds(WidgetRef ref) {
+    // Touch the tick provider so this build re-runs when the tick increments.
+    ref.watch(recordingTickProvider);
+    final controller = ref.read(recordingControllerProvider.notifier);
+    return controller.elapsedSeconds;
   }
 
   Future<void> _toggleRecording() async {
@@ -112,6 +105,16 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   Widget build(BuildContext context) {
     final state = ref.watch(recordingControllerProvider);
     final isRecording = state == RecordingState.recording;
+    // Read the current elapsed seconds. Watching recordingTickProvider
+    // makes this build re-run every second while recording so the timer
+    // text updates. Without this the timer stays frozen at 00:00 even
+    // though the mic stream is active.
+    final seconds = isRecording ? _readElapsedSeconds(ref) : 0;
+    final timeLabel = (() {
+      final m = (seconds ~/ 60).toString().padLeft(2, '0');
+      final s = (seconds % 60).toString().padLeft(2, '0');
+      return '$m:$s';
+    })();
 
     return Scaffold(
       appBar: AppBar(
@@ -149,7 +152,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Text(
-              _timeLabel,
+              timeLabel,
               style: TextStyle(
                 fontSize: 72,
                 fontWeight: FontWeight.w200,

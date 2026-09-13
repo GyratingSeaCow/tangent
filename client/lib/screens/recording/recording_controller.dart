@@ -8,15 +8,22 @@ import '../../services/recording_service.dart';
 
 enum RecordingState { idle, recording, saving }
 
+/// Tick counter incremented every second while recording. Consumers watch
+/// this to update their timer display without relying on state-changed
+/// events (which don't fire when the state value is the same).
+final recordingTickProvider = StateProvider<int>((ref) => 0);
+
 class RecordingController extends StateNotifier<RecordingState> {
   final RecordingService _service;
+  final Ref _ref;
   Timer? _timer;
   DateTime? _startedAt;
 
-  RecordingController(this._service) : super(RecordingState.idle);
+  RecordingController(this._service, this._ref)
+      : super(RecordingState.idle);
 
-  factory RecordingController.test() {
-    return RecordingController(StubRecordingService());
+  factory RecordingController.test(Ref ref) {
+    return RecordingController(StubRecordingService(), ref);
   }
 
   bool get isRecording => state == RecordingState.recording;
@@ -30,9 +37,14 @@ class RecordingController extends StateNotifier<RecordingState> {
     await _service.start();
     _startedAt = DateTime.now();
     state = RecordingState.recording;
+    _ref.read(recordingTickProvider.notifier).state = 0;
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-      // Force UI rebuild to show updated timer.
-      state = RecordingState.recording;
+      // Bump the tick counter so listeners watching recordingTickProvider
+      // can re-read elapsedSeconds and rebuild. We can't just set
+      // `state = RecordingState.recording` because StateNotifier suppresses
+      // notifications when the value is unchanged, which leaves the UI
+      // timer frozen at 00:00 even though the mic stream is alive.
+      _ref.read(recordingTickProvider.notifier).state++;
     });
   }
 
@@ -43,6 +55,7 @@ class RecordingController extends StateNotifier<RecordingState> {
     state = RecordingState.saving;
     final result = await _service.stop();
     _startedAt = null;
+    _ref.read(recordingTickProvider.notifier).state = 0;
     state = RecordingState.idle;
     return result;
   }
@@ -61,5 +74,8 @@ final recordingServiceProvider = Provider<RecordingService>((ref) {
 
 final recordingControllerProvider =
     StateNotifierProvider<RecordingController, RecordingState>((ref) {
-  return RecordingController(ref.watch(recordingServiceProvider));
+  return RecordingController(
+    ref.watch(recordingServiceProvider),
+    ref,
+  );
 });
