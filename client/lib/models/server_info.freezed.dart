@@ -14,10 +14,6 @@ T _$identity<T>(T value) => value;
 final _privateConstructorUsedError = UnsupportedError(
     'It seems like you constructed your class using `MyClass._()`. This constructor is only meant to be used by freezed and you are not supposed to need it nor use it.\nPlease check the documentation here for more information: https://github.com/rrousselGit/freezed#adding-getters-and-methods-to-our-models');
 
-ServerInfo _$ServerInfoFromJson(Map<String, dynamic> json) {
-  return _ServerInfo.fromJson(json);
-}
-
 /// @nodoc
 mixin _$ServerInfo {
   String get version => throw _privateConstructorUsedError;
@@ -26,9 +22,6 @@ mixin _$ServerInfo {
   List<String> get availableModels => throw _privateConstructorUsedError;
   int get storageUsedBytes => throw _privateConstructorUsedError;
   int get dumpCount => throw _privateConstructorUsedError;
-
-  /// Serializes this ServerInfo to a JSON map.
-  Map<String, dynamic> toJson() => throw _privateConstructorUsedError;
 
   /// Create a copy of ServerInfo
   /// with the given fields replaced by the non-null parameter values.
@@ -170,8 +163,8 @@ class __$$ServerInfoImplCopyWithImpl<$Res>
 }
 
 /// @nodoc
-@JsonSerializable()
-class _$ServerInfoImpl implements _ServerInfo {
+
+class _$ServerInfoImpl extends _ServerInfo {
   const _$ServerInfoImpl(
       {required this.version,
       required this.setupComplete,
@@ -179,10 +172,8 @@ class _$ServerInfoImpl implements _ServerInfo {
       required final List<String> availableModels,
       required this.storageUsedBytes,
       required this.dumpCount})
-      : _availableModels = availableModels;
-
-  factory _$ServerInfoImpl.fromJson(Map<String, dynamic> json) =>
-      _$$ServerInfoImplFromJson(json);
+      : _availableModels = availableModels,
+        super._();
 
   @override
   final String version;
@@ -226,7 +217,6 @@ class _$ServerInfoImpl implements _ServerInfo {
                 other.dumpCount == dumpCount));
   }
 
-  @JsonKey(includeFromJson: false, includeToJson: false)
   @override
   int get hashCode => Object.hash(
       runtimeType,
@@ -244,16 +234,9 @@ class _$ServerInfoImpl implements _ServerInfo {
   @pragma('vm:prefer-inline')
   _$$ServerInfoImplCopyWith<_$ServerInfoImpl> get copyWith =>
       __$$ServerInfoImplCopyWithImpl<_$ServerInfoImpl>(this, _$identity);
-
-  @override
-  Map<String, dynamic> toJson() {
-    return _$$ServerInfoImplToJson(
-      this,
-    );
-  }
 }
 
-abstract class _ServerInfo implements ServerInfo {
+abstract class _ServerInfo extends ServerInfo {
   const factory _ServerInfo(
       {required final String version,
       required final bool setupComplete,
@@ -261,9 +244,7 @@ abstract class _ServerInfo implements ServerInfo {
       required final List<String> availableModels,
       required final int storageUsedBytes,
       required final int dumpCount}) = _$ServerInfoImpl;
-
-  factory _ServerInfo.fromJson(Map<String, dynamic> json) =
-      _$ServerInfoImpl.fromJson;
+  const _ServerInfo._() : super._();
 
   @override
   String get version;
