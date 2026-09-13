@@ -16,13 +16,11 @@ from app.db import init_db
 
 
 @pytest.fixture
-def authed_client_with_dump(temp_data_dir: Path):
+def authed_client_with_dump(temp_data_dir: Path, monkeypatch):
     init_db(str(temp_data_dir))
 
-    # Use WAL mode so BackgroundTasks can write while the request connection is alive
-    conn = sqlite3.connect(temp_data_dir / "tangent.db")
-    conn.execute("PRAGMA journal_mode = WAL")
-    conn.close()
+    # Stub out the background task runner so tests don't hit real Whisper
+    monkeypatch.setattr("app.services.job_queue.run_job_inline", lambda jid, ap: None)
 
     token = generate_token()
     conn = sqlite3.connect(temp_data_dir / "tangent.db")
