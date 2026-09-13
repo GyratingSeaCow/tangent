@@ -69,16 +69,23 @@ class _Router extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final urlFuture = ref.read(secureStoreProvider).getServerUrl();
+    // Read with a 3s timeout. If secure storage hangs (rare, but seen on some
+    // Samsung Android 13+ devices when Tink/keystore service is slow to boot),
+    // fall back to the server-connection screen rather than spinning forever.
+    final urlFuture = ref.read(secureStoreProvider).getServerUrl().timeout(
+      const Duration(seconds: 3),
+      onTimeout: () => null,
+    );
     return FutureBuilder<String?>(
       future: urlFuture,
       builder: (context, snap) {
-        if (!snap.hasData) {
+        if (snap.connectionState != ConnectionState.done) {
           return const Scaffold(
             body: Center(child: CircularProgressIndicator()),
           );
         }
-        if (snap.data == null) {
+        final url = snap.data;
+        if (url == null || url.isEmpty) {
           return const ServerConnectionScreen();
         }
         return const HomeScreen();

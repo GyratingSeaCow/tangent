@@ -8,10 +8,11 @@ class SecureStore {
   final FlutterSecureStorage _storage;
 
   SecureStore({FlutterSecureStorage? storage})
-      : _storage = storage ??
-            const FlutterSecureStorage(
-              aOptions: AndroidOptions(encryptedSharedPreferences: true),
-            );
+      // encryptedSharedPreferences=true is deprecated in flutter_secure_storage
+      // 9.x and causes hangs on some Samsung/Android 13+ devices because Tink
+      // boot blocks the first read. Default (Android Keystore-backed prefs) is
+      // fast and reliable.
+      : _storage = storage ?? const FlutterSecureStorage();
 
   Future<String?> getToken() => _storage.read(key: _kToken);
   Future<String?> getServerUrl() => _storage.read(key: _kServerUrl);

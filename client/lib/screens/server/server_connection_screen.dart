@@ -39,11 +39,15 @@ class _ServerConnectionScreenState
     final store = ref.read(secureStoreProvider);
     final url = await store.getServerUrl();
     final token = await store.getToken();
-    if (mounted) {
-      setState(() {
-        _urlController.text = url ?? 'http://10.0.2.2:8000';
-        _tokenController.text = token ?? '';
-      });
+    if (!mounted) return;
+    // Only set the URL if the user hasn't typed anything yet. This avoids a
+    // race where async load clobbers the user's typed value (which used to
+    // cause an empty/host-less URL to be sent to the network layer).
+    if (_urlController.text.isEmpty) {
+      _urlController.text = url ?? 'http://10.0.2.2:8000';
+    }
+    if (_tokenController.text.isEmpty && token != null) {
+      _tokenController.text = token;
     }
   }
 
@@ -60,17 +64,28 @@ class _ServerConnectionScreenState
       _error = null;
     });
     try {
-      final client = TranscriptionClient(
-        baseUrl: _urlController.text.trim(),
-        token: _tokenController.text.trim().isEmpty
-            ? null
-            : _tokenController.text.trim(),
-      );
+      final url = _urlController.text.trim();
+      // Validate URL up-front so we fail with a clear message instead of
+      // a low-level Dio "no host in url" error.
+      if (url.isEmpty) {
+        throw Exception('Server URL is empty');
+      }
+      final parsed = Uri.tryParse(url);
+      if (parsed == null || parsed.host.isEmpty) {
+        throw Exception('Server URL is missing a host (e.g. http://192.168.1.5:8000)');
+      }
+      if (parsed.scheme != 'http' && parsed.scheme != 'https') {
+        throw Exception('Server URL must start with http:// or https://');
+      }
+      final token = _tokenController.text.trim().isEmpty
+          ? null
+          : _tokenController.text.trim();
+      final client = TranscriptionClient(baseUrl: url, token: token);
       await client.getServerInfo();
       final store = ref.read(secureStoreProvider);
-      await store.setServerUrl(_urlController.text.trim());
-      if (_tokenController.text.trim().isNotEmpty) {
-        await store.setToken(_tokenController.text.trim());
+      await store.setServerUrl(url);
+      if (token != null) {
+        await store.setToken(token);
       }
       if (mounted) {
         Navigator.of(context).pushReplacementNamed('/home');
