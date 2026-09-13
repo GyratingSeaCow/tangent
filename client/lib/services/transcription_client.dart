@@ -84,12 +84,11 @@ class TranscriptionClient {
         contentType: DioMediaType.parse(mimeType),
       ),
     });
-    final resp = await _dio.fetch<dynamic>(
-      RequestOptions(
-        path: '/v1/dumps/$dumpId/audio',
-        method: 'POST',
-        data: form,
-      ),
+    // Same bug as _fetch: _dio.fetch(RequestOptions(path: ...)) drops baseUrl.
+    // Use _dio.post() so the path is correctly joined with baseUrl.
+    final resp = await _dio.post<dynamic>(
+      '/v1/dumps/$dumpId/audio',
+      data: form,
     );
     if (resp.statusCode != 204) {
       _checkStatus(resp);
@@ -204,11 +203,24 @@ class TranscriptionClient {
     String method = 'GET',
     Object? data,
   }) async {
-    final resp = await _dio.fetch<Map<String, dynamic>>(
-      RequestOptions(path: path, method: method, data: data),
-    );
+    // NOTE: We MUST use the typed convenience methods (_dio.get, _dio.post,
+    // etc.) instead of _dio.fetch(RequestOptions(path: ...)). The latter was
+    // observed to dispatch with the raw `path` as the URI and ignore
+    // baseUrl, producing "Invalid argument(s): No host specified in URI".
+    final Response<dynamic> resp;
+    switch (method) {
+      case 'POST':
+        resp = await _dio.post<dynamic>(path, data: data);
+      case 'PATCH':
+        resp = await _dio.patch<dynamic>(path, data: data);
+      case 'DELETE':
+        resp = await _dio.delete<dynamic>(path, data: data);
+      case 'GET':
+      default:
+        resp = await _dio.get<dynamic>(path);
+    }
     _checkStatus(resp);
-    return resp.data!;
+    return (resp.data as Map<String, dynamic>?) ?? {};
   }
 
   void _checkStatus(Response<dynamic> resp) {

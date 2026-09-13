@@ -9,6 +9,7 @@ class _MockDio extends Mock implements Dio {}
 
 void main() {
   setUpAll(() {
+    registerFallbackValue(Options());
     registerFallbackValue(RequestOptions(path: ''));
   });
 
@@ -25,7 +26,7 @@ void main() {
     });
 
     test('getServerInfo returns parsed ServerInfo on 200', () async {
-      when(() => mock.fetch<Map<String, dynamic>>(any())).thenAnswer(
+      when(() => mock.get<dynamic>(any())).thenAnswer(
         (_) async => Response(
           data: {
             'version': '0.1.0',
@@ -47,15 +48,15 @@ void main() {
     });
 
     test('throws ApiException on 401', () async {
-      when(() => mock.fetch<Map<String, dynamic>>(any())).thenAnswer(
+      when(() => mock.get<dynamic>(any())).thenAnswer(
         (_) async => Response(
           data: {'error': {'code': 'unauthorized', 'message': 'Invalid token'}},
           requestOptions: RequestOptions(path: '/v1/server/info'),
           statusCode: 401,
         ),
       );
-      expect(
-        () => client.getServerInfo(),
+      await expectLater(
+        client.getServerInfo(),
         throwsA(isA<ApiException>()
             .having((e) => e.statusCode, 'statusCode', 401)
             .having((e) => e.code, 'code', 'unauthorized')),
@@ -67,25 +68,27 @@ void main() {
     });
 
     test('uploadAudio returns on 204', () async {
-      when(() => mock.fetch<dynamic>(any())).thenAnswer(
+      when(() => mock.post<dynamic>(any(),
+              data: any(named: 'data'))).thenAnswer(
         (_) async => Response(
           requestOptions: RequestOptions(path: '/v1/dumps/1/audio'),
           statusCode: 204,
         ),
       );
       await client.uploadAudio(dumpId: '1', audioBytes: [0, 1, 2]);
-      verify(() => mock.fetch<dynamic>(any())).called(1);
+      verify(() => mock.post<dynamic>(any(), data: any(named: 'data'))).called(1);
     });
 
     test('uploadAudio throws on non-204', () async {
-      when(() => mock.fetch<dynamic>(any())).thenAnswer(
+      when(() => mock.post<dynamic>(any(),
+              data: any(named: 'data'))).thenAnswer(
         (_) async => Response(
           requestOptions: RequestOptions(path: '/v1/dumps/1/audio'),
           statusCode: 500,
         ),
       );
-      expect(
-        () => client.uploadAudio(dumpId: '1', audioBytes: [0]),
+      await expectLater(
+        client.uploadAudio(dumpId: '1', audioBytes: [0]),
         throwsA(isA<ApiException>()),
       );
     });

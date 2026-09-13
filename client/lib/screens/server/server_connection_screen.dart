@@ -64,15 +64,29 @@ class _ServerConnectionScreenState
       _error = null;
     });
     try {
-      final url = _urlController.text.trim();
-      // Validate URL up-front so we fail with a clear message instead of
-      // a low-level Dio "no host in url" error.
+      // Trim aggressively and reject anything that isn't a valid http(s) URL
+      // with a host. This prevents low-level Dio/HttpClient errors like
+      // "no host specific in url" from leaking through to the user.
+      var url = _urlController.text.trim();
+      // Strip invisible characters some keyboards insert.
+      url = url.replaceAll(RegExp(r'[\u200B-\u200F\uFEFF]'), '');
+      // Common typo: missing scheme → prepend http://
+      if (!url.startsWith('http://') && !url.startsWith('https://')) {
+        url = 'http://$url';
+      }
+      // Strip trailing slashes (Dio joins baseUrl + '/' + path if both end/start
+      // with a slash, which can produce a malformed URI in some scenarios).
+      while (url.endsWith('/')) {
+        url = url.substring(0, url.length - 1);
+      }
       if (url.isEmpty) {
         throw Exception('Server URL is empty');
       }
       final parsed = Uri.tryParse(url);
       if (parsed == null || parsed.host.isEmpty) {
-        throw Exception('Server URL is missing a host (e.g. http://192.168.1.5:8000)');
+        throw Exception(
+          'Server URL is missing a host. Got: "${_urlController.text}" → normalized to "$url"',
+        );
       }
       if (parsed.scheme != 'http' && parsed.scheme != 'https') {
         throw Exception('Server URL must start with http:// or https://');
