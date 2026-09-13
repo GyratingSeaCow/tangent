@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# Local data
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Audio uploads
+uploads/
+
+# Model weights (huge, downloaded at runtime)
+models/*.bin
+models/*.gguf
+
+# IDE
+.vscode/
+.idea/
+
+# Env files
+.env
+.env.local
