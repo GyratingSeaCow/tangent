@@ -10,6 +10,16 @@ from pathlib import Path
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _reset_settings_cache():
+    """Clear the lru_cache on get_settings() so each test gets a fresh Settings."""
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
 @pytest.fixture
 def temp_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Generator[Path, None, None]:
     """Provide a temporary data dir, set as TANGENT_DATA_DIR."""
