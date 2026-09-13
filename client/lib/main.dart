@@ -60,6 +60,12 @@ class TangentApp extends StatelessWidget {
         useMaterial3: true,
       ),
       home: const _Router(),
+      // Route used by pushReplacementNamed() from server_connection_screen
+      // after a successful connection test. Without this entry, Flutter
+      // throws "Could not find a generator for route /home".
+      routes: {
+        '/home': (_) => const HomeScreen(),
+      },
     );
   }
 }
