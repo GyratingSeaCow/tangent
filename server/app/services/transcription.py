@@ -19,7 +19,7 @@ class TranscriptionService:
 
     def __init__(self, model_name: str | None = None) -> None:
         self._model_name = model_name or get_settings().whisper_model
-        self._model: "WhisperModel | None" = None
+        self._model: WhisperModel | None = None
 
     @property
     def model_name(self) -> str:

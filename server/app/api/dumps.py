@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import sqlite3
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
@@ -22,7 +22,7 @@ def _now_ts() -> int:
 
 
 def _to_iso(ts: int | None) -> datetime | None:
-    return datetime.fromtimestamp(ts, tz=timezone.utc) if ts else None
+    return datetime.fromtimestamp(ts, tz=UTC) if ts else None
 
 
 def _row_to_dump(row: sqlite3.Row) -> DumpResponse:

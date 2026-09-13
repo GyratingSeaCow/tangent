@@ -5,8 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
-import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
@@ -24,7 +23,7 @@ log = get_logger(__name__)
 
 
 def _to_iso(ts: int | None) -> datetime | None:
-    return datetime.fromtimestamp(ts, tz=timezone.utc) if ts else None
+    return datetime.fromtimestamp(ts, tz=UTC) if ts else None
 
 
 def _row_to_job(row: sqlite3.Row) -> JobResponse:

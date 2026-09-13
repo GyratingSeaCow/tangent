@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import sqlite3
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
@@ -22,7 +22,7 @@ def _now_ts() -> int:
 
 
 def _to_iso(ts: int) -> datetime:
-    return datetime.fromtimestamp(ts, tz=timezone.utc)
+    return datetime.fromtimestamp(ts, tz=UTC)
 
 
 @router.post("/v1/setup", response_model=SetupResponse)

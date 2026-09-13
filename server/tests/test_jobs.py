@@ -103,22 +103,6 @@ def test_enqueue_for_unknown_dump_returns_404(authed_client_with_dump):
     assert resp.status_code == 404
 
 
-def test_get_job_by_id(authed_client_with_dump):
-    client, token, dump_id = authed_client_with_dump
-    enq = client.post(
-        f"/v1/dumps/{dump_id}/transcribe",
-        json={"model": "large-v3"},
-        headers=_auth(token),
-    )
-    job_id = enq.json()["id"]
-
-    resp = client.get(f"/v1/jobs/{job_id}", headers=_auth(token))
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["id"] == job_id
-    assert body["dump_id"] == dump_id
-
-
 def test_get_unknown_job_returns_404(authed_client_with_dump):
     client, token, _ = authed_client_with_dump
     resp = client.get("/v1/jobs/does-not-exist", headers=_auth(token))

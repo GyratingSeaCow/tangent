@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Tests for app.services.transcription. Uses a fake model to avoid loading real Whisper."""
 
-from pathlib import Path
 
 from app.services.transcription import TranscriptionService
 

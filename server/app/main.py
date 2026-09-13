@@ -1,8 +1,10 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """FastAPI app factory. Lifespan handles DB init + logging setup."""
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -32,8 +34,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     init_db(settings.data_dir)
 
     # Print setup URL on first run
-    from app.db import get_db
     from app.api.setup import is_setup_complete
+    from app.db import get_db
 
     gen = get_db()
     db = next(gen)
@@ -56,10 +58,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         else:
             log.info("server.setup_complete")
     finally:
-        try:
+        with contextlib.suppress(StopIteration):
             next(gen)
-        except StopIteration:
-            pass
 
     yield
     log.info("server.stopping")

@@ -2,6 +2,7 @@
 """Tests for app.config module."""
 
 import pytest
+
 from app.config import Settings
 
 

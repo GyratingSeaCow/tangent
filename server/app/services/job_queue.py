@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """In-process transcription job runner.
 
 For v1 single-user: jobs run inline using FastAPI BackgroundTasks. No Celery,
@@ -8,6 +9,7 @@ startup. Good enough for one user on one server.
 
 from __future__ import annotations
 
+import contextlib
 import sqlite3
 import time
 import uuid
@@ -67,7 +69,6 @@ def run_job_inline(job_id: str, audio_path: str) -> None:
         if row is None:
             log.error("job.disappeared", job_id=job_id)
             return
-        model_name = row["model"]
 
         try:
             # Defensive: skip if audio file doesn't exist (v1: audio upload is Phase 1.5)
@@ -106,7 +107,5 @@ def run_job_inline(job_id: str, audio_path: str) -> None:
 
         db.commit()
     finally:
-        try:
+        with contextlib.suppress(StopIteration):
             next(gen)
-        except StopIteration:
-            pass

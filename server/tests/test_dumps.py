@@ -3,7 +3,7 @@
 
 import sqlite3
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -45,7 +45,7 @@ def _make_dump_payload(idx: int = 0) -> dict:
         "mode": "brain_dump",
         "duration_seconds": 60,
         "title": f"Test dump {idx}",
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
     }
 
 
