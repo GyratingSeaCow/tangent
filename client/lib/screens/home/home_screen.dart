@@ -1,11 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../data/audio_storage.dart';
 import '../../data/local_db.dart';
 import '../dump/dump_detail_screen.dart';
 import '../dump/dumps_list_screen.dart';
 import '../recording/recording_controller.dart';
+import '../settings/settings_screen.dart';
+import 'home_providers.dart';
 
 final localDbProvider = Provider<LocalDb>((ref) {
   throw UnimplementedError('Override in main()');
@@ -20,6 +25,7 @@ class HomeScreen extends ConsumerStatefulWidget {
 
 class _HomeScreenState extends ConsumerState<HomeScreen> {
   int _seconds = 0;
+  bool _syncing = false;
 
   @override
   void initState() {
@@ -47,10 +53,28 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final state = ref.read(recordingControllerProvider);
     if (state == RecordingState.recording) {
       final result = await controller.stop();
-      if (result != null && mounted) {
+      if (result == null) return;
+
+      // Persist to local DB.
+      final db = ref.read(localDbProvider);
+      final id = result.path.split(RegExp(r'[\\/]')).last.replaceAll('.opus', '');
+      await db.upsertDump(DumpRow(
+        id: id,
+        createdAt: DateTime.now(),
+        updatedAt: DateTime.now(),
+        mode: 'brain_dump',
+        durationSeconds: result.durationSeconds,
+        title: '',
+        audioPath: result.path,
+        audioSizeBytes: result.sizeBytes,
+        syncStatus: 'pending',
+        syncAttempts: 0,
+      ));
+
+      if (mounted) {
         Navigator.of(context).push(MaterialPageRoute(
           builder: (_) => DumpDetailScreen(
-            dumpId: result.path.split(RegExp(r'[\\/]')).last.replaceAll('.opus', ''),
+            dumpId: id,
             audioPath: result.path,
             durationSeconds: result.durationSeconds,
           ),
@@ -58,6 +82,26 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       }
     } else {
       await controller.start();
+    }
+  }
+
+  Future<void> _syncNow() async {
+    setState(() => _syncing = true);
+    try {
+      await ref.read(syncEngineProvider).syncNow();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Sync complete')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Sync error: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _syncing = false);
     }
   }
 
@@ -71,10 +115,28 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         title: const Text('Tangent'),
         actions: [
           IconButton(
+            icon: _syncing
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.cloud_sync),
+            tooltip: 'Sync now',
+            onPressed: _syncing ? null : _syncNow,
+          ),
+          IconButton(
             icon: const Icon(Icons.list),
             tooltip: 'View dumps',
             onPressed: () => Navigator.of(context).push(MaterialPageRoute(
               builder: (_) => const DumpsListScreen(),
+            )),
+          ),
+          IconButton(
+            icon: const Icon(Icons.settings),
+            tooltip: 'Settings',
+            onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+              builder: (_) => const SettingsScreen(),
             )),
           ),
         ],

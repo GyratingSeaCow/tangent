@@ -120,6 +120,9 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
         durationSeconds: row.durationSeconds,
         title: row.title,
         createdAt: row.createdAt,
+      );
+      await client.uploadAudio(
+        dumpId: row.id,
         audioBytes: await file.readAsBytes(),
       );
       await client.enqueueTranscription(row.id);

@@ -61,9 +61,19 @@ def enqueue_transcription(
             detail=f"Dump {dump_id!r} not found",
         )
 
-    # For v1: audio is reconstructed from a path convention.
-    # Full file upload is a separate concern (out of scope for the server-only plan).
-    audio_path = f"/data/audio/{dump_id}.wav"  # TODO: real path resolution
+    # Resolve the on-disk audio path. Returns 422 if no audio uploaded.
+    from app.api.dumps import get_audio_path_for_dump
+
+    audio_path_obj = get_audio_path_for_dump(dump_id)
+    if audio_path_obj is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"No audio file uploaded for dump {dump_id!r}. "
+                "POST the audio to /v1/dumps/{id}/audio first."
+            ),
+        )
+    audio_path = str(audio_path_obj)
 
     job_id = enqueue_job(db, dump_id, payload.model, audio_path)
 

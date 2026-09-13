@@ -6,15 +6,20 @@ from __future__ import annotations
 import sqlite3
 import time
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, UploadFile, status
 
 from app.auth import require_auth
+from app.config import get_settings
 from app.db import get_db
+from app.logging_config import get_logger
 from app.models import DumpCreate, DumpListResponse, DumpPatch, DumpResponse
 
 router = APIRouter()
+
+log = get_logger(__name__)
 
 
 def _now_ts() -> int:
@@ -35,6 +40,108 @@ def _row_to_dump(row: sqlite3.Row) -> DumpResponse:
         created_at=_to_iso(row["created_at"]),
         updated_at=_to_iso(row["updated_at"]),
     )
+
+
+def _audio_dir() -> Path:
+    """Return the configured audio directory, creating it if missing."""
+    settings = get_settings()
+    p = Path(settings.data_dir) / "audio"
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+@router.post("/v1/dumps/{dump_id}/audio", status_code=status.HTTP_204_NO_CONTENT)
+async def upload_audio(
+    dump_id: str,
+    audio: UploadFile,
+    db: Annotated[sqlite3.Connection, Depends(get_db)],
+    _user: Annotated[str, Depends(require_auth)],
+) -> Response:
+    """Upload the audio file for an existing dump. Idempotent overwrite.
+
+    The file is saved as `data_dir/audio/{dump_id}{ext}` where ext is
+    derived from the upload's content-type. Idempotent: re-uploading
+    replaces the file.
+    """
+    row = db.execute(
+        "SELECT id FROM dumps WHERE id = ? AND deleted_at IS NULL", (dump_id,)
+    ).fetchone()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Dump {dump_id!r} not found",
+        )
+
+    # Derive extension from content-type or filename; default to .opus.
+    ext = ".opus"
+    if audio.content_type:
+        if "ogg" in audio.content_type:
+            ext = ".opus"
+        elif "wav" in audio.content_type:
+            ext = ".wav"
+        elif "mpeg" in audio.content_type or "mp3" in audio.content_type:
+            ext = ".mp3"
+        elif "mp4" in audio.content_type or "aac" in audio.content_type:
+            ext = ".m4a"
+    elif audio.filename and "." in audio.filename:
+        ext = "." + audio.filename.rsplit(".", 1)[-1].lower()
+        if ext not in {".opus", ".wav", ".mp3", ".m4a", ".ogg"}:
+            ext = ".opus"
+
+    target = _audio_dir() / f"{dump_id}{ext}"
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    # Stream the upload to disk so we don't OOM on big files.
+    size = 0
+    with target.open("wb") as f:
+        while True:
+            chunk = await audio.read(64 * 1024)
+            if not chunk:
+                break
+            f.write(chunk)
+            size += len(chunk)
+
+    log.info("audio.uploaded", dump_id=dump_id, size=size, path=str(target))
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/v1/dumps/{dump_id}/audio")
+def get_audio(
+    dump_id: str,
+    db: Annotated[sqlite3.Connection, Depends(get_db)],
+    _user: Annotated[str, Depends(require_auth)],
+) -> Response:
+    """Download the audio file for a dump. Returns 404 if missing."""
+    row = db.execute(
+        "SELECT id FROM dumps WHERE id = ? AND deleted_at IS NULL", (dump_id,)
+    ).fetchone()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Dump {dump_id!r} not found",
+        )
+
+    # Try common extensions.
+    for ext in (".opus", ".ogg", ".wav", ".mp3", ".m4a"):
+        path = _audio_dir() / f"{dump_id}{ext}"
+        if path.exists():
+            data = path.read_bytes()
+            media = "audio/ogg" if ext in {".opus", ".ogg"} else f"audio/{ext.lstrip('.')}"
+            return Response(content=data, media_type=media)
+
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail=f"No audio file found for dump {dump_id!r}",
+    )
+
+
+def get_audio_path_for_dump(dump_id: str) -> Path | None:
+    """Look up the on-disk audio path for a dump (used by transcription jobs)."""
+    for ext in (".opus", ".ogg", ".wav", ".mp3", ".m4a"):
+        path = _audio_dir() / f"{dump_id}{ext}"
+        if path.exists():
+            return path
+    return None
 
 
 @router.post("/v1/dumps", response_model=DumpResponse, status_code=status.HTTP_201_CREATED)

@@ -39,38 +39,57 @@ class TranscriptionClient {
     return ServerInfo.fromJson(resp);
   }
 
-  /// Upload a dump + its audio file in one multipart request.
+  /// Create a dump record (metadata only). Audio is uploaded separately.
   Future<String> createDump({
     required String id,
     required String mode,
     required int durationSeconds,
     required String title,
     required DateTime createdAt,
-    required List<int> audioBytes,
   }) async {
-    final form = FormData.fromMap({
-      'metadata': MultipartFile.fromString(
-        jsonEncode({
-          'id': id,
-          'mode': mode,
-          'duration_seconds': durationSeconds,
-          'title': title,
-          'created_at': createdAt.toUtc().toIso8601String(),
-        }),
-        contentType: DioMediaType('application', 'json'),
-      ),
-      'audio': MultipartFile.fromBytes(
-        audioBytes,
-        filename: '$id.opus',
-        contentType: DioMediaType('audio', 'ogg'),
-      ),
-    });
     final resp = await _fetch(
       '/v1/dumps',
       method: 'POST',
-      data: form,
+      data: {
+        'id': id,
+        'mode': mode,
+        'duration_seconds': durationSeconds,
+        'title': title,
+        'created_at': createdAt.toUtc().toIso8601String(),
+      },
     );
     return resp['id'] as String;
+  }
+
+  /// Upload audio for an existing dump. 204 No Content on success.
+  Future<void> uploadAudio({
+    required String dumpId,
+    required List<int> audioBytes,
+    String filename = 'recording.opus',
+    String mimeType = 'audio/ogg',
+  }) async {
+    final form = FormData.fromMap({
+      'audio': MultipartFile.fromBytes(
+        audioBytes,
+        filename: filename,
+        contentType: DioMediaType.parse(mimeType),
+      ),
+    });
+    final resp = await _dio.fetch<dynamic>(
+      RequestOptions(
+        path: '/v1/dumps/$dumpId/audio',
+        method: 'POST',
+        data: form,
+      ),
+    );
+    if (resp.statusCode != 204) {
+      _checkStatus(resp);
+      throw ApiException(
+        statusCode: resp.statusCode ?? 0,
+        code: 'upload_failed',
+        message: 'Audio upload returned ${resp.statusCode}',
+      );
+    }
   }
 
   /// Enqueue a transcription job on the server.

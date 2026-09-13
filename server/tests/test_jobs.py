@@ -44,6 +44,11 @@ def authed_client_with_dump(temp_data_dir: Path, monkeypatch):
     finally:
         conn.close()
 
+    # Seed an audio file so transcription enqueue can find it.
+    audio_dir = temp_data_dir / "audio"
+    audio_dir.mkdir(exist_ok=True)
+    (audio_dir / "seed-dump-1.opus").write_bytes(b"fake-opus-bytes")
+
     app = FastAPI()
     app.include_router(dumps_router)
     app.include_router(jobs_router)

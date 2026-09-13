@@ -23,4 +23,16 @@ class SettingsStore {
     this.autoSync = true,
     this.triggerMode = TriggerMode.tap,
   });
+
+  Future<void> setWifiOnlySync(bool v) async {
+    wifiOnlySync = v;
+  }
+
+  Future<void> setAutoSync(bool v) async {
+    autoSync = v;
+  }
+
+  Future<void> setTriggerMode(TriggerMode m) async {
+    triggerMode = m;
+  }
 }

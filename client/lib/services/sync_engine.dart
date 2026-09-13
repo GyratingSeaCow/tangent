@@ -77,12 +77,13 @@ class SyncEngine {
             durationSeconds: row.durationSeconds,
             title: row.title,
             createdAt: row.createdAt,
+          );
+          await _client.uploadAudio(
+            dumpId: row.id,
             audioBytes: await audioFile.readAsBytes(),
           );
           await _db.updateSyncStatus(row.id, SyncStatus.syncing);
-
           await _client.enqueueTranscription(row.id);
-
           await _db.updateSyncStatus(row.id, SyncStatus.synced);
           _log.i('uploaded ${row.id}');
         } catch (e, st) {

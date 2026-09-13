@@ -62,7 +62,6 @@ void main() {
           durationSeconds: any(named: 'durationSeconds'),
           title: any(named: 'title'),
           createdAt: any(named: 'createdAt'),
-          audioBytes: any(named: 'audioBytes'),
         ),
       );
       expect(engine.isSyncing, isFalse);
@@ -79,7 +78,6 @@ void main() {
           durationSeconds: any(named: 'durationSeconds'),
           title: any(named: 'title'),
           createdAt: any(named: 'createdAt'),
-          audioBytes: any(named: 'audioBytes'),
         ),
       );
     });
@@ -106,9 +104,14 @@ void main() {
           durationSeconds: any(named: 'durationSeconds'),
           title: any(named: 'title'),
           createdAt: any(named: 'createdAt'),
-          audioBytes: any(named: 'audioBytes'),
         ),
       ).thenAnswer((_) async => 'test-dump');
+      when(
+        () => client.uploadAudio(
+          dumpId: any(named: 'dumpId'),
+          audioBytes: any(named: 'audioBytes'),
+        ),
+      ).thenAnswer((_) async {});
       when(() => client.enqueueTranscription(any()))
           .thenAnswer((_) async => 'job-1');
 

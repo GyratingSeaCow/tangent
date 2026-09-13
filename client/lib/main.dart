@@ -1,10 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path_provider/path_provider.dart';
 
 import 'data/audio_storage.dart';
 import 'data/local_db.dart';
 import 'data/secure_storage.dart';
+import 'screens/home/home_providers.dart';
 import 'screens/home/home_screen.dart';
 import 'screens/server/server_connection_screen.dart';
 import 'services/transcription_client.dart';
@@ -21,6 +25,8 @@ Future<void> main() async {
   );
 
   final db = LocalDb();
+  final docsDir = await getApplicationDocumentsDirectory();
+  final audio = AudioStorage.fromDirectory(docsDir);
 
   runApp(
     ProviderScope(
@@ -28,6 +34,7 @@ Future<void> main() async {
         secureStoreProvider.overrideWithValue(store),
         transcriptionClientProvider.overrideWithValue(client),
         localDbProvider.overrideWithValue(db),
+        audioStorageProvider.overrideWithValue(audio),
       ],
       child: const TangentApp(),
     ),
@@ -62,14 +69,20 @@ class _Router extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final url = ref.read(secureStoreProvider).getServerUrl();
-    if (url == null) {
-      return const ServerConnectionScreen();
-    }
-    return const HomeScreen();
+    final urlFuture = ref.read(secureStoreProvider).getServerUrl();
+    return FutureBuilder<String?>(
+      future: urlFuture,
+      builder: (context, snap) {
+        if (!snap.hasData) {
+          return const Scaffold(
+            body: Center(child: CircularProgressIndicator()),
+          );
+        }
+        if (snap.data == null) {
+          return const ServerConnectionScreen();
+        }
+        return const HomeScreen();
+      },
+    );
   }
 }
-
-// Make sure imports are used (silence lint)
-// ignore: unused_element
-final _ = AudioStorage;

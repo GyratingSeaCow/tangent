@@ -103,7 +103,7 @@ def get_db() -> Generator[sqlite3.Connection, None, None]:
     if not path.exists():
         init_db(settings.data_dir)
 
-    conn = sqlite3.connect(path)
+    conn = sqlite3.connect(path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")

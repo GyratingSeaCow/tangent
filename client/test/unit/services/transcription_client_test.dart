@@ -65,5 +65,29 @@ void main() {
     test('exposes baseUrl', () {
       expect(client.baseUrl, 'http://test');
     });
+
+    test('uploadAudio returns on 204', () async {
+      when(() => mock.fetch<dynamic>(any())).thenAnswer(
+        (_) async => Response(
+          requestOptions: RequestOptions(path: '/v1/dumps/1/audio'),
+          statusCode: 204,
+        ),
+      );
+      await client.uploadAudio(dumpId: '1', audioBytes: [0, 1, 2]);
+      verify(() => mock.fetch<dynamic>(any())).called(1);
+    });
+
+    test('uploadAudio throws on non-204', () async {
+      when(() => mock.fetch<dynamic>(any())).thenAnswer(
+        (_) async => Response(
+          requestOptions: RequestOptions(path: '/v1/dumps/1/audio'),
+          statusCode: 500,
+        ),
+      );
+      expect(
+        () => client.uploadAudio(dumpId: '1', audioBytes: [0]),
+        throwsA(isA<ApiException>()),
+      );
+    });
   });
 }
