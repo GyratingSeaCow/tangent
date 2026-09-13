@@ -70,6 +70,13 @@ Spec'd in `docs/superpowers/specs/2026-09-13-v1-brain-dump-design.md`. **Not imp
 
 ---
 
+## What's new this session (2026-09-13, late) ⏸
+
+- **Phase 2 Flutter client spec written and pushed** at `docs/superpowers/specs/2026-09-13-v1-flutter-client-design.md`. Spec adopts scope path **A2** (server-side transcription, no on-device Whisper in v1).
+- **Flutter SDK installed** at `~\AppData\Local\flutter\` (Flutter 3.27.1, working — `flutter --version` and `flutter doctor` both run; `flutter doctor` flags missing Android toolchain).
+- **Choco install attempts** for JDK + Android SDK + Flutter (via chocolatey) hit permission errors on `C:\ProgramData\chocolatey\lib-bad`. The Flutter SDK zip download + extract (1.04 GB) succeeded; the choco-managed reinstall is still in flight and may or may not complete.
+- **No Phase 2 implementation yet.** Spec awaiting user review.
+
 ## What blocked Phase 2 setup this session ❌
 
 Flutter SDK installation attempts failed twice:
@@ -119,18 +126,14 @@ Flutter SDK installation attempts failed twice:
 ### Quick resume checklist for next session
 
 1. Read `STATUS.md` (this file) ✅
-2. Read `docs/superpowers/specs/2026-09-13-v1-brain-dump-design.md` (approved spec)
-3. Read `docs/superpowers/plans/2026-09-13-v1-brain-dump.md` (Phase 1 plan — DONE)
-4. **Phase 2 path decision needed.** Pick A1 / A2 / A3 (see "What's locked" above). My recommendation is A3.
-5. **Flutter SDK fix needed.** Options:
-   - Re-extract `flutter.zip` with a different tool (tar, 7-zip, or git clone of flutter/flutter repo)
-   - Use `scoop install flutter` (if scoop is installed)
-   - Use `choco install flutter` (if chocolatey is installed — it is)
-   - Re-download the zip and retry extraction
-6. **Android SDK + JDK install** (only if A1 or A2 chosen)
-7. **Brainstorming session for Phase 2** (per `brainstorming` skill)
-8. **Write Phase 2 plan** (per `writing-plans` skill)
-9. **Build Phase 2** (subagent-driven or in-controller)
+2. Read `docs/superpowers/specs/2026-09-13-v1-brain-dump-design.md` (server spec, Phase 1 - DONE)
+3. Read `docs/superpowers/specs/2026-09-13-v1-flutter-client-design.md` (client spec, Phase 2 - awaiting approval)
+4. **Approve or amend the Phase 2 spec.** Scope is A2 (server-side transcription). On-device Whisper deferred to Phase 2.5.
+5. **Flutter SDK status:** verify `flutter --version` works at `~\AppData\Local\flutter\bin\flutter.bat`. If yes, optionally add to PATH. If broken, delete and re-extract from the zip at `%LOCALAPPDATA%\flutter-install\flutter.zip`.
+6. **JDK install (needed for Android builds):** try `choco install -y temurin17jdk` as admin, or download Temurin 17 directly from Adoptium. ~200 MB.
+7. **Android SDK install:** after JDK is working, use Android Studio installer or `sdkmanager` directly to install platform-tools + build-tools + a recent API level (~2 GB).
+8. **Write Phase 2 implementation plan** (per `writing-plans` skill) once spec is approved.
+9. **Build Phase 2** (subagent-driven via `zoe` profile, or in-controller).
 
 ### Files / artifacts to preserve
 
