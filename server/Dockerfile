@@ -32,5 +32,5 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:8000/v1/server/info || exit 1
 
-# Run server
-CMD ["python", "-m", "app"]
+# Run server (use uvicorn factory so the lifespan event handler runs properly)
+CMD ["uvicorn", "app.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
