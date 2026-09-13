@@ -70,6 +70,11 @@ def run_job_inline(job_id: str, audio_path: str) -> None:
         model_name = row["model"]
 
         try:
+            # Defensive: skip if audio file doesn't exist (v1: audio upload is Phase 1.5)
+            import os
+            if not os.path.exists(audio_path):
+                raise FileNotFoundError(f"Audio file not found at {audio_path}")
+
             service = get_transcription_service()
             transcript = service.transcribe(audio_path)
 
