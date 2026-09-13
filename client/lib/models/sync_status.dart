@@ -32,4 +32,18 @@ enum SyncStatus {
 
   bool get needsUpload =>
       this != SyncStatus.synced && this != SyncStatus.syncing;
+
+  String get displayName => switch (this) {
+        SyncStatus.localOnly => 'Local only',
+        SyncStatus.pending => 'Pending',
+        SyncStatus.syncing => 'Syncing…',
+        SyncStatus.synced => 'Synced',
+        SyncStatus.failed => 'Failed',
+      };
+}
+
+/// Extension that re-exports [SyncStatus.fromWire] so callers can use
+/// the more discoverable `SyncStatusX.fromWire` form.
+extension SyncStatusX on SyncStatus {
+  static SyncStatus fromWire(String value) => SyncStatus.fromWire(value);
 }

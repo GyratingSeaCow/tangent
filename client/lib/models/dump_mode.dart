@@ -20,4 +20,9 @@ enum DumpMode {
       orElse: () => throw ArgumentError('Unknown DumpMode: $value'),
     );
   }
+
+  String get displayName => switch (this) {
+        DumpMode.brainDump => 'Brain Dump',
+        DumpMode.meeting => 'Meeting',
+      };
 }

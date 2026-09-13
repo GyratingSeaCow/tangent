@@ -80,12 +80,24 @@ class LocalDb extends _$LocalDb {
   Future<void> upsertDump(DumpRow row) =>
       into(dumps).insertOnConflictUpdate(row);
 
+  /// Delete a dump row by id.
+  Future<int> deleteDump(String id) =>
+      (delete(dumps)..where((d) => d.id.equals(id))).go();
+
   /// Fetch dumps, newest first, with pagination.
   Future<List<DumpRow>> listDumps({int limit = 50, int offset = 0}) {
     return (select(dumps)
           ..orderBy([(d) => OrderingTerm.desc(d.createdAt)])
           ..limit(limit, offset: offset))
         .get();
+  }
+
+  /// Reactive stream of all dumps, newest first.
+  /// Emits whenever any row in [dumps] changes.
+  Stream<List<DumpRow>> watchAllDumps() {
+    return (select(dumps)
+          ..orderBy([(d) => OrderingTerm.desc(d.createdAt)]))
+        .watch();
   }
 
   /// Search across title and transcript using FTS5.
