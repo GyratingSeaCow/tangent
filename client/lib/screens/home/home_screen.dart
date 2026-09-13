@@ -5,7 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/local_db.dart';
 import '../dump/dump_detail_screen.dart';
 import '../dump/dumps_list_screen.dart';
-import 'recording_controller.dart';
+import '../recording/recording_controller.dart';
 
 final localDbProvider = Provider<LocalDb>((ref) {
   throw UnimplementedError('Override in main()');
