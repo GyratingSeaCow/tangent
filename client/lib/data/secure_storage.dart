@@ -7,22 +7,18 @@ class SecureStore {
 
   final FlutterSecureStorage _storage;
 
-  SecureStore()
-      : _storage = const FlutterSecureStorage(
-          aOptions: AndroidOptions(encryptedSharedPreferences: true),
-        );
+  SecureStore({FlutterSecureStorage? storage})
+      : _storage = storage ??
+            const FlutterSecureStorage(
+              aOptions: AndroidOptions(encryptedSharedPreferences: true),
+            );
 
-  SecureStore.forTesting({required FlutterSecureStorage storage})
-      : _storage = storage;
+  Future<String?> getToken() => _storage.read(key: _kToken);
+  Future<String?> getServerUrl() => _storage.read(key: _kServerUrl);
 
-  Future<String?> readToken() => _storage.read(key: _kToken);
-
-  Future<void> writeToken(String token) =>
+  Future<void> setToken(String token) =>
       _storage.write(key: _kToken, value: token);
-
-  Future<String?> readServerUrl() => _storage.read(key: _kServerUrl);
-
-  Future<void> writeServerUrl(String url) =>
+  Future<void> setServerUrl(String url) =>
       _storage.write(key: _kServerUrl, value: url);
 
   Future<void> clear() => _storage.deleteAll();
