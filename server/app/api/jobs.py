@@ -133,6 +133,8 @@ async def stream_job(
             detail=f"Job {job_id!r} not found",
         )
 
+    request_id = row["request_id"]
+
     async def event_generator():
         last_status: str | None = None
         # Poll for up to 30 minutes
@@ -142,7 +144,16 @@ async def stream_job(
                 (job_id,),
             ).fetchone()
             if row is None:
-                yield {"event": "error", "data": "job disappeared"}
+                yield {
+                    "event": "error",
+                    "data": json.dumps(
+                        {
+                            "status": "error",
+                            "request_id": request_id,
+                            "error": "job disappeared",
+                        }
+                    ),
+                }
                 return
 
             current_status = row["status"]
@@ -163,6 +174,15 @@ async def stream_job(
 
             await asyncio.sleep(1)
 
-        yield {"event": "timeout", "data": "job did not complete within 30 minutes"}
+        yield {
+            "event": "timeout",
+            "data": json.dumps(
+                {
+                    "status": "timeout",
+                    "request_id": request_id,
+                    "error": "job did not complete within 30 minutes",
+                }
+            ),
+        }
 
     return EventSourceResponse(event_generator())

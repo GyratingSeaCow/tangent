@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import time
+import uuid
 from collections.abc import Generator
 
 import pytest
@@ -48,8 +49,10 @@ def test_sse_streams_status_events(live_server: str, auth_token: str) -> None:
     """End-to-end: create dump, upload audio, enqueue, stream SSE events."""
     headers = {"Authorization": f"Bearer {auth_token}"}
 
-    # 1. Create dump.
-    dump_id = f"live-sse-{int(time.time())}"
+    # 1. Create dump and derive this run's idempotency key from the same UUID.
+    run_id = uuid.uuid4()
+    dump_id = f"live-sse-{run_id}"
+    request_id = f"request-live-sse-{run_id}"
     resp = requests.post(
         f"{live_server}/v1/dumps",
         headers={**headers, "Content-Type": "application/json"},
@@ -78,10 +81,11 @@ def test_sse_streams_status_events(live_server: str, auth_token: str) -> None:
     resp = requests.post(
         f"{live_server}/v1/dumps/{dump_id}/transcribe",
         headers={**headers, "Content-Type": "application/json"},
-        json={"model": "tiny", "request_id": "request-live-sse-001"},
+        json={"model": "tiny", "request_id": request_id},
         timeout=10,
     )
     assert resp.status_code == 201, resp.text
+    assert resp.json()["request_id"] == request_id
     job_id = resp.json()["id"]
 
     # 4. Stream SSE events until completed or failed.
@@ -118,6 +122,7 @@ def test_sse_streams_status_events(live_server: str, auth_token: str) -> None:
                     except Exception:
                         data = {"raw": current["data"]}
                     events.append({"event": current["event"], "data": data})
+                    assert data["request_id"] == request_id
                     current = {}
                 continue
             if raw_line.startswith(":"):

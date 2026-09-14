@@ -9,11 +9,12 @@ from pathlib import Path
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sse_starlette.sse import AppStatus
 
 from app.api.dumps import router as dumps_router
 from app.api.jobs import router as jobs_router
-from app.auth import generate_token, hash_token
-from app.db import init_db
+from app.auth import generate_token, hash_token, require_auth
+from app.db import get_db, init_db
 
 
 @pytest.fixture
@@ -182,6 +183,95 @@ def test_omitted_request_id_remains_backward_compatible(authed_client_with_dump)
     )
     assert response.status_code == 201
     assert response.json()["request_id"].startswith("legacy:")
+
+
+class _Cursor:
+    def __init__(self, row):
+        self._row = row
+
+    def fetchone(self):
+        return self._row
+
+
+class _StreamDb:
+    def __init__(self, request_id: str, *, disappear: bool = False):
+        self.request_id = request_id
+        self.disappear = disappear
+        self.polls = 0
+
+    def execute(self, sql, _params=()):
+        if "SELECT * FROM jobs" in sql:
+            return _Cursor({"id": "job-stream", "request_id": self.request_id})
+        self.polls += 1
+        if self.disappear:
+            return _Cursor(None)
+        return _Cursor(
+            {
+                "status": "queued",
+                "request_id": self.request_id,
+                "result_transcript": None,
+                "error": None,
+            }
+        )
+
+
+def _stream_client(db) -> TestClient:
+    AppStatus.should_exit_event = None
+    app = FastAPI()
+    app.include_router(jobs_router)
+    app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[require_auth] = lambda: "test-user"
+    return TestClient(app)
+
+
+def _sse_events(response) -> list[tuple[str, dict]]:
+    events = []
+    current = {}
+    for line in response.text.splitlines():
+        if not line:
+            if current:
+                events.append((current["event"], json.loads(current["data"])))
+                current = {}
+        elif line.startswith("event: "):
+            current["event"] = line.removeprefix("event: ")
+        elif line.startswith("data: "):
+            current["data"] = line.removeprefix("data: ")
+    return events
+
+
+def test_disappeared_job_stream_emits_exact_json_error_event():
+    request_id = "request-disappeared-001"
+    with _stream_client(_StreamDb(request_id, disappear=True)) as client:
+        response = client.get("/v1/jobs/job-stream/stream")
+    assert _sse_events(response) == [
+        (
+            "error",
+            {
+                "status": "error",
+                "request_id": request_id,
+                "error": "job disappeared",
+            },
+        )
+    ]
+
+
+def test_timed_out_job_stream_emits_exact_json_timeout_event(monkeypatch):
+    async def no_sleep(_seconds):
+        return None
+
+    request_id = "request-timeout-001"
+    monkeypatch.setattr("app.api.jobs.asyncio.sleep", no_sleep)
+    with _stream_client(_StreamDb(request_id)) as client:
+        response = client.get("/v1/jobs/job-stream/stream")
+    events = _sse_events(response)
+    assert events[-1] == (
+        "timeout",
+        {
+            "status": "timeout",
+            "request_id": request_id,
+            "error": "job did not complete within 30 minutes",
+        },
+    )
 
 
 def test_enqueue_requires_auth(authed_client_with_dump):
