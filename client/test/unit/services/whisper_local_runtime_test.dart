@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tangent/services/whisper_local_runtime.dart';
@@ -20,7 +21,8 @@ void main() {
     );
   });
 
-  test('runtime verifies downloads and forwards local inference progress', () async {
+  test('runtime verifies downloads and forwards local inference progress',
+      () async {
     final gateway = _FakeGateway();
     final runtime = WhisperLocalRuntime(gateway: gateway);
     final downloadProgress = <(int, int)>[];
@@ -28,11 +30,11 @@ void main() {
 
     expect(await runtime.isModelInstalled(), isFalse);
     await runtime.installModel(
-      onProgress: (received, total) =>
-          downloadProgress.add((received, total)),
+      onProgress: (received, total) => downloadProgress.add((received, total)),
     );
     final result = await runtime.transcribe(
       File('prepared.wav'),
+      onModelLoaded: () {},
       onProgress: inferenceProgress.add,
     );
     runtime.cancel();
@@ -43,6 +45,58 @@ void main() {
     expect(gateway.specs, everyElement(same(largeV3ModelSpec)));
     expect(gateway.cancelled, isTrue);
   });
+
+  test('loaded model cache reuses one engine for sequential transcripts',
+      () async {
+    var loadCount = 0;
+    final handle = _FakeEngineHandle();
+    final cache = LoadedWhisperEngineCache(
+      load: (path) async {
+        loadCount++;
+        return handle;
+      },
+    );
+
+    expect(await cache.get('large-v3.bin'), same(handle));
+    expect(await cache.get('large-v3.bin'), same(handle));
+    expect(loadCount, 1);
+
+    cache.dispose();
+    expect(handle.disposeCount, 1);
+  });
+
+  test('loaded model cache retries after a failed load', () async {
+    var loadCount = 0;
+    final handle = _FakeEngineHandle();
+    final cache = LoadedWhisperEngineCache(
+      load: (path) async {
+        loadCount++;
+        if (loadCount == 1) throw StateError('load failed');
+        return handle;
+      },
+    );
+
+    await expectLater(cache.get('large-v3.bin'), throwsStateError);
+    expect(await cache.get('large-v3.bin'), same(handle));
+    expect(loadCount, 2);
+  });
+}
+
+final class _FakeEngineHandle implements WhisperEngineHandle {
+  int disposeCount = 0;
+
+  @override
+  void cancel() {}
+
+  @override
+  void dispose() => disposeCount++;
+
+  @override
+  Future<String> transcribe(
+    Float32List samples, {
+    required void Function(int percent) onProgress,
+  }) async =>
+      'unused';
 }
 
 final class _FakeGateway implements WhisperPluginGateway {
@@ -67,9 +121,11 @@ final class _FakeGateway implements WhisperPluginGateway {
   Future<String> transcribe(
     LocalModelSpec spec,
     File wav, {
+    required void Function() onModelLoaded,
     required void Function(int percent) onProgress,
   }) async {
     specs.add(spec);
+    onModelLoaded();
     onProgress(42);
     return 'phone transcript';
   }

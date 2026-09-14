@@ -101,23 +101,7 @@ class _Router extends ConsumerWidget {
     if (!ref.watch(storageReadyProvider)) {
       return const StorageSetupScreen();
     }
-    final urlFuture = ref.read(secureStoreProvider).getServerUrl().timeout(
-          const Duration(seconds: 3),
-          onTimeout: () => null,
-        );
-    return FutureBuilder<String?>(
-      future: urlFuture,
-      builder: (context, snap) {
-        if (snap.connectionState != ConnectionState.done) {
-          return const Scaffold(
-            body: Center(child: CircularProgressIndicator()),
-          );
-        }
-        final url = snap.data;
-        if (url == null || url.isEmpty) return const ServerConnectionScreen();
-        return const HomeScreen();
-      },
-    );
+    return const HomeScreen();
   }
 }
 

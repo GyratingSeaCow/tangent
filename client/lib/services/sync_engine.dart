@@ -84,7 +84,6 @@ class SyncEngine {
             audioBytes: audioBytes,
           );
           await _db.updateSyncStatus(row.id, SyncStatus.syncing);
-          await _client.enqueueTranscription(row.id);
           await _db.updateSyncStatus(row.id, SyncStatus.synced);
           _log.i('uploaded ${row.id}');
         } catch (e, st) {

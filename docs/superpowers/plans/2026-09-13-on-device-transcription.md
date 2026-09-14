@@ -50,11 +50,11 @@
 - `largeV3ModelSpec` contains filename, immutable HTTPS URL, byte count, and SHA-256.
 - `WhisperLocalRuntime.isInstalled() -> Future<bool>` verifies the cached file.
 - `WhisperLocalRuntime.install(...)` uses resumable `WhisperModelManager.download` with the pinned checksum.
-- `WhisperLocalRuntime.transcribe(...)` loads one engine, reads WAV through `WhisperAudio.readWav`, performs balanced multilingual inference, returns text, and disposes the engine in `finally`.
+- `WhisperLocalRuntime.transcribe(...)` reuses one loaded engine for sequential notes, reads WAV through `WhisperAudio.readWav`, performs balanced multilingual inference, returns text, and disposes the engine after a two-minute idle window.
 
 - [ ] Write a failing metadata test asserting every exact model constant and HTTPS immutable revision.
 - [ ] Implement the model specification and make the test pass.
-- [ ] Write failing adapter tests using injected manager/engine facades to prove no download occurs when verified, progress is surfaced, checksum failures propagate, inference uses language `auto`, and engine disposal occurs after success/error.
+- [ ] Write failing adapter tests using injected manager/engine facades to prove no download occurs when verified, progress is surfaced, checksum failures propagate, inference uses language `auto`, sequential requests reuse the engine, failed loads can retry, and idle disposal releases native memory.
 - [ ] Implement and make all focused tests pass.
 - [ ] Commit.
 
@@ -85,7 +85,10 @@
 - Modify: `client/lib/screens/home/home_providers.dart`
 - Modify: `client/lib/screens/dump/dump_detail_screen.dart`
 - Modify: `client/lib/screens/settings/settings_screen.dart`
+- Create: `client/lib/services/recording_playback.dart`
 - Test: `client/test/widget/dump_detail_screen_test.dart`
+- Test: `client/test/widget/dump_detail_playback_test.dart`
+- Test: `client/test/unit/services/recording_playback_test.dart`
 - Test: `client/test/widget/settings_screen_test.dart`
 
 **Interfaces:**
@@ -97,6 +100,9 @@
 - [ ] Make the test pass.
 - [ ] Add RED→GREEN tests for download progress copy, inference progress copy, cancellation, blank result, and error display.
 - [ ] Add a Settings model card with exact model name/size/status, explicit download/re-download action, and progress.
+- [ ] Add local in-app recording playback with play/pause, elapsed/total time, and a draggable seek bar backed by filesystem and Android SAF content URIs.
+- [ ] Move active transcription ownership to a shared coordinator and keep a detailed progress/cancellation panel visible across Dump navigation.
+- [ ] Mark the active clip in the Dumps list with a live spinner and current local-transcription stage.
 - [ ] Commit.
 
 ### Task 5: Remove server transcription coupling
@@ -129,6 +135,7 @@
 - [ ] Decode an existing Opus recording to WAV on-device and verify nonzero PCM output.
 - [ ] Disable Wi-Fi and mobile data with ADB after recording their prior states; clear PID-scoped logcat.
 - [ ] Record a known spoken phrase, stop normally, and transcribe locally.
+- [ ] Play, pause, and seek the saved recording in its Dump detail before transcribing.
 - [ ] Verify the expected phrase appears in the detail UI and sidecar; verify no HTTP request and no Flutter/native error appears in PID-scoped logcat.
 - [ ] Restore network state exactly as found.
 - [ ] Run final full tests/analyze, `git diff --check`, commit, and push without creating a GitHub release.

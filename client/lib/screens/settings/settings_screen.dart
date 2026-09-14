@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/settings_store.dart';
+import '../home/home_providers.dart' show onDeviceTranscriptionProvider;
 import '../server/server_connection_screen.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
@@ -18,6 +19,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _keepScreenAwake = true;
   String _serverUrl = '';
   bool _loaded = false;
+  bool? _modelInstalled;
+  bool _modelBusy = false;
+  double? _modelProgress;
+  String? _modelError;
 
   @override
   void initState() {
@@ -29,6 +34,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final settings = ref.read(settingsStoreProvider);
     final store = ref.read(secureStoreProvider);
     final url = await store.getServerUrl();
+    bool? modelInstalled;
+    try {
+      modelInstalled = await ref.read(onDeviceTranscriptionProvider).isModelInstalled();
+    } catch (_) {
+      modelInstalled = null;
+    }
     if (mounted) {
       setState(() {
         _triggerMode = settings.triggerMode;
@@ -36,6 +47,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         _keepScreenAwake = settings.keepScreenAwakeWhileRecording;
         _serverUrl = url ?? '';
         _loaded = true;
+        _modelInstalled = modelInstalled;
       });
     }
   }
@@ -50,6 +62,32 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         const SnackBar(content: Text('Settings saved')),
       );
     }
+  }
+
+  Future<void> _downloadModel() async {
+    setState(() {
+      _modelBusy = true;
+      _modelError = null;
+      _modelProgress = 0;
+    });
+    try {
+      await ref.read(onDeviceTranscriptionProvider).installModel(
+        onProgress: (received, total) {
+          if (!mounted) return;
+          setState(() => _modelProgress = total > 0 ? received / total : null);
+        },
+      );
+      if (mounted) setState(() => _modelInstalled = true);
+    } catch (error) {
+      if (mounted) setState(() => _modelError = error.toString());
+    } finally {
+      if (mounted) setState(() => _modelBusy = false);
+    }
+  }
+
+  void _cancelModelDownload() {
+    ref.read(onDeviceTranscriptionProvider).cancel();
+    setState(() => _modelError = 'Model download cancellation requested');
   }
 
   Future<void> _changeServer() async {
@@ -84,6 +122,41 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             trailing: const Icon(Icons.chevron_right),
             onTap: _changeServer,
           ),
+          const Divider(),
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
+            child: Text(
+              'On-device transcription',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+          ),
+          ListTile(
+            title: const Text('Whisper large-v3'),
+            subtitle: Text(
+              _modelError ??
+                  (_modelBusy
+                      ? _modelProgress == null
+                          ? 'Downloading and verifying…'
+                          : 'Downloading ${(_modelProgress! * 100).round()}%'
+                      : _modelInstalled == true
+                          ? 'Installed and verified'
+                          : _modelInstalled == false
+                              ? 'Not installed (about 3.1 GB)'
+                              : 'Status unavailable'),
+            ),
+            trailing: _modelBusy
+                ? IconButton(
+                    tooltip: 'Cancel model download',
+                    onPressed: _cancelModelDownload,
+                    icon: const Icon(Icons.cancel_outlined),
+                  )
+                : FilledButton.tonal(
+                    onPressed: _modelInstalled == true ? null : _downloadModel,
+                    child: Text(_modelError == null ? 'Download' : 'Retry'),
+                  ),
+          ),
+          if (_modelBusy && _modelProgress != null)
+            LinearProgressIndicator(value: _modelProgress),
           const Divider(),
           const Padding(
             padding: EdgeInsets.fromLTRB(16, 16, 16, 8),

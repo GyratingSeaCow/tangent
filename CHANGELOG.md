@@ -24,6 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dockerfile + docker-compose.yml for production deploy
 
 ### Added — Client (Flutter)
+- On-device Android Whisper large-v3 transcription with checksum-pinned model storage
+- In-app recording player with play/pause, elapsed/total time, and draggable seek bar
+- Persistent local-transcription progress panel with stages, elapsed time, determinate progress, and cancellation
+- Live Dumps-list indicator identifying the clip and stage currently being transcribed
+- Loaded-model reuse for sequential notes with idle native-memory cleanup
 - Voice recording (opus, 16kHz mono, ~32 kbps) via `record` package
 - Big red record button on home screen with live timer
 - **Brain Dump mode** (default) — verbatim transcription

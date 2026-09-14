@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:whisper_cpp_flutter_plus/whisper_cpp_flutter_plus.dart';
 
@@ -43,10 +44,124 @@ abstract interface class WhisperPluginGateway {
   Future<String> transcribe(
     LocalModelSpec spec,
     File wav, {
+    required ModelLoadedCallback onModelLoaded,
     required void Function(int percent) onProgress,
   });
 
   void cancel();
+}
+
+abstract interface class WhisperEngineHandle {
+  Future<String> transcribe(
+    Float32List samples, {
+    required void Function(int percent) onProgress,
+  });
+
+  void cancel();
+
+  void dispose();
+}
+
+typedef WhisperEngineHandleLoader = Future<WhisperEngineHandle> Function(
+  String modelPath,
+);
+
+final class LoadedWhisperEngineCache {
+  LoadedWhisperEngineCache({
+    required WhisperEngineHandleLoader load,
+    this.idleDuration = const Duration(minutes: 2),
+  }) : _load = load;
+
+  final WhisperEngineHandleLoader _load;
+  final Duration idleDuration;
+  String? _modelPath;
+  Future<WhisperEngineHandle>? _loading;
+  WhisperEngineHandle? _engine;
+  Timer? _idleTimer;
+
+  Future<WhisperEngineHandle> get(String modelPath) async {
+    _idleTimer?.cancel();
+    if (_modelPath == modelPath && _engine != null) return _engine!;
+    if (_modelPath == modelPath && _loading != null) return _loading!;
+
+    dispose();
+    _modelPath = modelPath;
+    final loading = _load(modelPath);
+    _loading = loading;
+    try {
+      final engine = await loading;
+      if (identical(_loading, loading)) {
+        _engine = engine;
+        _loading = null;
+      }
+      return engine;
+    } catch (_) {
+      if (identical(_loading, loading)) {
+        _loading = null;
+        _modelPath = null;
+      }
+      rethrow;
+    }
+  }
+
+  void release() {
+    _idleTimer?.cancel();
+    if (_engine == null) return;
+    _idleTimer = Timer(idleDuration, dispose);
+  }
+
+  void cancel() => _engine?.cancel();
+
+  void dispose() {
+    _idleTimer?.cancel();
+    _idleTimer = null;
+    _engine?.dispose();
+    _engine = null;
+    _loading = null;
+    _modelPath = null;
+  }
+}
+
+final class _PluginWhisperEngineHandle implements WhisperEngineHandle {
+  _PluginWhisperEngineHandle(this._engine);
+
+  final WhisperEngine _engine;
+  WhisperTask? _activeTask;
+
+  @override
+  Future<String> transcribe(
+    Float32List samples, {
+    required void Function(int percent) onProgress,
+  }) async {
+    final task = _engine.transcribe(
+      samples,
+      options: const TranscribeOptions(
+        strategy: WhisperSamplingStrategy.beamSearch,
+        language: 'auto',
+        // language='auto' selects language before full transcription.
+        // whisper.cpp's detect_language flag is detect-only and would skip text.
+        detectLanguage: false,
+        tokenTimestamps: false,
+        noTimestamps: true,
+        noContext: false,
+        beamSize: 5,
+      ),
+    );
+    _activeTask = task;
+    final progressSubscription = task.progress.listen(onProgress);
+    try {
+      return (await task.result).text;
+    } finally {
+      _activeTask = null;
+      await progressSubscription.cancel();
+    }
+  }
+
+  @override
+  void cancel() => _activeTask?.cancel();
+
+  @override
+  void dispose() => _engine.dispose();
 }
 
 final class WhisperLocalRuntime implements LocalWhisperRuntime {
@@ -74,11 +189,13 @@ final class WhisperLocalRuntime implements LocalWhisperRuntime {
   @override
   Future<String> transcribe(
     File wav, {
+    required ModelLoadedCallback onModelLoaded,
     required InferenceProgressCallback onProgress,
   }) =>
       _gateway.transcribe(
         largeV3ModelSpec,
         wav,
+        onModelLoaded: onModelLoaded,
         onProgress: onProgress,
       );
 
@@ -87,9 +204,24 @@ final class WhisperLocalRuntime implements LocalWhisperRuntime {
 }
 
 final class DefaultWhisperPluginGateway implements WhisperPluginGateway {
-  WhisperModelManager _manager = WhisperModelManager();
-  WhisperTask? _activeTask;
+  DefaultWhisperPluginGateway({LoadedWhisperEngineCache? engineCache})
+      : _engineCache = engineCache ??
+            LoadedWhisperEngineCache(
+              load: (path) async => _PluginWhisperEngineHandle(
+                await WhisperEngine.load(
+                  path,
+                  config: const WhisperConfig(
+                    useGpu: true,
+                    useFlashAttention: true,
+                  ),
+                ),
+              ),
+            );
+
+  final WhisperModelManager _manager = WhisperModelManager();
+  final LoadedWhisperEngineCache _engineCache;
   bool _verifiedThisSession = false;
+  bool _cancelRequested = false;
 
   WhisperModelDescriptor _descriptor(LocalModelSpec spec) =>
       WhisperModelDescriptor(
@@ -107,7 +239,8 @@ final class DefaultWhisperPluginGateway implements WhisperPluginGateway {
     if (_verifiedThisSession) {
       return await _manager.find(spec.fileName) != null;
     }
-    final installed = await _manager.findCatalogModel(_descriptor(spec)) != null;
+    final installed =
+        await _manager.findCatalogModel(_descriptor(spec)) != null;
     _verifiedThisSession = installed;
     return installed;
   }
@@ -115,8 +248,12 @@ final class DefaultWhisperPluginGateway implements WhisperPluginGateway {
   @override
   Stream<(int, int)> installModel(LocalModelSpec spec) async* {
     _verifiedThisSession = false;
+    _cancelRequested = false;
     await for (final progress
         in _manager.downloadCatalogModel(_descriptor(spec))) {
+      if (_cancelRequested) {
+        throw const LocalTranscriptionException('Transcription was cancelled');
+      }
       yield (progress.received, progress.total);
     }
   }
@@ -125,8 +262,10 @@ final class DefaultWhisperPluginGateway implements WhisperPluginGateway {
   Future<String> transcribe(
     LocalModelSpec spec,
     File wav, {
+    required ModelLoadedCallback onModelLoaded,
     required void Function(int percent) onProgress,
   }) async {
+    _cancelRequested = false;
     final model = await _manager.findCatalogModel(_descriptor(spec));
     if (model == null) {
       throw const LocalTranscriptionException(
@@ -134,45 +273,28 @@ final class DefaultWhisperPluginGateway implements WhisperPluginGateway {
       );
     }
     final samples = await WhisperAudio.readWav(wav);
-    final engine = await WhisperEngine.load(
-      model.path,
-      config: const WhisperConfig(
-        useGpu: true,
-        useFlashAttention: true,
-      ),
-    );
-    StreamSubscription<int>? progressSubscription;
+    if (_cancelRequested) {
+      throw const LocalTranscriptionException('Transcription was cancelled');
+    }
+    final engine = await _engineCache.get(model.path);
+    if (_cancelRequested) {
+      _engineCache.release();
+      throw const LocalTranscriptionException('Transcription was cancelled');
+    }
+    onModelLoaded();
     try {
-      final task = engine.transcribe(
+      return await engine.transcribe(
         samples,
-        options: const TranscribeOptions(
-          strategy: WhisperSamplingStrategy.beamSearch,
-          language: 'auto',
-          detectLanguage: true,
-          tokenTimestamps: false,
-          noTimestamps: true,
-          noContext: false,
-          beamSize: 5,
-        ),
+        onProgress: onProgress,
       );
-      _activeTask = task;
-      progressSubscription = task.progress.listen(onProgress);
-      final result = await task.result;
-      return result.text;
     } finally {
-      _activeTask = null;
-      await progressSubscription?.cancel();
-      engine.dispose();
+      _engineCache.release();
     }
   }
 
   @override
   void cancel() {
-    _activeTask?.cancel();
-    if (_activeTask == null) {
-      _manager.close();
-      _manager = WhisperModelManager();
-      _verifiedThisSession = false;
-    }
+    _cancelRequested = true;
+    _engineCache.cancel();
   }
 }

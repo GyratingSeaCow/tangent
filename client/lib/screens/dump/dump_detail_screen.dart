@@ -1,16 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:drift/drift.dart' show Value;
 
 import '../../data/local_db.dart';
 import '../../data/recording_metadata.dart';
 import '../../models/dump_mode.dart';
 import '../../models/sync_status.dart';
+import '../../services/local_transcription_coordinator.dart';
+import '../../services/on_device_transcription.dart';
+import '../../services/recording_playback.dart';
 import '../home/home_screen.dart' show localDbProvider;
-import '../home/home_providers.dart' show audioStorageProvider;
-import '../server/server_connection_screen.dart'
-    show transcriptionClientProvider;
+import '../home/home_providers.dart'
+    show
+        audioStorageProvider,
+        localTranscriptionCoordinatorProvider,
+        recordingPlaybackEngineFactoryProvider;
 
 /// Watch a single dump by id.
 final dumpByIdProvider =
@@ -37,8 +43,8 @@ class DumpDetailScreen extends ConsumerStatefulWidget {
 
 class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
   late final TextEditingController _titleController;
+  late final RecordingPlaybackController _playbackController;
   bool _saving = false;
-  bool _transcribing = false;
   String? _statusMessage;
   String? _statusError;
 
@@ -46,6 +52,10 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
   void initState() {
     super.initState();
     _titleController = TextEditingController();
+    _playbackController = RecordingPlaybackController(
+      engine: ref.read(recordingPlaybackEngineFactoryProvider)(),
+    )..addListener(_onPlaybackChanged);
+    unawaited(_playbackController.initialize(widget.audioPath));
     // Async-load the existing title.
     Future.microtask(() async {
       final db = ref.read(localDbProvider);
@@ -60,8 +70,15 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
 
   @override
   void dispose() {
+    _playbackController
+      ..removeListener(_onPlaybackChanged)
+      ..dispose();
     _titleController.dispose();
     super.dispose();
+  }
+
+  void _onPlaybackChanged() {
+    if (mounted) setState(() {});
   }
 
   Future<void> _save() async {
@@ -103,78 +120,28 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
 
   Future<void> _transcribe() async {
     setState(() {
-      _transcribing = true;
       _statusError = null;
-      _statusMessage = 'Uploading + queueing transcription…';
+      _statusMessage = null;
     });
+    final coordinator = ref.read(localTranscriptionCoordinatorProvider);
     try {
-      final db = ref.read(localDbProvider);
-      final client = ref.read(transcriptionClientProvider);
-      final row = await db.getDump(widget.dumpId);
-      if (row == null) throw StateError('Dump not found');
-
-      final audioBytes = await ref.read(audioStorageProvider).readBytes(row.id);
-
-      // Upload + enqueue in one shot using the existing client API.
-      await client.createDump(
-        id: row.id,
-        mode: row.mode,
-        durationSeconds: row.durationSeconds,
-        title: row.title,
-        createdAt: row.createdAt,
-      );
-      await client.uploadAudio(
-        dumpId: row.id,
-        audioBytes: audioBytes,
-      );
-      final jobId = await client.enqueueTranscription(row.id);
-      await db.updateSyncStatus(row.id, SyncStatus.syncing);
-
-      if (mounted) {
-        setState(() => _statusMessage = 'Transcribing…');
-      }
-      await for (final event in client.streamJob(jobId)) {
-        if (event.status == 'failed' || event.status == 'error') {
-          throw StateError(
-            event.data['error']?.toString() ?? 'Transcription failed',
-          );
-        }
-        if (event.status == 'timeout') {
-          throw StateError('Transcription timed out');
-        }
-        if (event.status == 'completed') {
-          final transcript = event.data['transcript'] as String? ??
-              event.data['result_transcript'] as String?;
-          if (transcript == null) {
-            throw StateError('Server completed without a transcript');
-          }
-          final completed = row.copyWith(
-            transcript: Value(transcript),
-            syncStatus: SyncStatus.synced.wireValue,
-            updatedAt: DateTime.now().toUtc(),
-          );
-          await ref.read(audioStorageProvider).writeMetadata(
-                completed.id,
-                dumpMetadata(completed),
-              );
-          await db.upsertDump(completed);
-          ref.invalidate(dumpByIdProvider(widget.dumpId));
-          if (mounted) {
-            setState(() => _statusMessage = 'Transcription complete');
-          }
-          break;
-        }
-      }
-    } catch (e) {
-      if (mounted) {
+      await coordinator.transcribeDump(widget.dumpId);
+      if (!mounted) return;
+      ref.invalidate(dumpByIdProvider(widget.dumpId));
+      if (coordinator.operation.status == LocalTranscriptionStatus.error) {
         setState(() {
-          _statusError = 'Transcribe failed: $e';
-          _statusMessage = null;
+          _statusError = 'Transcribe failed: ${coordinator.operation.error}';
         });
       }
-    } finally {
-      if (mounted) setState(() => _transcribing = false);
+    } catch (error) {
+      if (mounted) {
+        setState(() => _statusError = 'Transcribe failed: $error');
+      }
     }
+  }
+
+  void _cancelTranscription() {
+    ref.read(localTranscriptionCoordinatorProvider).cancel();
   }
 
   Future<void> _delete() async {
@@ -215,6 +182,8 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
   @override
   Widget build(BuildContext context) {
     final dumpAsync = ref.watch(dumpByIdProvider(widget.dumpId));
+    final operation =
+        ref.watch(localTranscriptionCoordinatorProvider).operation;
 
     return Scaffold(
       appBar: AppBar(
@@ -228,20 +197,31 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
         ],
       ),
       body: dumpAsync.when(
-        data: (row) => _buildBody(context, row),
+        data: (row) => _buildBody(context, row, operation),
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, _) => Center(child: Text('Error: $e')),
       ),
     );
   }
 
-  Widget _buildBody(BuildContext context, DumpRow? row) {
+  Widget _buildBody(
+    BuildContext context,
+    DumpRow? row,
+    LocalTranscriptionOperation operation,
+  ) {
     if (row == null) {
       return const Center(child: Text('Dump not found'));
     }
 
     final sync = SyncStatus.fromWire(row.syncStatus);
     final mode = DumpMode.fromWire(row.mode);
+    final isCurrentOperation = operation.dumpId == widget.dumpId &&
+        operation.status != LocalTranscriptionStatus.idle;
+    final operationActive = isCurrentOperation && operation.isActive;
+    final displayTranscript = isCurrentOperation &&
+            operation.status == LocalTranscriptionStatus.complete
+        ? operation.transcript
+        : row.transcript;
 
     return ListView(
       padding: const EdgeInsets.all(16),
@@ -265,7 +245,14 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
           ],
         ),
         const SizedBox(height: 16),
-        if (row.transcript != null && row.transcript!.isNotEmpty) ...[
+        _RecordingPlaybackPanel(
+          state: _playbackController.state,
+          expectedDuration: Duration(seconds: row.durationSeconds),
+          onToggle: _playbackController.togglePlayback,
+          onSeek: _playbackController.seek,
+        ),
+        const SizedBox(height: 16),
+        if (displayTranscript != null && displayTranscript.isNotEmpty) ...[
           Text(
             'Transcript',
             style: Theme.of(context).textTheme.titleMedium,
@@ -274,7 +261,7 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
           Card(
             child: Padding(
               padding: const EdgeInsets.all(12),
-              child: SelectableText(row.transcript!),
+              child: SelectableText(displayTranscript),
             ),
           ),
         ] else ...[
@@ -289,17 +276,28 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
           ),
         ],
         const SizedBox(height: 16),
+        if (isCurrentOperation) ...[
+          _LocalTranscriptionProgressPanel(
+            operation: operation,
+            onCancel: _cancelTranscription,
+          ),
+          const SizedBox(height: 16),
+        ],
         if (_statusMessage != null)
           Padding(
             padding: const EdgeInsets.only(bottom: 8),
-            child: Text(_statusMessage!,
-                style: TextStyle(color: Theme.of(context).colorScheme.primary),),
+            child: Text(
+              _statusMessage!,
+              style: TextStyle(color: Theme.of(context).colorScheme.primary),
+            ),
           ),
         if (_statusError != null)
           Padding(
             padding: const EdgeInsets.only(bottom: 8),
-            child: Text(_statusError!,
-                style: TextStyle(color: Theme.of(context).colorScheme.error),),
+            child: Text(
+              _statusError!,
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
           ),
         Row(
           children: [
@@ -313,15 +311,15 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
             const SizedBox(width: 8),
             Expanded(
               child: FilledButton.icon(
-                icon: _transcribing
+                icon: operationActive
                     ? const SizedBox(
                         width: 16,
                         height: 16,
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
                     : const Icon(Icons.transcribe),
-                label: const Text('Transcribe'),
-                onPressed: _transcribing ? null : _transcribe,
+                label: Text(operationActive ? 'Working locally' : 'Transcribe'),
+                onPressed: operation.isActive ? null : _transcribe,
               ),
             ),
           ],
@@ -337,6 +335,262 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
         SyncStatus.failed => Colors.red,
         SyncStatus.localOnly => Colors.grey,
       };
+}
+
+class _RecordingPlaybackPanel extends StatelessWidget {
+  const _RecordingPlaybackPanel({
+    required this.state,
+    required this.expectedDuration,
+    required this.onToggle,
+    required this.onSeek,
+  });
+
+  final RecordingPlaybackState state;
+  final Duration expectedDuration;
+  final Future<void> Function() onToggle;
+  final Future<void> Function(Duration position) onSeek;
+
+  @override
+  Widget build(BuildContext context) {
+    final duration =
+        state.duration > Duration.zero ? state.duration : expectedDuration;
+    final durationSeconds = duration.inMilliseconds / 1000;
+    final positionSeconds = state.position.inMilliseconds
+            .clamp(0, duration.inMilliseconds)
+            .toDouble() /
+        1000;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              'Recording playback',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                IconButton.filledTonal(
+                  tooltip: state.playing ? 'Pause recording' : 'Play recording',
+                  onPressed: state.loading || state.error != null
+                      ? null
+                      : () => unawaited(onToggle()),
+                  icon: state.loading
+                      ? const SizedBox.square(
+                          dimension: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : Icon(state.playing ? Icons.pause : Icons.play_arrow),
+                ),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Slider(
+                    key: const ValueKey('recording-seek-bar'),
+                    value: positionSeconds,
+                    max: durationSeconds > 0 ? durationSeconds : 1,
+                    onChanged: state.loading || state.error != null
+                        ? null
+                        : (seconds) => unawaited(
+                              onSeek(
+                                Duration(
+                                  milliseconds: (seconds * 1000).round(),
+                                ),
+                              ),
+                            ),
+                    onChangeEnd: state.loading || state.error != null
+                        ? null
+                        : (seconds) => unawaited(
+                              onSeek(
+                                Duration(
+                                  milliseconds: (seconds * 1000).round(),
+                                ),
+                              ),
+                            ),
+                  ),
+                ),
+              ],
+            ),
+            Text(
+              '${_formatMediaTime(state.position)} / ${_formatMediaTime(duration)}',
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.labelLarge,
+            ),
+            if (state.error != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                state.error!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _formatMediaTime(Duration value) {
+    final hours = value.inHours;
+    final minutes = (value.inMinutes % 60).toString().padLeft(2, '0');
+    final seconds = (value.inSeconds % 60).toString().padLeft(2, '0');
+    return hours > 0 ? '$hours:$minutes:$seconds' : '$minutes:$seconds';
+  }
+}
+
+class _LocalTranscriptionProgressPanel extends StatefulWidget {
+  const _LocalTranscriptionProgressPanel({
+    required this.operation,
+    required this.onCancel,
+  });
+
+  final LocalTranscriptionOperation operation;
+  final VoidCallback onCancel;
+
+  @override
+  State<_LocalTranscriptionProgressPanel> createState() =>
+      _LocalTranscriptionProgressPanelState();
+}
+
+class _LocalTranscriptionProgressPanelState
+    extends State<_LocalTranscriptionProgressPanel> {
+  Timer? _elapsedTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _syncTimer();
+  }
+
+  @override
+  void didUpdateWidget(_LocalTranscriptionProgressPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _syncTimer();
+  }
+
+  void _syncTimer() {
+    if (widget.operation.isActive && _elapsedTimer == null) {
+      _elapsedTimer = Timer.periodic(
+        const Duration(seconds: 1),
+        (_) {
+          if (mounted) setState(() {});
+        },
+      );
+    } else if (!widget.operation.isActive) {
+      _elapsedTimer?.cancel();
+      _elapsedTimer = null;
+    }
+  }
+
+  @override
+  void dispose() {
+    _elapsedTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final operation = widget.operation;
+    final progress = operation.progress;
+    final stage = progress?.stage;
+    final title = switch (operation.status) {
+      LocalTranscriptionStatus.cancelling => 'Cancelling local transcription',
+      LocalTranscriptionStatus.complete => 'Transcription complete',
+      LocalTranscriptionStatus.error => 'Local transcription failed',
+      _ => switch (stage) {
+          LocalTranscriptionStage.preparingAudio => 'Preparing recording',
+          LocalTranscriptionStage.downloadingModel =>
+            'Downloading Whisper large-v3',
+          LocalTranscriptionStage.loadingModel => 'Loading Whisper large-v3',
+          LocalTranscriptionStage.transcribing => 'Transcribing on this phone',
+          LocalTranscriptionStage.complete => 'Transcription complete',
+          null => 'Starting local transcription',
+        },
+    };
+    final fraction = stage == LocalTranscriptionStage.downloadingModel ||
+            stage == LocalTranscriptionStage.transcribing
+        ? progress?.fraction
+        : null;
+    final startedAt = operation.startedAt;
+    final elapsed = startedAt == null
+        ? Duration.zero
+        : DateTime.now().difference(startedAt);
+
+    return Semantics(
+      liveRegion: true,
+      label: title,
+      child: Card(
+        color: Theme.of(context).colorScheme.secondaryContainer,
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(title, style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height: 8),
+              Text(_detailText(operation, elapsed)),
+              if (operation.isActive) ...[
+                const SizedBox(height: 12),
+                LinearProgressIndicator(value: fraction),
+                const SizedBox(height: 12),
+                OutlinedButton.icon(
+                  onPressed:
+                      operation.status == LocalTranscriptionStatus.cancelling
+                          ? null
+                          : widget.onCancel,
+                  icon: const Icon(Icons.cancel_outlined),
+                  label: Text(
+                    operation.status == LocalTranscriptionStatus.cancelling
+                        ? 'Cancelling…'
+                        : 'Cancel',
+                  ),
+                ),
+              ],
+              if (operation.status == LocalTranscriptionStatus.error &&
+                  operation.error != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  operation.error!,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _detailText(
+    LocalTranscriptionOperation operation,
+    Duration elapsed,
+  ) {
+    final progress = operation.progress;
+    final elapsedText = _formatElapsed(elapsed);
+    return switch (progress?.stage) {
+      LocalTranscriptionStage.downloadingModel =>
+        'Whisper large-v3 · 3.1 GB · one-time verified download\n'
+            '${progress?.fraction == null ? 'Receiving model data' : '${((progress!.fraction!) * 100).round()}% downloaded'} · Elapsed $elapsedText',
+      LocalTranscriptionStage.loadingModel =>
+        'Whisper large-v3 · 3.1 GB · on this phone\n'
+            'First load can take several minutes while Tangent initializes the model in memory. · Elapsed $elapsedText',
+      LocalTranscriptionStage.transcribing =>
+        '${progress?.fraction == null ? 'Processing speech locally' : '${((progress!.fraction!) * 100).round()}% processed'} · Elapsed $elapsedText',
+      LocalTranscriptionStage.preparingAudio =>
+        'Decoding the recording locally · Elapsed $elapsedText',
+      LocalTranscriptionStage.complete => 'Saved locally',
+      null => operation.status == LocalTranscriptionStatus.error
+          ? 'The recording was preserved.'
+          : 'Elapsed $elapsedText',
+    };
+  }
+
+  String _formatElapsed(Duration value) {
+    final minutes = value.inMinutes.toString().padLeft(2, '0');
+    final seconds = (value.inSeconds % 60).toString().padLeft(2, '0');
+    return '$minutes:$seconds';
+  }
 }
 
 class _MetaChip extends StatelessWidget {

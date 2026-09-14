@@ -5,7 +5,7 @@
 > Built for ADHD minds. Self-hosted. Offline-first. No subscriptions.
 
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](./LICENSE)
-[![Tests: 117 passing](https://img.shields.io/badge/tests-117%20passing-brightgreen.svg)]()
+[![Client tests: 91 passing](https://img.shields.io/badge/client_tests-91%20passing-brightgreen.svg)]()
 
 ---
 
@@ -15,9 +15,10 @@
 fingers. You tap a big red button, ramble for 30 seconds or 30 minutes, and the app:
 
 1. **Saves the recording locally** on your device — always, even offline
-2. **Transcribes it** on your own server (Whisper, large-v3 by default)
-3. **Indexes the text** for full-text search
-4. **Syncs to your server** when the network returns, with retry + failure handling
+2. **Lets you play and seek it** directly in the Dump detail
+3. **Transcribes it locally** on Android with checksum-verified Whisper large-v3
+4. **Indexes the text** for full-text search
+5. **Optionally syncs to your server** when the network returns
 
 **Two recording modes:**
 
@@ -32,7 +33,7 @@ lock you to their cloud, and were never designed for how ADHD brains actually wo
 
 ## Quick start
 
-### Server (1 minute)
+### Optional sync server
 
 ```bash
 git clone https://github.com/GyratingSeaCow/tangent.git
@@ -82,10 +83,12 @@ adb install -r client/build/app/outputs/flutter-apk/app-debug.apk
 On first launch:
 
 1. Tap "Get started"
-2. Enter your server URL (e.g. `http://192.168.1.50:8000`)
-3. Enter the API token from server setup
-4. Tap "Test & Connect"
-5. Start talking — big red mic button on the home screen
+2. Authorize Documents or the existing Tangent recording folder
+3. Start talking — big red mic button on the home screen
+4. Review recordings with the in-app player and draggable seek bar
+5. Download the checksum-pinned large-v3 model once, then transcribe offline
+
+Server URL and token configuration is optional and only enables replication to a server you control.
 
 ### Desktop (Linux)
 
@@ -108,10 +111,13 @@ flutter build linux
 │  Mic button ──► opus recording (16kHz mono, ~32kbps)         │
 │       │                                                      │
 │       ▼                                                      │
-│  Local SQLite + FTS5 search                                  │
+│  Local playback + seek + Android whisper.cpp large-v3       │
 │       │                                                      │
 │       ▼                                                      │
-│  Sync engine ──► upload to server when online                │
+│  Local transcript persistence + SQLite FTS5 search          │
+│       │                                                      │
+│       ▼                                                      │
+│  Optional sync ──► upload to server when configured          │
 └──────────────────────┬───────────────────────────────────────┘
                        │ HTTPS
                        ▼
@@ -150,7 +156,9 @@ flutter build linux
 | Local-first storage (always saves first) | ✅ |
 | SQLite with FTS5 full-text search | ✅ |
 | Server upload (multipart, idempotent) | ✅ |
-| Whisper transcription (tiny → large-v3) | ✅ |
+| In-app recording playback + seek bar | ✅ |
+| On-device Android Whisper large-v3 transcription | ✅ physical local transcription verified |
+| Persistent progress panel + active clip indicator | ✅ |
 | **Brain Dump mode** (verbatim transcript) | ✅ |
 | **Meeting mode** (action items + summary) | ✅ |
 | Real-time job updates (Server-Sent Events) | ✅ |
@@ -178,7 +186,7 @@ python -m pytest                # 61 unit + 1 live integration
 
 # Client (Flutter)
 cd client
-flutter test                    # 56 widget + unit tests
+flutter test                    # 91 widget + unit tests
 flutter analyze                 # 0 errors
 ```
 

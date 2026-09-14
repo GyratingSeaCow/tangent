@@ -76,10 +76,12 @@ final class _FakeRuntime implements LocalWhisperRuntime {
   @override
   Future<String> transcribe(
     File wav, {
+    required ModelLoadedCallback onModelLoaded,
     required InferenceProgressCallback onProgress,
   }) async {
     transcriptions++;
     receivedWav = wav;
+    onModelLoaded();
     onProgress(25);
     return transcript;
   }

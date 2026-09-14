@@ -4,6 +4,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/local_db.dart';
 import '../../models/sync_status.dart' show SyncStatus, SyncStatusX;
+import '../../services/local_transcription_coordinator.dart';
+import '../../services/on_device_transcription.dart';
+import '../home/home_providers.dart' show localTranscriptionCoordinatorProvider;
 import 'dump_detail_screen.dart';
 import 'dumps_providers.dart';
 
@@ -29,6 +32,8 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
     final dumpsAsync = ref.watch(dumpsProvider);
     final query = ref.watch(searchQueryProvider);
     final searchAsync = ref.watch(searchResultsProvider);
+    final transcription =
+        ref.watch(localTranscriptionCoordinatorProvider).operation;
 
     final showingSearch = query.trim().isNotEmpty;
 
@@ -67,18 +72,21 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
       ),
       body: showingSearch
           ? searchAsync.when(
-              data: (results) => _DumpList(dumps: results, empty: 'No matches'),
-              loading: () =>
-                  const Center(child: CircularProgressIndicator()),
+              data: (results) => _DumpList(
+                dumps: results,
+                empty: 'No matches',
+                transcription: transcription,
+              ),
+              loading: () => const Center(child: CircularProgressIndicator()),
               error: (e, _) => Center(child: Text('Search error: $e')),
             )
           : dumpsAsync.when(
               data: (dumps) => _DumpList(
                 dumps: dumps,
                 empty: 'No dumps yet — record one!',
+                transcription: transcription,
               ),
-              loading: () =>
-                  const Center(child: CircularProgressIndicator()),
+              loading: () => const Center(child: CircularProgressIndicator()),
               error: (e, _) => Center(child: Text('DB error: $e')),
             ),
     );
@@ -88,8 +96,13 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
 class _DumpList extends StatelessWidget {
   final List<DumpRow> dumps;
   final String empty;
+  final LocalTranscriptionOperation transcription;
 
-  const _DumpList({required this.dumps, required this.empty});
+  const _DumpList({
+    required this.dumps,
+    required this.empty,
+    required this.transcription,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -107,14 +120,36 @@ class _DumpList extends StatelessWidget {
       itemBuilder: (context, i) {
         final d = dumps[i];
         final sync = SyncStatusX.fromWire(d.syncStatus);
+        final isTranscribing =
+            transcription.isActive && transcription.dumpId == d.id;
         return ListTile(
           title: Text(
             d.title.isEmpty ? '(untitled)' : d.title,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
-          subtitle: Text(_subtitleFor(d, sync)),
-          trailing: _SyncBadge(status: sync),
+          subtitle: isTranscribing
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(_subtitleFor(d, sync)),
+                    Text(
+                      _transcriptionLabel(transcription),
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.primary,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                )
+              : Text(_subtitleFor(d, sync)),
+          trailing: isTranscribing
+              ? SizedBox.square(
+                  key: ValueKey('transcription-indicator-${d.id}'),
+                  dimension: 24,
+                  child: const CircularProgressIndicator(strokeWidth: 3),
+                )
+              : _SyncBadge(status: sync),
           onTap: () => Navigator.of(context).push<void>(
             MaterialPageRoute<void>(
               builder: (_) => DumpDetailScreen(
@@ -135,6 +170,20 @@ class _DumpList extends StatelessWidget {
     final dur = mins > 0 ? '${mins}m ${secs}s' : '${secs}s';
     final date = d.createdAt.toLocal().toString().split('.').first;
     return '$dur · $date';
+  }
+
+  String _transcriptionLabel(LocalTranscriptionOperation operation) {
+    if (operation.status == LocalTranscriptionStatus.cancelling) {
+      return 'Cancelling local transcription…';
+    }
+    return switch (operation.progress?.stage) {
+      LocalTranscriptionStage.preparingAudio => 'Preparing audio locally…',
+      LocalTranscriptionStage.downloadingModel => 'Downloading model…',
+      LocalTranscriptionStage.loadingModel => 'Loading model locally…',
+      LocalTranscriptionStage.transcribing => 'Transcribing on this phone…',
+      LocalTranscriptionStage.complete => 'Saving transcript locally…',
+      null => 'Starting local transcription…',
+    };
   }
 }
 

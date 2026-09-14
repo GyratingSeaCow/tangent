@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -29,9 +28,10 @@ void main() {
         'pcmBytes': 2,
       };
     });
-    addTearDown(() => TestDefaultBinaryMessengerBinding
-        .instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(channel, null));
+    addTearDown(
+      () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null),
+    );
 
     final wav = await const AndroidAudioDecoder().decodeToWav(
       Uint8List.fromList([1, 2, 3, 4]),
@@ -43,7 +43,10 @@ void main() {
     expect(received!.arguments, containsPair('outputPath', wav.path));
     expect(await wav.length(), 46);
     expect(
-      temp.listSync().whereType<File>().where((file) => file.path.endsWith('.opus')),
+      temp
+          .listSync()
+          .whereType<File>()
+          .where((file) => file.path.endsWith('.opus')),
       isEmpty,
     );
   });

@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:flutter/services.dart';
 
@@ -30,7 +29,9 @@ final class AndroidAudioDecoder implements LocalAudioDecoder {
         {'inputPath': input.path, 'outputPath': output.path},
       );
       final pcmBytes = (result?['pcmBytes'] as num?)?.toInt() ?? 0;
-      if (pcmBytes <= 0 || !await output.exists() || await output.length() <= 44) {
+      if (pcmBytes <= 0 ||
+          !await output.exists() ||
+          await output.length() <= 44) {
         throw const LocalTranscriptionException(
           'Android produced an empty WAV while preparing the recording',
         );

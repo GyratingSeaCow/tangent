@@ -2,8 +2,12 @@
 import 'dart:io';
 import 'dart:typed_data';
 
-typedef ModelProgressCallback = void Function(int receivedBytes, int totalBytes);
+typedef ModelProgressCallback = void Function(
+  int receivedBytes,
+  int totalBytes,
+);
 typedef InferenceProgressCallback = void Function(int percent);
+typedef ModelLoadedCallback = void Function();
 typedef LocalTranscriptionProgressCallback = void Function(
   LocalTranscriptionProgress progress,
 );
@@ -41,6 +45,7 @@ abstract interface class LocalWhisperRuntime {
 
   Future<String> transcribe(
     File wav, {
+    required ModelLoadedCallback onModelLoaded,
     required InferenceProgressCallback onProgress,
   });
 
@@ -56,7 +61,7 @@ final class LocalTranscriptionException implements Exception {
   String toString() => 'LocalTranscriptionException: $message';
 }
 
-final class OnDeviceTranscriptionService {
+class OnDeviceTranscriptionService {
   OnDeviceTranscriptionService({
     required LocalAudioDecoder decoder,
     required LocalWhisperRuntime runtime,
@@ -72,6 +77,28 @@ final class OnDeviceTranscriptionService {
   bool _active = false;
 
   bool get isActive => _active;
+
+  Future<bool> isModelInstalled() => _runtime.isModelInstalled();
+
+  Future<void> installModel({required ModelProgressCallback onProgress}) async {
+    if (_active) {
+      throw const LocalTranscriptionException(
+        'Another on-device transcription operation is already running',
+      );
+    }
+    _active = true;
+    _cancelled = false;
+    try {
+      await _runtime.installModel(
+        onProgress: (received, total) {
+          if (!_cancelled) onProgress(received, total);
+        },
+      );
+      _throwIfCancelled();
+    } finally {
+      _active = false;
+    }
+  }
 
   Future<String> transcribe(
     Uint8List audio, {
@@ -90,45 +117,66 @@ final class OnDeviceTranscriptionService {
     _cancelled = false;
     File? wav;
     try {
-      onProgress(const LocalTranscriptionProgress(
-        stage: LocalTranscriptionStage.preparingAudio,
-        fraction: 0,
-      ));
+      onProgress(
+        const LocalTranscriptionProgress(
+          stage: LocalTranscriptionStage.preparingAudio,
+          fraction: 0,
+        ),
+      );
       final directory = await _temporaryDirectory();
+      _throwIfCancelled();
       await directory.create(recursive: true);
+      _throwIfCancelled();
       wav = await _decoder.decodeToWav(audio, directory);
       _throwIfCancelled();
 
       if (!await _runtime.isModelInstalled()) {
-        onProgress(const LocalTranscriptionProgress(
-          stage: LocalTranscriptionStage.downloadingModel,
-          fraction: 0,
-        ));
-        await _runtime.installModel(onProgress: (received, total) {
-          onProgress(LocalTranscriptionProgress(
+        onProgress(
+          const LocalTranscriptionProgress(
             stage: LocalTranscriptionStage.downloadingModel,
-            fraction: total > 0 ? received / total : null,
-            receivedBytes: received,
-            totalBytes: total,
-          ));
-        });
+            fraction: 0,
+          ),
+        );
+        await _runtime.installModel(
+          onProgress: (received, total) {
+            if (_cancelled) return;
+            onProgress(
+              LocalTranscriptionProgress(
+                stage: LocalTranscriptionStage.downloadingModel,
+                fraction: total > 0 ? received / total : null,
+                receivedBytes: received,
+                totalBytes: total,
+              ),
+            );
+          },
+        );
       }
       _throwIfCancelled();
 
-      onProgress(const LocalTranscriptionProgress(
-        stage: LocalTranscriptionStage.loadingModel,
-      ));
-      onProgress(const LocalTranscriptionProgress(
-        stage: LocalTranscriptionStage.transcribing,
-        fraction: 0,
-      ));
+      onProgress(
+        const LocalTranscriptionProgress(
+          stage: LocalTranscriptionStage.loadingModel,
+        ),
+      );
       final transcript = (await _runtime.transcribe(
         wav,
+        onModelLoaded: () {
+          if (_cancelled) return;
+          onProgress(
+            const LocalTranscriptionProgress(
+              stage: LocalTranscriptionStage.transcribing,
+              fraction: 0,
+            ),
+          );
+        },
         onProgress: (percent) {
-          onProgress(LocalTranscriptionProgress(
-            stage: LocalTranscriptionStage.transcribing,
-            fraction: percent.clamp(0, 100) / 100,
-          ));
+          if (_cancelled) return;
+          onProgress(
+            LocalTranscriptionProgress(
+              stage: LocalTranscriptionStage.transcribing,
+              fraction: percent.clamp(0, 100) / 100,
+            ),
+          );
         },
       ))
           .trim();
@@ -138,10 +186,12 @@ final class OnDeviceTranscriptionService {
           'The on-device model returned an empty transcript',
         );
       }
-      onProgress(const LocalTranscriptionProgress(
-        stage: LocalTranscriptionStage.complete,
-        fraction: 1,
-      ));
+      onProgress(
+        const LocalTranscriptionProgress(
+          stage: LocalTranscriptionStage.complete,
+          fraction: 1,
+        ),
+      );
       return transcript;
     } finally {
       _active = false;

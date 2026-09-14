@@ -120,6 +120,7 @@ void main() {
       final fetched = await db.getDump('test-dump');
       expect(fetched!.syncStatus, SyncStatus.synced.wireValue);
       expect(engine.lastSync, isNotNull);
+      verifyNever(() => client.enqueueTranscription(any()));
     });
 
     test('syncNow marks dump failed when audio file missing', () async {

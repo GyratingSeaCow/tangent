@@ -36,11 +36,15 @@ Tangent recordings remain compact Opus. Before inference, Android `MediaExtracto
 
 This supports existing recovered `.opus` recordings and future recordings without converting durable storage to large WAV files.
 
-### Model state and UI
+### Playback, model state, and UI
+
+Every Dump detail includes an in-app audio player backed by the recording's durable file or SAF content URI. It provides play/pause, elapsed and total time, and a draggable seek bar so the recording can be reviewed before deciding whether to transcribe it. Playback is local and stops when the detail screen is disposed.
 
 Settings shows an **On-device transcription model** section with model name, installed/not-installed status, size, and a download action with byte progress. Pressing **Transcribe** also starts the checksum-verified download automatically when the model is absent, with explicit progress text. Once installed, transcription does not access the network.
 
-The active action shows separate preparing, model loading, and inference progress. The user can cancel a download or inference. Corrupt model verification presents an explicit error and a re-download path.
+The active action is owned by a shared coordinator rather than a screen instance. A persistent progress panel survives navigation and shows the exact preparing, downloading, model-loading, transcribing, cancelling, complete, or error state; determinate percentage where available; an animated indeterminate bar during native model initialization; elapsed time; model name and 3.1 GB size; first-load guidance; and a Cancel control. The Dumps list marks the active recording with a spinner and current local stage so the user can identify it without reopening every clip. Cancellation during native model loading is cooperative and remains visibly **Cancelling…** until the plugin returns. Corrupt model verification presents an explicit error and a re-download path.
+
+The loaded native engine is reused for sequential recordings to avoid paying the multi-minute 3.1 GB initialization cost for every note. It is disposed after two minutes idle to release several gigabytes of native memory.
 
 ### Local persistence
 
@@ -65,15 +69,16 @@ Server configuration moves out of the startup gate. Storage authorization remain
 - Native model-load or inference failure: preserve audio and any previous transcript; report the exact local error.
 - Empty transcription: do not overwrite a previous transcript with blank text.
 - Cancellation: stop the native task, clean temporary files, preserve the dump and prior transcript.
-- App navigation/disposal: cancel screen-owned work and release the loaded engine after the job.
+- App navigation/disposal: keep shared transcription work visible and persist its result independently of any screen; stop screen-owned audio playback. Release an idle loaded model after the reuse window.
 
 ## Verification requirements
 
-1. Unit tests prove model selection, checksum-pinned download state, persistence, cancellation, error preservation, and that no HTTP transcription client is invoked.
+1. Unit tests prove model selection, checksum-pinned download state, engine reuse, persistence, cancellation, error preservation, playback/seek behavior, and that no HTTP transcription client is invoked.
 2. A native/device test proves an existing Opus recording is converted into a readable WAV.
 3. Full Flutter tests and analysis pass.
 4. Build and install in place with the same `dev.tangent.tangent` application ID.
 5. Download and verify the exact large-v3 model on the connected `arm64-v8a` phone.
 6. Disable Wi-Fi/mobile data or otherwise make the server unreachable.
-7. Transcribe a newly recorded spoken phrase and verify the expected words appear in the UI, SQLite-backed detail view, and public metadata sidecar.
-8. Confirm PID-scoped logcat has no Flutter/native errors and no HTTP transcription request occurred.
+7. Play, pause, and seek the newly recorded phrase directly in its Dump detail.
+8. Transcribe that phrase and verify the expected words appear in the UI, SQLite-backed detail view, and public metadata sidecar.
+9. Confirm PID-scoped logcat has no Flutter/native errors and no HTTP transcription request occurred.
