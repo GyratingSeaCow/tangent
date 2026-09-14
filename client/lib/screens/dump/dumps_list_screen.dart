@@ -32,8 +32,7 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
     final dumpsAsync = ref.watch(dumpsProvider);
     final query = ref.watch(searchQueryProvider);
     final searchAsync = ref.watch(searchResultsProvider);
-    final transcription =
-        ref.watch(localTranscriptionCoordinatorProvider).operation;
+    final transcription = ref.watch(localTranscriptionCoordinatorProvider);
 
     final showingSearch = query.trim().isNotEmpty;
 
@@ -96,7 +95,7 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
 class _DumpList extends StatelessWidget {
   final List<DumpRow> dumps;
   final String empty;
-  final LocalTranscriptionOperation transcription;
+  final LocalTranscriptionCoordinator transcription;
 
   const _DumpList({
     required this.dumps,
@@ -120,21 +119,24 @@ class _DumpList extends StatelessWidget {
       itemBuilder: (context, i) {
         final d = dumps[i];
         final sync = SyncStatusX.fromWire(d.syncStatus);
-        final isTranscribing =
-            transcription.isActive && transcription.dumpId == d.id;
+        final rowOperation = transcription.operationFor(d.id);
+        final isTranscribing = rowOperation.isActive;
+        final isQueued = rowOperation.status == LocalTranscriptionStatus.queued;
         return ListTile(
           title: Text(
             d.title.isEmpty ? '(untitled)' : d.title,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
-          subtitle: isTranscribing
+          subtitle: isTranscribing || isQueued
               ? Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(_subtitleFor(d, sync)),
                     Text(
-                      _transcriptionLabel(transcription),
+                      isQueued
+                          ? 'Queued for local transcription #${rowOperation.queuePosition}'
+                          : _transcriptionLabel(rowOperation),
                       style: TextStyle(
                         color: Theme.of(context).colorScheme.primary,
                         fontWeight: FontWeight.w600,
@@ -149,7 +151,13 @@ class _DumpList extends StatelessWidget {
                   dimension: 24,
                   child: const CircularProgressIndicator(strokeWidth: 3),
                 )
-              : _SyncBadge(status: sync),
+              : isQueued
+                  ? Icon(
+                      Icons.schedule,
+                      key: ValueKey('transcription-queued-${d.id}'),
+                      color: Theme.of(context).colorScheme.primary,
+                    )
+                  : _SyncBadge(status: sync),
           onTap: () => Navigator.of(context).push<void>(
             MaterialPageRoute<void>(
               builder: (_) => DumpDetailScreen(

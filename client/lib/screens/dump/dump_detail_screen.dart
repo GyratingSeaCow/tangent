@@ -141,7 +141,7 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
   }
 
   void _cancelTranscription() {
-    ref.read(localTranscriptionCoordinatorProvider).cancel();
+    ref.read(localTranscriptionCoordinatorProvider).cancel(widget.dumpId);
   }
 
   Future<void> _delete() async {
@@ -182,8 +182,8 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
   @override
   Widget build(BuildContext context) {
     final dumpAsync = ref.watch(dumpByIdProvider(widget.dumpId));
-    final operation =
-        ref.watch(localTranscriptionCoordinatorProvider).operation;
+    final coordinator = ref.watch(localTranscriptionCoordinatorProvider);
+    final operation = coordinator.operationFor(widget.dumpId);
 
     return Scaffold(
       appBar: AppBar(
@@ -318,8 +318,20 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
                     : const Icon(Icons.transcribe),
-                label: Text(operationActive ? 'Working locally' : 'Transcribe'),
-                onPressed: operation.isActive ? null : _transcribe,
+                label: Text(
+                  switch (operation.status) {
+                    LocalTranscriptionStatus.queued =>
+                      'Queued #${operation.queuePosition}',
+                    LocalTranscriptionStatus.running ||
+                    LocalTranscriptionStatus.cancelling =>
+                      'Working locally',
+                    _ => 'Transcribe',
+                  },
+                ),
+                onPressed: operationActive ||
+                        operation.status == LocalTranscriptionStatus.queued
+                    ? null
+                    : _transcribe,
               ),
             ),
           ],
@@ -495,14 +507,17 @@ class _LocalTranscriptionProgressPanelState
     final progress = operation.progress;
     final stage = progress?.stage;
     final title = switch (operation.status) {
+      LocalTranscriptionStatus.queued =>
+        'Queued for local transcription #${operation.queuePosition}',
       LocalTranscriptionStatus.cancelling => 'Cancelling local transcription',
       LocalTranscriptionStatus.complete => 'Transcription complete',
       LocalTranscriptionStatus.error => 'Local transcription failed',
       _ => switch (stage) {
           LocalTranscriptionStage.preparingAudio => 'Preparing recording',
           LocalTranscriptionStage.downloadingModel =>
-            'Downloading Whisper large-v3',
-          LocalTranscriptionStage.loadingModel => 'Loading Whisper large-v3',
+            'Downloading Whisper large-v3-turbo',
+          LocalTranscriptionStage.loadingModel =>
+            'Loading Whisper large-v3-turbo',
           LocalTranscriptionStage.transcribing => 'Transcribing on this phone',
           LocalTranscriptionStage.complete => 'Transcription complete',
           null => 'Starting local transcription',
@@ -530,9 +545,11 @@ class _LocalTranscriptionProgressPanelState
               Text(title, style: Theme.of(context).textTheme.titleMedium),
               const SizedBox(height: 8),
               Text(_detailText(operation, elapsed)),
-              if (operation.isActive) ...[
+              if (operation.isActive ||
+                  operation.status == LocalTranscriptionStatus.queued) ...[
                 const SizedBox(height: 12),
-                LinearProgressIndicator(value: fraction),
+                if (operation.isActive)
+                  LinearProgressIndicator(value: fraction),
                 const SizedBox(height: 12),
                 OutlinedButton.icon(
                   onPressed:
@@ -570,11 +587,11 @@ class _LocalTranscriptionProgressPanelState
     final elapsedText = _formatElapsed(elapsed);
     return switch (progress?.stage) {
       LocalTranscriptionStage.downloadingModel =>
-        'Whisper large-v3 · 3.1 GB · one-time verified download\n'
+        'Whisper large-v3-turbo · 1.5 GB · one-time verified download\n'
             '${progress?.fraction == null ? 'Receiving model data' : '${((progress!.fraction!) * 100).round()}% downloaded'} · Elapsed $elapsedText',
       LocalTranscriptionStage.loadingModel =>
-        'Whisper large-v3 · 3.1 GB · on this phone\n'
-            'First load can take several minutes while Tangent initializes the model in memory. · Elapsed $elapsedText',
+        'Whisper large-v3-turbo · 1.5 GB · on this phone\n'
+            'First load can take roughly a minute while Tangent initializes the model in memory. · Elapsed $elapsedText',
       LocalTranscriptionStage.transcribing =>
         '${progress?.fraction == null ? 'Processing speech locally' : '${((progress!.fraction!) * 100).round()}% processed'} · Elapsed $elapsedText',
       LocalTranscriptionStage.preparingAudio =>
@@ -582,7 +599,9 @@ class _LocalTranscriptionProgressPanelState
       LocalTranscriptionStage.complete => 'Saved locally',
       null => operation.status == LocalTranscriptionStatus.error
           ? 'The recording was preserved.'
-          : 'Elapsed $elapsedText',
+          : operation.status == LocalTranscriptionStatus.queued
+              ? 'Waiting for the active recording to finish. You can leave this screen.'
+              : 'Elapsed $elapsedText',
     };
   }
 

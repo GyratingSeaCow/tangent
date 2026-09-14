@@ -61,3 +61,15 @@ The cleared operation log contains no HTTP URL, Dio request, audio upload, serve
 - Mobile data: enabled (`1`).
 - Airplane mode: unchanged (`0`).
 - Temporary USB stay-awake: restored to disabled (`0`).
+
+## Large-v3-turbo and queue addendum
+
+- Installed in place on Samsung `REDACTED_DEVICE_MODEL`, serial `REDACTED_DEVICE`; app data and public recordings were preserved.
+- Verified private model `files/whisper_models/ggml-large-v3-turbo.bin`: `1,624,555,275` bytes; SHA-256 `1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69`.
+- Queue reproduction: recording `1789393892907091` was active while recording `1789392589582077` retained an enabled Transcribe action. Tapping it displayed `Queued #1`. Dumps showed `Transcribing locally` only on the first row and `Queued #1` only on the second. Navigation remained responsive.
+- FIFO advancement: the first recording completed at `2026-09-14T14:06:51Z`; the second began automatically and completed at `2026-09-14T14:12:44Z` without another tap.
+- Timed turbo inference including first model initialization: `333 s` wall clock for a four-second clip (`10:01:18` to `10:06:51` EDT). Reused-engine queued inference: `353 s` for a nine-second clip (`10:06:51` to `10:12:44` EDT). This device is functionally correct, but CPU inference is not interactive-speed.
+- First transcript shown in UI, SQLite, and `/sdcard/Documents/Tangent/1789393892907091.meta.json`: `Testing, testing, one, two, three. Testing, testing.` Sync status remained `pending`.
+- Second sidecar `/sdcard/Documents/Tangent/1789392589582077.meta.json` contains `Testing the meeting notes. Next action item is taking care of the i9 processors.`
+- PID-scoped logcat contained no HTTP URL, `/v1/`, upload, enqueue, Dio, SocketException, crash, SIGSEGV, or local-transcription exception controlling either run. Samsung MediaCodec emitted `LegacyMessageQueue` warnings immediately after local Opus decoding; decoding and both inferences nevertheless completed and persisted correctly.
+- Post-queue automated verification: `100` Flutter tests passed; `flutter analyze` reported `No issues found!`; debug APK size `198,581,510` bytes and SHA-256 `55f7b32dbc252e0213fe6c6c437254d9c6185bd65970253c07dbd202a60bfc83`.

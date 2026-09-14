@@ -14,6 +14,7 @@ final class LocalModelSpec {
     required this.url,
     required this.byteSize,
     required this.sha256,
+    required this.approximateBytesLabel,
   });
 
   final String id;
@@ -21,6 +22,7 @@ final class LocalModelSpec {
   final Uri url;
   final int byteSize;
   final String sha256;
+  final String approximateBytesLabel;
 }
 
 final largeV3ModelSpec = LocalModelSpec(
@@ -32,6 +34,19 @@ final largeV3ModelSpec = LocalModelSpec(
   ),
   byteSize: 3095033483,
   sha256: '64d182b440b98d5203c4f9bd541544d84c605196c4f7b845dfa11fb23594d1e2',
+  approximateBytesLabel: '3.1 GB',
+);
+
+final largeV3TurboModelSpec = LocalModelSpec(
+  id: 'large-v3-turbo',
+  fileName: 'ggml-large-v3-turbo.bin',
+  url: Uri.parse(
+    'https://huggingface.co/ggerganov/whisper.cpp/resolve/'
+    '5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v3-turbo.bin',
+  ),
+  byteSize: 1624555275,
+  sha256: '1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69',
+  approximateBytesLabel: '1.5 GB',
 );
 
 abstract interface class WhisperPluginGateway {
@@ -69,7 +84,7 @@ typedef WhisperEngineHandleLoader = Future<WhisperEngineHandle> Function(
 final class LoadedWhisperEngineCache {
   LoadedWhisperEngineCache({
     required WhisperEngineHandleLoader load,
-    this.idleDuration = const Duration(minutes: 2),
+    this.idleDuration = const Duration(minutes: 15),
   }) : _load = load;
 
   final WhisperEngineHandleLoader _load;
@@ -122,6 +137,11 @@ final class LoadedWhisperEngineCache {
   }
 }
 
+/// Number of CPU threads dedicated to Whisper inference.
+/// Eight matches the big-core count of common flagship phones and is the
+/// sweet spot for `large-v3-turbo` decoding.
+const int kWhisperInferenceThreads = 8;
+
 final class _PluginWhisperEngineHandle implements WhisperEngineHandle {
   _PluginWhisperEngineHandle(this._engine);
 
@@ -136,15 +156,20 @@ final class _PluginWhisperEngineHandle implements WhisperEngineHandle {
     final task = _engine.transcribe(
       samples,
       options: const TranscribeOptions(
-        strategy: WhisperSamplingStrategy.beamSearch,
+        strategy: WhisperSamplingStrategy.greedy,
+        // Eight threads matches the big-core count on flagship phones and is
+        // the sweet spot for large-v3-turbo decoding. The plugin's
+        // WhisperConfig does not expose thread count; TranscribeOptions does.
+        threads: kWhisperInferenceThreads,
         language: 'auto',
         // language='auto' selects language before full transcription.
         // whisper.cpp's detect_language flag is detect-only and would skip text.
         detectLanguage: false,
         tokenTimestamps: false,
         noTimestamps: true,
-        noContext: false,
-        beamSize: 5,
+        // Skip context from previous windows: each Dump is its own note and
+        // re-encoding context adds noticeable latency on short clips.
+        noContext: true,
       ),
     );
     _activeTask = task;
@@ -165,23 +190,28 @@ final class _PluginWhisperEngineHandle implements WhisperEngineHandle {
 }
 
 final class WhisperLocalRuntime implements LocalWhisperRuntime {
-  WhisperLocalRuntime({WhisperPluginGateway? gateway})
-      : _gateway = gateway ?? DefaultWhisperPluginGateway();
+  WhisperLocalRuntime({
+    LocalModelSpec? spec,
+    WhisperPluginGateway? gateway,
+  })  : _spec = spec ?? largeV3TurboModelSpec,
+        _gateway = gateway ?? DefaultWhisperPluginGateway();
 
+  final LocalModelSpec _spec;
   final WhisperPluginGateway _gateway;
 
+  LocalModelSpec get modelSpec => _spec;
+
   @override
-  Future<bool> isModelInstalled() =>
-      _gateway.isModelInstalled(largeV3ModelSpec);
+  Future<bool> isModelInstalled() => _gateway.isModelInstalled(_spec);
 
   @override
   Future<void> installModel({required ModelProgressCallback onProgress}) async {
-    await for (final progress in _gateway.installModel(largeV3ModelSpec)) {
+    await for (final progress in _gateway.installModel(_spec)) {
       onProgress(progress.$1, progress.$2);
     }
-    if (!await _gateway.isModelInstalled(largeV3ModelSpec)) {
+    if (!await _gateway.isModelInstalled(_spec)) {
       throw const LocalTranscriptionException(
-        'The large-v3 model download did not produce a verified model',
+        'The selected Whisper model download did not produce a verified model',
       );
     }
   }
@@ -193,7 +223,7 @@ final class WhisperLocalRuntime implements LocalWhisperRuntime {
     required InferenceProgressCallback onProgress,
   }) =>
       _gateway.transcribe(
-        largeV3ModelSpec,
+        _spec,
         wav,
         onModelLoaded: onModelLoaded,
         onProgress: onProgress,
@@ -268,8 +298,8 @@ final class DefaultWhisperPluginGateway implements WhisperPluginGateway {
     _cancelRequested = false;
     final model = await _manager.findCatalogModel(_descriptor(spec));
     if (model == null) {
-      throw const LocalTranscriptionException(
-        'Whisper large-v3 is not installed',
+      throw LocalTranscriptionException(
+        'Whisper ${spec.id} is not installed',
       );
     }
     final samples = await WhisperAudio.readWav(wav);

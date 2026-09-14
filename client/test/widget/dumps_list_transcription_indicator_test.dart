@@ -27,6 +27,7 @@ void main() {
     });
 
     await db.upsertDump(_row('active', 'Currently processing'));
+    await db.upsertDump(_row('queued', 'Waiting recording'));
     await db.upsertDump(_row('other', 'Another recording'));
 
     await tester.pumpWidget(
@@ -49,6 +50,11 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('Loading model locally…'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('transcription-queued-queued')),
+      findsOneWidget,
+    );
+    expect(find.text('Queued for local transcription #1'), findsOneWidget);
     expect(
       find.byKey(const ValueKey('transcription-indicator-other')),
       findsNothing,
@@ -85,6 +91,17 @@ final class _LoadingCoordinator extends LocalTranscriptionCoordinator {
           stage: LocalTranscriptionStage.loadingModel,
         ),
       );
+
+  @override
+  LocalTranscriptionOperation operationFor(String dumpId) => switch (dumpId) {
+        'active' => operation,
+        'queued' => const LocalTranscriptionOperation(
+            status: LocalTranscriptionStatus.queued,
+            dumpId: 'queued',
+            queuePosition: 1,
+          ),
+        _ => const LocalTranscriptionOperation.idle(),
+      };
 }
 
 final class _UnusedLocalService extends OnDeviceTranscriptionService {

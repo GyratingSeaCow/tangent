@@ -11,6 +11,7 @@ import 'on_device_transcription.dart';
 
 enum LocalTranscriptionStatus {
   idle,
+  queued,
   running,
   cancelling,
   complete,
@@ -26,6 +27,7 @@ final class LocalTranscriptionOperation {
     this.startedAt,
     this.transcript,
     this.error,
+    this.queuePosition,
   });
 
   const LocalTranscriptionOperation.idle()
@@ -34,7 +36,8 @@ final class LocalTranscriptionOperation {
         progress = null,
         startedAt = null,
         transcript = null,
-        error = null;
+        error = null,
+        queuePosition = null;
 
   final LocalTranscriptionStatus status;
   final String? dumpId;
@@ -42,10 +45,17 @@ final class LocalTranscriptionOperation {
   final DateTime? startedAt;
   final String? transcript;
   final String? error;
+  final int? queuePosition;
 
   bool get isActive =>
       status == LocalTranscriptionStatus.running ||
       status == LocalTranscriptionStatus.cancelling;
+}
+
+final class _QueuedTranscription {
+  _QueuedTranscription(this.dumpId);
+  final String dumpId;
+  final Completer<void> completer = Completer<void>();
 }
 
 class LocalTranscriptionCoordinator extends ChangeNotifier {
@@ -60,41 +70,74 @@ class LocalTranscriptionCoordinator extends ChangeNotifier {
   final OnDeviceTranscriptionService _service;
   final LocalDb _db;
   final AudioStorage _audioStorage;
-
-  LocalTranscriptionOperation _operation =
+  final List<_QueuedTranscription> _queue = [];
+  final Map<String, LocalTranscriptionOperation> _terminal = {};
+  _QueuedTranscription? _activeJob;
+  LocalTranscriptionOperation _activeOperation =
       const LocalTranscriptionOperation.idle();
-  Future<void>? _activeFuture;
+  LocalTranscriptionOperation _lastOperation =
+      const LocalTranscriptionOperation.idle();
+  bool _disposed = false;
 
-  LocalTranscriptionOperation get operation => _operation;
+  LocalTranscriptionOperation get operation =>
+      _activeJob == null ? _lastOperation : _activeOperation;
 
-  Future<void> transcribeDump(String dumpId) {
-    if (_operation.isActive) {
-      if (_operation.dumpId == dumpId && _activeFuture != null) {
-        return _activeFuture!;
-      }
-      throw const LocalTranscriptionException(
-        'Another on-device transcription operation is already running',
-      );
-    }
+  List<String> get queuedDumpIds =>
+      List.unmodifiable(_queue.map((job) => job.dumpId));
 
-    final future = _run(dumpId);
-    _activeFuture = future;
-    return future;
+  int? queuePosition(String dumpId) {
+    final index = _queue.indexWhere((job) => job.dumpId == dumpId);
+    return index < 0 ? null : index + 1;
   }
 
-  Future<void> _run(String dumpId) async {
-    _setOperation(
-      LocalTranscriptionOperation(
-        status: LocalTranscriptionStatus.running,
+  LocalTranscriptionOperation operationFor(String dumpId) {
+    if (_activeJob?.dumpId == dumpId) return _activeOperation;
+    final position = queuePosition(dumpId);
+    if (position != null) {
+      return LocalTranscriptionOperation(
+        status: LocalTranscriptionStatus.queued,
         dumpId: dumpId,
-        startedAt: DateTime.now(),
-        progress: const LocalTranscriptionProgress(
-          stage: LocalTranscriptionStage.preparingAudio,
-          fraction: 0,
-        ),
+        queuePosition: position,
+      );
+    }
+    return _terminal[dumpId] ?? const LocalTranscriptionOperation.idle();
+  }
+
+  Future<void> transcribeDump(String dumpId) {
+    if (_disposed) throw StateError('Coordinator is disposed');
+    if (_activeJob?.dumpId == dumpId) return _activeJob!.completer.future;
+    final existing = _queue.where((job) => job.dumpId == dumpId).firstOrNull;
+    if (existing != null) return existing.completer.future;
+
+    final job = _QueuedTranscription(dumpId);
+    _queue.add(job);
+    _terminal.remove(dumpId);
+    _notify();
+    _startNext();
+    return job.completer.future;
+  }
+
+  void _startNext() {
+    if (_disposed || _activeJob != null || _queue.isEmpty) return;
+    final job = _queue.removeAt(0);
+    _activeJob = job;
+    unawaited(_run(job));
+  }
+
+  Future<void> _run(_QueuedTranscription job) async {
+    final dumpId = job.dumpId;
+    _activeOperation = LocalTranscriptionOperation(
+      status: LocalTranscriptionStatus.running,
+      dumpId: dumpId,
+      startedAt: DateTime.now(),
+      progress: const LocalTranscriptionProgress(
+        stage: LocalTranscriptionStage.preparingAudio,
+        fraction: 0,
       ),
     );
+    _notify();
 
+    LocalTranscriptionOperation terminal;
     try {
       final row = await _db.getDump(dumpId);
       if (row == null) throw StateError('Dump not found');
@@ -102,15 +145,14 @@ class LocalTranscriptionCoordinator extends ChangeNotifier {
       final transcript = (await _service.transcribe(
         audioBytes,
         onProgress: (progress) {
-          if (!_operation.isActive || _operation.dumpId != dumpId) return;
-          _setOperation(
-            LocalTranscriptionOperation(
-              status: _operation.status,
-              dumpId: dumpId,
-              startedAt: _operation.startedAt,
-              progress: progress,
-            ),
+          if (_activeJob != job || _disposed) return;
+          _activeOperation = LocalTranscriptionOperation(
+            status: _activeOperation.status,
+            dumpId: dumpId,
+            startedAt: _activeOperation.startedAt,
+            progress: progress,
           );
+          _notify();
         },
       ))
           .trim();
@@ -119,65 +161,76 @@ class LocalTranscriptionCoordinator extends ChangeNotifier {
           'The on-device model returned an empty transcript',
         );
       }
-
       final completed = row.copyWith(
         transcript: Value(transcript),
         syncStatus: row.syncStatus,
         updatedAt: DateTime.now().toUtc(),
       );
-      await _audioStorage.writeMetadata(
-        completed.id,
-        dumpMetadata(completed),
-      );
+      await _audioStorage.writeMetadata(completed.id, dumpMetadata(completed));
       await _db.upsertDump(completed);
-      _setOperation(
-        LocalTranscriptionOperation(
-          status: LocalTranscriptionStatus.complete,
-          dumpId: dumpId,
-          startedAt: _operation.startedAt,
-          progress: const LocalTranscriptionProgress(
-            stage: LocalTranscriptionStage.complete,
-            fraction: 1,
-          ),
-          transcript: transcript,
+      terminal = LocalTranscriptionOperation(
+        status: LocalTranscriptionStatus.complete,
+        dumpId: dumpId,
+        startedAt: _activeOperation.startedAt,
+        progress: const LocalTranscriptionProgress(
+          stage: LocalTranscriptionStage.complete,
+          fraction: 1,
         ),
+        transcript: transcript,
       );
     } catch (error) {
-      _setOperation(
-        LocalTranscriptionOperation(
-          status: LocalTranscriptionStatus.error,
-          dumpId: dumpId,
-          startedAt: _operation.startedAt,
-          progress: _operation.progress,
-          error: error.toString(),
-        ),
+      terminal = LocalTranscriptionOperation(
+        status: LocalTranscriptionStatus.error,
+        dumpId: dumpId,
+        startedAt: _activeOperation.startedAt,
+        progress: _activeOperation.progress,
+        error: error.toString(),
       );
-    } finally {
-      _activeFuture = null;
     }
+
+    _terminal[dumpId] = terminal;
+    _lastOperation = terminal;
+    _activeJob = null;
+    _activeOperation = const LocalTranscriptionOperation.idle();
+    if (!job.completer.isCompleted) job.completer.complete();
+    _notify();
+    _startNext();
   }
 
-  void cancel() {
-    if (!_operation.isActive) return;
-    _setOperation(
-      LocalTranscriptionOperation(
+  void cancel([String? dumpId]) {
+    final target = dumpId ?? _activeJob?.dumpId;
+    if (target == null) return;
+    if (_activeJob?.dumpId == target) {
+      if (!_activeOperation.isActive) return;
+      _activeOperation = LocalTranscriptionOperation(
         status: LocalTranscriptionStatus.cancelling,
-        dumpId: _operation.dumpId,
-        startedAt: _operation.startedAt,
-        progress: _operation.progress,
-      ),
-    );
-    _service.cancel();
+        dumpId: target,
+        startedAt: _activeOperation.startedAt,
+        progress: _activeOperation.progress,
+      );
+      _notify();
+      _service.cancel();
+      return;
+    }
+    final index = _queue.indexWhere((job) => job.dumpId == target);
+    if (index < 0) return;
+    final removed = _queue.removeAt(index);
+    if (!removed.completer.isCompleted) removed.completer.complete();
+    _notify();
   }
 
-  void _setOperation(LocalTranscriptionOperation value) {
-    _operation = value;
-    notifyListeners();
+  void _notify() {
+    if (!_disposed) notifyListeners();
   }
 
   @override
   void dispose() {
-    if (_operation.isActive) _service.cancel();
+    _disposed = true;
+    if (_activeOperation.isActive) _service.cancel();
+    for (final job in _queue) {
+      if (!job.completer.isCompleted) job.completer.complete();
+    }
+    _queue.clear();
     super.dispose();
   }
 }

@@ -16,10 +16,14 @@ Tangent transcribes recordings entirely on the Android phone after a one-time mo
 ## Model and runtime
 
 - Runtime: `whisper_cpp_flutter_plus` 0.4.1, which embeds whisper.cpp 1.9.2 and supports Android arm64 CPU inference.
-- Default and only v1 model: multilingual Whisper `large-v3`.
-- Filename: `ggml-large-v3.bin`.
+- Default v1 model: multilingual Whisper `large-v3-turbo` (greedy decoding, 8-thread CPU inference, engine cached in RAM for 15 minutes).
+- Optional model: multilingual Whisper `large-v3` (kept available via the runtime API; the same checksum-pinned spec, file name `ggml-large-v3.bin`, and SHA-256 `64d182b440b98d5203c4f9bd541544d84c605196c4f7b845dfa11fb23594d1e2`).
+- Default filename: `ggml-large-v3-turbo.bin`.
 - Immutable source revision: `5359861c739e955e79d9a303bcbc70fb988958b1`.
-- Download size: `3,095,033,483` bytes.
+- Default download size: `1,624,555,275` bytes.
+- Default SHA-256: `1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69`.
+- Optional `large-v3` download size: `3,095,033,483` bytes.
+- Optional `large-v3` SHA-256: `64d182b440b98d5203c4f9bd541544d84c605196c4f7b845dfa11fb23594d1e2`.
 - SHA-256: `64d182b440b98d5203c4f9bd541544d84c605196c4f7b845dfa11fb23594d1e2`.
 - Model storage: app support storage. Recordings remain in the user-authorized public SAF folder; the model may be re-downloaded after uninstall.
 - No smaller or remote fallback. Missing/corrupt models fail loudly and remain visibly actionable.
@@ -42,9 +46,11 @@ Every Dump detail includes an in-app audio player backed by the recording's dura
 
 Settings shows an **On-device transcription model** section with model name, installed/not-installed status, size, and a download action with byte progress. Pressing **Transcribe** also starts the checksum-verified download automatically when the model is absent, with explicit progress text. Once installed, transcription does not access the network.
 
-The active action is owned by a shared coordinator rather than a screen instance. A persistent progress panel survives navigation and shows the exact preparing, downloading, model-loading, transcribing, cancelling, complete, or error state; determinate percentage where available; an animated indeterminate bar during native model initialization; elapsed time; model name and 3.1 GB size; first-load guidance; and a Cancel control. The Dumps list marks the active recording with a spinner and current local stage so the user can identify it without reopening every clip. Cancellation during native model loading is cooperative and remains visibly **Cancelling…** until the plugin returns. Corrupt model verification presents an explicit error and a re-download path.
+The active action is owned by a shared coordinator rather than a screen instance. A persistent progress panel survives navigation and shows the exact preparing, downloading, model-loading, transcribing, cancelling, complete, or error state; determinate percentage where available; an animated indeterminate bar during native model initialization; elapsed time; model name and model size; first-load guidance; and a Cancel control. The Dumps list marks the active recording with a spinner and current local stage so the user can identify it without reopening every clip. Cancellation during native model loading is cooperative and remains visibly **Cancelling…** until the plugin returns. Corrupt model verification presents an explicit error and a re-download path.
 
-The loaded native engine is reused for sequential recordings to avoid paying the multi-minute 3.1 GB initialization cost for every note. It is disposed after two minutes idle to release several gigabytes of native memory.
+Transcription requests use a coordinator-owned FIFO queue around the single native engine. Starting one recording never disables Transcribe on other rows. A repeated request for an active or queued dump returns the existing job rather than creating a duplicate. Active and queued rows/details expose distinct state, queued position, and a queued-item Cancel action. Removing a queued job does not interrupt the active job. Every terminal active outcome (success, failure, or cancellation) advances the queue, and each successful item independently commits SQLite plus its public sidecar before the next result is reported complete.
+
+The loaded native engine is reused for sequential recordings to avoid paying the multi-minute initialization cost for every note. It is disposed after 15 minutes idle to balance queue/retry responsiveness against native memory use.
 
 ### Local persistence
 

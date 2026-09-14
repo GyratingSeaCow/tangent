@@ -10,8 +10,8 @@
 
 ## Global Constraints
 
-- Use full multilingual `ggml-large-v3.bin`; never silently fall back to a smaller or remote model.
-- Pin revision `5359861c739e955e79d9a303bcbc70fb988958b1` and SHA-256 `64d182b440b98d5203c4f9bd541544d84c605196c4f7b845dfa11fb23594d1e2`.
+- Use full multilingual `ggml-large-v3-turbo.bin` as the default; the runtime also supports `ggml-large-v3.bin` and never silently falls back to a remote or smaller model.
+- Pin revision `5359861c739e955e79d9a303bcbc70fb988958b1`. Turbo SHA-256 `1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69`; original large-v3 SHA-256 `64d182b440b98d5203c4f9bd541544d84c605196c4f7b845dfa11fb23594d1e2`.
 - Preserve all existing `.opus` recordings and metadata.
 - Server availability must not affect local transcription.
 - Install in place with application ID `dev.tangent.tangent`; do not uninstall or clear app data.
@@ -50,7 +50,7 @@
 - `largeV3ModelSpec` contains filename, immutable HTTPS URL, byte count, and SHA-256.
 - `WhisperLocalRuntime.isInstalled() -> Future<bool>` verifies the cached file.
 - `WhisperLocalRuntime.install(...)` uses resumable `WhisperModelManager.download` with the pinned checksum.
-- `WhisperLocalRuntime.transcribe(...)` reuses one loaded engine for sequential notes, reads WAV through `WhisperAudio.readWav`, performs balanced multilingual inference, returns text, and disposes the engine after a two-minute idle window.
+- `WhisperLocalRuntime.transcribe(...)` reuses one loaded engine for sequential notes, reads WAV through `WhisperAudio.readWav`, performs balanced multilingual inference, returns text, and disposes the engine after a 15-minute idle window.
 
 - [ ] Write a failing metadata test asserting every exact model constant and HTTPS immutable revision.
 - [ ] Implement the model specification and make the test pass.
@@ -103,6 +103,8 @@
 - [ ] Add local in-app recording playback with play/pause, elapsed/total time, and a draggable seek bar backed by filesystem and Android SAF content URIs.
 - [ ] Move active transcription ownership to a shared coordinator and keep a detailed progress/cancellation panel visible across Dump navigation.
 - [ ] Mark the active clip in the Dumps list with a live spinner and current local-transcription stage.
+- [x] Add a coordinator-owned FIFO queue: enqueue while active, suppress duplicate dump IDs, expose per-row active/queued position, remove queued jobs independently, and advance after success/error/cancel.
+- [x] Add focused unit/widget regressions for cross-recording enqueue, FIFO, duplicate taps, queued cancellation, terminal advancement, and row-state isolation.
 - [ ] Commit.
 
 ### Task 5: Remove server transcription coupling

@@ -131,7 +131,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ),
           ),
           ListTile(
-            title: const Text('Whisper large-v3'),
+            title: const Text('Whisper large-v3-turbo'),
             subtitle: Text(
               _modelError ??
                   (_modelBusy
@@ -141,7 +141,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       : _modelInstalled == true
                           ? 'Installed and verified'
                           : _modelInstalled == false
-                              ? 'Not installed (about 3.1 GB)'
+                              ? 'Not installed — about 1.5 GB, one-time verified download'
                               : 'Status unavailable'),
             ),
             trailing: _modelBusy

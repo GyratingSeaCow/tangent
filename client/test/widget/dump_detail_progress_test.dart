@@ -75,10 +75,10 @@ void main() {
 
     await mountDetail();
     await tester.pump();
-    expect(find.text('Loading Whisper large-v3'), findsOneWidget);
-    expect(find.textContaining('3.1 GB'), findsOneWidget);
+    expect(find.text('Loading Whisper large-v3-turbo'), findsOneWidget);
+    expect(find.textContaining('1.5 GB'), findsOneWidget);
     expect(
-      find.textContaining('First load can take several minutes'),
+      find.textContaining('First load can take roughly a minute'),
       findsOneWidget,
     );
     expect(find.textContaining('Elapsed 00:'), findsOneWidget);
@@ -98,7 +98,7 @@ void main() {
     await mountDetail();
     await tester.pump();
 
-    expect(find.text('Loading Whisper large-v3'), findsOneWidget);
+    expect(find.text('Loading Whisper large-v3-turbo'), findsOneWidget);
     expect(find.text('Cancel'), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox.shrink());
@@ -145,6 +145,12 @@ final class _LoadingCoordinator extends LocalTranscriptionCoordinator {
 
   @override
   LocalTranscriptionOperation get operation => _operation;
+
+  @override
+  LocalTranscriptionOperation operationFor(String dumpId) =>
+      dumpId == _operation.dumpId
+          ? _operation
+          : const LocalTranscriptionOperation.idle();
 }
 
 final class _UnusedLocalService extends OnDeviceTranscriptionService {
