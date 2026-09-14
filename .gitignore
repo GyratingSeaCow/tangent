@@ -116,3 +116,6 @@ $RECYCLE.BIN/
 .idea/workspace.xml
 # SDD orchestration artifacts (skill-managed scratch)
 .superpowers/sdd/
+
+# Local git worktrees used for isolated implementation branches
+.worktrees/
