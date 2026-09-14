@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:sqlite3/sqlite3.dart';
 import 'package:tangent/data/local_db.dart';
 
 void main() {
@@ -49,7 +50,7 @@ void main() {
           audioSizeBytes: 1000,
           syncStatus: 'local_only',
         syncAttempts: 0,
-        ));
+        ),);
       }
       final list = await db.listDumps();
       expect(list.length, 3);
@@ -69,7 +70,7 @@ void main() {
         audioSizeBytes: 1000,
         syncStatus: 'local_only',
         syncAttempts: 0,
-      ));
+      ),);
       await db.upsertDump(DumpRow(
         id: 'test-2',
         createdAt: DateTime.utc(2026, 1, 2),
@@ -81,11 +82,61 @@ void main() {
         audioSizeBytes: 1000,
         syncStatus: 'local_only',
         syncAttempts: 0,
-      ));
+      ),);
 
       final results = await db.searchDumps('deployment');
       expect(results.length, 1);
       expect(results.first.id, 'test-1');
+    });
+
+    test('migrates v1 FTS delete triggers to SQL string literals', () async {
+      await db.close();
+      final sqlite = sqlite3.openInMemory();
+      sqlite.execute('''
+        CREATE TABLE dumps (
+          id TEXT NOT NULL PRIMARY KEY,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          mode TEXT NOT NULL,
+          duration_seconds INTEGER NOT NULL,
+          title TEXT NOT NULL,
+          transcript TEXT,
+          audio_path TEXT NOT NULL,
+          audio_size_bytes INTEGER NOT NULL,
+          sync_status TEXT NOT NULL,
+          sync_attempts INTEGER NOT NULL DEFAULT 0,
+          last_sync_error TEXT
+        );
+        CREATE TABLE sync_queue (
+          id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+          dump_id TEXT NOT NULL REFERENCES dumps(id) ON DELETE CASCADE,
+          queued_at INTEGER NOT NULL
+        );
+        CREATE VIRTUAL TABLE dumps_fts USING fts5(
+          title, transcript, content='dumps', content_rowid='rowid'
+        );
+        CREATE TRIGGER dumps_ad AFTER DELETE ON dumps BEGIN
+          INSERT INTO dumps_fts("dumps_fts", rowid, title, transcript)
+          VALUES("delete", old.rowid, old.title, old.transcript);
+        END;
+        CREATE TRIGGER dumps_au AFTER UPDATE ON dumps BEGIN
+          INSERT INTO dumps_fts("dumps_fts", rowid, title, transcript)
+          VALUES("delete", old.rowid, old.title, old.transcript);
+          INSERT INTO dumps_fts(rowid, title, transcript)
+          VALUES(new.rowid, new.title, new.transcript);
+        END;
+        PRAGMA user_version = 1;
+      ''');
+      final migrated = LocalDb.forTesting(NativeDatabase.opened(sqlite));
+      addTearDown(migrated.close);
+
+      await migrated.listDumps();
+
+      final trigger = sqlite.select(
+        "SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = 'dumps_au'",
+      ).single['sql'] as String;
+      expect(trigger, contains("VALUES ('delete'"));
+      expect(sqlite.userVersion, 2);
     });
   });
 }

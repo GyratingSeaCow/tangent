@@ -59,7 +59,7 @@ void main() {
         client.getServerInfo(),
         throwsA(isA<ApiException>()
             .having((e) => e.statusCode, 'statusCode', 401)
-            .having((e) => e.code, 'code', 'unauthorized')),
+            .having((e) => e.code, 'code', 'unauthorized'),),
       );
     });
 
@@ -69,7 +69,7 @@ void main() {
 
     test('uploadAudio returns on 204', () async {
       when(() => mock.post<dynamic>(any(),
-              data: any(named: 'data'))).thenAnswer(
+              data: any(named: 'data'),),).thenAnswer(
         (_) async => Response(
           requestOptions: RequestOptions(path: '/v1/dumps/1/audio'),
           statusCode: 204,
@@ -81,7 +81,7 @@ void main() {
 
     test('uploadAudio throws on non-204', () async {
       when(() => mock.post<dynamic>(any(),
-              data: any(named: 'data'))).thenAnswer(
+              data: any(named: 'data'),),).thenAnswer(
         (_) async => Response(
           requestOptions: RequestOptions(path: '/v1/dumps/1/audio'),
           statusCode: 500,

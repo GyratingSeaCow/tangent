@@ -34,7 +34,7 @@ void main() {
 
       final container = ProviderContainer(overrides: [
         localDbProvider.overrideWithValue(db),
-      ]);
+      ],);
       addTearDown(() async {
         container.dispose();
         await db.close();
@@ -50,7 +50,7 @@ void main() {
 
       final container = ProviderContainer(overrides: [
         localDbProvider.overrideWithValue(db),
-      ]);
+      ],);
       addTearDown(() async {
         container.dispose();
         await db.close();
@@ -62,7 +62,7 @@ void main() {
 
       // Insert and wait for stream to emit.
       await db.upsertDump(_row('1', title: 'A new dump'));
-      await Future.delayed(const Duration(milliseconds: 100));
+      await Future<void>.delayed(const Duration(milliseconds: 100));
 
       dumps = await container.read(dumpsProvider.future);
       expect(dumps.length, 1);
@@ -77,7 +77,7 @@ void main() {
 
       final container = ProviderContainer(overrides: [
         localDbProvider.overrideWithValue(db),
-      ]);
+      ],);
       addTearDown(() async {
         container.dispose();
         await db.close();
@@ -95,7 +95,7 @@ void main() {
 
       final container = ProviderContainer(overrides: [
         localDbProvider.overrideWithValue(db),
-      ]);
+      ],);
       addTearDown(() async {
         container.dispose();
         await db.close();

@@ -115,8 +115,8 @@ class _DumpList extends StatelessWidget {
           ),
           subtitle: Text(_subtitleFor(d, sync)),
           trailing: _SyncBadge(status: sync),
-          onTap: () => Navigator.of(context).push(
-            MaterialPageRoute(
+          onTap: () => Navigator.of(context).push<void>(
+            MaterialPageRoute<void>(
               builder: (_) => DumpDetailScreen(
                 dumpId: d.id,
                 audioPath: d.audioPath,

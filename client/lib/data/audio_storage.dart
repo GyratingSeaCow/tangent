@@ -1,105 +1,257 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 
-import 'storage_permission.dart';
-
-/// Manages audio file storage in the public Documents/Tangent/ folder.
+/// Durable recording storage.
 ///
-/// Why this directory: the user wants recordings to SURVIVE app uninstall,
-/// and the only way to do that on Android is to put files in shared public
-/// storage (Documents/). Files in `/data/data/<pkg>/` or `/sdcard/Android/data/<pkg>/`
-/// are wiped when the user removes the app.
+/// Android uses a user-selected Storage Access Framework folder, never an
+/// app-private fallback. The recorder writes to [_stagingDir] first because
+/// Android's recorder API needs a filesystem path; [persistRecording] then
+/// copies and fsyncs audio + metadata into the selected public folder before
+/// deleting the staging file.
 class AudioStorage {
-  static const _tangentSubdir = 'Tangent';
+  static const _channel = MethodChannel('dev.tangent.tangent/storage');
   static const _audioExt = '.opus';
   static const _metaExt = '.meta.json';
 
-  final Directory _audioDir;
+  final Directory _stagingDir;
+  final Directory? _filesystemDir;
+  bool _ready;
 
-  AudioStorage._(this._audioDir);
+  AudioStorage._(this._stagingDir, this._filesystemDir, this._ready);
 
-  /// Test-only constructor. Tests pass a temp dir.
   factory AudioStorage.test(Directory baseDir) {
-    final dir = Directory(p.join(baseDir.path, _tangentSubdir));
-    if (!dir.existsSync()) dir.createSync(recursive: true);
-    return AudioStorage._(dir);
+    final durable = Directory(p.join(baseDir.path, 'Tangent'));
+    final staging = Directory(p.join(baseDir.path, '.staging'));
+    durable.createSync(recursive: true);
+    staging.createSync(recursive: true);
+    return AudioStorage._(staging, durable, true);
   }
 
-  /// Production constructor. Resolves the public Documents/Tangent/ folder.
-  static Future<AudioStorage> resolve() async {
-    final dir = await StoragePermission.documentsDir();
-    return AudioStorage._(dir);
+  static Future<AudioStorage> resolve({
+    required Directory durableDirectory,
+    required Directory stagingDirectory,
+  }) async {
+    await stagingDirectory.create(recursive: true);
+    if (!Platform.isAndroid) {
+      final durable = Directory(p.join(durableDirectory.path, 'Tangent'));
+      await durable.create(recursive: true);
+      return AudioStorage._(stagingDirectory, durable, true);
+    }
+    final ready =
+        await _channel.invokeMethod<bool>('hasStorageAccess') ?? false;
+    return AudioStorage._(stagingDirectory, null, ready);
   }
 
-  /// Backwards-compatible constructor used by main(). Internally delegates
-  /// to [resolve]. The [fallback] directory is used if public-storage access
-  /// isn't available (e.g. emulator without storage).
-  static Future<AudioStorage> fromDirectoryFallback(Directory fallback) async {
-    try {
-      return await resolve();
-    } catch (_) {
-      final dir = Directory(p.join(fallback.path, _tangentSubdir));
-      if (!dir.existsSync()) dir.createSync(recursive: true);
-      return AudioStorage._(dir);
+  bool get isReady => _ready;
+  Directory get stagingDir => _stagingDir;
+
+  /// Only available to filesystem-backed tests and non-Android platforms.
+  Directory get audioDir =>
+      _filesystemDir ??
+      (throw StateError('Android durable storage is a SAF document tree'));
+  String get audioDirPath => audioDir.path;
+
+  Future<bool> requestAccess() async {
+    if (!Platform.isAndroid) return _ready;
+    _ready = await _channel.invokeMethod<bool>('chooseStorageFolder') ?? false;
+    return _ready;
+  }
+
+  File stagingPathFor(String id) =>
+      File(p.join(_stagingDir.path, '$id$_audioExt'));
+  File pathFor(String id) => File(p.join(audioDir.path, '$id$_audioExt'));
+  File metaPathFor(String id) => File(p.join(audioDir.path, '$id$_metaExt'));
+
+  Future<StoredAudio> persistRecording({
+    required String id,
+    required String temporaryPath,
+    required Map<String, dynamic> metadata,
+  }) async {
+    final source = File(temporaryPath);
+    if (!await source.exists()) {
+      throw AudioStorageException(
+          'Recording staging file is missing: $temporaryPath',);
+    }
+    final size = await source.length();
+    if (size <= 0) {
+      throw const AudioStorageException(
+          'Recorder produced an empty file; the staging file was kept for recovery',);
+    }
+    if (!_ready) {
+      throw const AudioStorageException(
+          'No durable recording folder is authorized. Select Documents or Tangent first.',);
+    }
+
+    StoredAudio stored;
+    if (_filesystemDir != null) {
+      final audio = pathFor(id);
+      final audioTmp = File('${audio.path}.tmp');
+      await source.openRead().pipe(audioTmp.openWrite(mode: FileMode.write));
+      await audioTmp.rename(audio.path);
+      await _writeMetadataFile(id, metadata);
+      stored =
+          StoredAudio(locator: audio.path, sizeBytes: await audio.length());
+    } else {
+      final result = await _channel.invokeMapMethod<String, dynamic>(
+        'persistRecording',
+        {
+          'id': id,
+          'sourcePath': temporaryPath,
+          'metadataJson': jsonEncode(metadata),
+        },
+      );
+      if (result == null ||
+          result['uri'] == null ||
+          result['sizeBytes'] == null) {
+        throw const AudioStorageException(
+            'Android did not confirm durable storage',);
+      }
+      stored = StoredAudio(
+        locator: result['uri'] as String,
+        sizeBytes: (result['sizeBytes'] as num).toInt(),
+      );
+    }
+    await source.delete();
+    return stored;
+  }
+
+  Future<void> writeMetadata(String id, Map<String, dynamic> metadata) async {
+    if (!_ready) {
+      throw const AudioStorageException('Durable storage is unavailable');
+    }
+    if (_filesystemDir != null) {
+      await _writeMetadataFile(id, metadata);
+    } else {
+      await _channel.invokeMethod<void>(
+        'writeMetadata',
+        {'id': id, 'metadataJson': jsonEncode(metadata)},
+      );
     }
   }
 
-  Directory get audioDir => _audioDir;
-  String get audioDirPath => _audioDir.path;
+  Future<void> _writeMetadataFile(
+      String id, Map<String, dynamic> metadata,) async {
+    final target = metaPathFor(id);
+    final tmp = File('${target.path}.tmp');
+    await tmp.writeAsString(jsonEncode(metadata), flush: true);
+    if (await target.exists()) await target.delete();
+    await tmp.rename(target.path);
+  }
 
-  File pathFor(String id) => File(p.join(_audioDir.path, '$id$_audioExt'));
-
-  File metaPathFor(String id) => File(p.join(_audioDir.path, '$id$_metaExt'));
+  Future<Uint8List> readBytes(String id) async {
+    if (_filesystemDir != null) return pathFor(id).readAsBytes();
+    final bytes =
+        await _channel.invokeMethod<Uint8List>('readAudio', {'id': id});
+    if (bytes == null || bytes.isEmpty) {
+      throw AudioStorageException('Durable audio is missing or empty for $id');
+    }
+    return bytes;
+  }
 
   Future<int> getSize(String id) async {
-    final f = pathFor(id);
-    if (!await f.exists()) return 0;
-    return await f.length();
+    try {
+      return (await readBytes(id)).length;
+    } catch (_) {
+      return 0;
+    }
   }
 
   Future<void> deleteFile(String id) async {
-    final f = pathFor(id);
-    if (await f.exists()) await f.delete();
-    final meta = metaPathFor(id);
-    if (await meta.exists()) await meta.delete();
+    if (_filesystemDir != null) {
+      final audio = pathFor(id);
+      if (await audio.exists()) await audio.delete();
+      final meta = metaPathFor(id);
+      if (await meta.exists()) await meta.delete();
+      return;
+    }
+    await _channel.invokeMethod<void>('deleteRecording', {'id': id});
   }
 
-  /// Lists all .opus audio files in the storage directory.
-  /// Returns pairs of (id, file) so callers can import them.
   Future<List<ImportedAudio>> listAll() async {
-    if (!await _audioDir.exists()) return [];
-    final entities = await _audioDir.list().toList();
-    final result = <ImportedAudio>[];
-    for (final e in entities) {
-      if (e is! File) continue;
-      final name = p.basename(e.path);
-      if (!name.endsWith(_audioExt)) continue;
-      final id = name.substring(0, name.length - _audioExt.length);
-      final size = await e.length();
-      final modified = await e.lastModified();
-      result.add(ImportedAudio(
-        id: id,
-        file: e,
-        sizeBytes: size,
-        modifiedAt: modified,
-      ));
+    if (!_ready) return [];
+    if (_filesystemDir != null) {
+      if (!await audioDir.exists()) return [];
+      final result = <ImportedAudio>[];
+      await for (final entity in audioDir.list()) {
+        if (entity is! File || !entity.path.endsWith(_audioExt)) continue;
+        final id = p.basenameWithoutExtension(entity.path);
+        final metaFile = metaPathFor(id);
+        Map<String, dynamic>? metadata;
+        if (await metaFile.exists()) {
+          try {
+            metadata = jsonDecode(await metaFile.readAsString())
+                as Map<String, dynamic>;
+          } catch (_) {
+            metadata = null;
+          }
+        }
+        result.add(ImportedAudio(
+          id: id,
+          locator: entity.path,
+          sizeBytes: await entity.length(),
+          modifiedAt: await entity.lastModified(),
+          metadata: metadata,
+        ),);
+      }
+      return result;
     }
-    return result;
+
+    final rows =
+        await _channel.invokeListMethod<dynamic>('listRecordings') ?? const [];
+    return rows.map((raw) {
+      final map = Map<Object?, Object?>.from(raw as Map);
+      Map<String, dynamic>? metadata;
+      final metadataJson = map['metadataJson'] as String?;
+      if (metadataJson != null) {
+        try {
+          metadata = jsonDecode(metadataJson) as Map<String, dynamic>;
+        } catch (_) {
+          metadata = null;
+        }
+      }
+      return ImportedAudio(
+        id: map['id'] as String,
+        locator: map['uri'] as String,
+        sizeBytes: (map['sizeBytes'] as num).toInt(),
+        modifiedAt: DateTime.fromMillisecondsSinceEpoch(
+          (map['lastModified'] as num).toInt(),
+          isUtc: true,
+        ),
+        metadata: metadata,
+      );
+    }).toList();
   }
+}
+
+class StoredAudio {
+  final String locator;
+  final int sizeBytes;
+  const StoredAudio({required this.locator, required this.sizeBytes});
 }
 
 class ImportedAudio {
   final String id;
-  final File file;
+  final String locator;
   final int sizeBytes;
   final DateTime modifiedAt;
+  final Map<String, dynamic>? metadata;
 
   const ImportedAudio({
     required this.id,
-    required this.file,
+    required this.locator,
     required this.sizeBytes,
     required this.modifiedAt,
+    required this.metadata,
   });
+}
+
+class AudioStorageException implements Exception {
+  final String message;
+  const AudioStorageException(this.message);
+  @override
+  String toString() => 'AudioStorageException: $message';
 }

@@ -44,7 +44,7 @@ void main() {
           .thenAnswer((_) async {});
       await store.setServerUrl('http://homelab:8000');
       verify(() => mock.write(
-              key: 'server_url', value: 'http://homelab:8000'))
+              key: 'server_url', value: 'http://homelab:8000',),)
           .called(1);
     });
 

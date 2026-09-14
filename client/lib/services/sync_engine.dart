@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import 'dart:async';
-import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:logger/logger.dart';
 
@@ -59,8 +59,9 @@ class SyncEngine {
 
       for (final row in pending) {
         try {
-          final audioFile = File(_audio.pathFor(row.id).path);
-          if (!await audioFile.exists()) {
+          final audioBytes =
+              await _audio.readBytes(row.id).catchError((_) => Uint8List(0));
+          if (audioBytes.isEmpty) {
             _log.w('audio file missing for ${row.id}');
             await _db.updateSyncStatus(
               row.id,
@@ -80,15 +81,14 @@ class SyncEngine {
           );
           await _client.uploadAudio(
             dumpId: row.id,
-            audioBytes: await audioFile.readAsBytes(),
+            audioBytes: audioBytes,
           );
           await _db.updateSyncStatus(row.id, SyncStatus.syncing);
           await _client.enqueueTranscription(row.id);
           await _db.updateSyncStatus(row.id, SyncStatus.synced);
           _log.i('uploaded ${row.id}');
         } catch (e, st) {
-          _log.e('upload failed for ${row.id}',
-              error: e, stackTrace: st);
+          _log.e('upload failed for ${row.id}', error: e, stackTrace: st);
           await _db.updateSyncStatus(
             row.id,
             SyncStatus.failed,

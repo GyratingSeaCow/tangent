@@ -1,20 +1,20 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:drift/drift.dart' show Value;
 
-import '../../data/audio_storage.dart';
 import '../../data/local_db.dart';
+import '../../data/recording_metadata.dart';
 import '../../models/dump_mode.dart';
 import '../../models/sync_status.dart';
-import '../../services/transcription_client.dart';
 import '../home/home_screen.dart' show localDbProvider;
-import '../server/server_connection_screen.dart' show transcriptionClientProvider;
-import 'dumps_providers.dart';
+import '../home/home_providers.dart' show audioStorageProvider;
+import '../server/server_connection_screen.dart'
+    show transcriptionClientProvider;
 
 /// Watch a single dump by id.
-final dumpByIdProvider = FutureProvider.family<DumpRow?, String>((ref, id) async {
+final dumpByIdProvider =
+    FutureProvider.family<DumpRow?, String>((ref, id) async {
   final db = ref.watch(localDbProvider);
   return db.getDump(id);
 });
@@ -76,10 +76,16 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
       if (existing == null) {
         throw StateError('Dump not found');
       }
-      await db.upsertDump(existing.copyWith(
+      final updated = existing.copyWith(
         title: _titleController.text.trim(),
         updatedAt: DateTime.now(),
-      ));
+      );
+      if (updated.title.isEmpty) throw StateError('Title cannot be empty');
+      await ref.read(audioStorageProvider).writeMetadata(
+            updated.id,
+            dumpMetadata(updated),
+          );
+      await db.upsertDump(updated);
       if (mounted) {
         setState(() => _statusMessage = 'Saved');
       }
@@ -107,10 +113,7 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
       final row = await db.getDump(widget.dumpId);
       if (row == null) throw StateError('Dump not found');
 
-      final file = File(widget.audioPath);
-      if (!await file.exists()) {
-        throw StateError('Audio file missing');
-      }
+      final audioBytes = await ref.read(audioStorageProvider).readBytes(row.id);
 
       // Upload + enqueue in one shot using the existing client API.
       await client.createDump(
@@ -122,13 +125,45 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
       );
       await client.uploadAudio(
         dumpId: row.id,
-        audioBytes: await file.readAsBytes(),
+        audioBytes: audioBytes,
       );
-      await client.enqueueTranscription(row.id);
-      await db.updateSyncStatus(row.id, SyncStatus.pending);
+      final jobId = await client.enqueueTranscription(row.id);
+      await db.updateSyncStatus(row.id, SyncStatus.syncing);
 
       if (mounted) {
-        setState(() => _statusMessage = 'Queued. Use Dumps → Sync to upload.');
+        setState(() => _statusMessage = 'Transcribing…');
+      }
+      await for (final event in client.streamJob(jobId)) {
+        if (event.status == 'failed' || event.status == 'error') {
+          throw StateError(
+            event.data['error']?.toString() ?? 'Transcription failed',
+          );
+        }
+        if (event.status == 'timeout') {
+          throw StateError('Transcription timed out');
+        }
+        if (event.status == 'completed') {
+          final transcript = event.data['transcript'] as String? ??
+              event.data['result_transcript'] as String?;
+          if (transcript == null) {
+            throw StateError('Server completed without a transcript');
+          }
+          final completed = row.copyWith(
+            transcript: Value(transcript),
+            syncStatus: SyncStatus.synced.wireValue,
+            updatedAt: DateTime.now().toUtc(),
+          );
+          await ref.read(audioStorageProvider).writeMetadata(
+                completed.id,
+                dumpMetadata(completed),
+              );
+          await db.upsertDump(completed);
+          ref.invalidate(dumpByIdProvider(widget.dumpId));
+          if (mounted) {
+            setState(() => _statusMessage = 'Transcription complete');
+          }
+          break;
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -164,7 +199,7 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
 
     try {
       final db = ref.read(localDbProvider);
-      final audio = AudioStorage.test(Directory.systemTemp);
+      final audio = ref.read(audioStorageProvider);
       await audio.deleteFile(widget.dumpId);
       await db.deleteDump(widget.dumpId);
       if (mounted) Navigator.of(context).pop();
@@ -258,13 +293,13 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
           Padding(
             padding: const EdgeInsets.only(bottom: 8),
             child: Text(_statusMessage!,
-                style: TextStyle(color: Theme.of(context).colorScheme.primary)),
+                style: TextStyle(color: Theme.of(context).colorScheme.primary),),
           ),
         if (_statusError != null)
           Padding(
             padding: const EdgeInsets.only(bottom: 8),
             child: Text(_statusError!,
-                style: TextStyle(color: Theme.of(context).colorScheme.error)),
+                style: TextStyle(color: Theme.of(context).colorScheme.error),),
           ),
         Row(
           children: [
@@ -313,7 +348,7 @@ class _MetaChip extends StatelessWidget {
   Widget build(BuildContext context) {
     return Chip(
       label: Text(label),
-      backgroundColor: color?.withOpacity(0.15),
+      backgroundColor: color?.withValues(alpha: 0.15),
       side: BorderSide(color: color ?? Theme.of(context).colorScheme.outline),
     );
   }

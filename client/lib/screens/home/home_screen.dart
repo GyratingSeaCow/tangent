@@ -1,16 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../data/audio_storage.dart';
 import '../../data/local_db.dart';
+
 import '../../models/dump_mode.dart';
-import '../../services/sync_engine.dart';
+import '../../services/recording_persistence.dart';
 import '../dump/dump_detail_screen.dart';
 import '../dump/dumps_list_screen.dart';
 import '../recording/recording_controller.dart';
+import '../recording/recording_waveform.dart';
 import '../settings/settings_screen.dart';
 import 'home_providers.dart';
 
@@ -47,37 +46,32 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   Future<void> _toggleRecording() async {
     final controller = ref.read(recordingControllerProvider.notifier);
     final state = ref.read(recordingControllerProvider);
-    if (state == RecordingState.recording) {
-      final result = await controller.stop();
-      if (result == null) return;
-
-      // Persist to local DB.
-      final db = ref.read(localDbProvider);
-      final id = result.path.split(RegExp(r'[\\/]')).last.replaceAll('.opus', '');
-      await db.upsertDump(DumpRow(
-        id: id,
-        createdAt: DateTime.now(),
-        updatedAt: DateTime.now(),
-        mode: _mode.wireValue,
-        durationSeconds: result.durationSeconds,
-        title: '',
-        audioPath: result.path,
-        audioSizeBytes: result.sizeBytes,
-        syncStatus: 'pending',
-        syncAttempts: 0,
-      ));
-
-      if (mounted) {
-        Navigator.of(context).push(MaterialPageRoute(
-          builder: (_) => DumpDetailScreen(
-            dumpId: id,
-            audioPath: result.path,
-            durationSeconds: result.durationSeconds,
-          ),
-        ));
+    try {
+      if (state == RecordingState.recording) {
+        final result = await controller.stop();
+        if (result == null) throw StateError('Recorder returned no audio');
+        final row = await RecordingPersistence(
+          db: ref.read(localDbProvider),
+          storage: ref.read(audioStorageProvider),
+        ).save(result, mode: _mode.wireValue);
+        if (mounted) {
+          await Navigator.of(context).push<void>(MaterialPageRoute<void>(
+            builder: (_) => DumpDetailScreen(
+              dumpId: row.id,
+              audioPath: row.audioPath,
+              durationSeconds: result.durationSeconds,
+            ),
+          ),);
+        }
+      } else if (state == RecordingState.idle) {
+        await controller.start();
       }
-    } else {
-      await controller.start();
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Recording failed: $error')),
+        );
+      }
     }
   }
 
@@ -134,16 +128,20 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           IconButton(
             icon: const Icon(Icons.list),
             tooltip: 'View dumps',
-            onPressed: () => Navigator.of(context).push(MaterialPageRoute(
-              builder: (_) => const DumpsListScreen(),
-            )),
+            onPressed: () => Navigator.of(context).push<void>(
+              MaterialPageRoute<void>(
+                builder: (_) => const DumpsListScreen(),
+              ),
+            ),
           ),
           IconButton(
             icon: const Icon(Icons.settings),
             tooltip: 'Settings',
-            onPressed: () => Navigator.of(context).push(MaterialPageRoute(
-              builder: (_) => const SettingsScreen(),
-            )),
+            onPressed: () => Navigator.of(context).push<void>(
+              MaterialPageRoute<void>(
+                builder: (_) => const SettingsScreen(),
+              ),
+            ),
           ),
         ],
       ),
@@ -161,7 +159,17 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     : Theme.of(context).colorScheme.onSurface,
               ),
             ),
-            const SizedBox(height: 48),
+            if (isRecording) ...[
+              const SizedBox(height: 12),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: RecordingWaveformConsumer(
+                  color: Theme.of(context).colorScheme.error,
+                ),
+              ),
+              const SizedBox(height: 12),
+            ] else
+              const SizedBox(height: 32),
             GestureDetector(
               onTap: _toggleRecording,
               child: Container(
@@ -188,9 +196,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             const SizedBox(height: 24),
             _ModeSelector(
               current: _mode,
-              onChanged: isRecording
-                  ? null
-                  : (m) => setState(() => _mode = m),
+              onChanged: isRecording ? null : (m) => setState(() => _mode = m),
             ),
             const SizedBox(height: 16),
             Padding(
@@ -208,7 +214,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 
   String _modeDescription(DumpMode m) => switch (m) {
-        DumpMode.brainDump => 'Quick voice memo — gets transcribed and searchable.',
+        DumpMode.brainDump =>
+          'Quick voice memo — gets transcribed and searchable.',
         DumpMode.meeting =>
           'Secretary mode — meeting notes with action items extracted.',
       };
@@ -236,8 +243,7 @@ class _ModeSelector extends StatelessWidget {
         ),
       ],
       selected: {current},
-      onSelectionChanged:
-          onChanged == null ? null : (s) => onChanged!(s.first),
+      onSelectionChanged: onChanged == null ? null : (s) => onChanged!(s.first),
     );
   }
 }

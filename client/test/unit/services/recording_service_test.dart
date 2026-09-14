@@ -19,6 +19,19 @@ void main() {
   });
 
   group('StubRecordingService', () {
+    test('stub exposes emitted dBFS amplitude', () async {
+      final service = StubRecordingService();
+      final values = <double>[];
+      final subscription = service
+          .amplitudeStream(const Duration(milliseconds: 60))
+          .listen(values.add);
+      service.emitAmplitude(-18.0);
+      await Future<void>.delayed(Duration.zero);
+      expect(values, [-18.0]);
+      await subscription.cancel();
+      await service.dispose();
+    });
+
     test('starts not recording and with no path', () {
       final stub = StubRecordingService();
       expect(stub.isRecording, isFalse);

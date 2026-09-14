@@ -7,7 +7,7 @@ import '../../services/transcription_client.dart';
 
 final secureStoreProvider = Provider<SecureStore>((ref) => SecureStore());
 
-final transcriptionClientProvider = Provider<TranscriptionClient>((ref) {
+final transcriptionClientProvider = StateProvider<TranscriptionClient>((ref) {
   // Caller must override this provider once async values are available.
   // Defaults to localhost which lets the app boot; real client is set in
   // main() after reading SecureStore.
@@ -101,8 +101,10 @@ class _ServerConnectionScreenState
       if (token != null) {
         await store.setToken(token);
       }
+      // Secure storage is for the next launch; replace the live client too.
+      ref.read(transcriptionClientProvider.notifier).state = client;
       if (mounted) {
-        Navigator.of(context).pushReplacementNamed('/home');
+        await Navigator.of(context).pushReplacementNamed<void, void>('/home');
       }
     } catch (e) {
       setState(() => _error = 'Connection failed: $e');

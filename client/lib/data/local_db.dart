@@ -45,36 +45,59 @@ class LocalDb extends _$LocalDb {
   LocalDb.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 1;
+  int get schemaVersion => 2;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
         onCreate: (m) async {
           await m.createAll();
-          // Create FTS5 virtual table for full-text search
-          await customStatement(
-            'CREATE VIRTUAL TABLE IF NOT EXISTS dumps_fts USING fts5('
-            'title, transcript, content="dumps", content_rowid="rowid")',
-          );
-          // Triggers to keep FTS in sync with the main table
-          await customStatement(
-            'CREATE TRIGGER IF NOT EXISTS dumps_ai AFTER INSERT ON dumps BEGIN '
-            'INSERT INTO dumps_fts(rowid, title, transcript) VALUES (new.rowid, new.title, new.transcript);'
-            'END',
-          );
-          await customStatement(
-            'CREATE TRIGGER IF NOT EXISTS dumps_ad AFTER DELETE ON dumps BEGIN '
-            'INSERT INTO dumps_fts("dumps_fts", rowid, title, transcript) VALUES("delete", old.rowid, old.title, old.transcript);'
-            'END',
-          );
-          await customStatement(
-            'CREATE TRIGGER IF NOT EXISTS dumps_au AFTER UPDATE ON dumps BEGIN '
-            'INSERT INTO dumps_fts("dumps_fts", rowid, title, transcript) VALUES("delete", old.rowid, old.title, old.transcript);'
-            'INSERT INTO dumps_fts(rowid, title, transcript) VALUES (new.rowid, new.title, new.transcript);'
-            'END',
-          );
+          await _createFtsInfrastructure();
+        },
+        onUpgrade: (m, from, to) async {
+          if (from < 2) {
+            await _replaceFtsTriggers();
+          }
         },
       );
+
+  Future<void> _createFtsInfrastructure() async {
+    await customStatement(
+      '''CREATE VIRTUAL TABLE IF NOT EXISTS dumps_fts USING fts5(
+        title, transcript, content="dumps", content_rowid="rowid"
+      )''',
+    );
+    await _createFtsTriggers();
+  }
+
+  Future<void> _replaceFtsTriggers() async {
+    await customStatement('DROP TRIGGER IF EXISTS dumps_ai');
+    await customStatement('DROP TRIGGER IF EXISTS dumps_ad');
+    await customStatement('DROP TRIGGER IF EXISTS dumps_au');
+    await _createFtsTriggers();
+  }
+
+  Future<void> _createFtsTriggers() async {
+    await customStatement(
+      '''CREATE TRIGGER dumps_ai AFTER INSERT ON dumps BEGIN
+        INSERT INTO dumps_fts(rowid, title, transcript)
+        VALUES (new.rowid, new.title, new.transcript);
+      END''',
+    );
+    await customStatement(
+      '''CREATE TRIGGER dumps_ad AFTER DELETE ON dumps BEGIN
+        INSERT INTO dumps_fts("dumps_fts", rowid, title, transcript)
+        VALUES ('delete', old.rowid, old.title, old.transcript);
+      END''',
+    );
+    await customStatement(
+      '''CREATE TRIGGER dumps_au AFTER UPDATE ON dumps BEGIN
+        INSERT INTO dumps_fts("dumps_fts", rowid, title, transcript)
+        VALUES ('delete', old.rowid, old.title, old.transcript);
+        INSERT INTO dumps_fts(rowid, title, transcript)
+        VALUES (new.rowid, new.title, new.transcript);
+      END''',
+    );
+  }
 
   /// Insert or replace a dump row.
   Future<void> upsertDump(DumpRow row) =>

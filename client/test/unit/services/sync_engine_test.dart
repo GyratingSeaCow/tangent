@@ -94,7 +94,7 @@ void main() {
         audioSizeBytes: 100,
         syncStatus: SyncStatus.pending.wireValue,
         syncAttempts: 0,
-      ));
+      ),);
       await File('${tmp.path}/Tangent/test-dump.opus')
           .writeAsBytes(Uint8List(100));
       when(
@@ -134,7 +134,7 @@ void main() {
         audioSizeBytes: 0,
         syncStatus: SyncStatus.pending.wireValue,
         syncAttempts: 0,
-      ));
+      ),);
       await engine.syncNow();
 
       final fetched = await db.getDump('orphan-dump');

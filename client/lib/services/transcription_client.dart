@@ -35,7 +35,7 @@ class TranscriptionClient {
           contentType: 'application/json',
           headers: token != null ? {'Authorization': 'Bearer $token'} : {},
           validateStatus: (status) => status != null && status < 500,
-        ));
+        ),);
 
   TranscriptionClient.forTesting({required Dio dio, required String baseUrl})
       : _dio = dio,
@@ -135,7 +135,7 @@ class TranscriptionClient {
   }
 
   Stream<JobEvent> _sseStream(String jobId,
-      {required Duration maxWait}) async* {
+      {required Duration maxWait,}) async* {
     final uri = Uri.parse('$_baseUrl/v1/jobs/$jobId/stream');
     final request = await HttpClient().getUrl(uri);
     final authHeader = _dio.options.headers['Authorization'];
@@ -185,7 +185,7 @@ class TranscriptionClient {
 
   Stream<JobEvent> _pollJob(String jobId) async* {
     for (var i = 0; i < 1800; i++) {
-      await Future.delayed(const Duration(seconds: 2));
+      await Future<void>.delayed(const Duration(seconds: 2));
       try {
         final resp = await _fetch('/v1/jobs/$jobId');
         final status = resp['status'] as String;

@@ -15,6 +15,7 @@ class SettingsScreen extends ConsumerStatefulWidget {
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   TriggerMode _triggerMode = TriggerMode.tap;
   bool _wifiOnly = false;
+  bool _keepScreenAwake = true;
   String _serverUrl = '';
   bool _loaded = false;
 
@@ -32,6 +33,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       setState(() {
         _triggerMode = settings.triggerMode;
         _wifiOnly = settings.wifiOnlySync;
+        _keepScreenAwake = settings.keepScreenAwakeWhileRecording;
         _serverUrl = url ?? '';
         _loaded = true;
       });
@@ -42,6 +44,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final settings = ref.read(settingsStoreProvider);
     await settings.setTriggerMode(_triggerMode);
     await settings.setWifiOnlySync(_wifiOnly);
+    await settings.setKeepScreenAwakeWhileRecording(_keepScreenAwake);
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Settings saved')),
@@ -50,9 +53,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 
   Future<void> _changeServer() async {
-    await Navigator.of(context).push(MaterialPageRoute(
+    await Navigator.of(context).push<void>(MaterialPageRoute<void>(
       builder: (_) => const ServerConnectionScreen(),
-    ));
+    ),);
     await _load();
   }
 
@@ -107,9 +110,17 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           SwitchListTile(
             title: const Text('Wi-Fi only sync'),
             subtitle: const Text(
-                'Wait for Wi-Fi before uploading recordings to the server'),
+                'Wait for Wi-Fi before uploading recordings to the server',),
             value: _wifiOnly,
             onChanged: (v) => setState(() => _wifiOnly = v),
+          ),
+          SwitchListTile(
+            title: const Text('Keep screen awake while recording'),
+            subtitle: const Text(
+              'Prevents screen sleep only while an active recording is running',
+            ),
+            value: _keepScreenAwake,
+            onChanged: (value) => setState(() => _keepScreenAwake = value),
           ),
           const Divider(),
           const Padding(

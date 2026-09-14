@@ -1,32 +1,35 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../data/audio_storage.dart';
 import '../../services/recording_service.dart';
+import '../../services/screen_awake.dart';
 import '../home/home_providers.dart';
+import '../settings/settings_screen.dart';
+import 'waveform_state.dart';
 
-enum RecordingState { idle, recording, saving }
+enum RecordingState { idle, starting, recording, saving }
 
-/// Tick counter incremented every second while recording. Consumers watch
-/// this to update their timer display without relying on state-changed
-/// events (which don't fire when the state value is the same).
 final recordingTickProvider = StateProvider<int>((ref) => 0);
 
 class RecordingController extends StateNotifier<RecordingState> {
   final RecordingService _service;
-  final Ref _ref;
+  final ScreenAwake _screenAwake;
+  final StateController<int> _tick;
+  final WaveformNotifier _waveform;
+  final bool Function() _keepAwake;
   Timer? _timer;
+  StreamSubscription<double>? _amplitudeSubscription;
   DateTime? _startedAt;
 
-  RecordingController(this._service, this._ref)
-      : super(RecordingState.idle);
-
-  factory RecordingController.test(Ref ref) {
-    return RecordingController(StubRecordingService(), ref);
-  }
+  RecordingController(
+    this._service,
+    this._screenAwake,
+    this._tick,
+    this._waveform,
+    this._keepAwake,
+  ) : super(RecordingState.idle);
 
   bool get isRecording => state == RecordingState.recording;
   int get elapsedSeconds {
@@ -36,47 +39,95 @@ class RecordingController extends StateNotifier<RecordingState> {
 
   Future<void> start() async {
     if (state != RecordingState.idle) return;
-    await _service.start();
-    _startedAt = DateTime.now();
-    state = RecordingState.recording;
-    _ref.read(recordingTickProvider.notifier).state = 0;
-    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-      _ref.read(recordingTickProvider.notifier).state++;
-    });
+    state = RecordingState.starting;
+    _clearVisualState();
+    try {
+      await _service.start();
+      _startedAt = DateTime.now();
+      state = RecordingState.recording;
+      _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+        _tick.state++;
+      });
+      _amplitudeSubscription =
+          _service.amplitudeStream(const Duration(milliseconds: 60)).listen(
+        _waveform.addDbfs,
+        onError: (_) {
+          unawaited(_amplitudeSubscription?.cancel());
+          _amplitudeSubscription = null;
+          _waveform.clear();
+        },
+      );
+      if (_keepAwake()) {
+        try {
+          await _screenAwake.setEnabled(true);
+        } catch (_) {
+          // Screen-awake is optional and must never terminate valid audio capture.
+        }
+      }
+    } catch (_) {
+      await _releaseRecordingUi();
+      state = RecordingState.idle;
+      rethrow;
+    }
   }
 
   Future<RecordingResult?> stop() async {
     if (state != RecordingState.recording) return null;
+    state = RecordingState.saving;
+    try {
+      return await _service.stop();
+    } finally {
+      await _releaseRecordingUi();
+      state = RecordingState.idle;
+    }
+  }
+
+  void _clearVisualState() {
     _timer?.cancel();
     _timer = null;
-    state = RecordingState.saving;
-    final result = await _service.stop();
     _startedAt = null;
-    _ref.read(recordingTickProvider.notifier).state = 0;
-    state = RecordingState.idle;
-    return result;
+    _tick.state = 0;
+    _waveform.clear();
+  }
+
+  Future<void> _releaseRecordingUi() async {
+    _timer?.cancel();
+    _timer = null;
+    await _amplitudeSubscription?.cancel();
+    _amplitudeSubscription = null;
+    _clearVisualState();
+    try {
+      await _screenAwake.setEnabled(false);
+    } catch (_) {
+      // Native activity destruction also clears FLAG_KEEP_SCREEN_ON.
+    }
   }
 
   @override
   void dispose() {
     _timer?.cancel();
-    _service.dispose();
+    _timer = null;
+    unawaited(_amplitudeSubscription?.cancel());
+    _amplitudeSubscription = null;
+    _waveform.clear();
+    unawaited(_screenAwake.setEnabled(false).catchError((_) {}));
+    unawaited(_service.dispose());
     super.dispose();
   }
 }
 
 final recordingServiceProvider = Provider<RecordingService>((ref) {
-  // Use the AudioStorage directory so recordings land in the public
-  // Documents/Tangent/ folder (or wherever AudioStorage is configured to
-  // put them). This makes them survive app uninstall.
   final audio = ref.watch(audioStorageProvider);
-  return DefaultRecordingService(outputDir: audio.audioDir);
+  return DefaultRecordingService(outputDir: audio.stagingDir);
 });
 
 final recordingControllerProvider =
     StateNotifierProvider<RecordingController, RecordingState>((ref) {
   return RecordingController(
     ref.watch(recordingServiceProvider),
-    ref,
+    ref.watch(screenAwakeProvider),
+    ref.watch(recordingTickProvider.notifier),
+    ref.watch(waveformProvider.notifier),
+    () => ref.read(settingsStoreProvider).keepScreenAwakeWhileRecording,
   );
 });

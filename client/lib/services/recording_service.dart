@@ -2,6 +2,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:path/path.dart' as p;
 import 'package:record/record.dart';
 
 class RecordingResult {
@@ -16,13 +17,12 @@ class RecordingResult {
   });
 }
 
-/// Test-friendly abstraction. Production uses the default implementation;
-/// tests inject a stub.
 abstract class RecordingService {
   bool get isRecording;
   String? get currentPath;
 
   Future<bool> requestPermission();
+  Stream<double> amplitudeStream(Duration interval);
   Future<String> start();
   Future<RecordingResult?> stop();
   Future<void> dispose();
@@ -37,7 +37,8 @@ class DefaultRecordingService implements RecordingService {
 
   DefaultRecordingService({Directory? outputDir, AudioRecorder? recorder})
       : _recorder = recorder,
-        _outputDir = outputDir ?? Directory.systemTemp;
+        _outputDir = outputDir ??
+            (throw ArgumentError('A staging output directory is required'));
 
   AudioRecorder get _ensureRecorder => _recorder ??= AudioRecorder();
 
@@ -51,16 +52,22 @@ class DefaultRecordingService implements RecordingService {
   Future<bool> requestPermission() => _ensureRecorder.hasPermission();
 
   @override
+  Stream<double> amplitudeStream(Duration interval) => _ensureRecorder
+      .onAmplitudeChanged(interval)
+      .map((value) => value.current);
+
+  @override
   Future<String> start() async {
-    if (_isRecording) {
-      throw StateError('Already recording');
-    }
+    if (_isRecording) throw StateError('Already recording');
     final recorder = _ensureRecorder;
     if (!await recorder.hasPermission()) {
       throw StateError('Microphone permission not granted');
     }
-    final path =
-        '${_outputDir.path}/${DateTime.now().microsecondsSinceEpoch}.opus';
+    await _outputDir.create(recursive: true);
+    final path = p.join(
+      _outputDir.path,
+      '${DateTime.now().microsecondsSinceEpoch}.opus',
+    );
     await recorder.start(
       const RecordConfig(
         encoder: AudioEncoder.opus,
@@ -79,21 +86,25 @@ class DefaultRecordingService implements RecordingService {
   @override
   Future<RecordingResult?> stop() async {
     if (!_isRecording) return null;
-    final path = await _ensureRecorder.stop();
-    _isRecording = false;
-    if (path == null || _startedAt == null) {
+    final startedAt = _startedAt;
+    String? path;
+    try {
+      path = await _ensureRecorder.stop();
+    } finally {
+      _isRecording = false;
       _currentPath = null;
       _startedAt = null;
-      return null;
     }
-    final duration = DateTime.now().difference(_startedAt!).inSeconds;
+    if (path == null || startedAt == null) return null;
     final file = File(path);
-    final size = await file.exists() ? await file.length() : 0;
-    _currentPath = null;
-    _startedAt = null;
+    if (!await file.exists()) {
+      throw StateError('Recorder stopped without producing an audio file');
+    }
+    final size = await file.length();
+    if (size <= 0) throw StateError('Recorder produced an empty audio file');
     return RecordingResult(
       path: path,
-      durationSeconds: duration,
+      durationSeconds: DateTime.now().difference(startedAt).inSeconds,
       sizeBytes: size,
     );
   }
@@ -102,14 +113,18 @@ class DefaultRecordingService implements RecordingService {
   Future<void> dispose() async {
     await _recorder?.dispose();
     _recorder = null;
+    _isRecording = false;
+    _currentPath = null;
+    _startedAt = null;
   }
 }
 
-/// Test-only stub: never touches platform channels.
 class StubRecordingService implements RecordingService {
   bool _isRecording = false;
   String? _path;
+  bool _disposed = false;
   final List<String> events = [];
+  final StreamController<double> _amplitudes = StreamController.broadcast();
 
   @override
   bool get isRecording => _isRecording;
@@ -121,6 +136,15 @@ class StubRecordingService implements RecordingService {
     events.add('permission');
     return true;
   }
+
+  @override
+  Stream<double> amplitudeStream(Duration interval) {
+    events.add('amplitude:${interval.inMilliseconds}');
+    return _amplitudes.stream;
+  }
+
+  void emitAmplitude(double dbfs) => _amplitudes.add(dbfs);
+  void emitAmplitudeError(Object error) => _amplitudes.addError(error);
 
   @override
   Future<String> start() async {
@@ -135,13 +159,17 @@ class StubRecordingService implements RecordingService {
     events.add('stop');
     if (!_isRecording) return null;
     _isRecording = false;
-    final p = _path!;
+    final path = _path!;
     _path = null;
-    return RecordingResult(path: p, durationSeconds: 5, sizeBytes: 100);
+    return RecordingResult(path: path, durationSeconds: 5, sizeBytes: 100);
   }
 
   @override
   Future<void> dispose() async {
     events.add('dispose');
+    if (!_disposed) {
+      _disposed = true;
+      await _amplitudes.close();
+    }
   }
 }
