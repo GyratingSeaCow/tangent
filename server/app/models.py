@@ -31,7 +31,7 @@ class SetupResponse(BaseModel):
 
     token: str
     display_name: str
-    setup_completed_at: datetime
+    setup_completed_at: datetime | None
 
 
 class DumpCreate(BaseModel):

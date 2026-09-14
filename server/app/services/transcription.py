@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from app.config import get_settings
@@ -30,9 +31,20 @@ class TranscriptionService:
         from faster_whisper import WhisperModel
 
         target = model_name or self._model_name
-        log.info("transcription.loading_model", model=target)
+        download_root = Path(get_settings().data_dir) / "models"
+        download_root.mkdir(parents=True, exist_ok=True)
+        log.info(
+            "transcription.loading_model",
+            model=target,
+            download_root=str(download_root),
+        )
         # device="auto" lets faster-whisper pick CPU/CUDA; compute_type="int8" for CPU friendliness
-        self._model = WhisperModel(target, device="auto", compute_type="int8")
+        self._model = WhisperModel(
+            target,
+            device="auto",
+            compute_type="int8",
+            download_root=str(download_root),
+        )
         self._model_name = target
         log.info("transcription.model_loaded", model=target)
 

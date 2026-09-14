@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sqlite3
 from datetime import UTC, datetime
 from typing import Annotated
@@ -132,7 +133,7 @@ async def stream_job(
                     payload["transcript"] = row["result_transcript"]
                 elif current_status == "failed":
                     payload["error"] = row["error"]
-                yield {"event": current_status, "data": str(payload)}
+                yield {"event": current_status, "data": json.dumps(payload)}
                 last_status = current_status
 
             if current_status in ("completed", "failed"):

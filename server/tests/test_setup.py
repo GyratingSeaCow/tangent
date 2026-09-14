@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Tests for the /v1/setup endpoint."""
 
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -57,6 +58,27 @@ def test_setup_updates_display_name(client: TestClient):
     assert "<token-issued" in resp2.json()["token"]
     # Display name is updated
     assert resp2.json()["display_name"] == "Jeffrey"
+
+
+def test_setup_handles_legacy_row_without_completion_timestamp(
+    client: TestClient,
+    temp_data_dir: Path,
+):
+    db = sqlite3.connect(temp_data_dir / "tangent.db")
+    try:
+        db.execute(
+            "INSERT INTO auth (id, token_hash, display_name, created_at, setup_completed_at) "
+            "VALUES (1, ?, ?, ?, NULL)",
+            ("existing-token-hash", "Legacy", 1),
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    resp = client.post("/v1/setup", json={"display_name": "Jeff"})
+
+    assert resp.status_code == 200
+    assert resp.json()["setup_completed_at"] is None
 
 
 def test_setup_rejects_empty_display_name(client: TestClient):

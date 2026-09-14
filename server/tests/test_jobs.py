@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Tests for /v1/dumps/{id}/transcribe and /v1/jobs/{id} endpoints."""
 
+import json
 import sqlite3
 import time
 from pathlib import Path
@@ -90,6 +91,34 @@ def test_get_job_by_id(authed_client_with_dump):
     # prove the row existed at some point.
     resp = client.get(f"/v1/jobs/{job_id}", headers=_auth(token))
     assert resp.status_code in (200, 404)
+
+
+def test_completed_job_stream_emits_valid_json(
+    authed_client_with_dump,
+    temp_data_dir: Path,
+):
+    client, token, dump_id = authed_client_with_dump
+    transcript = "Jeff's update:\nready\tto ship\u0001"
+    conn = sqlite3.connect(temp_data_dir / "tangent.db")
+    try:
+        conn.execute(
+            """
+            INSERT INTO jobs (
+                id, dump_id, status, model, completed_at, result_transcript
+            ) VALUES (?, ?, 'completed', 'large-v3', ?, ?)
+            """,
+            ("completed-job", dump_id, int(time.time()), transcript),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    resp = client.get("/v1/jobs/completed-job/stream", headers=_auth(token))
+
+    assert resp.status_code == 200
+    data_line = next(line for line in resp.text.splitlines() if line.startswith("data: "))
+    payload = json.loads(data_line.removeprefix("data: "))
+    assert payload == {"status": "completed", "transcript": transcript}
 
 
 def test_enqueue_requires_auth(authed_client_with_dump):

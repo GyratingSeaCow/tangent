@@ -21,8 +21,8 @@ def _now_ts() -> int:
     return int(time.time())
 
 
-def _to_iso(ts: int) -> datetime:
-    return datetime.fromtimestamp(ts, tz=UTC)
+def _to_iso(ts: int | None) -> datetime | None:
+    return datetime.fromtimestamp(ts, tz=UTC) if ts is not None else None
 
 
 @router.post("/v1/setup", response_model=SetupResponse)

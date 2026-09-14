@@ -49,6 +49,17 @@ def test_service_loads_model_lazy(monkeypatch, tmp_path):
     assert service._model is original_model
 
 
+def test_service_loads_model_from_persistent_data_dir(monkeypatch, tmp_path):
+    model_root = tmp_path / "persistent-data"
+    monkeypatch.setenv("TANGENT_DATA_DIR", str(model_root))
+    monkeypatch.setattr("faster_whisper.WhisperModel", FakeWhisperModel)
+
+    service = TranscriptionService(model_name="large-v3")
+    service.load_model()
+
+    assert service._model.kwargs["download_root"] == str(model_root / "models")
+
+
 def test_service_returns_empty_string_for_empty_segments(monkeypatch, tmp_path):
     class EmptyModel(FakeWhisperModel):
         def transcribe(self, audio_path, **kwargs):
