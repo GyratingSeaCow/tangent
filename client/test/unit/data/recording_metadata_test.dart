@@ -107,4 +107,39 @@ void main() {
     expect(restore('blank', '   ').transcriptionStatus, 'not_transcribed');
     expect(restore('missing', null).transcriptionStatus, 'not_transcribed');
   });
+
+  test('schema v2 blank status derives completed from non-empty transcript',
+      () {
+    final row = importedDumpRow(
+      id: 'v2-blank-status',
+      locator: 'content://v2-blank-status',
+      sizeBytes: 1,
+      modifiedAt: DateTime.utc(2026, 9, 14),
+      metadata: const {
+        'schemaVersion': 2,
+        'title': 'Blank status',
+        'transcript': '  recovered transcript  ',
+        'transcriptionStatus': '',
+      },
+    );
+
+    expect(row.transcriptionStatus, 'completed');
+  });
+
+  test('schema v2 unknown status derives not transcribed from blank text', () {
+    final row = importedDumpRow(
+      id: 'v2-unknown-status',
+      locator: 'content://v2-unknown-status',
+      sizeBytes: 1,
+      modifiedAt: DateTime.utc(2026, 9, 14),
+      metadata: const {
+        'schemaVersion': 2,
+        'title': 'Unknown status',
+        'transcript': '   ',
+        'transcriptionStatus': 'recovering',
+      },
+    );
+
+    expect(row.transcriptionStatus, 'not_transcribed');
+  });
 }

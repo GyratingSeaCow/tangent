@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import '../models/transcription_status.dart';
 import 'local_db.dart';
 
 const recordingMetadataSchemaVersion = 2;
@@ -79,6 +80,10 @@ DumpRow importedDumpRow({
   final legacyStatus = transcript != null && transcript.trim().isNotEmpty
       ? 'completed'
       : 'not_transcribed';
+  final importedStatus = nullableText('transcriptionStatus');
+  final validImportedStatus = TranscriptionStatus.values.any(
+    (status) => status.wireValue == importedStatus,
+  );
   return DumpRow(
     id: id,
     createdAt: createdAt,
@@ -96,7 +101,9 @@ DumpRow importedDumpRow({
     syncAttempts: number('syncAttempts', 0),
     lastSyncError: metadata?['lastSyncError'] as String?,
     transcriptionStatus: schemaVersion >= 2
-        ? text('transcriptionStatus', legacyStatus)
+        ? validImportedStatus
+            ? importedStatus!
+            : legacyStatus
         : legacyStatus,
     transcriptionRequestId:
         schemaVersion >= 2 ? nullableText('transcriptionRequestId') : null,
