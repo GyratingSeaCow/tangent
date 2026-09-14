@@ -478,7 +478,7 @@ Expected: test file passes and analyzer reports no issues.
 Change `JobCreate.request_id` from the temporary optional field to `str = Field(min_length=8, max_length=128)`. Replace the temporary omission-compatibility test with an assertion that omission returns HTTP 422. Then run:
 
 ```bash
-cd ~/Documents/ADH2/server
+cd ~/Documents/ADH2/.worktrees/durable-transcription-recovery/server
 /c/Python314/python.exe -m pytest -q
 cd ../client
 "~/AppData/Local/flutter/bin/flutter.bat" test
@@ -780,7 +780,7 @@ git commit -m "feat(client): show durable transcription status"
 - [ ] **Step 1: Run all automated gates**
 
 ```bash
-cd ~/Documents/ADH2/server
+cd ~/Documents/ADH2/.worktrees/durable-transcription-recovery/server
 /c/Python314/python.exe -m pytest -q
 cd ../client
 "~/AppData/Local/flutter/bin/flutter.bat" pub get
@@ -793,7 +793,7 @@ Expected: every server/client test passes, no analyzer issues.
 - [ ] **Step 2: Rebuild and health-check the Docker stack**
 
 ```bash
-cd ~/Documents/ADH2/server
+cd ~/Documents/ADH2/.worktrees/durable-transcription-recovery/server
 DOCKER_CONFIG="$LOCALAPPDATA/Temp/tangent-docker-config"
 mkdir -p "$DOCKER_CONFIG"
 export DOCKER_CONFIG
