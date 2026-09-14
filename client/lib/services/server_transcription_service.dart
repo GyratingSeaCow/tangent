@@ -4,6 +4,7 @@ import 'dart:async';
 
 import 'package:drift/drift.dart' show Value;
 import 'package:flutter/foundation.dart';
+import 'package:uuid/uuid.dart';
 
 import '../data/audio_storage.dart';
 import '../data/local_db.dart';
@@ -139,9 +140,12 @@ class ServerTranscriptionService extends ChangeNotifier {
       );
       _notify();
 
-      final jobId = await _client.enqueueTranscription(row.id);
+      final job = await _client.enqueueTranscription(
+        row.id,
+        requestId: const Uuid().v4(),
+      );
       String? transcript;
-      await for (final event in _client.streamJob(jobId)) {
+      await for (final event in _client.streamJob(job.id)) {
         switch (event.status) {
           case 'queued':
             // Server confirmed queue position; no action needed.

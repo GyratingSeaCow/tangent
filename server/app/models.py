@@ -71,7 +71,7 @@ class JobCreate(BaseModel):
     """Request to enqueue a transcription job."""
 
     model: str = Field(default="large-v3", min_length=1, max_length=50)
-    request_id: str | None = Field(default=None, min_length=8, max_length=128)
+    request_id: str = Field(min_length=8, max_length=128)
 
 
 class JobResponse(BaseModel):

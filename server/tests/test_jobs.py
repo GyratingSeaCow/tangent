@@ -174,15 +174,14 @@ def test_request_id_conflicts_across_dump_or_model(
     assert conflict.status_code == 409
 
 
-def test_omitted_request_id_remains_backward_compatible(authed_client_with_dump):
+def test_omitted_request_id_returns_422(authed_client_with_dump):
     client, token, dump_id = authed_client_with_dump
     response = client.post(
         f"/v1/dumps/{dump_id}/transcribe",
         json={"model": "large-v3"},
         headers=_auth(token),
     )
-    assert response.status_code == 201
-    assert response.json()["request_id"].startswith("legacy:")
+    assert response.status_code == 422
 
 
 class _Cursor:
@@ -284,7 +283,10 @@ def test_enqueue_for_unknown_dump_returns_404(authed_client_with_dump):
     client, token, _ = authed_client_with_dump
     resp = client.post(
         "/v1/dumps/does-not-exist/transcribe",
-        json={"model": "large-v3"},
+        json={
+            "model": "large-v3",
+            "request_id": "request-unknown-dump-001",
+        },
         headers=_auth(token),
     )
     assert resp.status_code == 404

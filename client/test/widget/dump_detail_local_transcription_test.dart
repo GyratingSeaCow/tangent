@@ -45,11 +45,22 @@ class _FakeTranscriptionClient implements TranscriptionClient {
   }) async {}
 
   @override
-  Future<String> enqueueTranscription(
+  Future<TranscriptionJobSnapshot> enqueueTranscription(
     String dumpId, {
+    required String requestId,
     String model = 'large-v3',
   }) async =>
-      'job-$dumpId';
+      TranscriptionJobSnapshot(
+        id: 'job-$dumpId',
+        requestId: requestId,
+        dumpId: dumpId,
+        status: 'queued',
+        model: model,
+      );
+
+  @override
+  Future<TranscriptionJobSnapshot> getJob(String jobId) async =>
+      throw UnimplementedError();
 
   @override
   Future<ServerInfo> getServerInfo() async => throw UnimplementedError();

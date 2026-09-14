@@ -115,15 +115,17 @@ void main() {
           audioBytes: any(named: 'audioBytes'),
         ),
       ).thenAnswer((_) async {});
-      when(() => client.enqueueTranscription(any()))
-          .thenAnswer((_) async => 'job-1');
-
       await engine.syncNow();
 
       final fetched = await db.getDump('test-dump');
       expect(fetched!.syncStatus, SyncStatus.synced.wireValue);
       expect(engine.lastSync, isNotNull);
-      verifyNever(() => client.enqueueTranscription(any()));
+      verifyNever(
+        () => client.enqueueTranscription(
+          any(),
+          requestId: any(named: 'requestId'),
+        ),
+      );
     });
 
     test('syncNow marks dump failed when audio file missing', () async {

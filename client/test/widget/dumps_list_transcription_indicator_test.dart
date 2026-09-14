@@ -116,11 +116,21 @@ class _FakeClient implements TranscriptionClient {
     String mimeType = '',
   }) async {}
   @override
-  Future<String> enqueueTranscription(
+  Future<TranscriptionJobSnapshot> enqueueTranscription(
     String dumpId, {
+    required String requestId,
     String model = 'large-v3',
   }) async =>
-      'job';
+      TranscriptionJobSnapshot(
+        id: 'job',
+        requestId: requestId,
+        dumpId: dumpId,
+        status: 'queued',
+        model: model,
+      );
+  @override
+  Future<TranscriptionJobSnapshot> getJob(String jobId) async =>
+      throw UnimplementedError();
   @override
   Stream<JobEvent> streamJob(
     String jobId, {
