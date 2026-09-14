@@ -88,6 +88,73 @@ void main() {
     expect(saved!.transcript, 'words from this phone');
     expect(saved.syncStatus, 'pending');
   });
+
+  testWidgets('Meeting detail prioritizes notes and expands raw transcript',
+      (tester) async {
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    final temp = Directory.systemTemp.createTempSync('tangent-detail-meeting-');
+    final db = LocalDb.forTesting(NativeDatabase.memory());
+    final storage = AudioStorage.test(temp);
+    addTearDown(() async {
+      await db.close();
+      temp.deleteSync(recursive: true);
+    });
+    await db.upsertDump(
+      DumpRow(
+        id: 'meeting-detail',
+        createdAt: DateTime.utc(2026, 9, 14),
+        updatedAt: DateTime.utc(2026, 9, 14),
+        mode: 'meeting',
+        durationSeconds: 4,
+        title: 'Launch meeting',
+        transcript: 'Exact raw transcript words.',
+        meetingNotes: '# Launch\n\n## Summary\n\nQuoted summary.',
+        audioPath: storage.pathFor('meeting-detail').path,
+        audioSizeBytes: 3,
+        syncStatus: 'pending',
+        syncAttempts: 0,
+      ),
+    );
+    storage.pathFor('meeting-detail').writeAsBytesSync([1, 2, 3]);
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          localDbProvider.overrideWithValue(db),
+          audioStorageProvider.overrideWithValue(storage),
+          recordingPlaybackEngineFactoryProvider.overrideWithValue(
+            _TestPlaybackEngine.new,
+          ),
+        ],
+        child: const MaterialApp(
+          home: DumpDetailScreen(
+            dumpId: 'meeting-detail',
+            audioPath: 'unused',
+            durationSeconds: 4,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Meeting Notes'), findsOneWidget);
+    expect(find.textContaining('Quoted summary.'), findsOneWidget);
+    expect(find.text('Exact raw transcript words.'), findsNothing);
+
+    // The Raw Transcript is inside an ExpansionTile; the screen content may
+    // exceed the test viewport, so scroll it into view first, then tap.
+    final tileFinder = find.widgetWithText(ExpansionTile, 'Raw Transcript');
+    await tester.dragUntilVisible(
+      tileFinder,
+      find.byType(ListView),
+      const Offset(0, -120),
+    );
+    await tester.tap(tileFinder);
+    await tester.pumpAndSettle();
+    expect(find.text('Exact raw transcript words.'), findsOneWidget);
+  });
 }
 
 final class _TestPlaybackEngine implements RecordingPlaybackEngine {

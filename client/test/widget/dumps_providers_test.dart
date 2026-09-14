@@ -7,18 +7,24 @@ import 'package:tangent/models/sync_status.dart';
 import 'package:tangent/screens/dump/dumps_providers.dart';
 import 'package:tangent/screens/home/home_screen.dart' show localDbProvider;
 
-DumpRow _row(String id, {String title = 'T', String transcript = ''}) {
+DumpRow _row(
+  String id, {
+  String title = 'T',
+  String transcript = '',
+  String mode = 'brain_dump',
+  SyncStatus status = SyncStatus.pending,
+}) {
   return DumpRow(
     id: id,
     createdAt: DateTime.utc(2026, 1, 1).add(Duration(seconds: int.parse(id))),
     updatedAt: DateTime.utc(2026, 1, 1),
-    mode: 'brain_dump',
+    mode: mode,
     durationSeconds: 5,
     title: title,
     transcript: transcript,
     audioPath: '/tmp/$id.opus',
     audioSizeBytes: 100,
-    syncStatus: SyncStatus.pending.wireValue,
+    syncStatus: status.wireValue,
     syncAttempts: 0,
   );
 }
@@ -32,9 +38,11 @@ void main() {
       await db.upsertDump(_row('1', title: 'First'));
       await db.upsertDump(_row('2', title: 'Second'));
 
-      final container = ProviderContainer(overrides: [
-        localDbProvider.overrideWithValue(db),
-      ],);
+      final container = ProviderContainer(
+        overrides: [
+          localDbProvider.overrideWithValue(db),
+        ],
+      );
       addTearDown(() async {
         container.dispose();
         await db.close();
@@ -48,9 +56,11 @@ void main() {
     test('re-emits when a new dump is inserted', () async {
       final db = LocalDb.forTesting(NativeDatabase.memory());
 
-      final container = ProviderContainer(overrides: [
-        localDbProvider.overrideWithValue(db),
-      ],);
+      final container = ProviderContainer(
+        overrides: [
+          localDbProvider.overrideWithValue(db),
+        ],
+      );
       addTearDown(() async {
         container.dispose();
         await db.close();
@@ -75,9 +85,11 @@ void main() {
       final db = LocalDb.forTesting(NativeDatabase.memory());
       await db.upsertDump(_row('1', title: 'Hello', transcript: 'world'));
 
-      final container = ProviderContainer(overrides: [
-        localDbProvider.overrideWithValue(db),
-      ],);
+      final container = ProviderContainer(
+        overrides: [
+          localDbProvider.overrideWithValue(db),
+        ],
+      );
       addTearDown(() async {
         container.dispose();
         await db.close();
@@ -90,12 +102,17 @@ void main() {
 
     test('searches title and transcript via FTS5', () async {
       final db = LocalDb.forTesting(NativeDatabase.memory());
-      await db.upsertDump(_row('1', title: 'Grocery list', transcript: 'milk eggs'));
-      await db.upsertDump(_row('2', title: 'Meeting notes', transcript: 'budget'));
+      await db.upsertDump(
+        _row('1', title: 'Grocery list', transcript: 'milk eggs'),
+      );
+      await db
+          .upsertDump(_row('2', title: 'Meeting notes', transcript: 'budget'));
 
-      final container = ProviderContainer(overrides: [
-        localDbProvider.overrideWithValue(db),
-      ],);
+      final container = ProviderContainer(
+        overrides: [
+          localDbProvider.overrideWithValue(db),
+        ],
+      );
       addTearDown(() async {
         container.dispose();
         await db.close();
@@ -105,6 +122,71 @@ void main() {
       final results = await container.read(searchResultsProvider.future);
       expect(results.length, 1);
       expect(results.first.id, '1');
+    });
+  });
+
+  group('dump filters', () {
+    test('All, Brain Dump, Meeting, and Awaiting select the right rows', () {
+      final rows = [
+        _row('1', mode: 'brain_dump', status: SyncStatus.synced),
+        _row('2', mode: 'meeting', status: SyncStatus.synced),
+        _row('3', mode: 'meeting'),
+      ];
+
+      expect(
+        filterDumps(rows, DumpFilter.all).map((row) => row.id),
+        ['1', '2', '3'],
+      );
+      expect(
+        filterDumps(rows, DumpFilter.brainDump).map((row) => row.id),
+        ['1'],
+      );
+      expect(
+        filterDumps(rows, DumpFilter.meeting).map((row) => row.id),
+        ['2', '3'],
+      );
+      expect(
+        filterDumps(rows, DumpFilter.awaiting).map((row) => row.id),
+        ['3'],
+      );
+    });
+
+    test('search results respect the selected filter', () async {
+      final db = LocalDb.forTesting(NativeDatabase.memory());
+      await db.upsertDump(
+        _row('1', title: 'Budget brain dump', transcript: 'budget'),
+      );
+      await db.upsertDump(
+        _row(
+          '2',
+          title: 'Budget meeting',
+          transcript: 'budget',
+          mode: 'meeting',
+        ),
+      );
+      final container = ProviderContainer(
+        overrides: [
+          localDbProvider.overrideWithValue(db),
+        ],
+      );
+      addTearDown(() async {
+        container.dispose();
+        await db.close();
+      });
+
+      container.read(dumpFilterProvider.notifier).state = DumpFilter.meeting;
+      container.read(searchQueryProvider.notifier).state = 'budget';
+
+      final results = await container.read(searchResultsProvider.future);
+      expect(results.map((row) => row.id), ['2']);
+    });
+
+    test('filter state survives provider listeners navigating away', () {
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+
+      container.read(dumpFilterProvider.notifier).state = DumpFilter.meeting;
+      expect(container.read(dumpFilterProvider), DumpFilter.meeting);
     });
   });
 }

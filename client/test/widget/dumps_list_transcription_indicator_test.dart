@@ -29,6 +29,7 @@ void main() {
     await db.upsertDump(_row('active', 'Currently processing'));
     await db.upsertDump(_row('queued', 'Waiting recording'));
     await db.upsertDump(_row('other', 'Another recording'));
+    await db.upsertDump(_row('meeting', 'Meeting recording', mode: 'meeting'));
 
     await tester.pumpWidget(
       ProviderScope(
@@ -59,17 +60,26 @@ void main() {
       find.byKey(const ValueKey('transcription-indicator-other')),
       findsNothing,
     );
+    expect(find.text('All'), findsOneWidget);
+    expect(find.text('Brain Dump'), findsOneWidget);
+    expect(find.text('Meeting'), findsOneWidget);
+    expect(find.text('Awaiting'), findsOneWidget);
+
+    await tester.tap(find.text('Meeting'));
+    await tester.pumpAndSettle();
+    expect(find.text('Meeting recording'), findsOneWidget);
+    expect(find.text('Currently processing'), findsNothing);
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump(const Duration(milliseconds: 1));
   });
 }
 
-DumpRow _row(String id, String title) => DumpRow(
+DumpRow _row(String id, String title, {String mode = 'brain_dump'}) => DumpRow(
       id: id,
       createdAt: DateTime.utc(2026, 9, 14),
       updatedAt: DateTime.utc(2026, 9, 14),
-      mode: 'brain_dump',
+      mode: mode,
       durationSeconds: 9,
       title: title,
       audioPath: 'content://tangent/$id.opus',

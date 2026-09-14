@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import 'dart:async';
 
+import 'package:drift/drift.dart' show Value;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -9,6 +10,7 @@ import '../../data/recording_metadata.dart';
 import '../../models/dump_mode.dart';
 import '../../models/sync_status.dart';
 import '../../services/local_transcription_coordinator.dart';
+import '../../services/meeting_notes_processor.dart';
 import '../../services/on_device_transcription.dart';
 import '../../services/recording_playback.dart';
 import '../home/home_screen.dart' show localDbProvider;
@@ -144,6 +146,44 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
     ref.read(localTranscriptionCoordinatorProvider).cancel(widget.dumpId);
   }
 
+  /// Regenerate secretary notes from the existing transcript without
+  /// re-running Whisper. Preserves the raw transcript; only writes to
+  /// `meeting_notes` and the public sidecar.
+  Future<void> _regenerateMeetingNotes(String transcript) async {
+    final db = ref.read(localDbProvider);
+    final audio = ref.read(audioStorageProvider);
+    setState(() {
+      _statusError = null;
+      _statusMessage = 'Generating meeting notes…';
+    });
+    try {
+      final existing = await db.getDump(widget.dumpId);
+      if (existing == null) throw StateError('Dump not found');
+      final processor = const MeetingNotesProcessor();
+      final notes = processor.process(
+        title: existing.title,
+        transcript: transcript,
+      );
+      final updated = existing.copyWith(
+        meetingNotes: Value(notes),
+        updatedAt: DateTime.now().toUtc(),
+      );
+      await audio.writeMetadata(updated.id, dumpMetadata(updated));
+      await db.upsertDump(updated);
+      ref.invalidate(dumpByIdProvider(widget.dumpId));
+      if (mounted) {
+        setState(() => _statusMessage = 'Meeting notes updated');
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _statusError = 'Generate notes failed: $e';
+          _statusMessage = null;
+        });
+      }
+    }
+  }
+
   Future<void> _delete() async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -181,13 +221,13 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final dumpAsync = ref.watch(dumpByIdProvider(widget.dumpId));
+    final rowAsync = ref.watch(dumpByIdProvider(widget.dumpId));
     final coordinator = ref.watch(localTranscriptionCoordinatorProvider);
     final operation = coordinator.operationFor(widget.dumpId);
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Dump'),
+        title: Text(_modeTitle(rowAsync.valueOrNull)),
         actions: [
           IconButton(
             icon: const Icon(Icons.delete_outline),
@@ -196,12 +236,18 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
           ),
         ],
       ),
-      body: dumpAsync.when(
+      body: rowAsync.when(
         data: (row) => _buildBody(context, row, operation),
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, _) => Center(child: Text('Error: $e')),
       ),
     );
+  }
+
+  String _modeTitle(DumpRow? row) {
+    if (row == null) return 'Dump';
+    final mode = DumpMode.fromWire(row.mode);
+    return mode == DumpMode.meeting ? 'Meeting' : 'Dump';
   }
 
   Widget _buildBody(
@@ -252,9 +298,71 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
           onSeek: _playbackController.seek,
         ),
         const SizedBox(height: 16),
-        if (displayTranscript != null && displayTranscript.isNotEmpty) ...[
+        if (mode == DumpMode.meeting &&
+            row.meetingNotes != null &&
+            row.meetingNotes!.trim().isNotEmpty) ...[
           Text(
-            'Transcript',
+            'Meeting Notes',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 8),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: SelectableText(row.meetingNotes!),
+            ),
+          ),
+          const SizedBox(height: 8),
+          if (displayTranscript != null && displayTranscript.isNotEmpty)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: OutlinedButton.icon(
+                key: ValueKey('regenerate-notes-${widget.dumpId}'),
+                icon: const Icon(Icons.refresh),
+                label: const Text('Regenerate notes'),
+                onPressed: () => _regenerateMeetingNotes(displayTranscript),
+              ),
+            ),
+          Card(
+            child: ExpansionTile(
+              title: const Text('Raw Transcript'),
+              childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              children: [
+                SelectableText(displayTranscript ?? 'None stated'),
+              ],
+            ),
+          ),
+        ] else if (mode == DumpMode.meeting &&
+            displayTranscript != null &&
+            displayTranscript.isNotEmpty) ...[
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Raw Transcript',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 8),
+                  SelectableText(displayTranscript),
+                  const SizedBox(height: 12),
+                  FilledButton.icon(
+                    key: ValueKey('generate-notes-${widget.dumpId}'),
+                    icon: const Icon(Icons.auto_awesome),
+                    label: const Text('Generate meeting notes'),
+                    onPressed: () =>
+                        _regenerateMeetingNotes(displayTranscript),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ] else if (displayTranscript != null &&
+            displayTranscript.isNotEmpty) ...[
+          Text(
+            mode == DumpMode.meeting ? 'Raw Transcript' : 'Transcript',
             style: Theme.of(context).textTheme.titleMedium,
           ),
           const SizedBox(height: 8),

@@ -33,10 +33,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Big red record button on home screen with live timer
 - **Brain Dump mode** (default) — verbatim transcription
 - **Meeting mode** — secretary-formatted summary
+- Deterministic offline Meeting notes derived only from the local transcript, with separate raw-transcript storage and no meeting upload
 - Local SQLite with FTS5 full-text search across dumps
 - Local-first storage (always saves before syncing)
 - Sync engine: batches pending dumps to server, retry + failure tracking
 - Dumps list screen with reactive updates and search
+- Persistent All / Brain Dump / Meeting / Awaiting list filters that compose with search
 - Dump detail screen: edit title, view transcript, delete, re-transcribe
 - Server connection screen: URL + token entry with "Test & Connect"
 - Settings screen: trigger mode (tap vs hold), Wi-Fi-only sync, server reconfig

@@ -36,8 +36,7 @@ void main() {
       conn = _MockConnectivity();
       when(() => conn.currentStatus())
           .thenAnswer((_) async => ConnectivityStatus.wifi);
-      when(() => conn.statusStream)
-          .thenAnswer((_) => const Stream.empty());
+      when(() => conn.statusStream).thenAnswer((_) => const Stream.empty());
       when(() => client.baseUrl).thenReturn('http://test');
       engine = SyncEngine(
         db: db,
@@ -83,18 +82,20 @@ void main() {
     });
 
     test('syncNow uploads pending dumps and marks synced', () async {
-      await db.upsertDump(DumpRow(
-        id: 'test-dump',
-        createdAt: DateTime.utc(2026, 1, 1),
-        updatedAt: DateTime.utc(2026, 1, 1),
-        mode: 'brain_dump',
-        durationSeconds: 5,
-        title: 'Test',
-        audioPath: '${tmp.path}/Tangent/test-dump.opus',
-        audioSizeBytes: 100,
-        syncStatus: SyncStatus.pending.wireValue,
-        syncAttempts: 0,
-      ),);
+      await db.upsertDump(
+        DumpRow(
+          id: 'test-dump',
+          createdAt: DateTime.utc(2026, 1, 1),
+          updatedAt: DateTime.utc(2026, 1, 1),
+          mode: 'brain_dump',
+          durationSeconds: 5,
+          title: 'Test',
+          audioPath: '${tmp.path}/Tangent/test-dump.opus',
+          audioSizeBytes: 100,
+          syncStatus: SyncStatus.pending.wireValue,
+          syncAttempts: 0,
+        ),
+      );
       await File('${tmp.path}/Tangent/test-dump.opus')
           .writeAsBytes(Uint8List(100));
       when(
@@ -124,24 +125,71 @@ void main() {
     });
 
     test('syncNow marks dump failed when audio file missing', () async {
-      await db.upsertDump(DumpRow(
-        id: 'orphan-dump',
-        createdAt: DateTime.utc(2026, 1, 1),
-        updatedAt: DateTime.utc(2026, 1, 1),
-        mode: 'brain_dump',
-        durationSeconds: 5,
-        title: 'No audio',
-        audioPath: '/nonexistent.opus',
-        audioSizeBytes: 0,
-        syncStatus: SyncStatus.pending.wireValue,
-        syncAttempts: 0,
-      ),);
+      await db.upsertDump(
+        DumpRow(
+          id: 'orphan-dump',
+          createdAt: DateTime.utc(2026, 1, 1),
+          updatedAt: DateTime.utc(2026, 1, 1),
+          mode: 'brain_dump',
+          durationSeconds: 5,
+          title: 'No audio',
+          audioPath: '/nonexistent.opus',
+          audioSizeBytes: 0,
+          syncStatus: SyncStatus.pending.wireValue,
+          syncAttempts: 0,
+        ),
+      );
       await engine.syncNow();
 
       final fetched = await db.getDump('orphan-dump');
       expect(fetched!.syncStatus, SyncStatus.failed.wireValue);
       expect(fetched.syncAttempts, 1);
       expect(fetched.lastSyncError, contains('audio file missing'));
+    });
+
+    test('meeting audio and transcript never leave the device', () async {
+      await db.upsertDump(
+        DumpRow(
+          id: 'private-meeting',
+          createdAt: DateTime.utc(2026, 1, 1),
+          updatedAt: DateTime.utc(2026, 1, 1),
+          mode: 'meeting',
+          durationSeconds: 5,
+          title: 'Private meeting',
+          transcript: 'Confidential meeting words',
+          meetingNotes: '# Private meeting',
+          audioPath: '${tmp.path}/Tangent/private-meeting.opus',
+          audioSizeBytes: 3,
+          syncStatus: SyncStatus.localOnly.wireValue,
+          syncAttempts: 0,
+        ),
+      );
+      await File('${tmp.path}/Tangent/private-meeting.opus')
+          .writeAsBytes([1, 2, 3]);
+
+      await engine.syncNow();
+
+      verifyNever(
+        () => client.createDump(
+          id: any(named: 'id'),
+          mode: any(named: 'mode'),
+          durationSeconds: any(named: 'durationSeconds'),
+          title: any(named: 'title'),
+          createdAt: any(named: 'createdAt'),
+        ),
+      );
+      verifyNever(
+        () => client.uploadAudio(
+          dumpId: any(named: 'dumpId'),
+          audioBytes: any(named: 'audioBytes'),
+        ),
+      );
+      // `local_only` meetings are filtered out by `dumpsNeedingUpload`, so
+      // their status is unchanged after sync.
+      expect(
+        (await db.getDump('private-meeting'))!.syncStatus,
+        SyncStatus.localOnly.wireValue,
+      );
     });
   });
 }

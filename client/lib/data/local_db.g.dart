@@ -53,6 +53,12 @@ class $DumpsTable extends Dumps with TableInfo<$DumpsTable, DumpRow> {
   late final GeneratedColumn<String> transcript = GeneratedColumn<String>(
       'transcript', aliasedName, true,
       type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _meetingNotesMeta =
+      const VerificationMeta('meetingNotes');
+  @override
+  late final GeneratedColumn<String> meetingNotes = GeneratedColumn<String>(
+      'meeting_notes', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
   static const VerificationMeta _audioPathMeta =
       const VerificationMeta('audioPath');
   @override
@@ -97,6 +103,7 @@ class $DumpsTable extends Dumps with TableInfo<$DumpsTable, DumpRow> {
         durationSeconds,
         title,
         transcript,
+        meetingNotes,
         audioPath,
         audioSizeBytes,
         syncStatus,
@@ -156,6 +163,12 @@ class $DumpsTable extends Dumps with TableInfo<$DumpsTable, DumpRow> {
           transcript.isAcceptableOrUnknown(
               data['transcript']!, _transcriptMeta));
     }
+    if (data.containsKey('meeting_notes')) {
+      context.handle(
+          _meetingNotesMeta,
+          meetingNotes.isAcceptableOrUnknown(
+              data['meeting_notes']!, _meetingNotesMeta));
+    }
     if (data.containsKey('audio_path')) {
       context.handle(_audioPathMeta,
           audioPath.isAcceptableOrUnknown(data['audio_path']!, _audioPathMeta));
@@ -213,6 +226,8 @@ class $DumpsTable extends Dumps with TableInfo<$DumpsTable, DumpRow> {
           .read(DriftSqlType.string, data['${effectivePrefix}title'])!,
       transcript: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}transcript']),
+      meetingNotes: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}meeting_notes']),
       audioPath: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}audio_path'])!,
       audioSizeBytes: attachedDatabase.typeMapping
@@ -240,6 +255,7 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
   final int durationSeconds;
   final String title;
   final String? transcript;
+  final String? meetingNotes;
   final String audioPath;
   final int audioSizeBytes;
   final String syncStatus;
@@ -253,6 +269,7 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
       required this.durationSeconds,
       required this.title,
       this.transcript,
+      this.meetingNotes,
       required this.audioPath,
       required this.audioSizeBytes,
       required this.syncStatus,
@@ -269,6 +286,9 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
     map['title'] = Variable<String>(title);
     if (!nullToAbsent || transcript != null) {
       map['transcript'] = Variable<String>(transcript);
+    }
+    if (!nullToAbsent || meetingNotes != null) {
+      map['meeting_notes'] = Variable<String>(meetingNotes);
     }
     map['audio_path'] = Variable<String>(audioPath);
     map['audio_size_bytes'] = Variable<int>(audioSizeBytes);
@@ -291,6 +311,9 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
       transcript: transcript == null && nullToAbsent
           ? const Value.absent()
           : Value(transcript),
+      meetingNotes: meetingNotes == null && nullToAbsent
+          ? const Value.absent()
+          : Value(meetingNotes),
       audioPath: Value(audioPath),
       audioSizeBytes: Value(audioSizeBytes),
       syncStatus: Value(syncStatus),
@@ -312,6 +335,7 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
       durationSeconds: serializer.fromJson<int>(json['durationSeconds']),
       title: serializer.fromJson<String>(json['title']),
       transcript: serializer.fromJson<String?>(json['transcript']),
+      meetingNotes: serializer.fromJson<String?>(json['meetingNotes']),
       audioPath: serializer.fromJson<String>(json['audioPath']),
       audioSizeBytes: serializer.fromJson<int>(json['audioSizeBytes']),
       syncStatus: serializer.fromJson<String>(json['syncStatus']),
@@ -330,6 +354,7 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
       'durationSeconds': serializer.toJson<int>(durationSeconds),
       'title': serializer.toJson<String>(title),
       'transcript': serializer.toJson<String?>(transcript),
+      'meetingNotes': serializer.toJson<String?>(meetingNotes),
       'audioPath': serializer.toJson<String>(audioPath),
       'audioSizeBytes': serializer.toJson<int>(audioSizeBytes),
       'syncStatus': serializer.toJson<String>(syncStatus),
@@ -346,6 +371,7 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
           int? durationSeconds,
           String? title,
           Value<String?> transcript = const Value.absent(),
+          Value<String?> meetingNotes = const Value.absent(),
           String? audioPath,
           int? audioSizeBytes,
           String? syncStatus,
@@ -359,6 +385,8 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
         durationSeconds: durationSeconds ?? this.durationSeconds,
         title: title ?? this.title,
         transcript: transcript.present ? transcript.value : this.transcript,
+        meetingNotes:
+            meetingNotes.present ? meetingNotes.value : this.meetingNotes,
         audioPath: audioPath ?? this.audioPath,
         audioSizeBytes: audioSizeBytes ?? this.audioSizeBytes,
         syncStatus: syncStatus ?? this.syncStatus,
@@ -378,6 +406,9 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
       title: data.title.present ? data.title.value : this.title,
       transcript:
           data.transcript.present ? data.transcript.value : this.transcript,
+      meetingNotes: data.meetingNotes.present
+          ? data.meetingNotes.value
+          : this.meetingNotes,
       audioPath: data.audioPath.present ? data.audioPath.value : this.audioPath,
       audioSizeBytes: data.audioSizeBytes.present
           ? data.audioSizeBytes.value
@@ -403,6 +434,7 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
           ..write('durationSeconds: $durationSeconds, ')
           ..write('title: $title, ')
           ..write('transcript: $transcript, ')
+          ..write('meetingNotes: $meetingNotes, ')
           ..write('audioPath: $audioPath, ')
           ..write('audioSizeBytes: $audioSizeBytes, ')
           ..write('syncStatus: $syncStatus, ')
@@ -421,6 +453,7 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
       durationSeconds,
       title,
       transcript,
+      meetingNotes,
       audioPath,
       audioSizeBytes,
       syncStatus,
@@ -437,6 +470,7 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
           other.durationSeconds == this.durationSeconds &&
           other.title == this.title &&
           other.transcript == this.transcript &&
+          other.meetingNotes == this.meetingNotes &&
           other.audioPath == this.audioPath &&
           other.audioSizeBytes == this.audioSizeBytes &&
           other.syncStatus == this.syncStatus &&
@@ -452,6 +486,7 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
   final Value<int> durationSeconds;
   final Value<String> title;
   final Value<String?> transcript;
+  final Value<String?> meetingNotes;
   final Value<String> audioPath;
   final Value<int> audioSizeBytes;
   final Value<String> syncStatus;
@@ -466,6 +501,7 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
     this.durationSeconds = const Value.absent(),
     this.title = const Value.absent(),
     this.transcript = const Value.absent(),
+    this.meetingNotes = const Value.absent(),
     this.audioPath = const Value.absent(),
     this.audioSizeBytes = const Value.absent(),
     this.syncStatus = const Value.absent(),
@@ -481,6 +517,7 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
     required int durationSeconds,
     required String title,
     this.transcript = const Value.absent(),
+    this.meetingNotes = const Value.absent(),
     required String audioPath,
     required int audioSizeBytes,
     required String syncStatus,
@@ -504,6 +541,7 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
     Expression<int>? durationSeconds,
     Expression<String>? title,
     Expression<String>? transcript,
+    Expression<String>? meetingNotes,
     Expression<String>? audioPath,
     Expression<int>? audioSizeBytes,
     Expression<String>? syncStatus,
@@ -519,6 +557,7 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
       if (durationSeconds != null) 'duration_seconds': durationSeconds,
       if (title != null) 'title': title,
       if (transcript != null) 'transcript': transcript,
+      if (meetingNotes != null) 'meeting_notes': meetingNotes,
       if (audioPath != null) 'audio_path': audioPath,
       if (audioSizeBytes != null) 'audio_size_bytes': audioSizeBytes,
       if (syncStatus != null) 'sync_status': syncStatus,
@@ -536,6 +575,7 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
       Value<int>? durationSeconds,
       Value<String>? title,
       Value<String?>? transcript,
+      Value<String?>? meetingNotes,
       Value<String>? audioPath,
       Value<int>? audioSizeBytes,
       Value<String>? syncStatus,
@@ -550,6 +590,7 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
       durationSeconds: durationSeconds ?? this.durationSeconds,
       title: title ?? this.title,
       transcript: transcript ?? this.transcript,
+      meetingNotes: meetingNotes ?? this.meetingNotes,
       audioPath: audioPath ?? this.audioPath,
       audioSizeBytes: audioSizeBytes ?? this.audioSizeBytes,
       syncStatus: syncStatus ?? this.syncStatus,
@@ -583,6 +624,9 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
     if (transcript.present) {
       map['transcript'] = Variable<String>(transcript.value);
     }
+    if (meetingNotes.present) {
+      map['meeting_notes'] = Variable<String>(meetingNotes.value);
+    }
     if (audioPath.present) {
       map['audio_path'] = Variable<String>(audioPath.value);
     }
@@ -614,6 +658,7 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
           ..write('durationSeconds: $durationSeconds, ')
           ..write('title: $title, ')
           ..write('transcript: $transcript, ')
+          ..write('meetingNotes: $meetingNotes, ')
           ..write('audioPath: $audioPath, ')
           ..write('audioSizeBytes: $audioSizeBytes, ')
           ..write('syncStatus: $syncStatus, ')
@@ -876,6 +921,7 @@ typedef $$DumpsTableCreateCompanionBuilder = DumpsCompanion Function({
   required int durationSeconds,
   required String title,
   Value<String?> transcript,
+  Value<String?> meetingNotes,
   required String audioPath,
   required int audioSizeBytes,
   required String syncStatus,
@@ -891,6 +937,7 @@ typedef $$DumpsTableUpdateCompanionBuilder = DumpsCompanion Function({
   Value<int> durationSeconds,
   Value<String> title,
   Value<String?> transcript,
+  Value<String?> meetingNotes,
   Value<String> audioPath,
   Value<int> audioSizeBytes,
   Value<String> syncStatus,
@@ -947,6 +994,9 @@ class $$DumpsTableFilterComposer extends Composer<_$LocalDb, $DumpsTable> {
 
   ColumnFilters<String> get transcript => $composableBuilder(
       column: $table.transcript, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get meetingNotes => $composableBuilder(
+      column: $table.meetingNotes, builder: (column) => ColumnFilters(column));
 
   ColumnFilters<String> get audioPath => $composableBuilder(
       column: $table.audioPath, builder: (column) => ColumnFilters(column));
@@ -1016,6 +1066,10 @@ class $$DumpsTableOrderingComposer extends Composer<_$LocalDb, $DumpsTable> {
   ColumnOrderings<String> get transcript => $composableBuilder(
       column: $table.transcript, builder: (column) => ColumnOrderings(column));
 
+  ColumnOrderings<String> get meetingNotes => $composableBuilder(
+      column: $table.meetingNotes,
+      builder: (column) => ColumnOrderings(column));
+
   ColumnOrderings<String> get audioPath => $composableBuilder(
       column: $table.audioPath, builder: (column) => ColumnOrderings(column));
 
@@ -1063,6 +1117,9 @@ class $$DumpsTableAnnotationComposer extends Composer<_$LocalDb, $DumpsTable> {
 
   GeneratedColumn<String> get transcript => $composableBuilder(
       column: $table.transcript, builder: (column) => column);
+
+  GeneratedColumn<String> get meetingNotes => $composableBuilder(
+      column: $table.meetingNotes, builder: (column) => column);
 
   GeneratedColumn<String> get audioPath =>
       $composableBuilder(column: $table.audioPath, builder: (column) => column);
@@ -1131,6 +1188,7 @@ class $$DumpsTableTableManager extends RootTableManager<
             Value<int> durationSeconds = const Value.absent(),
             Value<String> title = const Value.absent(),
             Value<String?> transcript = const Value.absent(),
+            Value<String?> meetingNotes = const Value.absent(),
             Value<String> audioPath = const Value.absent(),
             Value<int> audioSizeBytes = const Value.absent(),
             Value<String> syncStatus = const Value.absent(),
@@ -1146,6 +1204,7 @@ class $$DumpsTableTableManager extends RootTableManager<
             durationSeconds: durationSeconds,
             title: title,
             transcript: transcript,
+            meetingNotes: meetingNotes,
             audioPath: audioPath,
             audioSizeBytes: audioSizeBytes,
             syncStatus: syncStatus,
@@ -1161,6 +1220,7 @@ class $$DumpsTableTableManager extends RootTableManager<
             required int durationSeconds,
             required String title,
             Value<String?> transcript = const Value.absent(),
+            Value<String?> meetingNotes = const Value.absent(),
             required String audioPath,
             required int audioSizeBytes,
             required String syncStatus,
@@ -1176,6 +1236,7 @@ class $$DumpsTableTableManager extends RootTableManager<
             durationSeconds: durationSeconds,
             title: title,
             transcript: transcript,
+            meetingNotes: meetingNotes,
             audioPath: audioPath,
             audioSizeBytes: audioSizeBytes,
             syncStatus: syncStatus,

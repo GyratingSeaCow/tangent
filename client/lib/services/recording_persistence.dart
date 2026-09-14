@@ -2,6 +2,7 @@
 import '../data/audio_storage.dart';
 import '../data/local_db.dart';
 import '../data/recording_metadata.dart';
+import '../models/sync_status.dart';
 import 'recording_service.dart';
 
 class RecordingPersistence {
@@ -29,7 +30,9 @@ class RecordingPersistence {
       title: generatedRecordingTitle(now),
       audioPath: result.path,
       audioSizeBytes: result.sizeBytes,
-      syncStatus: 'pending',
+      syncStatus: mode == 'meeting'
+          ? SyncStatus.localOnly.wireValue
+          : SyncStatus.pending.wireValue,
       syncAttempts: 0,
     );
     final stored = await _storage.persistRecording(

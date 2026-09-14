@@ -29,8 +29,9 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final dumpsAsync = ref.watch(dumpsProvider);
+    final dumpsAsync = ref.watch(filteredDumpsProvider);
     final query = ref.watch(searchQueryProvider);
+    final filter = ref.watch(dumpFilterProvider);
     final searchAsync = ref.watch(searchResultsProvider);
     final transcription = ref.watch(localTranscriptionCoordinatorProvider);
 
@@ -69,25 +70,51 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
             ),
         ],
       ),
-      body: showingSearch
-          ? searchAsync.when(
-              data: (results) => _DumpList(
-                dumps: results,
-                empty: 'No matches',
-                transcription: transcription,
-              ),
-              loading: () => const Center(child: CircularProgressIndicator()),
-              error: (e, _) => Center(child: Text('Search error: $e')),
-            )
-          : dumpsAsync.when(
-              data: (dumps) => _DumpList(
-                dumps: dumps,
-                empty: 'No dumps yet — record one!',
-                transcription: transcription,
-              ),
-              loading: () => const Center(child: CircularProgressIndicator()),
-              error: (e, _) => Center(child: Text('DB error: $e')),
+      body: Column(
+        children: [
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+            child: Row(
+              children: [
+                for (final choice in DumpFilter.values) ...[
+                  FilterChip(
+                    key: ValueKey('dump-filter-${choice.name}'),
+                    label: Text(choice.label),
+                    selected: filter == choice,
+                    onSelected: (_) =>
+                        ref.read(dumpFilterProvider.notifier).state = choice,
+                  ),
+                  const SizedBox(width: 8),
+                ],
+              ],
             ),
+          ),
+          Expanded(
+            child: showingSearch
+                ? searchAsync.when(
+                    data: (results) => _DumpList(
+                      dumps: results,
+                      empty: 'No matches',
+                      transcription: transcription,
+                    ),
+                    loading: () =>
+                        const Center(child: CircularProgressIndicator()),
+                    error: (e, _) => Center(child: Text('Search error: $e')),
+                  )
+                : dumpsAsync.when(
+                    data: (dumps) => _DumpList(
+                      dumps: dumps,
+                      empty: 'No dumps yet — record one!',
+                      transcription: transcription,
+                    ),
+                    loading: () =>
+                        const Center(child: CircularProgressIndicator()),
+                    error: (e, _) => Center(child: Text('DB error: $e')),
+                  ),
+          ),
+        ],
+      ),
     );
   }
 }

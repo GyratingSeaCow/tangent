@@ -19,11 +19,11 @@ class Dumps extends Table {
   IntColumn get durationSeconds => integer()();
   TextColumn get title => text().withLength(min: 1, max: 500)();
   TextColumn get transcript => text().nullable()();
+  TextColumn get meetingNotes => text().nullable()();
   TextColumn get audioPath => text()();
   IntColumn get audioSizeBytes => integer()();
   TextColumn get syncStatus => text().withLength(min: 1, max: 20)();
-  IntColumn get syncAttempts =>
-      integer().withDefault(const Constant(0))();
+  IntColumn get syncAttempts => integer().withDefault(const Constant(0))();
   TextColumn get lastSyncError => text().nullable()();
 
   @override
@@ -45,7 +45,7 @@ class LocalDb extends _$LocalDb {
   LocalDb.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 2;
+  int get schemaVersion => 3;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -56,6 +56,20 @@ class LocalDb extends _$LocalDb {
         onUpgrade: (m, from, to) async {
           if (from < 2) {
             await _replaceFtsTriggers();
+          }
+          if (from < 3) {
+            await m.addColumn(dumps, dumps.meetingNotes);
+            // Migration v2 → v3 promotes meetings to private on-device state.
+            // Already-synced meetings remain synced because the remote copy is
+            // truth and we cannot prove the server has deleted it. Pending,
+            // syncing, and failed meetings are demoted to local_only and have
+            // their stale retry state cleared so the user does not see error
+            // strings on rows that will never retry.
+            await customStatement(
+              'UPDATE dumps SET sync_status = \'local_only\', '
+              'sync_attempts = 0, last_sync_error = NULL '
+              'WHERE mode = \'meeting\' AND sync_status IN (\'pending\', \'syncing\', \'failed\')',
+            );
           }
         },
       );
@@ -118,8 +132,7 @@ class LocalDb extends _$LocalDb {
   /// Reactive stream of all dumps, newest first.
   /// Emits whenever any row in [dumps] changes.
   Stream<List<DumpRow>> watchAllDumps() {
-    return (select(dumps)
-          ..orderBy([(d) => OrderingTerm.desc(d.createdAt)]))
+    return (select(dumps)..orderBy([(d) => OrderingTerm.desc(d.createdAt)]))
         .watch();
   }
 
@@ -153,8 +166,7 @@ class LocalDb extends _$LocalDb {
     await (update(dumps)..where((d) => d.id.equals(id))).write(
       DumpsCompanion(
         syncStatus: Value(status.wireValue),
-        syncAttempts:
-            attempts != null ? Value(attempts) : const Value.absent(),
+        syncAttempts: attempts != null ? Value(attempts) : const Value.absent(),
         lastSyncError:
             lastError != null ? Value(lastError) : const Value.absent(),
         updatedAt: Value(DateTime.now().toUtc()),
@@ -162,13 +174,16 @@ class LocalDb extends _$LocalDb {
     );
   }
 
-  /// Find all dumps that need uploading (excludes synced, limited attempts).
+  /// Find all dumps that need uploading. Excludes synced rows, local-only
+  /// rows, and meeting recordings, which are intentionally kept private.
   Future<List<DumpRow>> dumpsNeedingUpload({int maxAttempts = 5}) {
     return customSelect(
-      'SELECT * FROM dumps WHERE sync_status != ? AND sync_attempts < ? '
+      'SELECT * FROM dumps '
+      "WHERE sync_status NOT IN ('synced', 'local_only') "
+      "AND mode != 'meeting' "
+      'AND sync_attempts < ? '
       'ORDER BY created_at ASC',
       variables: [
-        Variable.withString(SyncStatus.synced.wireValue),
         Variable.withInt(maxAttempts),
       ],
       readsFrom: {dumps},

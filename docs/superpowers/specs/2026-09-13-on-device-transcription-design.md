@@ -63,9 +63,17 @@ On successful inference:
 
 Local transcription does not mark a recording remotely synced. Sync status continues to describe optional server replication only.
 
+### Meeting workflow
+
+The Dumps screen keeps a process-lifetime filter selection directly below search: **All**, **Brain Dump**, **Meeting**, and **Awaiting**. Search results are intersected with the selected filter. **Awaiting** includes pending, syncing, and failed replication states but excludes synced and deliberately local-only meetings.
+
+After Whisper returns a transcript for a `meeting` recording, a deterministic extractive processor creates local secretary notes before that queue job completes. It uses only transcript sentences and performs no network or model call. The output contains a subject/title, concise extractive summary, key discussion points, decisions, action items, open questions, and raw transcript. Missing evidence is rendered as **None stated**. Action-item owner and date are copied only when explicitly present; otherwise each is **Not stated**.
+
+Schema version 3 adds nullable `meeting_notes` without replacing `transcript`. Migration from schema 2 preserves raw transcripts and marks existing meetings local-only. Fresh databases include both fields. Meeting detail renders secretary notes first and keeps the independent raw transcript behind an expander. Sidecars contain both values for durable recovery.
+
 ### Optional server sync
 
-Server configuration moves out of the startup gate. Storage authorization remains required, but a server is optional and is labeled accordingly in Settings. `SyncEngine` may upload local records when configured, but it must not enqueue server transcription. The server can remain available for backup/replication without controlling the local transcript workflow.
+Server configuration moves out of the startup gate. Storage authorization remains required, but a server is optional and is labeled accordingly in Settings. `SyncEngine` may upload brain dumps when configured, but it must not enqueue server transcription. Meeting audio, transcripts, and secretary notes remain local-only and are never sent to the server.
 
 ## Error handling
 

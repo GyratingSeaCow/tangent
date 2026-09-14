@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import '../data/audio_storage.dart';
 import '../data/local_db.dart';
 import '../data/recording_metadata.dart';
+import 'meeting_notes_processor.dart';
 import 'on_device_transcription.dart';
 
 enum LocalTranscriptionStatus {
@@ -63,13 +64,16 @@ class LocalTranscriptionCoordinator extends ChangeNotifier {
     required OnDeviceTranscriptionService service,
     required LocalDb db,
     required AudioStorage audioStorage,
+    MeetingNotesProcessor meetingNotesProcessor = const MeetingNotesProcessor(),
   })  : _service = service,
         _db = db,
-        _audioStorage = audioStorage;
+        _audioStorage = audioStorage,
+        _meetingNotesProcessor = meetingNotesProcessor;
 
   final OnDeviceTranscriptionService _service;
   final LocalDb _db;
   final AudioStorage _audioStorage;
+  final MeetingNotesProcessor _meetingNotesProcessor;
   final List<_QueuedTranscription> _queue = [];
   final Map<String, LocalTranscriptionOperation> _terminal = {};
   _QueuedTranscription? _activeJob;
@@ -163,6 +167,14 @@ class LocalTranscriptionCoordinator extends ChangeNotifier {
       }
       final completed = row.copyWith(
         transcript: Value(transcript),
+        meetingNotes: row.mode == 'meeting'
+            ? Value(
+                _meetingNotesProcessor.process(
+                  title: row.title,
+                  transcript: transcript,
+                ),
+              )
+            : const Value.absent(),
         syncStatus: row.syncStatus,
         updatedAt: DateTime.now().toUtc(),
       );

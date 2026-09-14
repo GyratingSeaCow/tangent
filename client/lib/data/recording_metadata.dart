@@ -19,6 +19,7 @@ Map<String, dynamic> dumpMetadata(DumpRow row) => {
       'durationSeconds': row.durationSeconds,
       'title': row.title,
       'transcript': row.transcript,
+      'meetingNotes': row.meetingNotes,
       'audioSizeBytes': row.audioSizeBytes,
       'syncStatus': row.syncStatus,
       'syncAttempts': row.syncAttempts,
@@ -62,6 +63,7 @@ DumpRow importedDumpRow({
         ? generatedRecordingTitle(createdAt)
         : restoredTitle,
     transcript: metadata?['transcript'] as String?,
+    meetingNotes: metadata?['meetingNotes'] as String?,
     audioPath: locator,
     audioSizeBytes: sizeBytes,
     syncStatus: text('syncStatus', 'pending'),
