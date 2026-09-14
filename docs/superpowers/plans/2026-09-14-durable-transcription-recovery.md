@@ -241,13 +241,14 @@ In the queue layer, query `request_id` before inserting. Return `(existing_id, F
 
 Expected: full server suite passes with no duplicate background scheduling.
 
-- [ ] **Step 9: Leave the compatible server contract uncommitted for the Task 3 client cutover**
+- [ ] **Step 9: Commit the backward-compatible server contract**
 
 ```bash
-git diff --check -- server
+git add server/app/db.py server/app/models.py server/app/services/job_queue.py server/app/api/jobs.py server/tests/test_db.py server/tests/test_jobs.py server/tests/test_audio_upload.py server/tests/test_live_sse.py
+git commit -m "feat(server): make transcription enqueue idempotent"
 ```
 
-Expected: the server suite is green and the existing client remains compatible because omission is temporarily accepted. The atomic server+client contract commit occurs in Task 3.
+Expected: the server suite is green and the existing client remains compatible because omission is temporarily accepted. Task 3 enforces the required field in the same commit as the client cutover.
 
 ---
 
@@ -488,7 +489,7 @@ Expected: both full suites pass with server and client on the same required requ
 - [ ] **Step 8: Commit the atomic server/client contract and resilient transport**
 
 ```bash
-git add server/app/db.py server/app/models.py server/app/services/job_queue.py server/app/api/jobs.py server/tests/test_db.py server/tests/test_jobs.py server/tests/test_audio_upload.py server/tests/test_live_sse.py client/lib/services/transcription_client.dart client/test/unit/services/transcription_client_test.dart client/test/unit/services/server_transcription_service_test.dart client/test/widget/dumps_list_transcription_indicator_test.dart client/test/widget/dump_detail_local_transcription_test.dart client/test/widget/dump_detail_playback_test.dart
+git add server/app/models.py server/tests/test_jobs.py client/lib/services/transcription_client.dart client/test/unit/services/transcription_client_test.dart client/test/unit/services/server_transcription_service_test.dart client/test/widget/dumps_list_transcription_indicator_test.dart client/test/widget/dump_detail_local_transcription_test.dart client/test/widget/dump_detail_playback_test.dart
 git commit -m "feat: add idempotent recoverable transcription jobs"
 ```
 
