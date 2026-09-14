@@ -1,18 +1,53 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
+# Tangent server container — single service for personal Docker use.
+#
+# Usage:
+#   docker compose up -d
+#   docker compose logs -f tangent-server
+#
+# Data (SQLite DB + faster-whisper model cache) is persisted in ./data so
+# rebuilds and image upgrades don't wipe your recordings or downloaded models.
+
 services:
   tangent-server:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: tangent-server:1.0.0
     container_name: tangent-server
-    ports:
-      - "8000:8000"
-    volumes:
-      - tangent-data:/data
-    environment:
-      - TANGENT_DATA_DIR=/data
-      - TANGENT_LOG_LEVEL=info
-      - TANGENT_WHISPER_MODEL=large-v3
     restart: unless-stopped
-
-volumes:
-  tangent-data:
-    name: tangent-data
+    ports:
+      # Bind the API to all interfaces so the phone can reach it over LAN.
+      # The first number is the HOST port — change it if 8000 is already
+      # taken (e.g. another Docker backend on Windows). The second is the
+      # container port (the server always listens there).
+      # Override TANGENT_HOST in compose.override.yaml to lock down to a
+      # specific interface.
+      - "8765:8000"
+    environment:
+      TANGENT_HOST: 0.0.0.0
+      TANGENT_PORT: 8000
+      TANGENT_DATA_DIR: /data
+      TANGENT_LOG_LEVEL: info
+      # Whisper model the server downloads on first transcribe.
+      # Valid options: tiny, base, small, medium, large-v3.
+      # CPU large-v3 is slow per audio-second; switch to small if speed matters.
+      TANGENT_WHISPER_MODEL: large-v3
+    volumes:
+      # Persist the SQLite DB, audio files, and the faster-whisper model
+      # cache across image rebuilds. ./data is created automatically.
+      - ./data:/data
+    # Resource limits — tune for your box by uncommenting the lines below.
+    # faster-whisper benefits from extra CPUs; leave it uncapped to use all
+    # cores, or set cpus/memory to bound a noisy neighbour.
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: "8"
+    #       memory: 8G
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/v1/server/info"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3

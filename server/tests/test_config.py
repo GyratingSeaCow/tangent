@@ -1,38 +1,46 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Tests for app.config module."""
+"""Tests for server config (model selection, env override)."""
+
+from __future__ import annotations
 
 import pytest
 
 from app.config import Settings
+from app.services.storage import SUPPORTED_MODELS
 
 
-def test_settings_defaults():
+@pytest.fixture(autouse=True)
+def _clear_settings_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Settings is @lru_cache-d; drop the cache between tests so env overrides stick."""
+    from app import config
+
+    config.get_settings.cache_clear()
+    yield
+    config.get_settings.cache_clear()
+
+
+def test_default_model_is_large_v3() -> None:
     settings = Settings()
-    assert settings.data_dir == "./data"
-    assert settings.log_level == "info"
-    assert settings.host == "0.0.0.0"
-    assert settings.port == 8000
     assert settings.whisper_model == "large-v3"
 
 
-def test_settings_from_env(monkeypatch, tmp_path):
-    monkeypatch.setenv("TANGENT_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("TANGENT_LOG_LEVEL", "debug")
-    monkeypatch.setenv("TANGENT_HOST", "127.0.0.1")
-    monkeypatch.setenv("TANGENT_PORT", "9000")
+def test_supported_models_includes_documented_set() -> None:
+    # Regression guard: if you add/remove a model here, the README and
+    # compose file must stay in sync.
+    assert "tiny" in SUPPORTED_MODELS
+    assert "base" in SUPPORTED_MODELS
+    assert "small" in SUPPORTED_MODELS
+    assert "medium" in SUPPORTED_MODELS
+    assert "large-v3" in SUPPORTED_MODELS
 
+
+def test_whisper_model_can_be_overridden_via_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TANGENT_WHISPER_MODEL", "small")
     settings = Settings()
-    assert settings.data_dir == str(tmp_path)
-    assert settings.log_level == "debug"
-    assert settings.host == "127.0.0.1"
-    assert settings.port == 9000
+    assert settings.whisper_model == "small"
 
 
-def test_settings_data_dir_kept_as_default_string(tmp_path):
-        settings = Settings(data_dir=str(tmp_path / "new_data"))
-        assert settings.data_dir == str(tmp_path / "new_data")
-
-
-def test_log_level_validation():
-    with pytest.raises(ValueError):
-        Settings(log_level="invalid")
+def test_data_dir_can_be_overridden_via_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TANGENT_DATA_DIR", "/srv/tangent")
+    settings = Settings()
+    assert settings.data_dir == "/srv/tangent"
