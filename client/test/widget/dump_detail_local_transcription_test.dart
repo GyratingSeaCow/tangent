@@ -1,29 +1,79 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_test/flutter_test.dart';
 import 'package:tangent/data/audio_storage.dart';
 import 'package:tangent/data/local_db.dart';
+
+import 'package:tangent/models/server_info.dart';
 import 'package:tangent/screens/dump/dump_detail_screen.dart';
 import 'package:tangent/screens/home/home_providers.dart';
 import 'package:tangent/screens/home/home_screen.dart';
-import 'package:tangent/services/local_transcription_coordinator.dart';
-import 'package:tangent/services/on_device_transcription.dart';
+import 'package:tangent/screens/server/server_connection_screen.dart';
 import 'package:tangent/services/recording_playback.dart';
 
+import 'package:tangent/services/server_transcription_service.dart';
+import 'package:tangent/services/transcription_client.dart';
+
+class _FakeTranscriptionClient implements TranscriptionClient {
+  _FakeTranscriptionClient({required this.completedTranscript});
+
+  final String completedTranscript;
+
+  @override
+  String get baseUrl => 'http://test';
+
+  @override
+  Future<String> createDump({
+    required String id,
+    required String mode,
+    required int durationSeconds,
+    required String title,
+    required DateTime createdAt,
+  }) async =>
+      id;
+
+  @override
+  Future<void> uploadAudio({
+    required String dumpId,
+    required List<int> audioBytes,
+    String filename = 'recording.opus',
+    String mimeType = 'audio/ogg',
+  }) async {}
+
+  @override
+  Future<String> enqueueTranscription(
+    String dumpId, {
+    String model = 'large-v3',
+  }) async =>
+      'job-$dumpId';
+
+  @override
+  Future<ServerInfo> getServerInfo() async => throw UnimplementedError();
+
+  @override
+  Stream<JobEvent> streamJob(
+    String jobId, {
+    Duration maxWait = const Duration(minutes: 30),
+  }) async* {
+    yield JobEvent('queued', const {});
+    yield JobEvent('running', const {});
+    yield JobEvent('completed', {'transcript': completedTranscript});
+  }
+}
+
 void main() {
-  testWidgets('Transcribe stores local result without a network client',
+  testWidgets('Transcribe uploads to the server and persists the transcript',
       (tester) async {
-    final temp = Directory.systemTemp.createTempSync('tangent-detail-local-');
+    final temp = Directory.systemTemp.createTempSync('tangent-detail-');
     final db = LocalDb.forTesting(NativeDatabase.memory());
     final storage = AudioStorage.test(temp);
-    final coordinator = LocalTranscriptionCoordinator(
-      service: _FakeLocalService(),
+    final fake = _FakeTranscriptionClient(completedTranscript: 'server side');
+    final service = ServerTranscriptionService(
+      client: fake,
       db: db,
       audioStorage: storage,
     );
@@ -32,13 +82,13 @@ void main() {
       temp.deleteSync(recursive: true);
     });
     final row = DumpRow(
-      id: 'local-1',
+      id: 'remote-1',
       createdAt: DateTime.utc(2026, 9, 13),
       updatedAt: DateTime.utc(2026, 9, 13),
       mode: 'brain_dump',
       durationSeconds: 4,
-      title: 'Local recording',
-      audioPath: storage.pathFor('local-1').path,
+      title: 'Remote recording',
+      audioPath: storage.pathFor('remote-1').path,
       audioSizeBytes: 3,
       syncStatus: 'pending',
       syncAttempts: 0,
@@ -50,8 +100,9 @@ void main() {
         overrides: [
           localDbProvider.overrideWithValue(db),
           audioStorageProvider.overrideWithValue(storage),
-          localTranscriptionCoordinatorProvider.overrideWith(
-            (ref) => coordinator,
+          transcriptionClientProvider.overrideWith((ref) => fake),
+          serverTranscriptionServiceProvider.overrideWith(
+            (ref) => service,
           ),
           recordingPlaybackEngineFactoryProvider.overrideWithValue(
             _TestPlaybackEngine.new,
@@ -59,7 +110,7 @@ void main() {
         ],
         child: const MaterialApp(
           home: DumpDetailScreen(
-            dumpId: 'local-1',
+            dumpId: 'remote-1',
             audioPath: 'unused',
             durationSeconds: 4,
           ),
@@ -73,19 +124,18 @@ void main() {
     await tester.runAsync(() async {
       transcribeButton.onPressed!();
       final deadline = DateTime.now().add(const Duration(seconds: 5));
-      while (
-          (await db.getDump(row.id))?.transcript != 'words from this phone') {
+      while ((await db.getDump(row.id))?.transcript != 'server side') {
         if (DateTime.now().isAfter(deadline)) {
-          fail('Timed out waiting for the local transcript to persist');
+          fail('Timed out waiting for the server transcript to persist');
         }
         await Future<void>.delayed(const Duration(milliseconds: 25));
       }
     });
     await tester.pumpAndSettle();
 
-    expect(find.text('words from this phone'), findsOneWidget);
+    expect(find.text('server side'), findsOneWidget);
     final saved = await db.getDump(row.id);
-    expect(saved!.transcript, 'words from this phone');
+    expect(saved!.transcript, 'server side');
     expect(saved.syncStatus, 'pending');
   });
 
@@ -97,6 +147,12 @@ void main() {
     final temp = Directory.systemTemp.createTempSync('tangent-detail-meeting-');
     final db = LocalDb.forTesting(NativeDatabase.memory());
     final storage = AudioStorage.test(temp);
+    final fake = _FakeTranscriptionClient(completedTranscript: 'unused');
+    final service = ServerTranscriptionService(
+      client: fake,
+      db: db,
+      audioStorage: storage,
+    );
     addTearDown(() async {
       await db.close();
       temp.deleteSync(recursive: true);
@@ -124,6 +180,10 @@ void main() {
         overrides: [
           localDbProvider.overrideWithValue(db),
           audioStorageProvider.overrideWithValue(storage),
+          transcriptionClientProvider.overrideWith((ref) => fake),
+          serverTranscriptionServiceProvider.overrideWith(
+            (ref) => service,
+          ),
           recordingPlaybackEngineFactoryProvider.overrideWithValue(
             _TestPlaybackEngine.new,
           ),
@@ -143,15 +203,7 @@ void main() {
     expect(find.textContaining('Quoted summary.'), findsOneWidget);
     expect(find.text('Exact raw transcript words.'), findsNothing);
 
-    // The Raw Transcript is inside an ExpansionTile; the screen content may
-    // exceed the test viewport, so scroll it into view first, then tap.
-    final tileFinder = find.widgetWithText(ExpansionTile, 'Raw Transcript');
-    await tester.dragUntilVisible(
-      tileFinder,
-      find.byType(ListView),
-      const Offset(0, -120),
-    );
-    await tester.tap(tileFinder);
+    await tester.tap(find.widgetWithText(ExpansionTile, 'Raw Transcript'));
     await tester.pumpAndSettle();
     expect(find.text('Exact raw transcript words.'), findsOneWidget);
   });
@@ -176,51 +228,4 @@ final class _TestPlaybackEngine implements RecordingPlaybackEngine {
   Future<void> seek(Duration position) async {}
   @override
   Future<void> dispose() async {}
-}
-
-final class _FakeLocalService extends OnDeviceTranscriptionService {
-  _FakeLocalService()
-      : super(
-          decoder: _UnusedDecoder(),
-          runtime: _UnusedRuntime(),
-          temporaryDirectory: Directory.systemTemp.createTemp,
-        );
-
-  @override
-  Future<String> transcribe(
-    Uint8List audio, {
-    required LocalTranscriptionProgressCallback onProgress,
-  }) async {
-    expect(audio, [1, 2, 3]);
-    onProgress(
-      const LocalTranscriptionProgress(
-        stage: LocalTranscriptionStage.transcribing,
-        fraction: 0.5,
-      ),
-    );
-    return 'words from this phone';
-  }
-}
-
-final class _UnusedDecoder implements LocalAudioDecoder {
-  @override
-  Future<File> decodeToWav(Uint8List source, Directory temporaryDirectory) =>
-      throw UnimplementedError();
-}
-
-final class _UnusedRuntime implements LocalWhisperRuntime {
-  @override
-  void cancel() {}
-  @override
-  Future<void> installModel({required ModelProgressCallback onProgress}) =>
-      throw UnimplementedError();
-  @override
-  Future<bool> isModelInstalled() => throw UnimplementedError();
-  @override
-  Future<String> transcribe(
-    File wav, {
-    required ModelLoadedCallback onModelLoaded,
-    required InferenceProgressCallback onProgress,
-  }) =>
-      throw UnimplementedError();
 }

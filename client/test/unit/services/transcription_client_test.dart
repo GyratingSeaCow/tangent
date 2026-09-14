@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import 'dart:async';
+import 'dart:io';
+
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
@@ -50,16 +53,20 @@ void main() {
     test('throws ApiException on 401', () async {
       when(() => mock.get<dynamic>(any())).thenAnswer(
         (_) async => Response(
-          data: {'error': {'code': 'unauthorized', 'message': 'Invalid token'}},
+          data: {
+            'error': {'code': 'unauthorized', 'message': 'Invalid token'},
+          },
           requestOptions: RequestOptions(path: '/v1/server/info'),
           statusCode: 401,
         ),
       );
       await expectLater(
         client.getServerInfo(),
-        throwsA(isA<ApiException>()
-            .having((e) => e.statusCode, 'statusCode', 401)
-            .having((e) => e.code, 'code', 'unauthorized'),),
+        throwsA(
+          isA<ApiException>()
+              .having((e) => e.statusCode, 'statusCode', 401)
+              .having((e) => e.code, 'code', 'unauthorized'),
+        ),
       );
     });
 
@@ -68,20 +75,29 @@ void main() {
     });
 
     test('uploadAudio returns on 204', () async {
-      when(() => mock.post<dynamic>(any(),
-              data: any(named: 'data'),),).thenAnswer(
+      when(
+        () => mock.post<dynamic>(
+          any(),
+          data: any(named: 'data'),
+        ),
+      ).thenAnswer(
         (_) async => Response(
           requestOptions: RequestOptions(path: '/v1/dumps/1/audio'),
           statusCode: 204,
         ),
       );
       await client.uploadAudio(dumpId: '1', audioBytes: [0, 1, 2]);
-      verify(() => mock.post<dynamic>(any(), data: any(named: 'data'))).called(1);
+      verify(() => mock.post<dynamic>(any(), data: any(named: 'data')))
+          .called(1);
     });
 
     test('uploadAudio throws on non-204', () async {
-      when(() => mock.post<dynamic>(any(),
-              data: any(named: 'data'),),).thenAnswer(
+      when(
+        () => mock.post<dynamic>(
+          any(),
+          data: any(named: 'data'),
+        ),
+      ).thenAnswer(
         (_) async => Response(
           requestOptions: RequestOptions(path: '/v1/dumps/1/audio'),
           statusCode: 500,
@@ -91,6 +107,35 @@ void main() {
         client.uploadAudio(dumpId: '1', audioBytes: [0]),
         throwsA(isA<ApiException>()),
       );
+    });
+
+    test('parses the server completed SSE Python-map payload', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close(force: true));
+      final transcript = "Dr. Lee's completed transcript from the server.";
+      unawaited(
+        server.first.then((request) async {
+          request.response.headers.contentType = ContentType(
+            'text',
+            'event-stream',
+            charset: 'utf-8',
+          );
+          request.response.write(
+            'event: completed\n'
+            "data: {'status': 'completed', 'transcript': "
+            "'Dr. Lee\\'s completed transcript from the server.'}\n\n",
+          );
+          await request.response.close();
+        }),
+      );
+      final sseClient = TranscriptionClient(
+        baseUrl: 'http://${server.address.address}:${server.port}',
+      );
+
+      final event = await sseClient.streamJob('real-job').first;
+
+      expect(event.status, 'completed');
+      expect(event.data['transcript'], transcript);
     });
   });
 }

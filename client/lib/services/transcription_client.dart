@@ -18,7 +18,8 @@ class _SseUnavailable implements Exception {
 
 /// Job status events from the SSE stream.
 class JobEvent {
-  final String status; // 'queued' | 'running' | 'completed' | 'failed' | 'error' | 'timeout'
+  final String
+      status; // 'queued' | 'running' | 'completed' | 'failed' | 'error' | 'timeout'
   final Map<String, dynamic> data;
 
   const JobEvent(this.status, this.data);
@@ -30,12 +31,14 @@ class TranscriptionClient {
 
   TranscriptionClient({required String baseUrl, String? token})
       : _baseUrl = baseUrl,
-        _dio = Dio(BaseOptions(
-          baseUrl: baseUrl,
-          contentType: 'application/json',
-          headers: token != null ? {'Authorization': 'Bearer $token'} : {},
-          validateStatus: (status) => status != null && status < 500,
-        ),);
+        _dio = Dio(
+          BaseOptions(
+            baseUrl: baseUrl,
+            contentType: 'application/json',
+            headers: token != null ? {'Authorization': 'Bearer $token'} : {},
+            validateStatus: (status) => status != null && status < 500,
+          ),
+        );
 
   TranscriptionClient.forTesting({required Dio dio, required String baseUrl})
       : _dio = dio,
@@ -123,7 +126,10 @@ class TranscriptionClient {
   ///
   /// Falls back to polling if SSE is unavailable (e.g. corporate proxies
   /// that buffer/close SSE connections).
-  Stream<JobEvent> streamJob(String jobId, {Duration maxWait = const Duration(minutes: 30)}) async* {
+  Stream<JobEvent> streamJob(
+    String jobId, {
+    Duration maxWait = const Duration(minutes: 30),
+  }) async* {
     try {
       await for (final evt in _sseStream(jobId, maxWait: maxWait)) {
         yield evt;
@@ -134,8 +140,10 @@ class TranscriptionClient {
     }
   }
 
-  Stream<JobEvent> _sseStream(String jobId,
-      {required Duration maxWait,}) async* {
+  Stream<JobEvent> _sseStream(
+    String jobId, {
+    required Duration maxWait,
+  }) async* {
     final uri = Uri.parse('$_baseUrl/v1/jobs/$jobId/stream');
     final request = await HttpClient().getUrl(uri);
     final authHeader = _dio.options.headers['Authorization'];
@@ -152,9 +160,8 @@ class TranscriptionClient {
 
     final events = <String, String>{};
     String? currentEvent;
-    final lines = response
-        .transform(utf8.decoder)
-        .transform(const LineSplitter());
+    final lines =
+        response.transform(utf8.decoder).transform(const LineSplitter());
 
     await for (final line in lines.timeout(maxWait)) {
       if (line.isEmpty) {
@@ -166,7 +173,7 @@ class TranscriptionClient {
           try {
             parsed = jsonDecode(data) as Map<String, dynamic>;
           } catch (_) {
-            parsed = {'raw': data};
+            parsed = _decodePythonMap(data) ?? {'raw': data};
           }
           yield JobEvent(ev, parsed);
           events.clear();
@@ -181,6 +188,52 @@ class TranscriptionClient {
       }
       // Ignore comments (lines starting with ':') and other fields.
     }
+  }
+
+  /// Decodes the Python `str(dict)` payload currently emitted by the server's
+  /// SSE endpoint without evaluating arbitrary input.
+  Map<String, dynamic>? _decodePythonMap(String source) {
+    final fields = RegExp(
+      r'''['"]([^'"]+)['"]\s*:\s*(None|True|False|-?\d+(?:\.\d+)?|'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*")''',
+    ).allMatches(source);
+    final result = <String, dynamic>{};
+    for (final field in fields) {
+      final key = field.group(1)!;
+      final value = field.group(2)!;
+      result[key] = switch (value) {
+        'None' => null,
+        'True' => true,
+        'False' => false,
+        _ when value.startsWith("'") || value.startsWith('"') =>
+          _decodePythonString(value),
+        _ => num.tryParse(value) ?? value,
+      };
+    }
+    return result.isEmpty ? null : result;
+  }
+
+  String _decodePythonString(String literal) {
+    final source = literal.substring(1, literal.length - 1);
+    final output = StringBuffer();
+    for (var i = 0; i < source.length; i++) {
+      final character = source[i];
+      if (character != '\\' || i + 1 >= source.length) {
+        output.write(character);
+        continue;
+      }
+      final escaped = source[++i];
+      output.write(
+        switch (escaped) {
+          'n' => String.fromCharCode(10),
+          'r' => String.fromCharCode(13),
+          't' => String.fromCharCode(9),
+          'b' => String.fromCharCode(8),
+          'f' => String.fromCharCode(12),
+          _ => escaped,
+        },
+      );
+    }
+    return output.toString();
   }
 
   Stream<JobEvent> _pollJob(String jobId) async* {

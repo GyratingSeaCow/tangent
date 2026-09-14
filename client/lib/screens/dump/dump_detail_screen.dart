@@ -9,16 +9,15 @@ import '../../data/local_db.dart';
 import '../../data/recording_metadata.dart';
 import '../../models/dump_mode.dart';
 import '../../models/sync_status.dart';
-import '../../services/local_transcription_coordinator.dart';
 import '../../services/meeting_notes_processor.dart';
-import '../../services/on_device_transcription.dart';
 import '../../services/recording_playback.dart';
+import '../../services/server_transcription.dart';
 import '../home/home_screen.dart' show localDbProvider;
 import '../home/home_providers.dart'
     show
         audioStorageProvider,
-        localTranscriptionCoordinatorProvider,
-        recordingPlaybackEngineFactoryProvider;
+        recordingPlaybackEngineFactoryProvider,
+        serverTranscriptionServiceProvider;
 
 /// Watch a single dump by id.
 final dumpByIdProvider =
@@ -125,14 +124,15 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
       _statusError = null;
       _statusMessage = null;
     });
-    final coordinator = ref.read(localTranscriptionCoordinatorProvider);
+    final service = ref.read(serverTranscriptionServiceProvider);
     try {
-      await coordinator.transcribeDump(widget.dumpId);
+      await service.transcribeDump(widget.dumpId);
       if (!mounted) return;
       ref.invalidate(dumpByIdProvider(widget.dumpId));
-      if (coordinator.operation.status == LocalTranscriptionStatus.error) {
+      if (service.operation.status == ServerTranscriptionStatus.error) {
         setState(() {
-          _statusError = 'Transcribe failed: ${coordinator.operation.error}';
+          _statusError =
+              'Transcribe failed: ${service.operation.error ?? "unknown"}';
         });
       }
     } catch (error) {
@@ -143,7 +143,9 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
   }
 
   void _cancelTranscription() {
-    ref.read(localTranscriptionCoordinatorProvider).cancel(widget.dumpId);
+    ref
+        .read(serverTranscriptionServiceProvider)
+        .cancel(widget.dumpId);
   }
 
   /// Regenerate secretary notes from the existing transcript without
@@ -159,7 +161,7 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
     try {
       final existing = await db.getDump(widget.dumpId);
       if (existing == null) throw StateError('Dump not found');
-      final processor = const MeetingNotesProcessor();
+      const processor = MeetingNotesProcessor();
       final notes = processor.process(
         title: existing.title,
         transcript: transcript,
@@ -222,8 +224,8 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
   @override
   Widget build(BuildContext context) {
     final rowAsync = ref.watch(dumpByIdProvider(widget.dumpId));
-    final coordinator = ref.watch(localTranscriptionCoordinatorProvider);
-    final operation = coordinator.operationFor(widget.dumpId);
+    final service = ref.watch(serverTranscriptionServiceProvider);
+    final operation = service.operationFor(widget.dumpId);
 
     return Scaffold(
       appBar: AppBar(
@@ -253,7 +255,7 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
   Widget _buildBody(
     BuildContext context,
     DumpRow? row,
-    LocalTranscriptionOperation operation,
+    ServerTranscriptionOperation operation,
   ) {
     if (row == null) {
       return const Center(child: Text('Dump not found'));
@@ -262,10 +264,10 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
     final sync = SyncStatus.fromWire(row.syncStatus);
     final mode = DumpMode.fromWire(row.mode);
     final isCurrentOperation = operation.dumpId == widget.dumpId &&
-        operation.status != LocalTranscriptionStatus.idle;
+        operation.status != ServerTranscriptionStatus.idle;
     final operationActive = isCurrentOperation && operation.isActive;
     final displayTranscript = isCurrentOperation &&
-            operation.status == LocalTranscriptionStatus.complete
+            operation.status == ServerTranscriptionStatus.complete
         ? operation.transcript
         : row.transcript;
 
@@ -377,7 +379,7 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
             child: Padding(
               padding: const EdgeInsets.all(12),
               child: Text(
-                'No transcript yet. Tap Transcribe to queue.',
+                'No transcript yet. Tap Transcribe to upload to your server.',
                 style: Theme.of(context).textTheme.bodyMedium,
               ),
             ),
@@ -385,7 +387,7 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
         ],
         const SizedBox(height: 16),
         if (isCurrentOperation) ...[
-          _LocalTranscriptionProgressPanel(
+          _ServerTranscriptionProgressPanel(
             operation: operation,
             onCancel: _cancelTranscription,
           ),
@@ -425,19 +427,23 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
                         height: 16,
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
-                    : const Icon(Icons.transcribe),
+                    : const Icon(Icons.cloud_upload),
                 label: Text(
                   switch (operation.status) {
-                    LocalTranscriptionStatus.queued =>
-                      'Queued #${operation.queuePosition}',
-                    LocalTranscriptionStatus.running ||
-                    LocalTranscriptionStatus.cancelling =>
-                      'Working locally',
-                    _ => 'Transcribe',
+                    ServerTranscriptionStatus.uploading =>
+                      'Uploading…',
+                    ServerTranscriptionStatus.queued => 'Queued',
+                    ServerTranscriptionStatus.running =>
+                      'Transcribing on server',
+                    ServerTranscriptionStatus.cancelling => 'Cancelling',
+                    ServerTranscriptionStatus.complete => 'Done',
+                    ServerTranscriptionStatus.error => 'Retry',
+                    ServerTranscriptionStatus.idle => 'Transcribe',
                   },
                 ),
                 onPressed: operationActive ||
-                        operation.status == LocalTranscriptionStatus.queued
+                        operation.status ==
+                            ServerTranscriptionStatus.queued
                     ? null
                     : _transcribe,
               ),
@@ -559,22 +565,22 @@ class _RecordingPlaybackPanel extends StatelessWidget {
   }
 }
 
-class _LocalTranscriptionProgressPanel extends StatefulWidget {
-  const _LocalTranscriptionProgressPanel({
+class _ServerTranscriptionProgressPanel extends StatefulWidget {
+  const _ServerTranscriptionProgressPanel({
     required this.operation,
     required this.onCancel,
   });
 
-  final LocalTranscriptionOperation operation;
+  final ServerTranscriptionOperation operation;
   final VoidCallback onCancel;
 
   @override
-  State<_LocalTranscriptionProgressPanel> createState() =>
-      _LocalTranscriptionProgressPanelState();
+  State<_ServerTranscriptionProgressPanel> createState() =>
+      _ServerTranscriptionProgressPanelState();
 }
 
-class _LocalTranscriptionProgressPanelState
-    extends State<_LocalTranscriptionProgressPanel> {
+class _ServerTranscriptionProgressPanelState
+    extends State<_ServerTranscriptionProgressPanel> {
   Timer? _elapsedTimer;
 
   @override
@@ -584,7 +590,7 @@ class _LocalTranscriptionProgressPanelState
   }
 
   @override
-  void didUpdateWidget(_LocalTranscriptionProgressPanel oldWidget) {
+  void didUpdateWidget(_ServerTranscriptionProgressPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
     _syncTimer();
   }
@@ -612,29 +618,18 @@ class _LocalTranscriptionProgressPanelState
   @override
   Widget build(BuildContext context) {
     final operation = widget.operation;
-    final progress = operation.progress;
-    final stage = progress?.stage;
     final title = switch (operation.status) {
-      LocalTranscriptionStatus.queued =>
-        'Queued for local transcription #${operation.queuePosition}',
-      LocalTranscriptionStatus.cancelling => 'Cancelling local transcription',
-      LocalTranscriptionStatus.complete => 'Transcription complete',
-      LocalTranscriptionStatus.error => 'Local transcription failed',
-      _ => switch (stage) {
-          LocalTranscriptionStage.preparingAudio => 'Preparing recording',
-          LocalTranscriptionStage.downloadingModel =>
-            'Downloading Whisper large-v3-turbo',
-          LocalTranscriptionStage.loadingModel =>
-            'Loading Whisper large-v3-turbo',
-          LocalTranscriptionStage.transcribing => 'Transcribing on this phone',
-          LocalTranscriptionStage.complete => 'Transcription complete',
-          null => 'Starting local transcription',
-        },
+      ServerTranscriptionStatus.uploading =>
+        'Uploading audio to your server',
+      ServerTranscriptionStatus.queued =>
+        'Queued on your server',
+      ServerTranscriptionStatus.running =>
+        'Transcribing on your server',
+      ServerTranscriptionStatus.cancelling => 'Cancelling',
+      ServerTranscriptionStatus.complete => 'Transcription complete',
+      ServerTranscriptionStatus.error => 'Server transcription failed',
+      ServerTranscriptionStatus.idle => 'Idle',
     };
-    final fraction = stage == LocalTranscriptionStage.downloadingModel ||
-            stage == LocalTranscriptionStage.transcribing
-        ? progress?.fraction
-        : null;
     final startedAt = operation.startedAt;
     final elapsed = startedAt == null
         ? Duration.zero
@@ -654,25 +649,24 @@ class _LocalTranscriptionProgressPanelState
               const SizedBox(height: 8),
               Text(_detailText(operation, elapsed)),
               if (operation.isActive ||
-                  operation.status == LocalTranscriptionStatus.queued) ...[
+                  operation.status == ServerTranscriptionStatus.queued) ...[
                 const SizedBox(height: 12),
-                if (operation.isActive)
-                  LinearProgressIndicator(value: fraction),
+                const LinearProgressIndicator(),
                 const SizedBox(height: 12),
                 OutlinedButton.icon(
                   onPressed:
-                      operation.status == LocalTranscriptionStatus.cancelling
+                      operation.status == ServerTranscriptionStatus.cancelling
                           ? null
                           : widget.onCancel,
                   icon: const Icon(Icons.cancel_outlined),
                   label: Text(
-                    operation.status == LocalTranscriptionStatus.cancelling
+                    operation.status == ServerTranscriptionStatus.cancelling
                         ? 'Cancelling…'
                         : 'Cancel',
                   ),
                 ),
               ],
-              if (operation.status == LocalTranscriptionStatus.error &&
+              if (operation.status == ServerTranscriptionStatus.error &&
                   operation.error != null) ...[
                 const SizedBox(height: 8),
                 Text(
@@ -688,28 +682,22 @@ class _LocalTranscriptionProgressPanelState
   }
 
   String _detailText(
-    LocalTranscriptionOperation operation,
+    ServerTranscriptionOperation operation,
     Duration elapsed,
   ) {
-    final progress = operation.progress;
     final elapsedText = _formatElapsed(elapsed);
-    return switch (progress?.stage) {
-      LocalTranscriptionStage.downloadingModel =>
-        'Whisper large-v3-turbo · 1.5 GB · one-time verified download\n'
-            '${progress?.fraction == null ? 'Receiving model data' : '${((progress!.fraction!) * 100).round()}% downloaded'} · Elapsed $elapsedText',
-      LocalTranscriptionStage.loadingModel =>
-        'Whisper large-v3-turbo · 1.5 GB · on this phone\n'
-            'First load can take roughly a minute while Tangent initializes the model in memory. · Elapsed $elapsedText',
-      LocalTranscriptionStage.transcribing =>
-        '${progress?.fraction == null ? 'Processing speech locally' : '${((progress!.fraction!) * 100).round()}% processed'} · Elapsed $elapsedText',
-      LocalTranscriptionStage.preparingAudio =>
-        'Decoding the recording locally · Elapsed $elapsedText',
-      LocalTranscriptionStage.complete => 'Saved locally',
-      null => operation.status == LocalTranscriptionStatus.error
-          ? 'The recording was preserved.'
-          : operation.status == LocalTranscriptionStatus.queued
-              ? 'Waiting for the active recording to finish. You can leave this screen.'
-              : 'Elapsed $elapsedText',
+    return switch (operation.status) {
+      ServerTranscriptionStatus.uploading =>
+        'Streaming the recording to your personal Docker container · Elapsed $elapsedText',
+      ServerTranscriptionStatus.queued =>
+        'Waiting for the server to start the worker · Elapsed $elapsedText',
+      ServerTranscriptionStatus.running =>
+        'The server is decoding audio with faster-whisper · Elapsed $elapsedText',
+      ServerTranscriptionStatus.cancelling =>
+        'Cancelling the queued or active job · Elapsed $elapsedText',
+      ServerTranscriptionStatus.complete => 'Saved locally',
+      ServerTranscriptionStatus.error => 'The recording is preserved on this device.',
+      ServerTranscriptionStatus.idle => 'Elapsed $elapsedText',
     };
   }
 

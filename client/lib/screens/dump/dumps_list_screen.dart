@@ -4,9 +4,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/local_db.dart';
 import '../../models/sync_status.dart' show SyncStatus, SyncStatusX;
-import '../../services/local_transcription_coordinator.dart';
-import '../../services/on_device_transcription.dart';
-import '../home/home_providers.dart' show localTranscriptionCoordinatorProvider;
+import '../../services/server_transcription.dart';
+import '../../services/server_transcription_service.dart';
+import '../home/home_providers.dart' show serverTranscriptionServiceProvider;
 import 'dump_detail_screen.dart';
 import 'dumps_providers.dart';
 
@@ -33,7 +33,7 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
     final query = ref.watch(searchQueryProvider);
     final filter = ref.watch(dumpFilterProvider);
     final searchAsync = ref.watch(searchResultsProvider);
-    final transcription = ref.watch(localTranscriptionCoordinatorProvider);
+    final transcription = ref.watch(serverTranscriptionServiceProvider);
 
     final showingSearch = query.trim().isNotEmpty;
 
@@ -122,7 +122,7 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
 class _DumpList extends StatelessWidget {
   final List<DumpRow> dumps;
   final String empty;
-  final LocalTranscriptionCoordinator transcription;
+  final ServerTranscriptionService transcription;
 
   const _DumpList({
     required this.dumps,
@@ -147,23 +147,23 @@ class _DumpList extends StatelessWidget {
         final d = dumps[i];
         final sync = SyncStatusX.fromWire(d.syncStatus);
         final rowOperation = transcription.operationFor(d.id);
-        final isTranscribing = rowOperation.isActive;
-        final isQueued = rowOperation.status == LocalTranscriptionStatus.queued;
+        final isActive = rowOperation.status ==
+                ServerTranscriptionStatus.uploading ||
+            rowOperation.status == ServerTranscriptionStatus.running;
+        final isQueued = rowOperation.status == ServerTranscriptionStatus.queued;
         return ListTile(
           title: Text(
             d.title.isEmpty ? '(untitled)' : d.title,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
-          subtitle: isTranscribing || isQueued
+          subtitle: isActive || isQueued
               ? Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(_subtitleFor(d, sync)),
                     Text(
-                      isQueued
-                          ? 'Queued for local transcription #${rowOperation.queuePosition}'
-                          : _transcriptionLabel(rowOperation),
+                      _labelFor(rowOperation, isQueued),
                       style: TextStyle(
                         color: Theme.of(context).colorScheme.primary,
                         fontWeight: FontWeight.w600,
@@ -172,7 +172,7 @@ class _DumpList extends StatelessWidget {
                   ],
                 )
               : Text(_subtitleFor(d, sync)),
-          trailing: isTranscribing
+          trailing: isActive
               ? SizedBox.square(
                   key: ValueKey('transcription-indicator-${d.id}'),
                   dimension: 24,
@@ -207,17 +207,21 @@ class _DumpList extends StatelessWidget {
     return '$dur · $date';
   }
 
-  String _transcriptionLabel(LocalTranscriptionOperation operation) {
-    if (operation.status == LocalTranscriptionStatus.cancelling) {
-      return 'Cancelling local transcription…';
+  String _labelFor(ServerTranscriptionOperation operation, bool isQueued) {
+    if (isQueued) {
+      return 'Queued on server #${operation.dumpId == null ? "?" : ""}';
     }
-    return switch (operation.progress?.stage) {
-      LocalTranscriptionStage.preparingAudio => 'Preparing audio locally…',
-      LocalTranscriptionStage.downloadingModel => 'Downloading model…',
-      LocalTranscriptionStage.loadingModel => 'Loading model locally…',
-      LocalTranscriptionStage.transcribing => 'Transcribing on this phone…',
-      LocalTranscriptionStage.complete => 'Saving transcript locally…',
-      null => 'Starting local transcription…',
+    return switch (operation.status) {
+      ServerTranscriptionStatus.uploading =>
+        'Uploading to your server…',
+      ServerTranscriptionStatus.queued => 'Waiting for server…',
+      ServerTranscriptionStatus.running =>
+        'Transcribing on your server…',
+      ServerTranscriptionStatus.cancelling => 'Cancelling…',
+      ServerTranscriptionStatus.complete => 'Transcript saved',
+      ServerTranscriptionStatus.error =>
+        'Server transcription failed',
+      ServerTranscriptionStatus.idle => 'Idle',
     };
   }
 }

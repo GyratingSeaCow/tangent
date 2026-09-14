@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
@@ -9,12 +8,48 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:tangent/data/audio_storage.dart';
 import 'package:tangent/data/local_db.dart';
+import 'package:tangent/models/server_info.dart';
 import 'package:tangent/screens/dump/dump_detail_screen.dart';
 import 'package:tangent/screens/home/home_providers.dart';
 import 'package:tangent/screens/home/home_screen.dart';
-import 'package:tangent/services/local_transcription_coordinator.dart';
-import 'package:tangent/services/on_device_transcription.dart';
+import 'package:tangent/screens/server/server_connection_screen.dart';
 import 'package:tangent/services/recording_playback.dart';
+import 'package:tangent/services/server_transcription_service.dart';
+import 'package:tangent/services/transcription_client.dart';
+
+class _NoopTranscriptionClient implements TranscriptionClient {
+  @override
+  String get baseUrl => 'http://test';
+  @override
+  Future<ServerInfo> getServerInfo() async => throw UnimplementedError();
+  @override
+  Future<String> createDump({
+    required String id,
+    required String mode,
+    required int durationSeconds,
+    required String title,
+    required DateTime createdAt,
+  }) async =>
+      id;
+  @override
+  Future<void> uploadAudio({
+    required String dumpId,
+    required List<int> audioBytes,
+    String filename = '',
+    String mimeType = '',
+  }) async {}
+  @override
+  Future<String> enqueueTranscription(
+    String dumpId, {
+    String model = 'large-v3',
+  }) async =>
+      'job';
+  @override
+  Stream<JobEvent> streamJob(
+    String jobId, {
+    Duration maxWait = const Duration(minutes: 30),
+  }) async* {}
+}
 
 void main() {
   testWidgets('Dump detail plays, pauses, and seeks through its recording',
@@ -23,11 +58,7 @@ void main() {
     final db = LocalDb.forTesting(NativeDatabase.memory());
     final storage = AudioStorage.test(temp);
     final engine = _FakePlaybackEngine();
-    final coordinator = LocalTranscriptionCoordinator(
-      service: _UnusedLocalService(),
-      db: db,
-      audioStorage: storage,
-    );
+    final noopClient = _NoopTranscriptionClient();
     addTearDown(() async {
       await db.close();
       temp.deleteSync(recursive: true);
@@ -51,8 +82,13 @@ void main() {
         overrides: [
           localDbProvider.overrideWithValue(db),
           audioStorageProvider.overrideWithValue(storage),
-          localTranscriptionCoordinatorProvider.overrideWith(
-            (ref) => coordinator,
+          transcriptionClientProvider.overrideWith((ref) => noopClient),
+          serverTranscriptionServiceProvider.overrideWith(
+            (ref) => ServerTranscriptionService(
+              client: noopClient,
+              db: db,
+              audioStorage: storage,
+            ),
           ),
           recordingPlaybackEngineFactoryProvider.overrideWithValue(
             () => engine,
@@ -146,36 +182,4 @@ final class _FakePlaybackEngine implements RecordingPlaybackEngine {
   }
 
   void emitPosition(Duration value) => _positions.add(value);
-}
-
-final class _UnusedLocalService extends OnDeviceTranscriptionService {
-  _UnusedLocalService()
-      : super(
-          decoder: _UnusedDecoder(),
-          runtime: _UnusedRuntime(),
-          temporaryDirectory: Directory.systemTemp.createTemp,
-        );
-}
-
-final class _UnusedDecoder implements LocalAudioDecoder {
-  @override
-  Future<File> decodeToWav(Uint8List source, Directory temporaryDirectory) =>
-      throw UnimplementedError();
-}
-
-final class _UnusedRuntime implements LocalWhisperRuntime {
-  @override
-  void cancel() {}
-  @override
-  Future<void> installModel({required ModelProgressCallback onProgress}) =>
-      throw UnimplementedError();
-  @override
-  Future<bool> isModelInstalled() => throw UnimplementedError();
-  @override
-  Future<String> transcribe(
-    File wav, {
-    required ModelLoadedCallback onModelLoaded,
-    required InferenceProgressCallback onProgress,
-  }) =>
-      throw UnimplementedError();
 }

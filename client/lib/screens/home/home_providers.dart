@@ -1,15 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:path_provider/path_provider.dart';
 
 import '../../data/audio_storage.dart';
-import '../../services/android_audio_decoder.dart';
 import '../../services/connectivity_service.dart';
-import '../../services/local_transcription_coordinator.dart';
-import '../../services/on_device_transcription.dart';
 import '../../services/recording_playback.dart';
+import '../../services/server_transcription_service.dart';
 import '../../services/sync_engine.dart';
-import '../../services/whisper_local_runtime.dart';
 import '../server/server_connection_screen.dart'
     show transcriptionClientProvider;
 import '../settings/settings_screen.dart' show settingsStoreProvider;
@@ -24,18 +20,13 @@ final connectivityServiceProvider = Provider<ConnectivityService>((ref) {
   return ConnectivityService();
 });
 
-final onDeviceTranscriptionProvider = Provider<OnDeviceTranscriptionService>(
-  (ref) => OnDeviceTranscriptionService(
-    decoder: const AndroidAudioDecoder(),
-    runtime: WhisperLocalRuntime(),
-    temporaryDirectory: getTemporaryDirectory,
-  ),
-);
-
-final localTranscriptionCoordinatorProvider =
-    ChangeNotifierProvider<LocalTranscriptionCoordinator>((ref) {
-  return LocalTranscriptionCoordinator(
-    service: ref.watch(onDeviceTranscriptionProvider),
+/// Server-backed transcription service. There is no on-device Whisper;
+/// every "Transcribe" tap uploads audio to the user's personal Docker
+/// container and listens for the SSE transcript event.
+final serverTranscriptionServiceProvider =
+    ChangeNotifierProvider<ServerTranscriptionService>((ref) {
+  return ServerTranscriptionService(
+    client: ref.watch(transcriptionClientProvider),
     db: ref.watch(localDbProvider),
     audioStorage: ref.watch(audioStorageProvider),
   );

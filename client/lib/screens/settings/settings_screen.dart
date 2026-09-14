@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/settings_store.dart';
-import '../home/home_providers.dart' show onDeviceTranscriptionProvider;
 import '../server/server_connection_screen.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
@@ -18,11 +17,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _wifiOnly = false;
   bool _keepScreenAwake = true;
   String _serverUrl = '';
+  ServerInfoSnapshot? _serverInfo;
   bool _loaded = false;
-  bool? _modelInstalled;
-  bool _modelBusy = false;
-  double? _modelProgress;
-  String? _modelError;
+  bool _serverBusy = false;
+  String? _serverError;
 
   @override
   void initState() {
@@ -34,11 +32,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final settings = ref.read(settingsStoreProvider);
     final store = ref.read(secureStoreProvider);
     final url = await store.getServerUrl();
-    bool? modelInstalled;
-    try {
-      modelInstalled = await ref.read(onDeviceTranscriptionProvider).isModelInstalled();
-    } catch (_) {
-      modelInstalled = null;
+    ServerInfoSnapshot? info;
+    String? infoError;
+    if (url != null && url.isNotEmpty) {
+      try {
+        final client = ref.read(transcriptionClientProvider);
+        info = ServerInfoSnapshot.fromInfo(await client.getServerInfo());
+      } catch (e) {
+        infoError = e.toString();
+      }
     }
     if (mounted) {
       setState(() {
@@ -46,8 +48,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         _wifiOnly = settings.wifiOnlySync;
         _keepScreenAwake = settings.keepScreenAwakeWhileRecording;
         _serverUrl = url ?? '';
+        _serverInfo = info;
+        _serverError = infoError;
         _loaded = true;
-        _modelInstalled = modelInstalled;
       });
     }
   }
@@ -64,37 +67,29 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     }
   }
 
-  Future<void> _downloadModel() async {
-    setState(() {
-      _modelBusy = true;
-      _modelError = null;
-      _modelProgress = 0;
-    });
-    try {
-      await ref.read(onDeviceTranscriptionProvider).installModel(
-        onProgress: (received, total) {
-          if (!mounted) return;
-          setState(() => _modelProgress = total > 0 ? received / total : null);
-        },
-      );
-      if (mounted) setState(() => _modelInstalled = true);
-    } catch (error) {
-      if (mounted) setState(() => _modelError = error.toString());
-    } finally {
-      if (mounted) setState(() => _modelBusy = false);
-    }
-  }
-
-  void _cancelModelDownload() {
-    ref.read(onDeviceTranscriptionProvider).cancel();
-    setState(() => _modelError = 'Model download cancellation requested');
-  }
-
   Future<void> _changeServer() async {
     await Navigator.of(context).push<void>(MaterialPageRoute<void>(
       builder: (_) => const ServerConnectionScreen(),
     ),);
     await _load();
+  }
+
+  Future<void> _refreshServerInfo() async {
+    setState(() {
+      _serverBusy = true;
+      _serverError = null;
+    });
+    try {
+      final client = ref.read(transcriptionClientProvider);
+      final info = await client.getServerInfo();
+      if (mounted) {
+        setState(() => _serverInfo = ServerInfoSnapshot.fromInfo(info));
+      }
+    } catch (e) {
+      if (mounted) setState(() => _serverError = e.toString());
+    } finally {
+      if (mounted) setState(() => _serverBusy = false);
+    }
   }
 
   @override
@@ -126,37 +121,35 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           const Padding(
             padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
             child: Text(
-              'On-device transcription',
+              'Transcription',
               style: TextStyle(fontWeight: FontWeight.bold),
             ),
           ),
           ListTile(
-            title: const Text('Whisper large-v3-turbo'),
-            subtitle: Text(
-              _modelError ??
-                  (_modelBusy
-                      ? _modelProgress == null
-                          ? 'Downloading and verifying…'
-                          : 'Downloading ${(_modelProgress! * 100).round()}%'
-                      : _modelInstalled == true
-                          ? 'Installed and verified'
-                          : _modelInstalled == false
-                              ? 'Not installed — about 1.5 GB, one-time verified download'
-                              : 'Status unavailable'),
-            ),
-            trailing: _modelBusy
-                ? IconButton(
-                    tooltip: 'Cancel model download',
-                    onPressed: _cancelModelDownload,
-                    icon: const Icon(Icons.cancel_outlined),
+            title: Text(_serverInfo?.title ?? 'Server transcription'),
+            subtitle: Text(_serverInfoText()),
+            trailing: _serverBusy
+                ? const SizedBox.square(
+                    dimension: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
                   )
-                : FilledButton.tonal(
-                    onPressed: _modelInstalled == true ? null : _downloadModel,
-                    child: Text(_modelError == null ? 'Download' : 'Retry'),
+                : IconButton(
+                    tooltip: 'Refresh server info',
+                    onPressed: _serverUrl.isEmpty ? null : _refreshServerInfo,
+                    icon: const Icon(Icons.refresh),
                   ),
           ),
-          if (_modelBusy && _modelProgress != null)
-            LinearProgressIndicator(value: _modelProgress),
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 4, 16, 4),
+            child: Text(
+              'Audio is uploaded to your personal Docker container '
+              'over the LAN (or cellular). The server transcribes with '
+              'faster-whisper and streams the result back. Recordings taken '
+              'without connectivity will be queued and transcribed when you '
+              'next open the app with network access.',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+          ),
           const Divider(),
           const Padding(
             padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
@@ -208,6 +201,43 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       ),
     );
   }
+
+  String _serverInfoText() {
+    if (_serverError != null) return 'Server unreachable: $_serverError';
+    final info = _serverInfo;
+    if (info == null) return 'Not configured — tap Server above to set up';
+    final parts = <String>['Connected'];
+    if (info.model != null) parts.add('default model: ${info.model}');
+    if (info.models != null) parts.add('available: ${info.models!.join(", ")}');
+    if (info.dumpCount != null) parts.add('${info.dumpCount} dumps');
+    if (info.setupComplete == false) parts.add('SETUP INCOMPLETE — open the server URL in a browser');
+    return parts.join(' · ');
+  }
+}
+
+class ServerInfoSnapshot {
+  const ServerInfoSnapshot({
+    required this.setupComplete,
+    this.model,
+    this.models,
+    this.dumpCount,
+  });
+
+  factory ServerInfoSnapshot.fromInfo(dynamic info) {
+    return ServerInfoSnapshot(
+      setupComplete: info.setupComplete as bool,
+      model: info.defaultModel as String?,
+      models: (info.availableModels as List?)?.map((e) => e.toString()).toList(),
+      dumpCount: info.dumpCount as int?,
+    );
+  }
+
+  final bool setupComplete;
+  final String? model;
+  final List<String>? models;
+  final int? dumpCount;
+
+  String get title => 'Server transcription';
 }
 
 /// Provider for the in-memory settings store.
