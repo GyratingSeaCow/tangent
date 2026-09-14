@@ -120,7 +120,7 @@ Server migrations must upgrade existing databases without deleting jobs. Legacy 
 5. Persist the returned job ID and server status.
 6. Consume SSE while the app is active.
 7. Persist every meaningful status transition.
-8. On completion, persist transcript/meeting notes, update sidecar metadata, then atomically mark `completed`.
+8. On completion, atomically commit transcript/meeting notes as `completed` under the attempt/request guard, then generate the sidecar from that winning committed row. If the sidecar write fails, retain a durable `sidecar_sync_pending:` error marker and repair it during reconciliation; a stale attempt never writes the sidecar.
 9. On a terminal failure, persist `failed` and a recoverable error; never delete audio.
 
 ### Navigation and background behavior
@@ -165,7 +165,8 @@ Retry creates a new request ID and increments the attempt. It must not reuse a f
 - App killed after enqueue: startup reconciliation recovers by request ID/job ID.
 - Server unreachable: keep durable nonterminal identity, surface connection state, and retry reconciliation later without duplicate enqueue.
 - Empty completed transcript: mark `failed` with an explicit empty-transcript error unless the product later defines empty speech as a valid terminal result.
-- Sidecar/DB persistence failure after server completion: preserve audio and server identity, surface a recoverable failure, and allow reconciliation to retry persistence.
+- Database persistence failure after server completion: keep the nonterminal server identity and retry the same completed job during reconciliation.
+- Sidecar persistence failure after database completion: keep the completed transcript, store a `sidecar_sync_pending:` marker, and retry only the sidecar write from the winning committed row during reconciliation.
 
 ## Testing
 
