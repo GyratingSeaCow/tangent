@@ -90,6 +90,8 @@ DumpRow _row(String id, String title, {String mode = 'brain_dump'}) => DumpRow(
       audioSizeBytes: 3,
       syncStatus: 'pending',
       syncAttempts: 0,
+      transcriptionStatus: 'not_transcribed',
+      transcriptionAttempt: 0,
     );
 
 class _FakeClient implements TranscriptionClient {

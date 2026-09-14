@@ -117,6 +117,8 @@ void main() {
       audioSizeBytes: 3,
       syncStatus: 'pending',
       syncAttempts: 0,
+      transcriptionStatus: 'not_transcribed',
+      transcriptionAttempt: 0,
     );
   }
 

@@ -94,6 +94,8 @@ void main() {
           audioSizeBytes: 100,
           syncStatus: SyncStatus.pending.wireValue,
           syncAttempts: 0,
+          transcriptionStatus: 'not_transcribed',
+          transcriptionAttempt: 0,
         ),
       );
       await File('${tmp.path}/Tangent/test-dump.opus')
@@ -137,6 +139,8 @@ void main() {
           audioSizeBytes: 0,
           syncStatus: SyncStatus.pending.wireValue,
           syncAttempts: 0,
+          transcriptionStatus: 'not_transcribed',
+          transcriptionAttempt: 0,
         ),
       );
       await engine.syncNow();
@@ -162,6 +166,8 @@ void main() {
           audioSizeBytes: 3,
           syncStatus: SyncStatus.localOnly.wireValue,
           syncAttempts: 0,
+          transcriptionStatus: 'not_transcribed',
+          transcriptionAttempt: 0,
         ),
       );
       await File('${tmp.path}/Tangent/private-meeting.opus')

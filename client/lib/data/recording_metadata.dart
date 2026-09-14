@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import 'local_db.dart';
 
-const recordingMetadataSchemaVersion = 1;
+const recordingMetadataSchemaVersion = 2;
 
 String generatedRecordingTitle(DateTime createdAt) {
   final local = createdAt.toLocal();
@@ -20,6 +20,17 @@ Map<String, dynamic> dumpMetadata(DumpRow row) => {
       'title': row.title,
       'transcript': row.transcript,
       'meetingNotes': row.meetingNotes,
+      'transcriptionStatus': row.transcriptionStatus,
+      'transcriptionRequestId': row.transcriptionRequestId,
+      'transcriptionJobId': row.transcriptionJobId,
+      'transcriptionAttempt': row.transcriptionAttempt,
+      'transcriptionStartedAt':
+          row.transcriptionStartedAt?.toUtc().toIso8601String(),
+      'transcriptionUpdatedAt':
+          row.transcriptionUpdatedAt?.toUtc().toIso8601String(),
+      'transcriptionCompletedAt':
+          row.transcriptionCompletedAt?.toUtc().toIso8601String(),
+      'transcriptionError': row.transcriptionError,
       'audioSizeBytes': row.audioSizeBytes,
       'syncStatus': row.syncStatus,
       'syncAttempts': row.syncAttempts,
@@ -50,9 +61,24 @@ DumpRow importedDumpRow({
     return raw is String ? raw : fallback;
   }
 
+  String? nullableText(String key) {
+    final raw = metadata?[key];
+    return raw is String && raw.isNotEmpty ? raw : null;
+  }
+
+  DateTime? utcDate(String key) {
+    final raw = nullableText(key);
+    return raw == null ? null : DateTime.tryParse(raw)?.toUtc();
+  }
+
   final modifiedUtc = modifiedAt.toUtc();
   final createdAt = date('createdAt', modifiedUtc);
   final restoredTitle = text('title', '').trim();
+  final transcript = metadata?['transcript'] as String?;
+  final schemaVersion = number('schemaVersion', 1);
+  final legacyStatus = transcript != null && transcript.trim().isNotEmpty
+      ? 'completed'
+      : 'not_transcribed';
   return DumpRow(
     id: id,
     createdAt: createdAt,
@@ -62,12 +88,29 @@ DumpRow importedDumpRow({
     title: restoredTitle.isEmpty
         ? generatedRecordingTitle(createdAt)
         : restoredTitle,
-    transcript: metadata?['transcript'] as String?,
+    transcript: transcript,
     meetingNotes: metadata?['meetingNotes'] as String?,
     audioPath: locator,
     audioSizeBytes: sizeBytes,
     syncStatus: text('syncStatus', 'pending'),
     syncAttempts: number('syncAttempts', 0),
     lastSyncError: metadata?['lastSyncError'] as String?,
+    transcriptionStatus: schemaVersion >= 2
+        ? text('transcriptionStatus', legacyStatus)
+        : legacyStatus,
+    transcriptionRequestId:
+        schemaVersion >= 2 ? nullableText('transcriptionRequestId') : null,
+    transcriptionJobId:
+        schemaVersion >= 2 ? nullableText('transcriptionJobId') : null,
+    transcriptionAttempt:
+        schemaVersion >= 2 ? number('transcriptionAttempt', 0) : 0,
+    transcriptionStartedAt:
+        schemaVersion >= 2 ? utcDate('transcriptionStartedAt') : null,
+    transcriptionUpdatedAt:
+        schemaVersion >= 2 ? utcDate('transcriptionUpdatedAt') : null,
+    transcriptionCompletedAt:
+        schemaVersion >= 2 ? utcDate('transcriptionCompletedAt') : null,
+    transcriptionError:
+        schemaVersion >= 2 ? nullableText('transcriptionError') : null,
   );
 }

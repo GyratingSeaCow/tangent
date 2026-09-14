@@ -92,6 +92,8 @@ void main() {
       audioSizeBytes: 3,
       syncStatus: 'pending',
       syncAttempts: 0,
+      transcriptionStatus: 'not_transcribed',
+      transcriptionAttempt: 0,
     );
     await db.upsertDump(row);
     storage.pathFor(row.id).writeAsBytesSync([1, 2, 3]);
@@ -171,6 +173,8 @@ void main() {
         audioSizeBytes: 3,
         syncStatus: 'pending',
         syncAttempts: 0,
+        transcriptionStatus: 'not_transcribed',
+        transcriptionAttempt: 0,
       ),
     );
     storage.pathFor('meeting-detail').writeAsBytesSync([1, 2, 3]);

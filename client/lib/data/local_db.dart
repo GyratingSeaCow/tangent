@@ -7,6 +7,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import '../models/sync_status.dart';
+import '../models/transcription_status.dart';
 
 part 'local_db.g.dart';
 
@@ -25,6 +26,17 @@ class Dumps extends Table {
   TextColumn get syncStatus => text().withLength(min: 1, max: 20)();
   IntColumn get syncAttempts => integer().withDefault(const Constant(0))();
   TextColumn get lastSyncError => text().nullable()();
+  TextColumn get transcriptionStatus => text().withDefault(
+        Constant(TranscriptionStatus.notTranscribed.wireValue),
+      )();
+  TextColumn get transcriptionRequestId => text().nullable()();
+  TextColumn get transcriptionJobId => text().nullable()();
+  IntColumn get transcriptionAttempt =>
+      integer().withDefault(const Constant(0))();
+  DateTimeColumn get transcriptionStartedAt => dateTime().nullable()();
+  DateTimeColumn get transcriptionUpdatedAt => dateTime().nullable()();
+  DateTimeColumn get transcriptionCompletedAt => dateTime().nullable()();
+  TextColumn get transcriptionError => text().nullable()();
 
   @override
   Set<Column> get primaryKey => {id};
@@ -45,7 +57,7 @@ class LocalDb extends _$LocalDb {
   LocalDb.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 3;
+  int get schemaVersion => 4;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -69,6 +81,24 @@ class LocalDb extends _$LocalDb {
               'UPDATE dumps SET sync_status = \'local_only\', '
               'sync_attempts = 0, last_sync_error = NULL '
               'WHERE mode = \'meeting\' AND sync_status IN (\'pending\', \'syncing\', \'failed\')',
+            );
+          }
+          if (from < 4) {
+            await m.addColumn(dumps, dumps.transcriptionStatus);
+            await m.addColumn(dumps, dumps.transcriptionRequestId);
+            await m.addColumn(dumps, dumps.transcriptionJobId);
+            await m.addColumn(dumps, dumps.transcriptionAttempt);
+            await m.addColumn(dumps, dumps.transcriptionStartedAt);
+            await m.addColumn(dumps, dumps.transcriptionUpdatedAt);
+            await m.addColumn(dumps, dumps.transcriptionCompletedAt);
+            await m.addColumn(dumps, dumps.transcriptionError);
+            await customStatement(
+              'UPDATE dumps SET transcription_status = CASE '
+              "WHEN TRIM(COALESCE(transcript, '')) != '' THEN 'completed' "
+              "ELSE 'not_transcribed' END, "
+              'transcription_completed_at = CASE '
+              "WHEN TRIM(COALESCE(transcript, '')) != '' THEN updated_at "
+              'ELSE NULL END',
             );
           }
         },
@@ -155,6 +185,116 @@ class LocalDb extends _$LocalDb {
   /// Find a dump by id.
   Future<DumpRow?> getDump(String id) =>
       (select(dumps)..where((d) => d.id.equals(id))).getSingleOrNull();
+
+  /// Starts a new durable transcription attempt before any network I/O.
+  Future<DumpRow> beginTranscriptionAttempt(
+    String id, {
+    required String requestId,
+    required DateTime now,
+  }) {
+    return transaction(() async {
+      final current = await getDump(id);
+      if (current == null) throw StateError('Dump not found: $id');
+      final timestamp = now.toUtc();
+      final nextAttempt = current.transcriptionAttempt + 1;
+      await (update(dumps)..where((d) => d.id.equals(id))).write(
+        DumpsCompanion(
+          updatedAt: Value(timestamp),
+          transcriptionStatus: Value(TranscriptionStatus.uploading.wireValue),
+          transcriptionRequestId: Value(requestId),
+          transcriptionJobId: const Value(null),
+          transcriptionAttempt: Value(nextAttempt),
+          transcriptionStartedAt: Value(timestamp),
+          transcriptionUpdatedAt: Value(timestamp),
+          transcriptionCompletedAt: const Value(null),
+          transcriptionError: const Value(null),
+        ),
+      );
+      return (await getDump(id))!;
+    });
+  }
+
+  /// Updates an attempt only if it is still the latest attempt for the dump.
+  Future<bool> updateTranscriptionStatus(
+    String id, {
+    required int attempt,
+    required String requestId,
+    required TranscriptionStatus status,
+    required DateTime now,
+    String? jobId,
+    String? error,
+  }) async {
+    final timestamp = now.toUtc();
+    final count = await (update(dumps)
+          ..where(
+            (d) =>
+                d.id.equals(id) &
+                d.transcriptionAttempt.equals(attempt) &
+                d.transcriptionRequestId.equals(requestId),
+          ))
+        .write(
+      DumpsCompanion(
+        updatedAt: Value(timestamp),
+        transcriptionStatus: Value(status.wireValue),
+        transcriptionJobId: jobId == null ? const Value.absent() : Value(jobId),
+        transcriptionUpdatedAt: Value(timestamp),
+        transcriptionCompletedAt:
+            status.isTerminal ? Value(timestamp) : const Value.absent(),
+        transcriptionError: Value(error),
+      ),
+    );
+    return count == 1;
+  }
+
+  /// Commits transcript output only for the current attempt.
+  Future<bool> completeTranscriptionAttempt(
+    String id, {
+    required int attempt,
+    required String requestId,
+    required String transcript,
+    String? meetingNotes,
+    required DateTime now,
+  }) async {
+    final timestamp = now.toUtc();
+    final count = await (update(dumps)
+          ..where(
+            (d) =>
+                d.id.equals(id) &
+                d.transcriptionAttempt.equals(attempt) &
+                d.transcriptionRequestId.equals(requestId),
+          ))
+        .write(
+      DumpsCompanion(
+        updatedAt: Value(timestamp),
+        transcript: Value(transcript),
+        meetingNotes: Value(meetingNotes),
+        transcriptionStatus: Value(TranscriptionStatus.completed.wireValue),
+        transcriptionUpdatedAt: Value(timestamp),
+        transcriptionCompletedAt: Value(timestamp),
+        transcriptionError: const Value(null),
+      ),
+    );
+    return count == 1;
+  }
+
+  /// Rows whose latest attempt needs network or sidecar reconciliation.
+  Future<List<DumpRow>> dumpsNeedingTranscriptionRecovery() {
+    return (select(dumps)
+          ..where(
+            (d) =>
+                d.transcriptionStatus.isIn([
+                  TranscriptionStatus.uploading.wireValue,
+                  TranscriptionStatus.queued.wireValue,
+                  TranscriptionStatus.running.wireValue,
+                ]) |
+                (d.transcriptionStatus.equals(
+                      TranscriptionStatus.completed.wireValue,
+                    ) &
+                    d.transcriptionError.like('sidecar_sync_pending:%')),
+          )
+          ..orderBy([(d) => OrderingTerm.asc(d.transcriptionStartedAt)]))
+        .get();
+  }
 
   /// Update only the sync fields for a dump.
   Future<void> updateSyncStatus(

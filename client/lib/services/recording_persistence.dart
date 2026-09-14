@@ -34,6 +34,8 @@ class RecordingPersistence {
           ? SyncStatus.localOnly.wireValue
           : SyncStatus.pending.wireValue,
       syncAttempts: 0,
+      transcriptionStatus: 'not_transcribed',
+      transcriptionAttempt: 0,
     );
     final stored = await _storage.persistRecording(
       id: id,

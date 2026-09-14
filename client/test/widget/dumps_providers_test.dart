@@ -26,6 +26,9 @@ DumpRow _row(
     audioSizeBytes: 100,
     syncStatus: status.wireValue,
     syncAttempts: 0,
+    transcriptionStatus:
+        transcript.trim().isEmpty ? 'not_transcribed' : 'completed',
+    transcriptionAttempt: 0,
   );
 }
 
