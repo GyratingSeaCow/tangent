@@ -149,7 +149,7 @@ def test_transcribe_without_audio_returns_422(authed_client) -> None:
 
     resp = client.post(
         f"/v1/dumps/{dump_id}/transcribe",
-        json={"model": "tiny"},
+        json={"model": "tiny", "request_id": "request-audio-missing-001"},
         headers=_auth(token),
     )
     assert resp.status_code == 422

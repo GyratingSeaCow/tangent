@@ -24,24 +24,47 @@ def _now_ts() -> int:
     return int(time.time())
 
 
+class RequestIdConflict(Exception):  # noqa: N818
+    """A request ID was already used for a different dump or model."""
+
+
 def enqueue_job(
     db: sqlite3.Connection,
     dump_id: str,
     model: str,
-    audio_path: str,
-) -> str:
-    """Create a job row in 'queued' state. Returns the job id."""
+    request_id: str,
+) -> tuple[str, bool]:
+    """Create a queued job, or return an identical request's existing job."""
+    existing = db.execute(
+        "SELECT id, dump_id, model FROM jobs WHERE request_id = ?", (request_id,)
+    ).fetchone()
+    if existing is not None:
+        if existing["dump_id"] == dump_id and existing["model"] == model:
+            return existing["id"], False
+        raise RequestIdConflict(request_id)
+
     job_id = str(uuid.uuid4())
-    db.execute(
-        """
-        INSERT INTO jobs (id, dump_id, status, model, started_at)
-        VALUES (?, ?, 'queued', ?, NULL)
-        """,
-        (job_id, dump_id, model),
-    )
-    db.commit()  # explicit commit so BackgroundTasks readers see the row
+    try:
+        db.execute(
+            """
+            INSERT INTO jobs (id, request_id, dump_id, status, model, started_at)
+            VALUES (?, ?, ?, 'queued', ?, NULL)
+            """,
+            (job_id, request_id, dump_id, model),
+        )
+        db.commit()
+    except sqlite3.IntegrityError:
+        db.rollback()
+        existing = db.execute(
+            "SELECT id, dump_id, model FROM jobs WHERE request_id = ?", (request_id,)
+        ).fetchone()
+        if existing is not None:
+            if existing["dump_id"] == dump_id and existing["model"] == model:
+                return existing["id"], False
+            raise RequestIdConflict(request_id) from None
+        raise
     log.info("job.queued", job_id=job_id, dump_id=dump_id, model=model)
-    return job_id
+    return job_id, True
 
 
 def run_job_inline(job_id: str, audio_path: str) -> None:

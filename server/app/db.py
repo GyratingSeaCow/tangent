@@ -38,6 +38,7 @@ CREATE INDEX IF NOT EXISTS idx_dumps_created_at ON dumps(created_at DESC);
 
 CREATE TABLE IF NOT EXISTS jobs (
     id TEXT PRIMARY KEY,
+    request_id TEXT NOT NULL,
     dump_id TEXT NOT NULL,
     status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'completed', 'failed')),
     model TEXT NOT NULL,
@@ -69,6 +70,20 @@ def _db_path(data_dir: str) -> Path:
     return Path(data_dir) / "tangent.db"
 
 
+def _migrate_jobs_request_id(conn: sqlite3.Connection) -> None:
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(jobs)")}
+    if "request_id" not in columns:
+        conn.execute("ALTER TABLE jobs ADD COLUMN request_id TEXT")
+    conn.execute(
+        "UPDATE jobs SET request_id = 'legacy:' || id "
+        "WHERE request_id IS NULL OR request_id = ''"
+    )
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_request_id "
+        "ON jobs(request_id)"
+    )
+
+
 def init_db(data_dir: str) -> None:
     """Create the SQLite DB and apply schema. Idempotent."""
     Path(data_dir).mkdir(parents=True, exist_ok=True)
@@ -78,6 +93,7 @@ def init_db(data_dir: str) -> None:
     conn = sqlite3.connect(path)
     try:
         conn.executescript(SCHEMA)
+        _migrate_jobs_request_id(conn)
         conn.commit()
     finally:
         conn.close()

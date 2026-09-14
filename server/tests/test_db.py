@@ -4,7 +4,9 @@
 import sqlite3
 from pathlib import Path
 
-from app.db import get_db, init_db
+import pytest
+
+from app.db import SCHEMA, get_db, init_db
 
 
 def test_init_db_creates_sqlite_file(temp_data_dir: Path) -> None:
@@ -48,6 +50,51 @@ def test_get_db_yields_connection_with_row_factory(temp_data_dir: Path) -> None:
             next(conn_gen)
         except StopIteration:
             pass
+
+
+def test_init_db_migrates_legacy_jobs_to_request_ids(temp_data_dir: Path) -> None:
+    db_path = temp_data_dir / "tangent.db"
+    conn = sqlite3.connect(db_path)
+    conn.executescript(SCHEMA.replace("request_id TEXT NOT NULL,", ""))
+    conn.executemany(
+        "INSERT INTO jobs (id, dump_id, status, model) VALUES (?, ?, ?, ?)",
+        [
+            ("job-a", "dump-a", "queued", "large-v3"),
+            ("job-b", "dump-b", "failed", "large-v3"),
+        ],
+    )
+    conn.commit()
+    conn.close()
+
+    init_db(str(temp_data_dir))
+
+    conn = sqlite3.connect(db_path)
+    rows = conn.execute("SELECT id, request_id FROM jobs ORDER BY id").fetchall()
+    columns = {row[1]: row for row in conn.execute("PRAGMA table_info(jobs)")}
+    indexes = conn.execute("PRAGMA index_list('jobs')").fetchall()
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "INSERT INTO jobs (id, request_id, dump_id, status, model) "
+            "VALUES ('job-c', 'legacy:job-a', 'dump-c', 'queued', 'large-v3')"
+        )
+    conn.close()
+
+    assert rows == [("job-a", "legacy:job-a"), ("job-b", "legacy:job-b")]
+    assert columns["request_id"][3] == 0
+    assert any(index[1] == "idx_jobs_request_id" and index[2] == 1 for index in indexes)
+
+
+def test_fresh_jobs_schema_requires_request_id(temp_data_dir: Path) -> None:
+    init_db(str(temp_data_dir))
+    conn = sqlite3.connect(temp_data_dir / "tangent.db")
+    columns = {row[1]: row for row in conn.execute("PRAGMA table_info(jobs)")}
+    assert columns["request_id"][3] == 1
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "INSERT INTO jobs (id, dump_id, status, model) "
+            "VALUES ('job-no-request', 'dump-a', 'queued', 'large-v3')"
+        )
+    conn.close()
 
 
 def test_dumps_table_has_expected_columns(temp_data_dir: Path) -> None:

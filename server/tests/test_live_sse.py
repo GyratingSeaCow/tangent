@@ -13,7 +13,6 @@ Skipped by default (no env var) — this test requires a live server.
 from __future__ import annotations
 
 import os
-import threading
 import time
 from collections.abc import Generator
 
@@ -79,7 +78,7 @@ def test_sse_streams_status_events(live_server: str, auth_token: str) -> None:
     resp = requests.post(
         f"{live_server}/v1/dumps/{dump_id}/transcribe",
         headers={**headers, "Content-Type": "application/json"},
-        json={"model": "tiny"},
+        json={"model": "tiny", "request_id": "request-live-sse-001"},
         timeout=10,
     )
     assert resp.status_code == 201, resp.text
