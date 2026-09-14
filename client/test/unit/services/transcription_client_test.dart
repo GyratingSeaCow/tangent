@@ -185,6 +185,42 @@ void main() {
       expect(snapshot.transcript, 'poll result');
     });
 
+    test('terminal SSE ends promptly with one event and zero polls', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close(force: true));
+      unawaited(
+        server.first.then((request) async {
+          request.response.headers.contentType = ContentType(
+            'text',
+            'event-stream',
+            charset: 'utf-8',
+          );
+          request.response.write(
+            'event: completed\n'
+            'data: {"status":"completed","transcript":"done"}\n\n'
+            'event: running\n'
+            'data: {"status":"running"}\n\n',
+          );
+          await request.response.close();
+        }),
+      );
+      when(() => mock.options).thenReturn(BaseOptions());
+      final terminalClient = TranscriptionClient.forTesting(
+        dio: mock,
+        baseUrl: 'http://${server.address.address}:${server.port}',
+        httpClientFactory: HttpClient.new,
+      );
+
+      final events = await terminalClient
+          .streamJob('job-terminal')
+          .toList()
+          .timeout(const Duration(seconds: 1));
+
+      expect(events, hasLength(1));
+      expect(events.single.status, 'completed');
+      verifyNever(() => mock.get<dynamic>(any()));
+    });
+
     test('clean SSE EOF after running falls back to completed poll', () async {
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       addTearDown(() => server.close(force: true));
@@ -362,6 +398,140 @@ void main() {
 
       expect(events.last.status, 'timeout');
       expect(pollCalls, 1);
+    });
+
+    test('in-flight poll is bounded by the shared deadline', () async {
+      final httpClient = _MockHttpClient();
+      final pendingPoll = Completer<Response<dynamic>>();
+      when(() => httpClient.getUrl(any())).thenThrow(
+        const SocketException('SSE unavailable'),
+      );
+      when(() => mock.get<dynamic>('/v1/jobs/job-pending'))
+          .thenAnswer((_) => pendingPoll.future);
+      final fallbackClient = TranscriptionClient.forTesting(
+        dio: mock,
+        baseUrl: 'http://test',
+        httpClientFactory: () => httpClient,
+      );
+
+      final events = await fallbackClient
+          .streamJob('job-pending', maxWait: const Duration(milliseconds: 20))
+          .toList()
+          .timeout(const Duration(milliseconds: 200));
+
+      expect(events.map((event) => event.status), ['timeout']);
+    });
+
+    test('polling propagates permanent API errors', () async {
+      final httpClient = _MockHttpClient();
+      when(() => httpClient.getUrl(any())).thenThrow(
+        const SocketException('SSE unavailable'),
+      );
+      when(() => mock.get<dynamic>('/v1/jobs/job-unauthorized')).thenAnswer(
+        (_) async => Response(
+          requestOptions: RequestOptions(path: '/v1/jobs/job-unauthorized'),
+          statusCode: 401,
+          data: const {
+            'error': {'code': 'unauthorized', 'message': 'Invalid token'},
+          },
+        ),
+      );
+      final fallbackClient = TranscriptionClient.forTesting(
+        dio: mock,
+        baseUrl: 'http://test',
+        httpClientFactory: () => httpClient,
+      );
+
+      await expectLater(
+        fallbackClient
+            .streamJob(
+              'job-unauthorized',
+              maxWait: const Duration(milliseconds: 20),
+            )
+            .toList(),
+        throwsA(
+          isA<ApiException>().having(
+            (error) => error.statusCode,
+            'statusCode',
+            401,
+          ),
+        ),
+      );
+    });
+
+    test('polling propagates malformed typed responses', () async {
+      final httpClient = _MockHttpClient();
+      when(() => httpClient.getUrl(any())).thenThrow(
+        const SocketException('SSE unavailable'),
+      );
+      when(() => mock.get<dynamic>('/v1/jobs/job-malformed')).thenAnswer(
+        (_) async => Response(
+          requestOptions: RequestOptions(path: '/v1/jobs/job-malformed'),
+          statusCode: 200,
+          data: const {'status': 'completed'},
+        ),
+      );
+      final fallbackClient = TranscriptionClient.forTesting(
+        dio: mock,
+        baseUrl: 'http://test',
+        httpClientFactory: () => httpClient,
+      );
+
+      await expectLater(
+        fallbackClient
+            .streamJob(
+              'job-malformed',
+              maxWait: const Duration(milliseconds: 20),
+            )
+            .toList(),
+        throwsA(isA<TypeError>()),
+      );
+    });
+
+    test('polling retries transient transport failures', () async {
+      final httpClient = _MockHttpClient();
+      var pollCalls = 0;
+      when(() => httpClient.getUrl(any())).thenThrow(
+        const SocketException('SSE unavailable'),
+      );
+      when(() => mock.get<dynamic>('/v1/jobs/job-transient'))
+          .thenAnswer((_) async {
+        pollCalls++;
+        if (pollCalls == 1) {
+          throw DioException(
+            requestOptions: RequestOptions(path: '/v1/jobs/job-transient'),
+            type: DioExceptionType.connectionError,
+            error: const SocketException('temporary disconnect'),
+          );
+        }
+        return Response(
+          requestOptions: RequestOptions(path: '/v1/jobs/job-transient'),
+          statusCode: 200,
+          data: const {
+            'id': 'job-transient',
+            'request_id': 'request-transient-001',
+            'dump_id': 'dump-transient',
+            'status': 'completed',
+            'model': 'large-v3',
+            'started_at': null,
+            'completed_at': null,
+            'result_transcript': 'poll result',
+            'error': null,
+          },
+        );
+      });
+      final fallbackClient = TranscriptionClient.forTesting(
+        dio: mock,
+        baseUrl: 'http://test',
+        httpClientFactory: () => httpClient,
+        delay: (_) async {},
+      );
+
+      final events = await fallbackClient.streamJob('job-transient').toList();
+
+      expect(events.single.status, 'completed');
+      expect(events.single.data['transcript'], 'poll result');
+      expect(pollCalls, 2);
     });
 
     test('parses the server completed SSE Python-map payload', () async {

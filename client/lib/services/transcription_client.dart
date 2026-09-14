@@ -223,53 +223,58 @@ class TranscriptionClient {
     required DateTime deadline,
   }) async* {
     final uri = Uri.parse('$_baseUrl/v1/jobs/$jobId/stream');
-    final request =
-        await _httpClientFactory().getUrl(uri).timeout(_remaining(deadline));
-    final authHeader = _dio.options.headers['Authorization'];
-    if (authHeader is String) {
-      request.headers.set('Authorization', authHeader);
-    }
-    request.headers.set('Accept', 'text/event-stream');
-    request.headers.set('Cache-Control', 'no-cache');
+    final httpClient = _httpClientFactory();
+    StreamIterator<String>? iterator;
+    try {
+      final request =
+          await httpClient.getUrl(uri).timeout(_remaining(deadline));
+      final authHeader = _dio.options.headers['Authorization'];
+      if (authHeader is String) {
+        request.headers.set('Authorization', authHeader);
+      }
+      request.headers.set('Accept', 'text/event-stream');
+      request.headers.set('Cache-Control', 'no-cache');
 
-    final response = await request.close().timeout(_remaining(deadline));
-    if (response.statusCode != 200) {
-      throw _SseUnavailable('SSE returned ${response.statusCode}');
-    }
+      final response = await request.close().timeout(_remaining(deadline));
+      if (response.statusCode != 200) {
+        throw _SseUnavailable('SSE returned ${response.statusCode}');
+      }
 
-    final events = <String, String>{};
-    String? currentEvent;
-    final lines =
-        response.transform(utf8.decoder).transform(const LineSplitter());
+      final events = <String, String>{};
+      String? currentEvent;
+      final lines =
+          response.transform(utf8.decoder).transform(const LineSplitter());
 
-    final iterator = StreamIterator<String>(lines);
-    while (await iterator.moveNext().timeout(_remaining(deadline))) {
-      final line = iterator.current;
-      if (line.isEmpty) {
-        // End of event.
-        if (events.isNotEmpty) {
-          final ev = currentEvent ?? 'message';
-          final data = events['data'] ?? '';
-          Map<String, dynamic> parsed;
-          try {
-            parsed = jsonDecode(data) as Map<String, dynamic>;
-          } catch (_) {
-            parsed = _decodePythonMap(data) ?? {'raw': data};
+      iterator = StreamIterator<String>(lines);
+      while (await iterator.moveNext().timeout(_remaining(deadline))) {
+        final line = iterator.current;
+        if (line.isEmpty) {
+          if (events.isNotEmpty) {
+            final ev = currentEvent ?? 'message';
+            final data = events['data'] ?? '';
+            Map<String, dynamic> parsed;
+            try {
+              parsed = jsonDecode(data) as Map<String, dynamic>;
+            } catch (_) {
+              parsed = _decodePythonMap(data) ?? {'raw': data};
+            }
+            yield JobEvent(ev, parsed);
+            if (ev == 'completed' || ev == 'failed') return;
+            events.clear();
+            currentEvent = null;
           }
-          yield JobEvent(ev, parsed);
-          events.clear();
-          currentEvent = null;
+          continue;
         }
-        continue;
+        if (line.startsWith('event:')) {
+          currentEvent = line.substring(6).trim();
+        } else if (line.startsWith('data:')) {
+          events['data'] = (events['data'] ?? '') + line.substring(5).trim();
+        }
       }
-      if (line.startsWith('event:')) {
-        currentEvent = line.substring(6).trim();
-      } else if (line.startsWith('data:')) {
-        events['data'] = (events['data'] ?? '') + line.substring(5).trim();
-      }
-      // Ignore comments (lines starting with ':') and other fields.
+    } finally {
+      await iterator?.cancel();
+      httpClient.close(force: true);
     }
-    await iterator.cancel();
   }
 
   /// Decodes the Python `str(dict)` payload currently emitted by the server's
@@ -324,7 +329,7 @@ class TranscriptionClient {
   }) async* {
     while (_now().isBefore(deadline)) {
       try {
-        final snapshot = await getJob(jobId);
+        final snapshot = await getJob(jobId).timeout(_remaining(deadline));
         final data = <String, dynamic>{
           'status': snapshot.status,
           'request_id': snapshot.requestId,
@@ -335,8 +340,10 @@ class TranscriptionClient {
         if (snapshot.status == 'completed' || snapshot.status == 'failed') {
           return;
         }
-      } catch (_) {
-        // Ignore transient errors during poll.
+      } on TimeoutException {
+        break;
+      } catch (error) {
+        if (!_isTransientPollingError(error)) rethrow;
       }
       if (!_now().isBefore(deadline)) break;
       final remaining = deadline.difference(_now());
@@ -355,6 +362,33 @@ class TranscriptionClient {
       throw TimeoutException('Transcription job deadline reached');
     }
     return remaining;
+  }
+
+  bool _isTransientPollingError(Object error) {
+    if (error is SocketException) return true;
+    if (error is ApiException) {
+      return error.statusCode == 408 ||
+          error.statusCode == 429 ||
+          error.statusCode >= 500;
+    }
+    if (error is DioException) {
+      final statusCode = error.response?.statusCode;
+      if (error.type == DioExceptionType.badResponse) {
+        return statusCode == 408 ||
+            statusCode == 429 ||
+            (statusCode ?? 0) >= 500;
+      }
+      return switch (error.type) {
+        DioExceptionType.connectionTimeout ||
+        DioExceptionType.sendTimeout ||
+        DioExceptionType.receiveTimeout ||
+        DioExceptionType.connectionError =>
+          true,
+        DioExceptionType.unknown when error.error is SocketException => true,
+        _ => false,
+      };
+    }
+    return false;
   }
 
   Future<Map<String, dynamic>> _fetch(
