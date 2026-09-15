@@ -19,7 +19,188 @@ final invalidStorage = throwsA(
       .having((fault) => fault.problem.code, 'code', ProblemCode.invalid),
 );
 
+DirectoryRef literalSaf(
+  String uri, {
+  String authority = 'fixture',
+  String documentId = 'opaque-effective-id',
+}) =>
+    (
+      kind: 'saf',
+      path: '',
+      treeUri: uri,
+      authority: authority,
+      documentId: documentId,
+    );
+
+Map<String, Object?> directoryWire(DirectoryRef value) => {
+      'version': 1,
+      'kind': value.kind,
+      'path': value.path,
+      'treeUri': value.treeUri,
+      'authority': value.authority,
+      'documentId': value.documentId,
+    };
+
 void main() {
+  for (final decode in [false, true]) {
+    final boundary = decode ? 'decode' : 'encode';
+    Object? audioBoundary(String uri) {
+      final audio = (kind: 'saf', value: uri);
+      return decode
+          ? StorageCodec.decodeAudio(
+              jsonEncode({'version': 1, 'kind': 'saf', 'value': uri}),
+            )
+          : jsonDecode(StorageCodec.encodeAudio(audio))['value'];
+    }
+
+    Object? directoryBoundary(DirectoryRef directory) => decode
+        ? StorageCodec.decodeDirectory(jsonEncode(directoryWire(directory)))
+        : jsonDecode(StorageCodec.encodeDirectory(directory))['treeUri'];
+
+    test('fix1 $boundary rejects literal audio structural traversal', () {
+      expect(
+        () => audioBoundary('content://fixture/garbage/../document/audio'),
+        invalidStorage,
+      );
+    });
+    test('fix1 $boundary rejects literal tree structural traversal', () {
+      expect(
+        () => directoryBoundary(
+          literalSaf('content://fixture/garbage/../tree/root'),
+        ),
+        invalidStorage,
+      );
+    });
+    for (final id in ['.', '..', '%2E', '%2e%2E']) {
+      test('fix1 $boundary preserves opaque audio ID $id', () {
+        for (final path in [
+          'document/$id',
+          'tree/root/document/$id',
+          'tree/$id/document/audio',
+        ]) {
+          final uri = 'content://fixture/$path';
+          expect(audioBoundary(uri), decode ? (kind: 'saf', value: uri) : uri);
+        }
+      });
+      test('fix1 $boundary preserves opaque tree ID $id', () {
+        for (final path in [
+          'tree/$id',
+          'tree/$id/document/child',
+          'tree/root/document/$id',
+        ]) {
+          final uri = 'content://fixture/$path';
+          final directory =
+              literalSaf(uri, documentId: Uri.decodeComponent(id));
+          expect(directoryBoundary(directory), decode ? directory : uri);
+        }
+      });
+    }
+    for (final authority in ['fixture', 'FiXtUrE.Provider', 'MiXeD.例']) {
+      test(
+          'fix1 $boundary preserves encoded and Unicode IDs with authority $authority',
+          () {
+        for (final id in [
+          'folder%2Fclip%3A100%25',
+          '%252F',
+          '%E5%BD%95%E9%9F%B3',
+          '录音-é',
+          'é%2F录音%25',
+        ]) {
+          final uri = 'content://$authority/tree/$id/document/$id';
+          expect(audioBoundary(uri), decode ? (kind: 'saf', value: uri) : uri);
+          final directory =
+              literalSaf('content://$authority/tree/$id', authority: authority);
+          expect(
+            directoryBoundary(directory),
+            decode ? directory : directory.treeUri,
+          );
+        }
+      });
+    }
+    test(
+        'fix1 $boundary compares directory authority literally not case-folded',
+        () {
+      expect(
+        () => directoryBoundary(literalSaf('content://FiXtUrE/tree/root')),
+        invalidStorage,
+      );
+    });
+    test('fix1 $boundary retains malformed escapes and decoded NUL rejection',
+        () {
+      for (final id in ['%', '%ZZ', '%0', '%00', '%FF']) {
+        expect(
+          () => audioBoundary('content://fixture/document/$id'),
+          invalidStorage,
+        );
+        expect(
+          () => directoryBoundary(literalSaf('content://fixture/tree/$id')),
+          invalidStorage,
+        );
+      }
+    });
+    test(
+        'fix1 $boundary binding preserves exact authority and rejects folded alias',
+        () {
+      for (final authority in ['FiXtUrE.Provider', 'MiXeD.例']) {
+        final directory =
+            literalSaf('content://$authority/tree/.', authority: authority);
+        final binding = (
+          key: (dumpId: 'fixture-one', incarnation: 'fixture-inc'),
+          location: (
+            id: 'fixture-location',
+            directory: directory,
+            label: 'Original'
+          ),
+          audio: (kind: 'saf', value: 'content://$authority/document/..'),
+          metadataName: 'fixture-one.meta.json',
+        );
+        final wire = <String, Object?>{
+          'version': 1,
+          'key': {
+            'version': 1,
+            'dumpId': 'fixture-one',
+            'incarnation': 'fixture-inc',
+          },
+          'location': {
+            'version': 1,
+            'id': 'fixture-location',
+            'directory': directoryWire(directory),
+            'label': 'Original',
+          },
+          'audio': {'version': 1, 'kind': 'saf', 'value': binding.audio.value},
+          'metadataName': binding.metadataName,
+        };
+        if (decode) {
+          expect(StorageCodec.decodeBinding(jsonEncode(wire)), binding);
+          wire['audio'] = {
+            'version': 1,
+            'kind': 'saf',
+            'value': 'content://${authority.toLowerCase()}/document/..',
+          };
+          expect(
+            () => StorageCodec.decodeBinding(jsonEncode(wire)),
+            invalidStorage,
+          );
+        } else {
+          expect(jsonDecode(StorageCodec.encodeBinding(binding)), wire);
+          expect(
+            () => StorageCodec.encodeBinding(
+              (
+                key: binding.key,
+                location: binding.location,
+                audio: (
+                  kind: 'saf',
+                  value: 'content://${authority.toLowerCase()}/document/..'
+                ),
+                metadataName: binding.metadataName,
+              ),
+            ),
+            invalidStorage,
+          );
+        }
+      }
+    });
+  }
   test('rejects unsafe literal keys on encode and decode without normalization',
       () {
     for (final id in ['', '.', '..', 'a/b', r'a\b', 'a\u0000b']) {

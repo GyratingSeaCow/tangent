@@ -97,31 +97,54 @@ abstract final class StorageCodec {
     if (!absolute) _invalid('Expected an absolute filesystem path');
   }
 
-  static Uri _contentUri(String value) {
+  static ({String authority, List<String> pathSegments}) _contentParts(
+    String value,
+  ) {
     _nonempty(value, 'content URI');
     if (RegExp(r'%(?![0-9A-Fa-f]{2})').hasMatch(value)) {
       _invalid('Malformed content URI escape');
     }
+    // Uri parsing is only a syntax/envelope check. Its normalized path/host
+    // cannot establish the literal Android document shape or provider identity.
     final uri = Uri.tryParse(value);
+    final literal = RegExp(
+      r'^content://([^/?#]+)(/[^?#]*)$',
+      caseSensitive: false,
+    ).firstMatch(value);
     if (uri == null ||
+        literal == null ||
         uri.scheme != 'content' ||
-        uri.authority.isEmpty ||
         uri.userInfo.isNotEmpty ||
         uri.hasPort ||
         uri.hasQuery ||
         uri.hasFragment) {
       _invalid('Expected a content document capability');
     }
+    final authority = literal.group(1)!;
+    // Split BEFORE decoding: encoded slashes stay inside opaque IDs, and dot
+    // IDs stay in their original position instead of resolving as traversal.
+    final encodedSegments = literal.group(2)!.substring(1).split('/');
+    final segments = <String>[];
     try {
-      for (final segment in uri.pathSegments) {
+      for (final encoded in encodedSegments) {
+        // Combine literal Unicode and escaped octets without URI path
+        // normalization. decodeComponent alone expects ASCII encoded input.
+        final pieces = encoded.split('%');
+        final bytes = <int>[...utf8.encode(pieces.first)];
+        for (final piece in pieces.skip(1)) {
+          bytes.add(int.parse(piece.substring(0, 2), radix: 16));
+          bytes.addAll(utf8.encode(piece.substring(2)));
+        }
+        final segment = utf8.decode(bytes);
         if (segment.contains('\u0000')) {
           _invalid('Invalid content document identity');
         }
+        segments.add(segment);
       }
     } on FormatException {
       _invalid('Malformed content document identity');
     }
-    return uri;
+    return (authority: authority, pathSegments: segments);
   }
 
   static void _validateDirectory(DirectoryRef value) {
@@ -139,13 +162,13 @@ abstract final class StorageCodec {
         }
         _nonempty(value.authority, 'authority');
         _nonempty(value.documentId, 'documentId');
-        final uri = _contentUri(value.treeUri);
-        final segments = uri.pathSegments;
+        final parts = _contentParts(value.treeUri);
+        final segments = parts.pathSegments;
         final tree = segments.length == 2 ||
             (segments.length == 4 &&
                 segments[2] == 'document' &&
                 segments[3].isNotEmpty);
-        if (uri.authority != value.authority ||
+        if (parts.authority != value.authority ||
             !tree ||
             segments[0] != 'tree' ||
             segments[1].isEmpty) {
@@ -161,7 +184,7 @@ abstract final class StorageCodec {
       case 'file':
         _absolutePath(value.value);
       case 'saf':
-        final segments = _contentUri(value.value).pathSegments;
+        final segments = _contentParts(value.value).pathSegments;
         final direct = segments.length == 2 &&
             segments[0] == 'document' &&
             segments[1].isNotEmpty;
@@ -195,7 +218,7 @@ abstract final class StorageCodec {
       _invalid('Binding locator kind mismatch');
     }
     if (value.audio.kind == 'saf' &&
-        _contentUri(value.audio.value).authority !=
+        _contentParts(value.audio.value).authority !=
             value.location.directory.authority) {
       _invalid('Binding authority mismatch');
     }
