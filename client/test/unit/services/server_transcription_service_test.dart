@@ -645,6 +645,58 @@ void main() {
     expect(service.operation.status, ServerTranscriptionStatus.complete);
   });
 
+  test('sidecar wait deadline releases the local FIFO', () async {
+    await seedRow(row(id: 'r1'));
+    await seedRow(row(id: 'r2'));
+    final writerStarted = Completer<void>();
+    final releaseWriter = Completer<void>();
+    final fake = _FakeTranscriptionClient(
+      completedTranscript: 'durable transcript',
+    );
+    final service = ServerTranscriptionService(
+      client: fake,
+      db: db,
+      audioStorage: storage,
+      requestIdFactory: () => 'request-${fake.enqueueCalls + 1}',
+      sidecarWaitTimeout: const Duration(milliseconds: 10),
+      metadataWriter: (id, metadata) async {
+        if (id != 'r1') return;
+        writerStarted.complete();
+        await releaseWriter.future;
+      },
+    );
+    addTearDown(service.dispose);
+
+    final first = service.transcribeDump('r1');
+    final second = service.transcribeDump('r2');
+    await writerStarted.future.timeout(const Duration(milliseconds: 200));
+    await Future.wait([first, second])
+        .timeout(const Duration(milliseconds: 300));
+
+    var firstRow = (await db.getDump('r1'))!;
+    final secondRow = (await db.getDump('r2'))!;
+    expect(firstRow.transcriptionStatus, 'completed');
+    expect(firstRow.transcriptionError, startsWith('sidecar_sync_pending:'));
+    expect(secondRow.transcriptionStatus, 'completed');
+    expect(secondRow.transcriptionError, isNull);
+    expect(fake.createCalls, 2);
+    expect(fake.uploadCalls, 2);
+    expect(fake.enqueueCalls, 2);
+
+    releaseWriter.complete();
+    final repairDeadline =
+        DateTime.now().add(const Duration(milliseconds: 200));
+    while (true) {
+      firstRow = (await db.getDump('r1'))!;
+      if (firstRow.transcriptionError == null) break;
+      if (DateTime.now().isAfter(repairDeadline)) {
+        fail('late serialized sidecar completion did not clear its marker');
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+    }
+    expect(firstRow.transcript, 'durable transcript');
+  });
+
   test(
       'stale completion cannot overwrite or write a sidecar for a newer attempt',
       () async {
@@ -2389,6 +2441,84 @@ void main() {
     expect(recovered.transcript, 'recovered after watcher exit');
   });
 
+  test('recovery timeout re-arms backoff and ignores its late result',
+      () async {
+    await seedRow(
+      row(
+        transcriptionStatus: 'running',
+        transcriptionRequestId: 'request-existing',
+        transcriptionJobId: 'job-existing',
+        transcriptionAttempt: 2,
+      ),
+    );
+    final lateSnapshot = Completer<TranscriptionJobSnapshot>();
+    var getCalls = 0;
+    final fake = _FakeTranscriptionClient(
+      completedTranscript: 'unused',
+      onGetJob: (jobId) {
+        getCalls += 1;
+        if (getCalls == 2) return lateSnapshot.future;
+        return TranscriptionJobSnapshot(
+          id: 'job-existing',
+          requestId: 'request-existing',
+          dumpId: 'r1',
+          status: getCalls == 1 ? 'running' : 'completed',
+          model: 'large-v3',
+          transcript: getCalls == 1 ? null : 'eventually recovered',
+        );
+      },
+      streamForJob: (_) => Stream<JobEvent>.fromIterable(const [
+        JobEvent('error', {'error': 'observer disconnected'}),
+      ]),
+    );
+    final service = ServerTranscriptionService(
+      client: fake,
+      db: db,
+      audioStorage: storage,
+      recoveryRequestTimeout: const Duration(milliseconds: 10),
+      recoveryRetryBaseDelay: const Duration(milliseconds: 5),
+      recoveryRetryMaxDelay: const Duration(milliseconds: 5),
+    );
+    addTearDown(service.dispose);
+
+    await service.reconcilePending();
+
+    final deadline = DateTime.now().add(const Duration(milliseconds: 300));
+    late DumpRow recovered;
+    while (true) {
+      recovered = (await db.getDump('r1'))!;
+      if (getCalls == 3 &&
+          recovered.transcriptionStatus == 'completed' &&
+          recovered.transcriptionError == null) {
+        break;
+      }
+      if (DateTime.now().isAfter(deadline)) {
+        fail('timed-out recovery did not re-arm a later retry');
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+    }
+
+    lateSnapshot.complete(
+      const TranscriptionJobSnapshot(
+        id: 'job-existing',
+        requestId: 'request-existing',
+        dumpId: 'r1',
+        status: 'running',
+        model: 'large-v3',
+      ),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+
+    recovered = (await db.getDump('r1'))!;
+    expect(getCalls, 3);
+    expect(fake.enqueueCalls, 0);
+    expect(recovered.transcriptionStatus, 'completed');
+    expect(recovered.transcript, 'eventually recovered');
+    expect(recovered.transcriptionAttempt, 2);
+    expect(recovered.transcriptionRequestId, 'request-existing');
+    expect(recovered.transcriptionJobId, 'job-existing');
+  });
+
   test('terminal recovery resets retry backoff for a later attempt', () async {
     await seedRow(
       row(
@@ -2836,33 +2966,46 @@ void main() {
       db: db,
       audioStorage: storage,
       recoveryRequestTimeout: const Duration(milliseconds: 20),
+      recoveryRetryBaseDelay: const Duration(seconds: 5),
+      recoveryRetryMaxDelay: const Duration(seconds: 5),
     );
     addTearDown(service.dispose);
 
-    final scan = service.reconcilePending();
-    try {
-      await scan.timeout(const Duration(milliseconds: 200));
-    } finally {
-      stalledEnqueue.complete(
-        const TranscriptionJobSnapshot(
-          id: 'late-job',
-          requestId: 'request-existing',
-          dumpId: 'r1',
-          status: 'queued',
-          model: 'large-v3',
-        ),
-      );
-      await scan;
+    await service.reconcilePending().timeout(const Duration(milliseconds: 200));
+    final replayDeadline =
+        DateTime.now().add(const Duration(milliseconds: 200));
+    while (fake.enqueueCalls < 2) {
+      if (DateTime.now().isAfter(replayDeadline)) {
+        fail('timed-out enqueue did not replay its durable request ID');
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 1));
     }
-    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(const Duration(milliseconds: 50));
 
-    final timedOut = (await db.getDump('r1'))!;
-    expect(fake.enqueueCalls, 1);
+    var timedOut = (await db.getDump('r1'))!;
+    expect(fake.enqueueCalls, 2);
     expect(timedOut.transcriptionStatus, 'uploading');
     expect(timedOut.transcriptionRequestId, 'request-existing');
     expect(timedOut.transcriptionJobId, isNull);
     expect(timedOut.transcriptionAttempt, 2);
     expect(timedOut.transcriptionError, startsWith('reconciliation_pending:'));
+
+    service.dispose();
+    stalledEnqueue.complete(
+      const TranscriptionJobSnapshot(
+        id: 'late-job',
+        requestId: 'request-existing',
+        dumpId: 'r1',
+        status: 'queued',
+        model: 'large-v3',
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    timedOut = (await db.getDump('r1'))!;
+    expect(fake.enqueueCalls, 2);
+    expect(timedOut.transcriptionStatus, 'uploading');
+    expect(timedOut.transcriptionJobId, isNull);
   });
 
   test('bounds metadata creation during recovery', () async {
@@ -3035,6 +3178,77 @@ void main() {
     expect(writtenMetadata?['transcriptionError'], isNull);
     expect(repaired.transcriptionError, isNull);
     expect(await storage.pathFor('r1').readAsBytes(), [1, 2, 3]);
+  });
+
+  test('sidecar wait deadline releases reconciliation generations', () async {
+    await seedRow(
+      row(
+        transcriptionStatus: 'completed',
+        transcriptionRequestId: 'request-existing',
+        transcriptionJobId: 'job-existing',
+        transcriptionAttempt: 2,
+        transcriptionCompletedAt: DateTime.utc(2026, 9, 14, 15),
+        transcriptionError: 'sidecar_sync_pending: write pending',
+      ).copyWith(transcript: const Value('committed transcript')),
+    );
+    final writerStarted = Completer<void>();
+    final releaseWriter = Completer<void>();
+    final fake = _FakeTranscriptionClient(
+      completedTranscript: 'unused',
+      onGetJob: (jobId) => TranscriptionJobSnapshot(
+        id: jobId,
+        requestId: 'request-r2',
+        dumpId: 'r2',
+        status: 'completed',
+        model: 'large-v3',
+        transcript: 'second row recovered',
+      ),
+    );
+    final service = ServerTranscriptionService(
+      client: fake,
+      db: db,
+      audioStorage: storage,
+      sidecarWaitTimeout: const Duration(milliseconds: 10),
+      metadataWriter: (id, metadata) async {
+        if (id != 'r1') return;
+        writerStarted.complete();
+        await releaseWriter.future;
+      },
+    );
+    addTearDown(service.dispose);
+
+    final firstScan = service.reconcilePending();
+    await writerStarted.future.timeout(const Duration(milliseconds: 200));
+    await firstScan.timeout(const Duration(milliseconds: 300));
+
+    await seedRow(
+      row(
+        id: 'r2',
+        transcriptionStatus: 'running',
+        transcriptionRequestId: 'request-r2',
+        transcriptionJobId: 'job-r2',
+        transcriptionAttempt: 1,
+      ),
+    );
+    await service.reconcilePending().timeout(const Duration(milliseconds: 300));
+
+    final secondRow = (await db.getDump('r2'))!;
+    expect(fake.getJobIds, ['job-r2']);
+    expect(secondRow.transcriptionStatus, 'completed');
+    expect(secondRow.transcript, 'second row recovered');
+    expect(secondRow.transcriptionError, isNull);
+
+    releaseWriter.complete();
+    final repairDeadline =
+        DateTime.now().add(const Duration(milliseconds: 200));
+    while (true) {
+      final firstRow = (await db.getDump('r1'))!;
+      if (firstRow.transcriptionError == null) break;
+      if (DateTime.now().isAfter(repairDeadline)) {
+        fail('late serialized repair did not clear its marker');
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+    }
   });
 
   test('replays a persisted request ID and stores its returned job ID',

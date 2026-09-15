@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import sqlite3
 import time
 from datetime import UTC, datetime
@@ -13,6 +14,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.api.dumps import router as dumps_router
+from app.api.dumps import upload_audio
 from app.auth import generate_token, hash_token
 from app.db import init_db
 
@@ -134,6 +136,113 @@ def test_upload_overwrites_existing(authed_client, temp_data_dir: Path) -> None:
     resp = client.get(f"/v1/dumps/{dump_id}/audio", headers=_auth(token))
     assert resp.status_code == 200
     assert resp.content == b"second"
+
+
+class _PausedUpload:
+    filename = "replacement.opus"
+    content_type = "audio/ogg"
+
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+        self._reads = 0
+
+    async def read(self, _size: int) -> bytes:
+        self._reads += 1
+        if self._reads == 1:
+            self.started.set()
+            return b"new-"
+        if self._reads == 2:
+            await self.release.wait()
+            return b"audio"
+        return b""
+
+
+@pytest.mark.asyncio
+async def test_upload_publishes_only_after_the_body_is_complete(
+    authed_client,
+    temp_data_dir: Path,
+) -> None:
+    client, token = authed_client
+    dump_id = _create_dump(client, token, "test-dump-atomic")
+    target = temp_data_dir / "audio" / f"{dump_id}.opus"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(b"old-complete-audio")
+    upload = _PausedUpload()
+    db = sqlite3.connect(temp_data_dir / "tangent.db")
+    db.row_factory = sqlite3.Row
+    try:
+        task = asyncio.create_task(upload_audio(dump_id, upload, db, "test-user"))
+        await asyncio.wait_for(upload.started.wait(), timeout=0.2)
+        await asyncio.sleep(0)
+
+        assert target.read_bytes() == b"old-complete-audio"
+
+        upload.release.set()
+        response = await asyncio.wait_for(task, timeout=0.2)
+        assert response.status_code == 204
+        assert target.read_bytes() == b"new-audio"
+    finally:
+        upload.release.set()
+        db.close()
+
+
+class _FailingUpload:
+    filename = "replacement.opus"
+    content_type = "audio/ogg"
+
+    def __init__(self) -> None:
+        self._reads = 0
+
+    async def read(self, _size: int) -> bytes:
+        self._reads += 1
+        if self._reads == 1:
+            return b"partial"
+        raise OSError("client disconnected")
+
+
+@pytest.mark.asyncio
+async def test_failed_upload_preserves_existing_audio_and_removes_temp(
+    authed_client,
+    temp_data_dir: Path,
+) -> None:
+    client, token = authed_client
+    dump_id = _create_dump(client, token, "test-dump-failed-replacement")
+    target = temp_data_dir / "audio" / f"{dump_id}.opus"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(b"old-complete-audio")
+    db = sqlite3.connect(temp_data_dir / "tangent.db")
+    db.row_factory = sqlite3.Row
+    try:
+        with pytest.raises(OSError, match="client disconnected"):
+            await upload_audio(dump_id, _FailingUpload(), db, "test-user")
+    finally:
+        db.close()
+
+    assert target.read_bytes() == b"old-complete-audio"
+    assert list(target.parent.glob(f".{target.name}.*.upload")) == []
+
+
+def test_empty_upload_preserves_existing_audio(
+    authed_client,
+    temp_data_dir: Path,
+) -> None:
+    client, token = authed_client
+    dump_id = _create_dump(client, token, "test-dump-empty-replacement")
+    target = temp_data_dir / "audio" / f"{dump_id}.opus"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(b"old-complete-audio")
+
+    response = client.post(
+        f"/v1/dumps/{dump_id}/audio",
+        files={"audio": (f"{dump_id}.opus", b"", "audio/ogg")},
+        headers=_auth(token),
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Uploaded audio is empty"
+    assert target.read_bytes() == b"old-complete-audio"
+    assert list(target.parent.glob(f".{target.name}.*.upload")) == []
 
 
 def test_transcribe_without_audio_returns_422(authed_client) -> None:

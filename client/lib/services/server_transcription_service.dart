@@ -57,6 +57,7 @@ class ServerTranscriptionService extends ChangeNotifier {
     Future<void> Function(String, Map<String, dynamic>)? metadataWriter,
     Duration recoveryRequestTimeout = const Duration(seconds: 30),
     Duration operationRequestTimeout = const Duration(seconds: 30),
+    Duration sidecarWaitTimeout = const Duration(seconds: 30),
     Duration recoveryRetryBaseDelay = const Duration(seconds: 1),
     Duration recoveryRetryMaxDelay = const Duration(seconds: 30),
   })  : _client = client,
@@ -68,6 +69,7 @@ class ServerTranscriptionService extends ChangeNotifier {
         _metadataWriterOverride = metadataWriter,
         _recoveryRequestTimeout = recoveryRequestTimeout,
         _operationRequestTimeout = operationRequestTimeout,
+        _sidecarWaitTimeout = sidecarWaitTimeout,
         _recoveryRetryBaseDelay = recoveryRetryBaseDelay,
         _recoveryRetryMaxDelay = recoveryRetryMaxDelay;
 
@@ -81,6 +83,7 @@ class ServerTranscriptionService extends ChangeNotifier {
       _metadataWriterOverride;
   final Duration _recoveryRequestTimeout;
   final Duration _operationRequestTimeout;
+  final Duration _sidecarWaitTimeout;
   final Duration _recoveryRetryBaseDelay;
   final Duration _recoveryRetryMaxDelay;
 
@@ -218,7 +221,13 @@ class ServerTranscriptionService extends ChangeNotifier {
             final attachment = await _resolvePendingRow(row);
             if (_disposed) return;
             if (attachment == null) {
-              _clearRecoveryRetryIfTerminal(row.id);
+              final current = _durableRows[row.id] ?? row;
+              if (TranscriptionStatus.fromWire(current.transcriptionStatus)
+                  .isInProgress) {
+                _scheduleRecoveryRetry(row.id);
+              } else {
+                _clearRecoveryRetry(row.id);
+              }
               return;
             }
             final (attachmentRow, jobId) = attachment;
@@ -443,6 +452,10 @@ class ServerTranscriptionService extends ChangeNotifier {
     return request.timeout(_operationRequestTimeout);
   }
 
+  Future<void> _awaitSidecarWrite(Future<void> write) {
+    return write.timeout(_sidecarWaitTimeout, onTimeout: () {});
+  }
+
   void _startReattachment(DumpRow row, String jobId) {
     if (_disposed) return;
     if (_isLocallyOwned(row.id)) {
@@ -594,40 +607,43 @@ class ServerTranscriptionService extends ChangeNotifier {
 
   Future<void> _repairCompletedSidecar(DumpRow row) async {
     _throwIfDisposed();
-    await _audioStorage.runSerializedMetadataWrite<void>(
-      row.id,
-      (write) async {
-        _throwIfDisposed();
-        final current = await _db.getDump(row.id);
-        _throwIfDisposed();
-        if (current == null ||
-            current.transcriptionAttempt != row.transcriptionAttempt ||
-            current.transcriptionRequestId != row.transcriptionRequestId ||
-            TranscriptionStatus.fromWire(current.transcriptionStatus) !=
-                TranscriptionStatus.completed ||
-            !(current.transcriptionError?.startsWith('sidecar_sync_pending:') ??
-                false)) {
-          return;
-        }
-        final metadata = dumpMetadata(current)..['transcriptionError'] = null;
-        final override = _metadataWriterOverride;
-        if (override == null) {
-          await write(metadata);
-        } else {
-          await override(current.id, metadata);
-        }
-        _throwIfDisposed();
-        await _db.updateTranscriptionSidecarError(
-          current.id,
-          attempt: current.transcriptionAttempt,
-          requestId: current.transcriptionRequestId!,
-          error: null,
-          now: _now(),
-        );
-        _throwIfDisposed();
-        await _refreshDurableRow(current.id);
-        _throwIfDisposed();
-      },
+    await _awaitSidecarWrite(
+      _audioStorage.runSerializedMetadataWrite<void>(
+        row.id,
+        (write) async {
+          _throwIfDisposed();
+          final current = await _db.getDump(row.id);
+          _throwIfDisposed();
+          if (current == null ||
+              current.transcriptionAttempt != row.transcriptionAttempt ||
+              current.transcriptionRequestId != row.transcriptionRequestId ||
+              TranscriptionStatus.fromWire(current.transcriptionStatus) !=
+                  TranscriptionStatus.completed ||
+              !(current.transcriptionError
+                      ?.startsWith('sidecar_sync_pending:') ??
+                  false)) {
+            return;
+          }
+          final metadata = dumpMetadata(current)..['transcriptionError'] = null;
+          final override = _metadataWriterOverride;
+          if (override == null) {
+            await write(metadata);
+          } else {
+            await override(current.id, metadata);
+          }
+          _throwIfDisposed();
+          await _db.updateTranscriptionSidecarError(
+            current.id,
+            attempt: current.transcriptionAttempt,
+            requestId: current.transcriptionRequestId!,
+            error: null,
+            now: _now(),
+          );
+          _throwIfDisposed();
+          await _refreshDurableRow(current.id);
+          _throwIfDisposed();
+        },
+      ),
     );
     _throwIfDisposed();
   }
@@ -888,58 +904,61 @@ class ServerTranscriptionService extends ChangeNotifier {
       }
       _throwIfDisposed();
       if (!completionWon) throw const _StaleTranscriptionAttempt();
-      await _audioStorage.runSerializedMetadataWrite<void>(
-        row.id,
-        (write) async {
-          final completed = await _readCurrentAttempt(row);
-          if (completed.transcriptionAttempt != row.transcriptionAttempt ||
-              completed.transcriptionRequestId != row.transcriptionRequestId ||
-              TranscriptionStatus.fromWire(completed.transcriptionStatus) !=
-                  TranscriptionStatus.completed ||
-              !(completed.transcriptionError
-                      ?.startsWith('sidecar_sync_pending:') ??
-                  false)) {
-            throw const _StaleTranscriptionAttempt();
-          }
-          _durableRows[row.id] = completed;
-          final sidecarMetadata = dumpMetadata(completed)
-            ..['transcriptionError'] = null;
-          try {
-            final override = _metadataWriterOverride;
-            if (override == null) {
-              await write(sidecarMetadata);
-            } else {
-              await override(completed.id, sidecarMetadata);
+      await _awaitSidecarWrite(
+        _audioStorage.runSerializedMetadataWrite<void>(
+          row.id,
+          (write) async {
+            final completed = await _readCurrentAttempt(row);
+            if (completed.transcriptionAttempt != row.transcriptionAttempt ||
+                completed.transcriptionRequestId !=
+                    row.transcriptionRequestId ||
+                TranscriptionStatus.fromWire(completed.transcriptionStatus) !=
+                    TranscriptionStatus.completed ||
+                !(completed.transcriptionError
+                        ?.startsWith('sidecar_sync_pending:') ??
+                    false)) {
+              throw const _StaleTranscriptionAttempt();
             }
-          } catch (error) {
+            _durableRows[row.id] = completed;
+            final sidecarMetadata = dumpMetadata(completed)
+              ..['transcriptionError'] = null;
             try {
-              await _db.updateTranscriptionSidecarError(
+              final override = _metadataWriterOverride;
+              if (override == null) {
+                await write(sidecarMetadata);
+              } else {
+                await override(completed.id, sidecarMetadata);
+              }
+            } catch (error) {
+              try {
+                await _db.updateTranscriptionSidecarError(
+                  completed.id,
+                  attempt: completed.transcriptionAttempt,
+                  requestId: completed.transcriptionRequestId!,
+                  error: 'sidecar_sync_pending: $error',
+                  now: _now(),
+                );
+              } catch (_) {
+                // Atomic completion already left the generic pending marker.
+              }
+              return;
+            }
+            try {
+              final cleared = await _db.updateTranscriptionSidecarError(
                 completed.id,
                 attempt: completed.transcriptionAttempt,
                 requestId: completed.transcriptionRequestId!,
-                error: 'sidecar_sync_pending: $error',
+                error: null,
                 now: _now(),
               );
-            } catch (_) {
-              // Atomic completion already left the generic pending marker.
+              if (!cleared) throw const _StaleTranscriptionAttempt();
+            } on _StaleTranscriptionAttempt {
+              rethrow;
+            } catch (cause) {
+              throw _TranscriptionPersistenceFailure(cause);
             }
-            return;
-          }
-          try {
-            final cleared = await _db.updateTranscriptionSidecarError(
-              completed.id,
-              attempt: completed.transcriptionAttempt,
-              requestId: completed.transcriptionRequestId!,
-              error: null,
-              now: _now(),
-            );
-            if (!cleared) throw const _StaleTranscriptionAttempt();
-          } on _StaleTranscriptionAttempt {
-            rethrow;
-          } catch (cause) {
-            throw _TranscriptionPersistenceFailure(cause);
-          }
-        },
+          },
+        ),
       );
     } on _ServiceDisposed {
       // Provider replacement only detaches this observer. The durable request

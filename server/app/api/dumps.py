@@ -3,8 +3,10 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
 import time
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
@@ -91,15 +93,32 @@ async def upload_audio(
     target = _audio_dir() / f"{dump_id}{ext}"
     target.parent.mkdir(parents=True, exist_ok=True)
 
-    # Stream the upload to disk so we don't OOM on big files.
+    # Stream into a unique file in the destination directory. The canonical
+    # path remains absent (or keeps its prior complete contents) until the
+    # upload is fully flushed, then os.replace publishes it atomically.
+    temporary = target.with_name(f".{target.name}.{uuid.uuid4().hex}.upload")
     size = 0
-    with target.open("wb") as f:
-        while True:
-            chunk = await audio.read(64 * 1024)
-            if not chunk:
-                break
-            f.write(chunk)
-            size += len(chunk)
+    published = False
+    try:
+        with temporary.open("xb") as f:
+            while True:
+                chunk = await audio.read(64 * 1024)
+                if not chunk:
+                    break
+                f.write(chunk)
+                size += len(chunk)
+            if size == 0:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail="Uploaded audio is empty",
+                )
+            f.flush()
+            os.fsync(f.fileno())
+        temporary.replace(target)
+        published = True
+    finally:
+        if not published:
+            temporary.unlink(missing_ok=True)
 
     log.info("audio.uploaded", dump_id=dump_id, size=size, path=str(target))
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -154,19 +173,21 @@ def create_dump(
     now = _now_ts()
     created_ts = int(payload.created_at.timestamp())
 
-    # Idempotency: if exists, return as-is
-    existing = db.execute(
-        "SELECT * FROM dumps WHERE id = ? AND deleted_at IS NULL", (payload.id,)
-    ).fetchone()
-    if existing:
-        return _row_to_dump(existing)
-
     db.execute(
         """
         INSERT INTO dumps (
             id, client_id, mode, duration_seconds, title,
             created_at, updated_at, transcript, audio_kept
         ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, 0)
+        ON CONFLICT(id) DO UPDATE SET
+            client_id = excluded.client_id,
+            mode = excluded.mode,
+            duration_seconds = excluded.duration_seconds,
+            title = excluded.title,
+            created_at = excluded.created_at,
+            updated_at = excluded.updated_at,
+            deleted_at = NULL
+        WHERE dumps.deleted_at IS NOT NULL
         """,
         (
             payload.id,
