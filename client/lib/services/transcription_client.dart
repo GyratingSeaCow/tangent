@@ -427,6 +427,19 @@ class TranscriptionClient {
           message: body['error']['message'] as String,
         );
       }
+      if (status == 422 && body is Map) {
+        final detail = body['detail'];
+        if (detail is String &&
+            RegExp(
+              r"^No audio file uploaded for dump '[^']+'\. POST the audio to /v1/dumps/\{id\}/audio first\.$",
+            ).hasMatch(detail)) {
+          throw ApiException(
+            statusCode: 422,
+            code: 'missing_audio',
+            message: detail,
+          );
+        }
+      }
       if (status == 409 &&
           body is Map &&
           body['detail'] == 'request_id conflict') {

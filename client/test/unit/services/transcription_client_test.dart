@@ -191,6 +191,57 @@ void main() {
       );
     });
 
+    test('only the exact server missing-audio 422 gets a typed code', () async {
+      Future<ApiException> enqueueError(Object detail) async {
+        final dio = _MockDio();
+        when(
+          () => dio.post<dynamic>(
+            '/v1/dumps/dump-1/transcribe',
+            data: any(named: 'data'),
+          ),
+        ).thenAnswer(
+          (_) async => Response(
+            requestOptions: RequestOptions(
+              path: '/v1/dumps/dump-1/transcribe',
+            ),
+            statusCode: 422,
+            data: {'detail': detail},
+          ),
+        );
+        final testClient = TranscriptionClient.forTesting(
+          dio: dio,
+          baseUrl: 'http://test',
+        );
+        try {
+          await testClient.enqueueTranscription(
+            'dump-1',
+            requestId: 'request-422',
+          );
+          fail('enqueue unexpectedly succeeded');
+        } on ApiException catch (error) {
+          return error;
+        }
+      }
+
+      const missingAudioDetail = "No audio file uploaded for dump 'dump-1'. "
+          'POST the audio to /v1/dumps/{id}/audio first.';
+      final missingAudio = await enqueueError(missingAudioDetail);
+      final validation = await enqueueError(const [
+        {
+          'type': 'missing',
+          'loc': ['body', 'request_id'],
+          'msg': 'Field required',
+        },
+      ]);
+
+      expect(missingAudio.statusCode, 422);
+      expect(missingAudio.code, 'missing_audio');
+      expect(missingAudio.message, missingAudioDetail);
+      expect(validation.statusCode, 422);
+      expect(validation.code, 'http_error');
+      expect(validation.message, 'HTTP 422');
+    });
+
     test('poll response maps result transcript into typed snapshot', () async {
       when(() => mock.get<dynamic>('/v1/jobs/job-1')).thenAnswer(
         (_) async => Response(

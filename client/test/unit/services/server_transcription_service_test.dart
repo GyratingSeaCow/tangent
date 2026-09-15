@@ -59,6 +59,7 @@ class _FakeTranscriptionClient implements TranscriptionClient {
   final List<String> enqueueRequestIds = [];
   final List<String> getJobIds = [];
   final List<String> streamJobIds = [];
+  final List<List<int>> uploadedAudioBytes = [];
   final List<String> calls = [];
 
   @override
@@ -94,6 +95,7 @@ class _FakeTranscriptionClient implements TranscriptionClient {
   }) async {
     uploadCalls += 1;
     calls.add('upload');
+    uploadedAudioBytes.add(List<int>.from(audioBytes));
   }
 
   @override
@@ -569,6 +571,50 @@ void main() {
     expect((await db.getDump('r1'))!.transcript, 'recovered transcript');
   });
 
+  test('completed snapshot with blank transcript becomes durable failed',
+      () async {
+    await seedRow(
+      row(
+        transcriptionStatus: 'running',
+        transcriptionRequestId: 'request-existing',
+        transcriptionJobId: 'job-existing',
+        transcriptionAttempt: 2,
+      ),
+    );
+    final fake = _FakeTranscriptionClient(
+      completedTranscript: 'unused',
+      onGetJob: (jobId) => const TranscriptionJobSnapshot(
+        id: 'job-existing',
+        requestId: 'request-existing',
+        dumpId: 'r1',
+        status: 'completed',
+        model: 'large-v3',
+        transcript: '   ',
+      ),
+    );
+    final service = ServerTranscriptionService(
+      client: fake,
+      db: db,
+      audioStorage: storage,
+    );
+    addTearDown(service.dispose);
+
+    await service.reconcilePending();
+
+    final recovered = (await db.getDump('r1'))!;
+    expect(recovered.transcriptionStatus, 'failed');
+    expect(recovered.transcriptionError, 'Server returned an empty transcript');
+    expect(recovered.transcriptionRequestId, 'request-existing');
+    expect(recovered.transcriptionJobId, 'job-existing');
+    expect(recovered.transcriptionAttempt, 2);
+    expect(fake.streamJobCalls, 0);
+    expect(
+      (await db.dumpsNeedingTranscriptionRecovery()).map((row) => row.id),
+      isNot(contains('r1')),
+    );
+    expect(await storage.pathFor('r1').readAsBytes(), [1, 2, 3]);
+  });
+
   test('persists a terminal failed snapshot without attaching a stream',
       () async {
     await seedRow(
@@ -791,6 +837,59 @@ void main() {
     }
     expect(recovered.transcript, 'stream recovery');
     expect(recovered.transcriptionJobId, 'job-existing');
+    expect(await storage.pathFor('r1').readAsBytes(), [1, 2, 3]);
+  });
+
+  test('blank completion from a reattached stream becomes durable failed',
+      () async {
+    await seedRow(
+      row(
+        transcriptionStatus: 'running',
+        transcriptionRequestId: 'request-existing',
+        transcriptionJobId: 'job-existing',
+        transcriptionAttempt: 2,
+      ),
+    );
+    final fake = _FakeTranscriptionClient(
+      completedTranscript: 'unused',
+      onGetJob: (jobId) => const TranscriptionJobSnapshot(
+        id: 'job-existing',
+        requestId: 'request-existing',
+        dumpId: 'r1',
+        status: 'running',
+        model: 'large-v3',
+      ),
+      streamForJob: (_) => Stream<JobEvent>.fromIterable(const [
+        JobEvent('completed', {'transcript': '  '}),
+      ]),
+    );
+    final service = ServerTranscriptionService(
+      client: fake,
+      db: db,
+      audioStorage: storage,
+    );
+    addTearDown(service.dispose);
+
+    await service.reconcilePending();
+
+    final deadline = DateTime.now().add(const Duration(seconds: 2));
+    late DumpRow recovered;
+    while (true) {
+      recovered = (await db.getDump('r1'))!;
+      if (recovered.transcriptionStatus == 'failed') break;
+      if (DateTime.now().isAfter(deadline)) {
+        fail('blank stream completion did not persist durable failure');
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+    }
+    expect(recovered.transcriptionError, 'Server returned an empty transcript');
+    expect(recovered.transcriptionRequestId, 'request-existing');
+    expect(recovered.transcriptionJobId, 'job-existing');
+    expect(recovered.transcriptionAttempt, 2);
+    expect(
+      (await db.dumpsNeedingTranscriptionRecovery()).map((row) => row.id),
+      isNot(contains('r1')),
+    );
     expect(await storage.pathFor('r1').readAsBytes(), [1, 2, 3]);
   });
 
@@ -1017,7 +1116,8 @@ void main() {
     expect(fake.streamJobCalls, 0);
   });
 
-  test('recreates missing server metadata before replaying the same request ID',
+  test(
+      'repairs missing metadata then audio in one scan with the same request ID',
       () async {
     await seedRow(
       row(
@@ -1031,22 +1131,32 @@ void main() {
       completedTranscript: 'unused',
       onEnqueue: (dumpId, requestId, model) {
         enqueueAttempt += 1;
-        if (enqueueAttempt == 1) {
-          throw const ApiException(
-            statusCode: 404,
-            code: 'not_found',
-            message: 'Dump not found',
-          );
+        switch (enqueueAttempt) {
+          case 1:
+            throw const ApiException(
+              statusCode: 404,
+              code: 'http_error',
+              message: "Dump 'r1' not found",
+            );
+          case 2:
+            throw const ApiException(
+              statusCode: 422,
+              code: 'missing_audio',
+              message: "No audio file uploaded for dump 'r1'. "
+                  'POST the audio to /v1/dumps/{id}/audio first.',
+            );
         }
         return TranscriptionJobSnapshot(
-          id: 'job-after-metadata',
+          id: 'job-after-repair',
           requestId: requestId,
           dumpId: dumpId,
           status: 'queued',
           model: model,
         );
       },
-      streamForJob: (_) => const Stream<JobEvent>.empty(),
+      streamForJob: (_) => Stream<JobEvent>.fromIterable(const [
+        JobEvent('completed', {'transcript': 'recovered after repair'}),
+      ]),
     );
     var generatedIds = 0;
     final service = ServerTranscriptionService(
@@ -1059,17 +1169,45 @@ void main() {
 
     await service.reconcilePending();
 
-    final recovered = (await db.getDump('r1'))!;
-    expect(fake.calls.take(3), ['enqueue', 'create', 'enqueue']);
+    final deadline = DateTime.now().add(const Duration(seconds: 2));
+    late DumpRow recovered;
+    while (true) {
+      recovered = (await db.getDump('r1'))!;
+      if (recovered.transcriptionStatus == 'completed' &&
+          recovered.transcriptionError == null) {
+        break;
+      }
+      if (DateTime.now().isAfter(deadline)) {
+        fail('one-scan repair did not persist completion');
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+    }
+
+    expect(fake.calls, [
+      'enqueue',
+      'create',
+      'enqueue',
+      'upload',
+      'enqueue',
+      'stream',
+    ]);
     expect(fake.createCalls, 1);
-    expect(fake.uploadCalls, 0);
+    expect(fake.uploadCalls, 1);
+    expect(fake.uploadedAudioBytes, [
+      [1, 2, 3],
+    ]);
     expect(fake.enqueueRequestIds, [
       'request-existing',
       'request-existing',
+      'request-existing',
     ]);
-    expect(recovered.transcriptionJobId, 'job-after-metadata');
+    expect(recovered.transcriptionStatus, 'completed');
+    expect(recovered.transcript, 'recovered after repair');
+    expect(recovered.transcriptionJobId, 'job-after-repair');
     expect(recovered.transcriptionRequestId, 'request-existing');
+    expect(recovered.transcriptionAttempt, 2);
     expect(generatedIds, 0);
+    expect(await storage.pathFor('r1').readAsBytes(), [1, 2, 3]);
   });
 
   test('reuploads missing server audio before replaying the same request ID',
@@ -1089,8 +1227,9 @@ void main() {
         if (enqueueAttempt == 1) {
           throw const ApiException(
             statusCode: 422,
-            code: 'http_error',
-            message: 'No audio file uploaded',
+            code: 'missing_audio',
+            message: "No audio file uploaded for dump 'r1'. "
+                'POST the audio to /v1/dumps/{id}/audio first.',
           );
         }
         return TranscriptionJobSnapshot(
@@ -1125,6 +1264,82 @@ void main() {
     expect(recovered.transcriptionJobId, 'job-after-audio');
     expect(recovered.transcriptionRequestId, 'request-existing');
     expect(generatedIds, 0);
+  });
+
+  test('reconciliation classifies enqueue outcomes before persisting state',
+      () async {
+    for (final (id, requestId) in [
+      ('generic-422', 'request-generic'),
+      ('conflict-409', 'request-conflict'),
+      ('ambiguous-timeout', 'request-ambiguous'),
+    ]) {
+      await seedRow(
+        row(
+          id: id,
+          transcriptionStatus: 'uploading',
+          transcriptionRequestId: requestId,
+          transcriptionAttempt: 4,
+        ),
+      );
+    }
+    final fake = _FakeTranscriptionClient(
+      completedTranscript: 'unused',
+      onEnqueue: (dumpId, requestId, model) {
+        return switch (dumpId) {
+          'generic-422' => throw const ApiException(
+              statusCode: 422,
+              code: 'http_error',
+              message: 'HTTP 422',
+            ),
+          'conflict-409' => throw const ApiException(
+              statusCode: 409,
+              code: 'request_id_conflict',
+              message: 'request_id conflict',
+            ),
+          _ => throw TimeoutException('enqueue response lost'),
+        };
+      },
+    );
+    var generatedIds = 0;
+    final service = ServerTranscriptionService(
+      client: fake,
+      db: db,
+      audioStorage: storage,
+      requestIdFactory: () => 'unexpected-${++generatedIds}',
+    );
+    addTearDown(service.dispose);
+
+    await service.reconcilePending();
+
+    final generic = (await db.getDump('generic-422'))!;
+    final conflict = (await db.getDump('conflict-409'))!;
+    final ambiguous = (await db.getDump('ambiguous-timeout'))!;
+    expect(generic.transcriptionStatus, 'failed');
+    expect(generic.transcriptionRequestId, 'request-generic');
+    expect(generic.transcriptionAttempt, 4);
+    expect(generic.transcriptionError, contains('HTTP 422'));
+    expect(conflict.transcriptionStatus, 'failed');
+    expect(conflict.transcriptionRequestId, 'request-conflict');
+    expect(conflict.transcriptionAttempt, 4);
+    expect(conflict.transcriptionError, contains('request_id_conflict'));
+    expect(ambiguous.transcriptionStatus, 'uploading');
+    expect(ambiguous.transcriptionRequestId, 'request-ambiguous');
+    expect(ambiguous.transcriptionAttempt, 4);
+    expect(ambiguous.transcriptionJobId, isNull);
+    expect(
+      ambiguous.transcriptionError,
+      startsWith('reconciliation_pending:'),
+    );
+    expect(
+      (await db.dumpsNeedingTranscriptionRecovery()).map((row) => row.id),
+      ['ambiguous-timeout'],
+    );
+    expect(fake.createCalls, 0);
+    expect(fake.uploadCalls, 0);
+    expect(generatedIds, 0);
+    for (final id in ['generic-422', 'conflict-409', 'ambiguous-timeout']) {
+      expect(await storage.pathFor(id).readAsBytes(), [1, 2, 3]);
+    }
   });
 
   test('stores one row connection error and continues reconciling other rows',

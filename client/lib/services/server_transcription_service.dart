@@ -110,40 +110,46 @@ class ServerTranscriptionService extends ChangeNotifier {
         final requestId = row.transcriptionRequestId;
         if (requestId == null) return null;
         late TranscriptionJobSnapshot snapshot;
-        try {
-          snapshot = await _client.enqueueTranscription(
-            row.id,
-            requestId: requestId,
-            model: 'large-v3',
-          );
-        } on ApiException catch (error) {
-          if (error.statusCode == 404) {
-            await _client.createDump(
-              id: row.id,
-              mode: row.mode,
-              durationSeconds: row.durationSeconds,
-              title: row.title,
-              createdAt: row.createdAt,
+        var repairedMetadata = false;
+        var repairedAudio = false;
+        while (true) {
+          try {
+            snapshot = await _client.enqueueTranscription(
+              row.id,
+              requestId: requestId,
+              model: 'large-v3',
             );
-          } else if (error.statusCode == 422) {
-            final audioBytes = await _audioStorage.readBytes(row.id);
-            if (audioBytes.isEmpty) {
-              throw const LocalTranscriptionServerError(
-                'Audio file is empty',
+            break;
+          } on ApiException catch (error) {
+            if (error.statusCode == 404 && !repairedMetadata) {
+              repairedMetadata = true;
+              await _client.createDump(
+                id: row.id,
+                mode: row.mode,
+                durationSeconds: row.durationSeconds,
+                title: row.title,
+                createdAt: row.createdAt,
               );
+              continue;
             }
-            await _client.uploadAudio(
-              dumpId: row.id,
-              audioBytes: audioBytes,
-            );
-          } else {
+            if (error.statusCode == 422 &&
+                error.code == 'missing_audio' &&
+                !repairedAudio) {
+              repairedAudio = true;
+              final audioBytes = await _audioStorage.readBytes(row.id);
+              if (audioBytes.isEmpty) {
+                throw const LocalTranscriptionServerError(
+                  'Audio file is empty',
+                );
+              }
+              await _client.uploadAudio(
+                dumpId: row.id,
+                audioBytes: audioBytes,
+              );
+              continue;
+            }
             rethrow;
           }
-          snapshot = await _client.enqueueTranscription(
-            row.id,
-            requestId: requestId,
-            model: 'large-v3',
-          );
         }
         if (snapshot.status == 'completed') {
           final accepted = await _guardedStatus(
@@ -201,16 +207,34 @@ class ServerTranscriptionService extends ChangeNotifier {
       }
       if (snapshot.status != 'completed') return (row, jobId);
       final transcript = snapshot.transcript?.trim();
-      if (transcript == null || transcript.isEmpty) return null;
+      if (transcript == null || transcript.isEmpty) {
+        await _guardedStatus(
+          row,
+          status: TranscriptionStatus.failed,
+          jobId: jobId,
+          error: 'Server returned an empty transcript',
+        );
+        await _refreshDurableRow(row.id);
+        return null;
+      }
       await _persistRecoveredCompletion(row, transcript);
     } catch (error) {
       if (TranscriptionStatus.fromWire(row.transcriptionStatus) !=
           TranscriptionStatus.completed) {
-        await _persistRecoverable(
-          row,
-          marker: 'reconciliation_pending: $error',
-          jobId: row.transcriptionJobId,
-        );
+        if (_isDefinitiveFailure(error)) {
+          await _guardedStatus(
+            row,
+            status: TranscriptionStatus.failed,
+            jobId: row.transcriptionJobId,
+            error: error.toString(),
+          );
+        } else {
+          await _persistRecoverable(
+            row,
+            marker: 'reconciliation_pending: $error',
+            jobId: row.transcriptionJobId,
+          );
+        }
       }
       await _refreshDurableRow(row.id);
     }
@@ -236,11 +260,13 @@ class ServerTranscriptionService extends ChangeNotifier {
           case 'completed':
             final transcript = event.data['transcript']?.toString().trim();
             if (transcript == null || transcript.isEmpty) {
-              await _storeReattachmentError(
+              await _guardedStatus(
                 row,
-                jobId,
-                'Server returned an empty transcript',
+                status: TranscriptionStatus.failed,
+                jobId: jobId,
+                error: 'Server returned an empty transcript',
               );
+              await _refreshDurableRow(row.id);
             } else {
               await _persistRecoveredCompletion(row, transcript);
             }
