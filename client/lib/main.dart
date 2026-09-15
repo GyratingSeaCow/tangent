@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -59,13 +60,15 @@ Future<void> importDurableRecordings(LocalDb db, AudioStorage audio) async {
   final recordings = await audio.listAll();
   for (final recording in recordings) {
     if (await db.getDump(recording.id) != null) continue;
-    await db.upsertDump(importedDumpRow(
-      id: recording.id,
-      locator: recording.locator,
-      sizeBytes: recording.sizeBytes,
-      modifiedAt: recording.modifiedAt,
-      metadata: recording.metadata,
-    ),);
+    await db.upsertDump(
+      importedDumpRow(
+        id: recording.id,
+        locator: recording.locator,
+        sizeBytes: recording.sizeBytes,
+        modifiedAt: recording.modifiedAt,
+        metadata: recording.metadata,
+      ),
+    );
   }
 }
 
@@ -74,23 +77,69 @@ class TangentApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Tangent',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
-        useMaterial3: true,
-      ),
-      darkTheme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.indigo,
-          brightness: Brightness.dark,
+    return _TranscriptionLifecycleHost(
+      child: MaterialApp(
+        title: 'Tangent',
+        theme: ThemeData(
+          colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
+          useMaterial3: true,
         ),
-        useMaterial3: true,
+        darkTheme: ThemeData(
+          colorScheme: ColorScheme.fromSeed(
+            seedColor: Colors.indigo,
+            brightness: Brightness.dark,
+          ),
+          useMaterial3: true,
+        ),
+        home: const _Router(),
+        routes: {'/home': (_) => const HomeScreen()},
       ),
-      home: const _Router(),
-      routes: {'/home': (_) => const HomeScreen()},
     );
   }
+}
+
+class _TranscriptionLifecycleHost extends ConsumerStatefulWidget {
+  const _TranscriptionLifecycleHost({required this.child});
+
+  final Widget child;
+
+  @override
+  ConsumerState<_TranscriptionLifecycleHost> createState() =>
+      _TranscriptionLifecycleHostState();
+}
+
+class _TranscriptionLifecycleHostState
+    extends ConsumerState<_TranscriptionLifecycleHost>
+    with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback(_reconcileAfterStartup);
+  }
+
+  void _reconcileAfterStartup(Duration _) {
+    if (!mounted) return;
+    unawaited(ref.read(serverTranscriptionServiceProvider).reconcilePending());
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(
+        ref.read(serverTranscriptionServiceProvider).reconcilePending(),
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
 }
 
 class _Router extends ConsumerWidget {

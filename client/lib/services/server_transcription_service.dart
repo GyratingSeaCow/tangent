@@ -55,6 +55,8 @@ class ServerTranscriptionService extends ChangeNotifier {
 
   final List<_QueuedTranscription> _queue = [];
   final Map<String, DumpRow> _durableRows = {};
+  final Map<String, Future<void>> _reattachments = {};
+  Future<void>? _reconciliationScan;
   _QueuedTranscription? _activeJob;
   ServerTranscriptionOperation _activeOperation =
       const ServerTranscriptionOperation.idle();
@@ -70,6 +72,282 @@ class ServerTranscriptionService extends ChangeNotifier {
 
   List<String> get queuedDumpIds =>
       List.unmodifiable(_queue.map((job) => job.dumpId));
+
+  Future<void> reconcilePending() {
+    if (_disposed) return Future<void>.value();
+    final activeScan = _reconciliationScan;
+    if (activeScan != null) return activeScan;
+
+    late final Future<void> scan;
+    scan = _scanPending().whenComplete(() {
+      if (identical(_reconciliationScan, scan)) _reconciliationScan = null;
+    });
+    _reconciliationScan = scan;
+    return scan;
+  }
+
+  Future<void> _scanPending() async {
+    final rows = await _db.dumpsNeedingTranscriptionRecovery();
+    final attachments = <(DumpRow, String)>[];
+    for (final row in rows) {
+      final attachment = await _resolvePendingRow(row);
+      if (attachment != null) attachments.add(attachment);
+    }
+    for (final (row, jobId) in attachments) {
+      _startReattachment(row, jobId);
+    }
+  }
+
+  Future<(DumpRow, String)?> _resolvePendingRow(DumpRow row) async {
+    try {
+      if (TranscriptionStatus.fromWire(row.transcriptionStatus) ==
+          TranscriptionStatus.completed) {
+        await _repairCompletedSidecar(row);
+        return null;
+      }
+      final jobId = row.transcriptionJobId;
+      if (jobId == null) {
+        final requestId = row.transcriptionRequestId;
+        if (requestId == null) return null;
+        late TranscriptionJobSnapshot snapshot;
+        try {
+          snapshot = await _client.enqueueTranscription(
+            row.id,
+            requestId: requestId,
+            model: 'large-v3',
+          );
+        } on ApiException catch (error) {
+          if (error.statusCode == 404) {
+            await _client.createDump(
+              id: row.id,
+              mode: row.mode,
+              durationSeconds: row.durationSeconds,
+              title: row.title,
+              createdAt: row.createdAt,
+            );
+          } else if (error.statusCode == 422) {
+            final audioBytes = await _audioStorage.readBytes(row.id);
+            if (audioBytes.isEmpty) {
+              throw const LocalTranscriptionServerError(
+                'Audio file is empty',
+              );
+            }
+            await _client.uploadAudio(
+              dumpId: row.id,
+              audioBytes: audioBytes,
+            );
+          } else {
+            rethrow;
+          }
+          snapshot = await _client.enqueueTranscription(
+            row.id,
+            requestId: requestId,
+            model: 'large-v3',
+          );
+        }
+        if (snapshot.status == 'completed') {
+          final accepted = await _guardedStatus(
+            row,
+            status: TranscriptionStatus.queued,
+            jobId: snapshot.id,
+          );
+          if (!accepted) return null;
+          final transcript = snapshot.transcript?.trim();
+          if (transcript == null || transcript.isEmpty) {
+            await _guardedStatus(
+              row,
+              status: TranscriptionStatus.failed,
+              jobId: snapshot.id,
+              error: 'Server returned an empty transcript',
+            );
+          } else {
+            await _persistRecoveredCompletion(row, transcript);
+          }
+          await _refreshDurableRow(row.id);
+          return null;
+        }
+        if (snapshot.status == 'failed') {
+          await _guardedStatus(
+            row,
+            status: TranscriptionStatus.failed,
+            jobId: snapshot.id,
+            error: snapshot.error ?? 'Server job failed',
+          );
+          await _refreshDurableRow(row.id);
+          return null;
+        }
+        final status = switch (snapshot.status) {
+          'running' => TranscriptionStatus.running,
+          'queued' => TranscriptionStatus.queued,
+          _ => throw FormatException(
+              'Unknown transcription status: ${snapshot.status}',
+            ),
+        };
+        final accepted =
+            await _guardedStatus(row, status: status, jobId: snapshot.id);
+        await _refreshDurableRow(row.id);
+        return accepted ? (row, snapshot.id) : null;
+      }
+      final snapshot = await _client.getJob(jobId);
+      if (snapshot.status == 'failed') {
+        await _guardedStatus(
+          row,
+          status: TranscriptionStatus.failed,
+          jobId: jobId,
+          error: snapshot.error ?? 'Server job failed',
+        );
+        await _refreshDurableRow(row.id);
+        return null;
+      }
+      if (snapshot.status != 'completed') return (row, jobId);
+      final transcript = snapshot.transcript?.trim();
+      if (transcript == null || transcript.isEmpty) return null;
+      await _persistRecoveredCompletion(row, transcript);
+    } catch (error) {
+      if (TranscriptionStatus.fromWire(row.transcriptionStatus) !=
+          TranscriptionStatus.completed) {
+        await _persistRecoverable(
+          row,
+          marker: 'reconciliation_pending: $error',
+          jobId: row.transcriptionJobId,
+        );
+      }
+      await _refreshDurableRow(row.id);
+    }
+    return null;
+  }
+
+  void _startReattachment(DumpRow row, String jobId) {
+    if (_disposed || _reattachments.containsKey(row.id)) return;
+    late final Future<void> attachment;
+    attachment = _watchReattachedJob(row, jobId).whenComplete(() {
+      if (identical(_reattachments[row.id], attachment)) {
+        _reattachments.remove(row.id);
+      }
+    });
+    _reattachments[row.id] = attachment;
+    unawaited(attachment);
+  }
+
+  Future<void> _watchReattachedJob(DumpRow row, String jobId) async {
+    try {
+      await for (final event in _client.streamJob(jobId)) {
+        switch (event.status) {
+          case 'completed':
+            final transcript = event.data['transcript']?.toString().trim();
+            if (transcript == null || transcript.isEmpty) {
+              await _storeReattachmentError(
+                row,
+                jobId,
+                'Server returned an empty transcript',
+              );
+            } else {
+              await _persistRecoveredCompletion(row, transcript);
+            }
+            return;
+          case 'failed':
+            await _guardedStatus(
+              row,
+              status: TranscriptionStatus.failed,
+              jobId: jobId,
+              error: event.data['error']?.toString() ?? 'Server job failed',
+            );
+            await _refreshDurableRow(row.id);
+            return;
+          case 'error':
+          case 'timeout':
+            await _storeReattachmentError(
+              row,
+              jobId,
+              event.data['message']?.toString() ??
+                  'Server stream reported ${event.status}',
+            );
+            return;
+          default:
+            break;
+        }
+      }
+      await _storeReattachmentError(
+        row,
+        jobId,
+        'Event stream ended before a terminal event',
+      );
+    } catch (error) {
+      await _storeReattachmentError(row, jobId, error.toString());
+    }
+  }
+
+  Future<void> _storeReattachmentError(
+    DumpRow row,
+    String jobId,
+    String error,
+  ) async {
+    await _persistRecoverable(
+      row,
+      marker: 'reconciliation_pending: $error',
+      jobId: jobId,
+    );
+    await _refreshDurableRow(row.id);
+  }
+
+  Future<void> _persistRecoveredCompletion(
+    DumpRow row,
+    String transcript,
+  ) async {
+    final meetingNotes = row.mode == 'meeting'
+        ? _meetingNotesProcessor.process(
+            title: row.title,
+            transcript: transcript,
+          )
+        : null;
+    final completed = await _db.completeTranscriptionAttempt(
+      row.id,
+      attempt: row.transcriptionAttempt,
+      requestId: row.transcriptionRequestId!,
+      transcript: transcript,
+      meetingNotes: meetingNotes,
+      now: _now(),
+      sidecarError: 'sidecar_sync_pending: write pending',
+    );
+    if (!completed) return;
+    final committed = await _db.getDump(row.id);
+    if (committed == null) return;
+    _durableRows[row.id] = committed;
+    await _repairCompletedSidecar(committed);
+  }
+
+  Future<void> _repairCompletedSidecar(DumpRow row) async {
+    await _audioStorage.runSerializedMetadataWrite<void>(
+      row.id,
+      (write) async {
+        final current = await _db.getDump(row.id);
+        if (current == null ||
+            current.transcriptionAttempt != row.transcriptionAttempt ||
+            current.transcriptionRequestId != row.transcriptionRequestId ||
+            TranscriptionStatus.fromWire(current.transcriptionStatus) !=
+                TranscriptionStatus.completed ||
+            !(current.transcriptionError?.startsWith('sidecar_sync_pending:') ??
+                false)) {
+          return;
+        }
+        final metadata = dumpMetadata(current)..['transcriptionError'] = null;
+        final override = _metadataWriterOverride;
+        if (override == null) {
+          await write(metadata);
+        } else {
+          await override(current.id, metadata);
+        }
+        await _db.updateTranscriptionSidecarError(
+          current.id,
+          attempt: current.transcriptionAttempt,
+          requestId: current.transcriptionRequestId!,
+          error: null,
+          now: _now(),
+        );
+        await _refreshDurableRow(current.id);
+      },
+    );
+  }
 
   int? queuePosition(String dumpId) {
     final index = _queue.indexWhere((job) => job.dumpId == dumpId);
