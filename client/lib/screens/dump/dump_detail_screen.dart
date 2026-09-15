@@ -9,9 +9,9 @@ import '../../data/local_db.dart';
 import '../../data/recording_metadata.dart';
 import '../../models/dump_mode.dart';
 import '../../models/sync_status.dart';
+import '../../models/transcription_status.dart';
 import '../../services/meeting_notes_processor.dart';
 import '../../services/recording_playback.dart';
-import '../../services/server_transcription.dart';
 import '../home/home_screen.dart' show localDbProvider;
 import '../home/home_providers.dart'
     show
@@ -44,8 +44,14 @@ class DumpDetailScreen extends ConsumerStatefulWidget {
 
 class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
   late final TextEditingController _titleController;
+  late final TextEditingController _transcriptController;
   late final RecordingPlaybackController _playbackController;
   bool _saving = false;
+  bool _savingTranscript = false;
+  bool _transcriptDirty = false;
+  String? _editorBaseTranscript;
+  int? _editorBaseAttempt;
+  String? _editorBaseRequestId;
   String? _statusMessage;
   String? _statusError;
 
@@ -53,6 +59,7 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
   void initState() {
     super.initState();
     _titleController = TextEditingController();
+    _transcriptController = TextEditingController();
     _playbackController = RecordingPlaybackController(
       engine: ref.read(recordingPlaybackEngineFactoryProvider)(),
     )..addListener(_onPlaybackChanged);
@@ -75,6 +82,7 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
       ..removeListener(_onPlaybackChanged)
       ..dispose();
     _titleController.dispose();
+    _transcriptController.dispose();
     super.dispose();
   }
 
@@ -91,6 +99,82 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
         await write(dumpMetadata(latest));
       },
     );
+  }
+
+  void _syncTranscriptEditor(DumpRow row) {
+    final transcript = row.transcript;
+    if (transcript == null || transcript.isEmpty) return;
+    final revisionChanged = _editorBaseTranscript != transcript ||
+        _editorBaseAttempt != row.transcriptionAttempt ||
+        _editorBaseRequestId != row.transcriptionRequestId;
+    if (_editorBaseTranscript == null ||
+        (!_transcriptDirty && revisionChanged)) {
+      _transcriptController.value = TextEditingValue(
+        text: transcript,
+        selection: TextSelection.collapsed(offset: transcript.length),
+      );
+      _editorBaseTranscript = transcript;
+      _editorBaseAttempt = row.transcriptionAttempt;
+      _editorBaseRequestId = row.transcriptionRequestId;
+      _transcriptDirty = false;
+    }
+  }
+
+  void _onTranscriptChanged(String value) {
+    final dirty = value != _editorBaseTranscript;
+    setState(() => _transcriptDirty = dirty);
+  }
+
+  Future<void> _saveTranscript() async {
+    final expectedTranscript = _editorBaseTranscript;
+    final expectedAttempt = _editorBaseAttempt;
+    if (expectedTranscript == null || expectedAttempt == null) return;
+    final transcript = _transcriptController.text;
+    if (transcript.trim().isEmpty) return;
+    setState(() {
+      _savingTranscript = true;
+      _statusError = null;
+      _statusMessage = 'Saving transcript…';
+    });
+    try {
+      final db = ref.read(localDbProvider);
+      final audio = ref.read(audioStorageProvider);
+      final saved = await db.updateDumpTranscript(
+        widget.dumpId,
+        expectedTranscript: expectedTranscript,
+        expectedTranscriptionAttempt: expectedAttempt,
+        expectedTranscriptionRequestId: _editorBaseRequestId,
+        transcript: transcript,
+        now: DateTime.now().toUtc(),
+      );
+      await _writeLatestMetadata(db, audio);
+      if (mounted) {
+        setState(() {
+          _editorBaseTranscript = saved.transcript;
+          _editorBaseAttempt = saved.transcriptionAttempt;
+          _editorBaseRequestId = saved.transcriptionRequestId;
+          _transcriptDirty = false;
+          _statusMessage = 'Transcript saved';
+        });
+      }
+    } on StateError {
+      if (mounted) {
+        setState(() {
+          _statusMessage = null;
+          _statusError =
+              'Transcript not saved: a newer transcription or recording change won. Your draft is still here.';
+        });
+      }
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _statusMessage = null;
+          _statusError = 'Transcript save failed: $error';
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _savingTranscript = false);
+    }
   }
 
   Future<void> _save() async {
@@ -125,7 +209,37 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
     }
   }
 
-  Future<void> _transcribe() async {
+  void _requestTranscription(DumpRow row) {
+    if (row.transcript?.trim().isNotEmpty ?? false) {
+      showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Overwrite transcript?'),
+          content: const Text(
+            'The current transcript stays visible while replacement transcription runs. It is replaced only if the new transcription succeeds.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                Navigator.of(dialogContext).pop();
+                unawaited(_runTranscription());
+              },
+              child: const Text('Overwrite'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+    unawaited(_runTranscription());
+  }
+
+  Future<void> _runTranscription() async {
+    if (!mounted) return;
     setState(() {
       _statusError = null;
       _statusMessage = null;
@@ -133,23 +247,11 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
     final service = ref.read(serverTranscriptionServiceProvider);
     try {
       await service.transcribeDump(widget.dumpId);
-      if (!mounted) return;
-      ref.invalidate(dumpByIdProvider(widget.dumpId));
-      if (service.operation.status == ServerTranscriptionStatus.error) {
-        setState(() {
-          _statusError =
-              'Transcribe failed: ${service.operation.error ?? "unknown"}';
-        });
-      }
     } catch (error) {
       if (mounted) {
         setState(() => _statusError = 'Transcribe failed: $error');
       }
     }
-  }
-
-  void _cancelTranscription() {
-    ref.read(serverTranscriptionServiceProvider).cancel(widget.dumpId);
   }
 
   /// Regenerate secretary notes from the existing transcript without
@@ -232,11 +334,6 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
   @override
   Widget build(BuildContext context) {
     final rowAsync = ref.watch(dumpByIdProvider(widget.dumpId));
-    final service = ref.watch(serverTranscriptionServiceProvider);
-    final operation = service.operationFor(
-      widget.dumpId,
-      currentRow: rowAsync.valueOrNull,
-    );
 
     return Scaffold(
       appBar: AppBar(
@@ -250,7 +347,7 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
         ],
       ),
       body: rowAsync.when(
-        data: (row) => _buildBody(context, row, operation),
+        data: (row) => _buildBody(context, row),
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, _) => Center(child: Text('Error: $e')),
       ),
@@ -263,29 +360,23 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
     return mode == DumpMode.meeting ? 'Meeting' : 'Dump';
   }
 
-  Widget _buildBody(
-    BuildContext context,
-    DumpRow? row,
-    ServerTranscriptionOperation operation,
-  ) {
+  Widget _buildBody(BuildContext context, DumpRow? row) {
     if (row == null) {
       return const Center(child: Text('Dump not found'));
     }
 
+    _syncTranscriptEditor(row);
     final sync = SyncStatus.fromWire(row.syncStatus);
     final mode = DumpMode.fromWire(row.mode);
-    final isCurrentOperation = operation.dumpId == widget.dumpId &&
-        operation.status != ServerTranscriptionStatus.idle;
-    final operationActive = isCurrentOperation && operation.isActive;
-    final displayTranscript = isCurrentOperation &&
-            operation.status == ServerTranscriptionStatus.complete
-        ? operation.transcript
-        : row.transcript;
+    final transcription = TranscriptionStatus.fromWire(row.transcriptionStatus);
+    final operationActive = transcription.isInProgress;
+    final displayTranscript = row.transcript;
 
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
         TextField(
+          key: ValueKey('title-editor-${widget.dumpId}'),
           controller: _titleController,
           decoration: const InputDecoration(
             labelText: 'Title',
@@ -336,54 +427,61 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
                 onPressed: () => _regenerateMeetingNotes(displayTranscript),
               ),
             ),
-          Card(
-            child: ExpansionTile(
-              title: const Text('Raw Transcript'),
-              childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-              children: [
-                SelectableText(displayTranscript ?? 'None stated'),
-              ],
-            ),
-          ),
-        ] else if (mode == DumpMode.meeting &&
-            displayTranscript != null &&
-            displayTranscript.isNotEmpty) ...[
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Raw Transcript',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 8),
-                  SelectableText(displayTranscript),
-                  const SizedBox(height: 12),
-                  FilledButton.icon(
-                    key: ValueKey('generate-notes-${widget.dumpId}'),
-                    icon: const Icon(Icons.auto_awesome),
-                    label: const Text('Generate meeting notes'),
-                    onPressed: () => _regenerateMeetingNotes(displayTranscript),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ] else if (displayTranscript != null &&
-            displayTranscript.isNotEmpty) ...[
+          const SizedBox(height: 16),
+        ],
+        if (displayTranscript != null && displayTranscript.isNotEmpty) ...[
           Text(
             mode == DumpMode.meeting ? 'Raw Transcript' : 'Transcript',
             style: Theme.of(context).textTheme.titleMedium,
           ),
           const SizedBox(height: 8),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: SelectableText(displayTranscript),
+          TextField(
+            key: ValueKey('transcript-editor-${widget.dumpId}'),
+            controller: _transcriptController,
+            keyboardType: TextInputType.multiline,
+            minLines: 6,
+            maxLines: null,
+            onChanged: _onTranscriptChanged,
+            decoration: InputDecoration(
+              alignLabelWithHint: true,
+              border: const OutlineInputBorder(),
+              errorText: _transcriptController.text.isNotEmpty &&
+                      _transcriptController.text.trim().isEmpty
+                  ? 'Transcript cannot be blank'
+                  : null,
             ),
           ),
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: FilledButton.icon(
+              key: ValueKey('save-transcript-${widget.dumpId}'),
+              icon: _savingTranscript
+                  ? const SizedBox.square(
+                      dimension: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.save),
+              label: const Text('Save transcript'),
+              onPressed: transcription == TranscriptionStatus.completed &&
+                      _transcriptDirty &&
+                      _transcriptController.text.trim().isNotEmpty &&
+                      !_savingTranscript
+                  ? _saveTranscript
+                  : null,
+            ),
+          ),
+          if (mode == DumpMode.meeting &&
+              (row.meetingNotes == null ||
+                  row.meetingNotes!.trim().isEmpty)) ...[
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              key: ValueKey('generate-notes-${widget.dumpId}'),
+              icon: const Icon(Icons.auto_awesome),
+              label: const Text('Generate meeting notes'),
+              onPressed: () => _regenerateMeetingNotes(displayTranscript),
+            ),
+          ],
         ] else ...[
           Card(
             child: Padding(
@@ -396,10 +494,10 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
           ),
         ],
         const SizedBox(height: 16),
-        if (isCurrentOperation) ...[
+        if (operationActive || transcription == TranscriptionStatus.failed) ...[
           _ServerTranscriptionProgressPanel(
-            operation: operation,
-            onCancel: _cancelTranscription,
+            row: row,
+            status: transcription,
           ),
           const SizedBox(height: 16),
         ],
@@ -431,6 +529,7 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
             const SizedBox(width: 8),
             Expanded(
               child: FilledButton.icon(
+                key: ValueKey('transcribe-${widget.dumpId}'),
                 icon: operationActive
                     ? const SizedBox(
                         width: 16,
@@ -439,21 +538,17 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
                       )
                     : const Icon(Icons.cloud_upload),
                 label: Text(
-                  switch (operation.status) {
-                    ServerTranscriptionStatus.uploading => 'Uploading…',
-                    ServerTranscriptionStatus.queued => 'Queued',
-                    ServerTranscriptionStatus.running =>
-                      'Transcribing on server',
-                    ServerTranscriptionStatus.cancelling => 'Cancelling',
-                    ServerTranscriptionStatus.complete => 'Done',
-                    ServerTranscriptionStatus.error => 'Retry',
-                    ServerTranscriptionStatus.idle => 'Transcribe',
+                  switch (transcription) {
+                    TranscriptionStatus.uploading => 'Uploading…',
+                    TranscriptionStatus.queued => 'Queued',
+                    TranscriptionStatus.running => 'Transcribing on server',
+                    TranscriptionStatus.completed => 'Transcribe again',
+                    TranscriptionStatus.failed => 'Retry',
+                    TranscriptionStatus.notTranscribed => 'Transcribe',
                   },
                 ),
-                onPressed: operationActive ||
-                        operation.status == ServerTranscriptionStatus.queued
-                    ? null
-                    : _transcribe,
+                onPressed:
+                    operationActive ? null : () => _requestTranscription(row),
               ),
             ),
           ],
@@ -575,12 +670,12 @@ class _RecordingPlaybackPanel extends StatelessWidget {
 
 class _ServerTranscriptionProgressPanel extends StatefulWidget {
   const _ServerTranscriptionProgressPanel({
-    required this.operation,
-    required this.onCancel,
+    required this.row,
+    required this.status,
   });
 
-  final ServerTranscriptionOperation operation;
-  final VoidCallback onCancel;
+  final DumpRow row;
+  final TranscriptionStatus status;
 
   @override
   State<_ServerTranscriptionProgressPanel> createState() =>
@@ -604,14 +699,14 @@ class _ServerTranscriptionProgressPanelState
   }
 
   void _syncTimer() {
-    if (widget.operation.isActive && _elapsedTimer == null) {
+    if (widget.status.isInProgress && _elapsedTimer == null) {
       _elapsedTimer = Timer.periodic(
         const Duration(seconds: 1),
         (_) {
           if (mounted) setState(() {});
         },
       );
-    } else if (!widget.operation.isActive) {
+    } else if (!widget.status.isInProgress) {
       _elapsedTimer?.cancel();
       _elapsedTimer = null;
     }
@@ -625,20 +720,20 @@ class _ServerTranscriptionProgressPanelState
 
   @override
   Widget build(BuildContext context) {
-    final operation = widget.operation;
-    final title = switch (operation.status) {
-      ServerTranscriptionStatus.uploading => 'Uploading audio to your server',
-      ServerTranscriptionStatus.queued => 'Queued on your server',
-      ServerTranscriptionStatus.running => 'Transcribing on your server',
-      ServerTranscriptionStatus.cancelling => 'Cancelling',
-      ServerTranscriptionStatus.complete => 'Transcription complete',
-      ServerTranscriptionStatus.error => 'Server transcription failed',
-      ServerTranscriptionStatus.idle => 'Idle',
+    final status = widget.status;
+    final title = switch (status) {
+      TranscriptionStatus.uploading => 'Uploading audio to your server',
+      TranscriptionStatus.queued => 'Queued on your server',
+      TranscriptionStatus.running => 'Transcribing on your server',
+      TranscriptionStatus.failed => 'Server transcription failed',
+      TranscriptionStatus.completed => 'Transcription complete',
+      TranscriptionStatus.notTranscribed => 'Not transcribed',
     };
-    final startedAt = operation.startedAt;
-    final elapsed = startedAt == null
+    final startedAt = widget.row.transcriptionStartedAt;
+    final rawElapsed = startedAt == null
         ? Duration.zero
         : DateTime.now().difference(startedAt);
+    final elapsed = rawElapsed.isNegative ? Duration.zero : rawElapsed;
 
     return Semantics(
       liveRegion: true,
@@ -652,30 +747,16 @@ class _ServerTranscriptionProgressPanelState
             children: [
               Text(title, style: Theme.of(context).textTheme.titleMedium),
               const SizedBox(height: 8),
-              Text(_detailText(operation, elapsed)),
-              if (operation.isActive ||
-                  operation.status == ServerTranscriptionStatus.queued) ...[
+              Text(_detailText(status, elapsed)),
+              if (status.isInProgress) ...[
                 const SizedBox(height: 12),
                 const LinearProgressIndicator(),
-                const SizedBox(height: 12),
-                OutlinedButton.icon(
-                  onPressed:
-                      operation.status == ServerTranscriptionStatus.cancelling
-                          ? null
-                          : widget.onCancel,
-                  icon: const Icon(Icons.cancel_outlined),
-                  label: Text(
-                    operation.status == ServerTranscriptionStatus.cancelling
-                        ? 'Cancelling…'
-                        : 'Cancel',
-                  ),
-                ),
               ],
-              if (operation.status == ServerTranscriptionStatus.error &&
-                  operation.error != null) ...[
+              if (status == TranscriptionStatus.failed &&
+                  widget.row.transcriptionError != null) ...[
                 const SizedBox(height: 8),
                 Text(
-                  operation.error!,
+                  widget.row.transcriptionError!,
                   style: TextStyle(color: Theme.of(context).colorScheme.error),
                 ),
               ],
@@ -686,24 +767,19 @@ class _ServerTranscriptionProgressPanelState
     );
   }
 
-  String _detailText(
-    ServerTranscriptionOperation operation,
-    Duration elapsed,
-  ) {
+  String _detailText(TranscriptionStatus status, Duration elapsed) {
     final elapsedText = _formatElapsed(elapsed);
-    return switch (operation.status) {
-      ServerTranscriptionStatus.uploading =>
-        'Streaming the recording to your personal Docker container · Elapsed $elapsedText',
-      ServerTranscriptionStatus.queued =>
-        'Waiting for the server to start the worker · Elapsed $elapsedText',
-      ServerTranscriptionStatus.running =>
-        'The server is decoding audio with faster-whisper · Elapsed $elapsedText',
-      ServerTranscriptionStatus.cancelling =>
-        'Cancelling the queued or active job · Elapsed $elapsedText',
-      ServerTranscriptionStatus.complete => 'Saved locally',
-      ServerTranscriptionStatus.error =>
-        'The recording is preserved on this device.',
-      ServerTranscriptionStatus.idle => 'Elapsed $elapsedText',
+    return switch (status) {
+      TranscriptionStatus.uploading =>
+        'Streaming the preserved recording to your personal Docker container · Elapsed $elapsedText',
+      TranscriptionStatus.queued =>
+        'Waiting for the server worker · Elapsed $elapsedText',
+      TranscriptionStatus.running =>
+        'The server is decoding audio with faster-whisper. This continues if you leave this screen · Elapsed $elapsedText',
+      TranscriptionStatus.failed =>
+        'The previous transcript and raw recording are preserved on this device.',
+      TranscriptionStatus.completed => 'Saved locally',
+      TranscriptionStatus.notTranscribed => 'No transcription attempt yet',
     };
   }
 

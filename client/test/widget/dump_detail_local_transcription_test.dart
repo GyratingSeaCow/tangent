@@ -24,9 +24,27 @@ import 'package:tangent/services/server_transcription_service.dart';
 import 'package:tangent/services/transcription_client.dart';
 
 class _FakeTranscriptionClient implements TranscriptionClient {
-  _FakeTranscriptionClient({required this.completedTranscript});
+  _FakeTranscriptionClient({
+    required this.completedTranscript,
+    this.pauseBeforeTerminal = false,
+    this.failure,
+  });
 
   final String completedTranscript;
+  final bool pauseBeforeTerminal;
+  final String? failure;
+  int createCalls = 0;
+  int uploadCalls = 0;
+  int enqueueCalls = 0;
+  final List<String> requestIds = [];
+  Completer<void>? _terminalGate;
+
+  bool get isWaitingBeforeTerminal => _terminalGate != null;
+
+  void releaseTerminal() {
+    final gate = _terminalGate;
+    if (gate != null && !gate.isCompleted) gate.complete();
+  }
 
   @override
   String get baseUrl => 'http://test';
@@ -38,8 +56,10 @@ class _FakeTranscriptionClient implements TranscriptionClient {
     required int durationSeconds,
     required String title,
     required DateTime createdAt,
-  }) async =>
-      id;
+  }) async {
+    createCalls++;
+    return id;
+  }
 
   @override
   Future<void> uploadAudio({
@@ -47,21 +67,26 @@ class _FakeTranscriptionClient implements TranscriptionClient {
     required List<int> audioBytes,
     String filename = 'recording.opus',
     String mimeType = 'audio/ogg',
-  }) async {}
+  }) async {
+    uploadCalls++;
+  }
 
   @override
   Future<TranscriptionJobSnapshot> enqueueTranscription(
     String dumpId, {
     required String requestId,
     String model = 'large-v3',
-  }) async =>
-      TranscriptionJobSnapshot(
-        id: 'job-$dumpId',
-        requestId: requestId,
-        dumpId: dumpId,
-        status: 'queued',
-        model: model,
-      );
+  }) async {
+    enqueueCalls++;
+    requestIds.add(requestId);
+    return TranscriptionJobSnapshot(
+      id: 'job-$dumpId',
+      requestId: requestId,
+      dumpId: dumpId,
+      status: 'queued',
+      model: model,
+    );
+  }
 
   @override
   Future<TranscriptionJobSnapshot> getJob(String jobId) async =>
@@ -77,7 +102,16 @@ class _FakeTranscriptionClient implements TranscriptionClient {
   }) async* {
     yield JobEvent('queued', const {});
     yield JobEvent('running', const {});
-    yield JobEvent('completed', {'transcript': completedTranscript});
+    if (pauseBeforeTerminal) {
+      final gate = Completer<void>();
+      _terminalGate = gate;
+      await gate.future;
+    }
+    if (failure != null) {
+      yield JobEvent('failed', {'error': failure!});
+    } else {
+      yield JobEvent('completed', {'transcript': completedTranscript});
+    }
   }
 }
 
@@ -326,10 +360,374 @@ void main() {
     await tester.pump();
     await tester.pump();
     expect(find.text('Reactive transcript'), findsOneWidget);
-    expect(find.text('Done'), findsOneWidget);
+    expect(find.text('Transcribe again'), findsOneWidget);
   });
 
-  testWidgets('Meeting detail prioritizes notes and expands raw transcript',
+  testWidgets(
+      'existing transcript requires confirmation and stays visible until replacement succeeds',
+      (tester) async {
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    final temp = Directory.systemTemp.createTempSync('tangent-overwrite-ok-');
+    final db = LocalDb.forTesting(NativeDatabase.memory());
+    final storage = AudioStorage.test(temp);
+    final fake = _FakeTranscriptionClient(
+      completedTranscript: 'Replacement transcript',
+      pauseBeforeTerminal: true,
+    );
+    final service = ServerTranscriptionService(
+      client: fake,
+      db: db,
+      audioStorage: storage,
+      requestIdFactory: () => 'request-replacement',
+    );
+    addTearDown(() async {
+      fake.releaseTerminal();
+      service.dispose();
+      await db.close();
+      if (temp.existsSync()) temp.deleteSync(recursive: true);
+    });
+    final row = _completedRow(
+      id: 'overwrite-ok',
+      transcript: 'Original transcript',
+      attempt: 4,
+      requestId: 'request-original',
+      jobId: 'job-original',
+    );
+    await db.upsertDump(row);
+    final rawAudio = <int>[8, 6, 7, 5, 3, 0, 9];
+    storage.pathFor(row.id).writeAsBytesSync(rawAudio);
+    storage
+        .metaPathFor(row.id)
+        .writeAsStringSync(jsonEncode(dumpMetadata(row)));
+
+    await _mountDetail(tester, db, storage, fake, service, row);
+    expect(_editorText(tester, row.id), 'Original transcript');
+
+    await tester.tap(find.byKey(ValueKey('transcribe-${row.id}')));
+    await tester.pumpAndSettle();
+    expect(find.text('Overwrite transcript?'), findsOneWidget);
+    await tester.tap(find.widgetWithText(TextButton, 'Cancel'));
+    await tester.pumpAndSettle();
+
+    late DumpRow cancelled;
+    await tester.runAsync(() async {
+      cancelled = (await db.getDump(row.id))!;
+    });
+    expect(fake.createCalls, 0);
+    expect(fake.uploadCalls, 0);
+    expect(fake.enqueueCalls, 0);
+    expect(cancelled.transcriptionAttempt, 4);
+    expect(cancelled.transcriptionRequestId, 'request-original');
+
+    await tester.tap(find.byKey(ValueKey('transcribe-${row.id}')));
+    await tester.pumpAndSettle();
+    final overwriteButton = tester.widget<FilledButton>(
+      find.widgetWithText(FilledButton, 'Overwrite'),
+    );
+    late DumpRow running;
+    late DumpRow completed;
+    late Map<String, dynamic> sidecar;
+    await tester.runAsync(() async {
+      overwriteButton.onPressed!();
+      final operationDone = service.transcribeDump(row.id);
+      await _waitForRealCondition(
+        () async => fake.isWaitingBeforeTerminal,
+        description: 'server stream to pause before its terminal event',
+      );
+      running = await _waitForRow(
+        db,
+        row.id,
+        (value) => value.transcriptionStatus == 'running',
+      );
+      fake.releaseTerminal();
+      await operationDone;
+      completed = (await db.getDump(row.id))!;
+      sidecar = await _waitForMetadata(
+        storage,
+        row.id,
+        (metadata) => metadata['transcript'] == 'Replacement transcript',
+      );
+    });
+
+    expect(running.transcriptionAttempt, 5);
+    expect(running.transcriptionRequestId, 'request-replacement');
+    expect(running.transcriptionRequestId, isNot('request-original'));
+    expect(running.transcript, 'Original transcript');
+    expect(_editorText(tester, row.id), 'Original transcript');
+    expect(storage.pathFor(row.id).readAsBytesSync(), rawAudio);
+    expect(fake.createCalls, 1);
+    expect(fake.uploadCalls, 1);
+    expect(fake.enqueueCalls, 1);
+    expect(fake.requestIds, ['request-replacement']);
+
+    expect(completed.transcriptionAttempt, 5);
+    expect(completed.transcript, 'Replacement transcript');
+    expect(sidecar['transcriptionRequestId'], 'request-replacement');
+    expect(storage.pathFor(row.id).readAsBytesSync(), rawAudio);
+
+    await _disposeDetail(tester);
+    await _mountDetail(tester, db, storage, fake, service, completed);
+    expect(_editorText(tester, row.id), 'Replacement transcript');
+    await _disposeDetail(tester);
+  });
+
+  testWidgets('failed replacement preserves prior transcript and raw audio',
+      (tester) async {
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    final temp = Directory.systemTemp.createTempSync('tangent-overwrite-fail-');
+    final db = LocalDb.forTesting(NativeDatabase.memory());
+    final storage = AudioStorage.test(temp);
+    final fake = _FakeTranscriptionClient(
+      completedTranscript: 'unused',
+      failure: 'replacement failed',
+    );
+    final service = ServerTranscriptionService(
+      client: fake,
+      db: db,
+      audioStorage: storage,
+      requestIdFactory: () => 'request-failure',
+    );
+    addTearDown(() async {
+      service.dispose();
+      await db.close();
+      if (temp.existsSync()) temp.deleteSync(recursive: true);
+    });
+    final row = _completedRow(
+      id: 'overwrite-fail',
+      transcript: 'Transcript that must survive',
+      attempt: 2,
+      requestId: 'request-before-failure',
+      jobId: 'job-before-failure',
+    );
+    await db.upsertDump(row);
+    final rawAudio = <int>[1, 4, 1, 4, 2, 1];
+    storage.pathFor(row.id).writeAsBytesSync(rawAudio);
+    storage
+        .metaPathFor(row.id)
+        .writeAsStringSync(jsonEncode(dumpMetadata(row)));
+
+    await _mountDetail(tester, db, storage, fake, service, row);
+    await tester.tap(find.byKey(ValueKey('transcribe-${row.id}')));
+    await tester.pumpAndSettle();
+    final overwriteButton = tester.widget<FilledButton>(
+      find.widgetWithText(FilledButton, 'Overwrite'),
+    );
+    late DumpRow failed;
+    late Map<String, dynamic> sidecar;
+    await tester.runAsync(() async {
+      overwriteButton.onPressed!();
+      await service.transcribeDump(row.id);
+      failed = (await db.getDump(row.id))!;
+      sidecar = jsonDecode(await storage.metaPathFor(row.id).readAsString())
+          as Map<String, dynamic>;
+    });
+
+    expect(failed.transcriptionAttempt, 3);
+    expect(failed.transcriptionRequestId, 'request-failure');
+    expect(failed.transcript, 'Transcript that must survive');
+    expect(_editorText(tester, row.id), 'Transcript that must survive');
+    expect(sidecar['transcript'], 'Transcript that must survive');
+    expect(storage.pathFor(row.id).readAsBytesSync(), rawAudio);
+
+    await _disposeDetail(tester);
+  });
+
+  testWidgets(
+      'editable multiline transcript blocks blank and saves SQLite plus sidecar without changing notes or audio',
+      (tester) async {
+    tester.view.physicalSize = const Size(1080, 2600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    final temp = Directory.systemTemp.createTempSync('tangent-edit-save-');
+    final db = LocalDb.forTesting(NativeDatabase.memory());
+    final storage = AudioStorage.test(temp);
+    final fake = _FakeTranscriptionClient(completedTranscript: 'unused');
+    final service = ServerTranscriptionService(
+      client: fake,
+      db: db,
+      audioStorage: storage,
+    );
+    addTearDown(() async {
+      service.dispose();
+      await db.close();
+      if (temp.existsSync()) temp.deleteSync(recursive: true);
+    });
+    final row = _completedRow(
+      id: 'edit-save',
+      mode: 'meeting',
+      transcript: 'Original meeting transcript',
+      meetingNotes: 'Notes must remain unchanged',
+      attempt: 6,
+      requestId: 'request-edit-save',
+      jobId: 'job-edit-save',
+    );
+    await db.upsertDump(row);
+    final rawAudio = <int>[2, 7, 1, 8, 2, 8];
+    storage.pathFor(row.id).writeAsBytesSync(rawAudio);
+    storage
+        .metaPathFor(row.id)
+        .writeAsStringSync(jsonEncode(dumpMetadata(row)));
+
+    await _mountDetail(tester, db, storage, fake, service, row);
+    final editorFinder = find.byKey(ValueKey('transcript-editor-${row.id}'));
+    final editor = tester.widget<TextField>(editorFinder);
+    expect(editor.maxLines, isNull);
+    expect(editor.keyboardType, TextInputType.multiline);
+    expect(editor.controller!.text, 'Original meeting transcript');
+
+    await tester.enterText(editorFinder, '   \n');
+    await tester.pump();
+    expect(find.text('Transcript cannot be blank'), findsOneWidget);
+    expect(
+      tester
+          .widget<FilledButton>(
+            find.byKey(ValueKey('save-transcript-${row.id}')),
+          )
+          .onPressed,
+      isNull,
+    );
+
+    const corrected = 'Corrected line one.\nCorrected line two.';
+    await tester.enterText(editorFinder, corrected);
+    await tester.pump();
+    final saveFinder = find.byKey(ValueKey('save-transcript-${row.id}'));
+    final saveButton = tester.widget<FilledButton>(saveFinder);
+    expect(saveButton.onPressed, isNotNull);
+    late DumpRow saved;
+    late Map<String, dynamic> sidecar;
+    await tester.runAsync(() async {
+      saveButton.onPressed!();
+      saved = await _waitForRow(
+        db,
+        row.id,
+        (value) => value.transcript == corrected,
+      );
+      sidecar = await _waitForMetadata(
+        storage,
+        row.id,
+        (metadata) => metadata['transcript'] == corrected,
+      );
+    });
+    await tester.pump();
+
+    expect(saved.meetingNotes, 'Notes must remain unchanged');
+    expect(saved.transcriptionStatus, 'completed');
+    expect(saved.transcriptionAttempt, 6);
+    expect(saved.transcriptionRequestId, 'request-edit-save');
+    expect(saved.transcriptionJobId, 'job-edit-save');
+    expect(sidecar['meetingNotes'], 'Notes must remain unchanged');
+    expect(sidecar['transcriptionAttempt'], 6);
+    expect(storage.pathFor(row.id).readAsBytesSync(), rawAudio);
+    expect(find.text('Transcript saved'), findsOneWidget);
+
+    await _disposeDetail(tester);
+    await _mountDetail(tester, db, storage, fake, service, saved);
+    expect(_editorText(tester, row.id), corrected);
+    expect(
+      tester.widget<FilledButton>(saveFinder).onPressed,
+      isNull,
+    );
+    expect(storage.pathFor(row.id).readAsBytesSync(), rawAudio);
+
+    await _disposeDetail(tester);
+  });
+
+  testWidgets('stale transcript draft cannot overwrite a newer result',
+      (tester) async {
+    tester.view.physicalSize = const Size(1080, 2600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    final temp = Directory.systemTemp.createTempSync('tangent-edit-stale-');
+    final db = LocalDb.forTesting(NativeDatabase.memory());
+    final storage = AudioStorage.test(temp);
+    final fake = _FakeTranscriptionClient(completedTranscript: 'unused');
+    final service = ServerTranscriptionService(
+      client: fake,
+      db: db,
+      audioStorage: storage,
+    );
+    addTearDown(() async {
+      service.dispose();
+      await db.close();
+      if (temp.existsSync()) temp.deleteSync(recursive: true);
+    });
+    final now = DateTime.utc(2026, 9, 15, 10);
+    final row = _completedRow(
+      id: 'edit-stale',
+      mode: 'meeting',
+      transcript: 'Original result',
+      meetingNotes: 'Original notes',
+      attempt: 1,
+      requestId: 'request-one',
+      jobId: 'job-one',
+      now: now,
+    );
+    await db.upsertDump(row);
+    final rawAudio = <int>[1, 6, 1, 8, 0, 3];
+    storage.pathFor(row.id).writeAsBytesSync(rawAudio);
+    storage
+        .metaPathFor(row.id)
+        .writeAsStringSync(jsonEncode(dumpMetadata(row)));
+
+    await _mountDetail(tester, db, storage, fake, service, row);
+    final editorFinder = find.byKey(ValueKey('transcript-editor-${row.id}'));
+    await tester.enterText(editorFinder, 'Unsaved stale draft');
+    await tester.pump();
+
+    late DumpRow newer;
+    await tester.runAsync(() async {
+      final nextAttempt = await db.beginTranscriptionAttempt(
+        row.id,
+        requestId: 'request-two',
+        now: now.add(const Duration(minutes: 1)),
+      );
+      await db.completeTranscriptionAttempt(
+        row.id,
+        attempt: nextAttempt.transcriptionAttempt,
+        requestId: nextAttempt.transcriptionRequestId!,
+        transcript: 'Newer server result',
+        meetingNotes: 'Newer notes',
+        now: now.add(const Duration(minutes: 2)),
+      );
+      newer = (await db.getDump(row.id))!;
+      await storage
+          .metaPathFor(row.id)
+          .writeAsString(jsonEncode(dumpMetadata(newer)));
+    });
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 20));
+
+    expect(_editorText(tester, row.id), 'Unsaved stale draft');
+    final saveFinder = find.byKey(ValueKey('save-transcript-${row.id}'));
+    expect(tester.widget<FilledButton>(saveFinder).onPressed, isNotNull);
+    await _invokeButton(tester, saveFinder);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 20));
+
+    late DumpRow after;
+    late Map<String, dynamic> sidecar;
+    await tester.runAsync(() async {
+      after = (await db.getDump(row.id))!;
+      sidecar = jsonDecode(await storage.metaPathFor(row.id).readAsString())
+          as Map<String, dynamic>;
+    });
+    expect(after.transcript, 'Newer server result');
+    expect(after.meetingNotes, 'Newer notes');
+    expect(after.transcriptionAttempt, 2);
+    expect(after.transcriptionRequestId, 'request-two');
+    expect(sidecar['transcript'], 'Newer server result');
+    expect(find.textContaining('newer transcription'), findsOneWidget);
+    expect(_editorText(tester, row.id), 'Unsaved stale draft');
+    expect(storage.pathFor(row.id).readAsBytesSync(), rawAudio);
+
+    await _disposeDetail(tester);
+  });
+
+  testWidgets('Meeting detail prioritizes notes and keeps transcript editable',
       (tester) async {
     tester.view.physicalSize = const Size(1080, 2400);
     tester.view.devicePixelRatio = 1.0;
@@ -344,6 +742,7 @@ void main() {
       audioStorage: storage,
     );
     addTearDown(() async {
+      service.dispose();
       await db.close();
       temp.deleteSync(recursive: true);
     });
@@ -400,13 +799,17 @@ void main() {
 
     expect(find.text('Meeting Notes'), findsOneWidget);
     expect(find.textContaining('Quoted summary.'), findsOneWidget);
-    expect(find.text('Exact raw transcript words.'), findsNothing);
+    final transcriptEditor = tester.widget<TextField>(
+      find.byKey(const ValueKey('transcript-editor-meeting-detail')),
+    );
+    expect(transcriptEditor.controller!.text, 'Exact raw transcript words.');
+    expect(transcriptEditor.maxLines, isNull);
+    expect(transcriptEditor.keyboardType, TextInputType.multiline);
 
-    await tester.tap(find.widgetWithText(ExpansionTile, 'Raw Transcript'));
-    await tester.pumpAndSettle();
-    expect(find.text('Exact raw transcript words.'), findsOneWidget);
-
-    await tester.enterText(find.byType(TextField), 'Renamed launch meeting');
+    await tester.enterText(
+      find.byKey(const ValueKey('title-editor-meeting-detail')),
+      'Renamed launch meeting',
+    );
     final saveButton = tester.widget<OutlinedButton>(
       find.ancestor(
         of: find.text('Save'),
@@ -619,6 +1022,143 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump(const Duration(milliseconds: 1));
   });
+}
+
+DumpRow _completedRow({
+  required String id,
+  required String transcript,
+  required int attempt,
+  required String requestId,
+  required String jobId,
+  String mode = 'brain_dump',
+  String? meetingNotes,
+  DateTime? now,
+}) {
+  final timestamp = now ?? DateTime.utc(2026, 9, 15);
+  return DumpRow(
+    id: id,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    mode: mode,
+    durationSeconds: 4,
+    title: 'Recording $id',
+    transcript: transcript,
+    meetingNotes: meetingNotes,
+    audioPath: '/ignored/$id.opus',
+    audioSizeBytes: 7,
+    syncStatus: 'pending',
+    syncAttempts: 0,
+    transcriptionStatus: 'completed',
+    transcriptionRequestId: requestId,
+    transcriptionJobId: jobId,
+    transcriptionAttempt: attempt,
+    transcriptionStartedAt: timestamp,
+    transcriptionUpdatedAt: timestamp,
+    transcriptionCompletedAt: timestamp,
+  );
+}
+
+Future<void> _mountDetail(
+  WidgetTester tester,
+  LocalDb db,
+  AudioStorage storage,
+  TranscriptionClient client,
+  ServerTranscriptionService service,
+  DumpRow row,
+) async {
+  await tester.pumpWidget(
+    ProviderScope(
+      overrides: [
+        localDbProvider.overrideWithValue(db),
+        audioStorageProvider.overrideWithValue(storage),
+        transcriptionClientProvider.overrideWith((_) => client),
+        serverTranscriptionServiceProvider.overrideWith((_) => service),
+        dumpByIdProvider(row.id).overrideWith((_) => Stream.value(row)),
+        recordingPlaybackEngineFactoryProvider.overrideWithValue(
+          _TestPlaybackEngine.new,
+        ),
+      ],
+      child: MaterialApp(
+        home: DumpDetailScreen(
+          dumpId: row.id,
+          audioPath: row.audioPath,
+          durationSeconds: row.durationSeconds,
+        ),
+      ),
+    ),
+  );
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 100));
+}
+
+Future<void> _invokeButton(WidgetTester tester, Finder finder) async {
+  final button = tester.widget<FilledButton>(finder);
+  await tester.runAsync(() async {
+    button.onPressed!();
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+  });
+}
+
+String _editorText(WidgetTester tester, String dumpId) => tester
+    .widget<TextField>(find.byKey(ValueKey('transcript-editor-$dumpId')))
+    .controller!
+    .text;
+
+Future<void> _waitForRealCondition(
+  FutureOr<bool> Function() predicate, {
+  required String description,
+}) async {
+  final deadline = DateTime.now().add(const Duration(seconds: 5));
+  while (!await predicate()) {
+    if (DateTime.now().isAfter(deadline)) {
+      fail('Timed out waiting for $description');
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+  }
+}
+
+Future<DumpRow> _waitForRow(
+  LocalDb db,
+  String id,
+  bool Function(DumpRow row) predicate,
+) async {
+  DumpRow? result;
+  await _waitForRealCondition(
+    () async {
+      final row = await db.getDump(id);
+      if (row == null || !predicate(row)) return false;
+      result = row;
+      return true;
+    },
+    description: 'dump $id',
+  );
+  return result!;
+}
+
+Future<Map<String, dynamic>> _waitForMetadata(
+  AudioStorage storage,
+  String id,
+  bool Function(Map<String, dynamic> metadata) predicate,
+) async {
+  Map<String, dynamic>? result;
+  await _waitForRealCondition(
+    () async {
+      final sidecar = storage.metaPathFor(id);
+      if (!await sidecar.exists()) return false;
+      final metadata =
+          jsonDecode(await sidecar.readAsString()) as Map<String, dynamic>;
+      if (!predicate(metadata)) return false;
+      result = metadata;
+      return true;
+    },
+    description: 'metadata $id',
+  );
+  return result!;
+}
+
+Future<void> _disposeDetail(WidgetTester tester) async {
+  await tester.pumpWidget(const SizedBox.shrink());
+  await tester.pump(const Duration(milliseconds: 1));
 }
 
 final class _TestPlaybackEngine implements RecordingPlaybackEngine {

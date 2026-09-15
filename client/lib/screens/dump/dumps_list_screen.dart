@@ -4,9 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/local_db.dart';
 import '../../models/sync_status.dart' show SyncStatus, SyncStatusX;
-import '../../services/server_transcription.dart';
-import '../../services/server_transcription_service.dart';
-import '../home/home_providers.dart' show serverTranscriptionServiceProvider;
+import '../../models/transcription_status.dart';
 import 'dump_detail_screen.dart';
 import 'dumps_providers.dart';
 
@@ -31,10 +29,9 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
   Widget build(BuildContext context) {
     final dumpsAsync = ref.watch(filteredDumpsProvider);
     final query = ref.watch(searchQueryProvider);
-    final filter = ref.watch(dumpFilterProvider);
+    final modeFilter = ref.watch(dumpModeFilterProvider);
+    final transcriptFilter = ref.watch(transcriptFilterProvider);
     final searchAsync = ref.watch(searchResultsProvider);
-    final transcription = ref.watch(serverTranscriptionServiceProvider);
-
     final showingSearch = query.trim().isNotEmpty;
 
     return Scaffold(
@@ -47,8 +44,8 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
                   hintText: 'Search dumps…',
                   border: InputBorder.none,
                 ),
-                onChanged: (v) =>
-                    ref.read(searchQueryProvider.notifier).state = v,
+                onChanged: (value) =>
+                    ref.read(searchQueryProvider.notifier).state = value,
               )
             : const Text('Dumps'),
         actions: [
@@ -72,23 +69,23 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
       ),
       body: Column(
         children: [
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-            child: Row(
-              children: [
-                for (final choice in DumpFilter.values) ...[
-                  FilterChip(
-                    key: ValueKey('dump-filter-${choice.name}'),
-                    label: Text(choice.label),
-                    selected: filter == choice,
-                    onSelected: (_) =>
-                        ref.read(dumpFilterProvider.notifier).state = choice,
-                  ),
-                  const SizedBox(width: 8),
-                ],
-              ],
-            ),
+          _FilterRow<DumpModeFilter>(
+            label: 'Mode',
+            values: DumpModeFilter.values,
+            selected: modeFilter,
+            keyFor: (choice) => ValueKey('mode-filter-${choice.name}'),
+            labelFor: (choice) => choice.label,
+            onSelected: (choice) =>
+                ref.read(dumpModeFilterProvider.notifier).state = choice,
+          ),
+          _FilterRow<TranscriptFilter>(
+            label: 'Transcript',
+            values: TranscriptFilter.values,
+            selected: transcriptFilter,
+            keyFor: (choice) => ValueKey('transcript-filter-${choice.name}'),
+            labelFor: (choice) => choice.label,
+            onSelected: (choice) =>
+                ref.read(transcriptFilterProvider.notifier).state = choice,
           ),
           Expanded(
             child: showingSearch
@@ -96,21 +93,21 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
                     data: (results) => _DumpList(
                       dumps: results,
                       empty: 'No matches',
-                      transcription: transcription,
                     ),
                     loading: () =>
                         const Center(child: CircularProgressIndicator()),
-                    error: (e, _) => Center(child: Text('Search error: $e')),
+                    error: (error, _) =>
+                        Center(child: Text('Search error: $error')),
                   )
                 : dumpsAsync.when(
                     data: (dumps) => _DumpList(
                       dumps: dumps,
                       empty: 'No dumps yet — record one!',
-                      transcription: transcription,
                     ),
                     loading: () =>
                         const Center(child: CircularProgressIndicator()),
-                    error: (e, _) => Center(child: Text('DB error: $e')),
+                    error: (error, _) =>
+                        Center(child: Text('DB error: $error')),
                   ),
           ),
         ],
@@ -119,16 +116,66 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
   }
 }
 
+class _FilterRow<T> extends StatelessWidget {
+  const _FilterRow({
+    required this.label,
+    required this.values,
+    required this.selected,
+    required this.keyFor,
+    required this.labelFor,
+    required this.onSelected,
+  });
+
+  final String label;
+  final List<T> values;
+  final T selected;
+  final Key Function(T value) keyFor;
+  final String Function(T value) labelFor;
+  final ValueChanged<T> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          SizedBox(
+            width: 72,
+            child: Text(
+              label,
+              style: Theme.of(context).textTheme.labelLarge,
+            ),
+          ),
+          Expanded(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  for (final choice in values) ...[
+                    FilterChip(
+                      key: keyFor(choice),
+                      label: Text(labelFor(choice)),
+                      selected: selected == choice,
+                      onSelected: (_) => onSelected(choice),
+                    ),
+                    const SizedBox(width: 8),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _DumpList extends StatelessWidget {
+  const _DumpList({required this.dumps, required this.empty});
+
   final List<DumpRow> dumps;
   final String empty;
-  final ServerTranscriptionService transcription;
-
-  const _DumpList({
-    required this.dumps,
-    required this.empty,
-    required this.transcription,
-  });
 
   @override
   Widget build(BuildContext context) {
@@ -143,55 +190,34 @@ class _DumpList extends StatelessWidget {
     return ListView.separated(
       itemCount: dumps.length,
       separatorBuilder: (_, __) => const Divider(height: 1),
-      itemBuilder: (context, i) {
-        final d = dumps[i];
-        final sync = SyncStatusX.fromWire(d.syncStatus);
-        final rowOperation = transcription.operationFor(d.id, currentRow: d);
-        final isActive =
-            rowOperation.status == ServerTranscriptionStatus.uploading ||
-                rowOperation.status == ServerTranscriptionStatus.running;
-        final isQueued =
-            rowOperation.status == ServerTranscriptionStatus.queued;
+      itemBuilder: (context, index) {
+        final dump = dumps[index];
+        final sync = SyncStatusX.fromWire(dump.syncStatus);
+        final transcription =
+            TranscriptionStatus.fromWire(dump.transcriptionStatus);
         return ListTile(
           title: Text(
-            d.title.isEmpty ? '(untitled)' : d.title,
+            dump.title.isEmpty ? '(untitled)' : dump.title,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
-          subtitle: isActive || isQueued
-              ? Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(_subtitleFor(d, sync)),
-                    Text(
-                      _labelFor(rowOperation, isQueued),
-                      style: TextStyle(
-                        color: Theme.of(context).colorScheme.primary,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                )
-              : Text(_subtitleFor(d, sync)),
-          trailing: isActive
-              ? SizedBox.square(
-                  key: ValueKey('transcription-indicator-${d.id}'),
-                  dimension: 24,
-                  child: const CircularProgressIndicator(strokeWidth: 3),
-                )
-              : isQueued
-                  ? Icon(
-                      Icons.schedule,
-                      key: ValueKey('transcription-queued-${d.id}'),
-                      color: Theme.of(context).colorScheme.primary,
-                    )
-                  : _SyncBadge(status: sync),
+          subtitle: Row(
+            children: [
+              _SyncBadge(status: sync),
+              const SizedBox(width: 6),
+              Expanded(child: Text(_subtitleFor(dump))),
+            ],
+          ),
+          trailing: _TranscriptionStatusPill(
+            dumpId: dump.id,
+            status: transcription,
+          ),
           onTap: () => Navigator.of(context).push<void>(
             MaterialPageRoute<void>(
               builder: (_) => DumpDetailScreen(
-                dumpId: d.id,
-                audioPath: d.audioPath,
-                durationSeconds: d.durationSeconds,
+                dumpId: dump.id,
+                audioPath: dump.audioPath,
+                durationSeconds: dump.durationSeconds,
               ),
             ),
           ),
@@ -200,33 +226,111 @@ class _DumpList extends StatelessWidget {
     );
   }
 
-  String _subtitleFor(DumpRow d, SyncStatus s) {
-    final mins = (d.durationSeconds / 60).floor();
-    final secs = d.durationSeconds % 60;
-    final dur = mins > 0 ? '${mins}m ${secs}s' : '${secs}s';
-    final date = d.createdAt.toLocal().toString().split('.').first;
-    return '$dur · $date';
+  String _subtitleFor(DumpRow dump) {
+    final mins = (dump.durationSeconds / 60).floor();
+    final secs = dump.durationSeconds % 60;
+    final duration = mins > 0 ? '${mins}m ${secs}s' : '${secs}s';
+    final date = dump.createdAt.toLocal().toString().split('.').first;
+    return '$duration · $date';
   }
+}
 
-  String _labelFor(ServerTranscriptionOperation operation, bool isQueued) {
-    if (isQueued) {
-      return 'Queued on server #${operation.dumpId == null ? "?" : ""}';
-    }
-    return switch (operation.status) {
-      ServerTranscriptionStatus.uploading => 'Uploading to your server…',
-      ServerTranscriptionStatus.queued => 'Waiting for server…',
-      ServerTranscriptionStatus.running => 'Transcribing on your server…',
-      ServerTranscriptionStatus.cancelling => 'Cancelling…',
-      ServerTranscriptionStatus.complete => 'Transcript saved',
-      ServerTranscriptionStatus.error => 'Server transcription failed',
-      ServerTranscriptionStatus.idle => 'Idle',
+class _TranscriptionStatusPill extends StatelessWidget {
+  const _TranscriptionStatusPill({
+    required this.dumpId,
+    required this.status,
+  });
+
+  final String dumpId;
+  final TranscriptionStatus status;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final slug = status.wireValue.replaceAll('_', '-');
+    final (label, icon, foreground, background, border) = switch (status) {
+      TranscriptionStatus.notTranscribed => (
+          'Not transcribed',
+          Icons.radio_button_unchecked,
+          colors.onSurfaceVariant,
+          colors.surfaceContainerHighest,
+          colors.outline,
+        ),
+      TranscriptionStatus.uploading => (
+          'Uploading',
+          Icons.cloud_upload_outlined,
+          colors.onPrimaryContainer,
+          colors.primaryContainer,
+          colors.primary,
+        ),
+      TranscriptionStatus.queued => (
+          'Queued',
+          Icons.schedule,
+          colors.onPrimaryContainer,
+          colors.primaryContainer,
+          colors.primary,
+        ),
+      TranscriptionStatus.running => (
+          'Transcribing',
+          null,
+          colors.onPrimaryContainer,
+          colors.primaryContainer,
+          colors.primary,
+        ),
+      TranscriptionStatus.completed => (
+          'Transcribed',
+          Icons.check_circle_outline,
+          colors.onTertiaryContainer,
+          colors.tertiaryContainer,
+          colors.tertiary,
+        ),
+      TranscriptionStatus.failed => (
+          'Failed',
+          Icons.error_outline,
+          colors.onErrorContainer,
+          colors.errorContainer,
+          colors.error,
+        ),
     };
+    return Container(
+      key: ValueKey('transcription-pill-$dumpId-$slug'),
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+      decoration: BoxDecoration(
+        color: background,
+        border: Border.all(color: border),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (icon == null)
+            SizedBox.square(
+              dimension: 14,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: foreground,
+              ),
+            )
+          else
+            Icon(icon, size: 16, color: foreground),
+          const SizedBox(width: 5),
+          Text(
+            label,
+            style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                  color: foreground,
+                  fontWeight: FontWeight.w600,
+                ),
+          ),
+        ],
+      ),
+    );
   }
 }
 
 class _SyncBadge extends StatelessWidget {
-  final SyncStatus status;
   const _SyncBadge({required this.status});
+
+  final SyncStatus status;
 
   @override
   Widget build(BuildContext context) {
@@ -244,6 +348,9 @@ class _SyncBadge extends StatelessWidget {
       SyncStatus.failed => Icons.cloud_off,
       SyncStatus.localOnly => Icons.smartphone,
     };
-    return Icon(icon, color: color, size: 20);
+    return Tooltip(
+      message: status.displayName,
+      child: Icon(icon, color: color, size: 16),
+    );
   }
 }

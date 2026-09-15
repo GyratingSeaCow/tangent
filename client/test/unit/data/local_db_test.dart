@@ -695,6 +695,115 @@ void main() {
       );
     });
 
+    test('guarded transcript edit preserves notes and durable ownership',
+        () async {
+      final now = DateTime.utc(2026, 9, 15, 8);
+      final original = DumpRow(
+        id: 'editable-transcript',
+        createdAt: now,
+        updatedAt: now,
+        mode: 'meeting',
+        durationSeconds: 5,
+        title: 'Editable transcript',
+        transcript: 'Original words',
+        meetingNotes: 'Keep these notes',
+        audioPath: '/editable-transcript.opus',
+        audioSizeBytes: 17,
+        syncStatus: 'pending',
+        syncAttempts: 0,
+        transcriptionStatus: 'completed',
+        transcriptionRequestId: 'request-editable',
+        transcriptionJobId: 'job-editable',
+        transcriptionAttempt: 3,
+        transcriptionStartedAt: now,
+        transcriptionUpdatedAt: now,
+        transcriptionCompletedAt: now,
+      );
+      await db.upsertDump(original);
+
+      final saved = await db.updateDumpTranscript(
+        original.id,
+        expectedTranscript: original.transcript!,
+        expectedTranscriptionAttempt: original.transcriptionAttempt,
+        expectedTranscriptionRequestId: original.transcriptionRequestId,
+        transcript: 'Corrected words',
+        now: now.add(const Duration(minutes: 1)),
+      );
+
+      expect(saved.transcript, 'Corrected words');
+      expect(saved.meetingNotes, 'Keep these notes');
+      expect(saved.audioPath, '/editable-transcript.opus');
+      expect(saved.audioSizeBytes, 17);
+      expect(saved.transcriptionStatus, 'completed');
+      expect(saved.transcriptionRequestId, 'request-editable');
+      expect(saved.transcriptionJobId, 'job-editable');
+      expect(saved.transcriptionAttempt, 3);
+      expect(
+        saved.transcriptionStartedAt!.millisecondsSinceEpoch,
+        now.millisecondsSinceEpoch,
+      );
+      expect(
+        saved.transcriptionCompletedAt!.millisecondsSinceEpoch,
+        now.millisecondsSinceEpoch,
+      );
+    });
+
+    test('transcript edit rejects blank, in-progress, and stale revisions',
+        () async {
+      final now = DateTime.utc(2026, 9, 15, 9);
+      final original = DumpRow(
+        id: 'guarded-transcript-edit',
+        createdAt: now,
+        updatedAt: now,
+        mode: 'brain_dump',
+        durationSeconds: 5,
+        title: 'Guarded transcript',
+        transcript: 'Original words',
+        audioPath: '/guarded-transcript.opus',
+        audioSizeBytes: 17,
+        syncStatus: 'pending',
+        syncAttempts: 0,
+        transcriptionStatus: 'completed',
+        transcriptionRequestId: 'request-one',
+        transcriptionJobId: 'job-one',
+        transcriptionAttempt: 1,
+        transcriptionStartedAt: now,
+        transcriptionUpdatedAt: now,
+        transcriptionCompletedAt: now,
+      );
+      await db.upsertDump(original);
+
+      expect(
+        () => db.updateDumpTranscript(
+          original.id,
+          expectedTranscript: original.transcript!,
+          expectedTranscriptionAttempt: 1,
+          expectedTranscriptionRequestId: 'request-one',
+          transcript: '   \n ',
+          now: now.add(const Duration(seconds: 1)),
+        ),
+        throwsArgumentError,
+      );
+
+      await db.beginTranscriptionAttempt(
+        original.id,
+        requestId: 'request-two',
+        now: now.add(const Duration(seconds: 2)),
+      );
+      await expectLater(
+        db.updateDumpTranscript(
+          original.id,
+          expectedTranscript: original.transcript!,
+          expectedTranscriptionAttempt: 1,
+          expectedTranscriptionRequestId: 'request-one',
+          transcript: 'Stale corrected words',
+          now: now.add(const Duration(seconds: 3)),
+        ),
+        throwsStateError,
+      );
+      expect((await db.getDump(original.id))!.transcript, 'Original words');
+    });
+
     test('late nonterminal updates cannot regress a running phase', () async {
       final now = DateTime.utc(2026, 9, 14, 23, 30);
       await db.upsertDump(

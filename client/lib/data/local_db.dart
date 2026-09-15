@@ -253,6 +253,54 @@ class LocalDb extends _$LocalDb {
     });
   }
 
+  /// Saves a manual transcript edit only against the exact completed
+  /// transcription revision the editor opened. A newer attempt or result wins.
+  Future<DumpRow> updateDumpTranscript(
+    String id, {
+    required String expectedTranscript,
+    required int expectedTranscriptionAttempt,
+    required String? expectedTranscriptionRequestId,
+    required String transcript,
+    required DateTime now,
+  }) {
+    if (transcript.trim().isEmpty) {
+      throw ArgumentError.value(transcript, 'transcript', 'must not be blank');
+    }
+    return transaction(() async {
+      final count = await (update(dumps)
+            ..where(
+              (d) {
+                final requestIdMatches = expectedTranscriptionRequestId == null
+                    ? d.transcriptionRequestId.isNull()
+                    : d.transcriptionRequestId.equals(
+                        expectedTranscriptionRequestId,
+                      );
+                return d.id.equals(id) &
+                    d.transcriptionStatus.equals(
+                      TranscriptionStatus.completed.wireValue,
+                    ) &
+                    d.transcript.equals(expectedTranscript) &
+                    d.transcriptionAttempt.equals(
+                      expectedTranscriptionAttempt,
+                    ) &
+                    requestIdMatches;
+              },
+            ))
+          .write(
+        DumpsCompanion(
+          transcript: Value(transcript),
+          updatedAt: Value(now.toUtc()),
+        ),
+      );
+      if (count != 1) {
+        throw StateError(
+          'Transcript revision changed while editing: $id',
+        );
+      }
+      return (await getDump(id))!;
+    });
+  }
+
   /// Starts a new durable transcription attempt before any network I/O.
   Future<DumpRow> beginTranscriptionAttempt(
     String id, {

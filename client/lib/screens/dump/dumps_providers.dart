@@ -2,35 +2,61 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/local_db.dart';
-import '../../models/sync_status.dart';
+import '../../models/transcription_status.dart';
 import '../../screens/home/home_screen.dart' show localDbProvider;
 
-enum DumpFilter { all, brainDump, meeting, awaiting }
+enum DumpModeFilter { all, brainDump, meeting }
 
-extension DumpFilterX on DumpFilter {
+extension DumpModeFilterX on DumpModeFilter {
   String get label => switch (this) {
-        DumpFilter.all => 'All',
-        DumpFilter.brainDump => 'Brain Dump',
-        DumpFilter.meeting => 'Meeting',
-        DumpFilter.awaiting => 'Awaiting',
+        DumpModeFilter.all => 'All',
+        DumpModeFilter.brainDump => 'Brain Dump',
+        DumpModeFilter.meeting => 'Meeting',
       };
 }
 
-List<DumpRow> filterDumps(Iterable<DumpRow> rows, DumpFilter filter) {
+enum TranscriptFilter { all, needsTranscript, inProgress, transcribed, failed }
+
+extension TranscriptFilterX on TranscriptFilter {
+  String get label => switch (this) {
+        TranscriptFilter.all => 'All',
+        TranscriptFilter.needsTranscript => 'Needs transcript',
+        TranscriptFilter.inProgress => 'In progress',
+        TranscriptFilter.transcribed => 'Transcribed',
+        TranscriptFilter.failed => 'Failed',
+      };
+}
+
+List<DumpRow> filterDumps(
+  Iterable<DumpRow> rows,
+  DumpModeFilter modeFilter,
+  TranscriptFilter transcriptFilter,
+) {
   return rows.where((row) {
-    return switch (filter) {
-      DumpFilter.all => true,
-      DumpFilter.brainDump => row.mode == 'brain_dump',
-      DumpFilter.meeting => row.mode == 'meeting',
-      DumpFilter.awaiting => row.syncStatus != SyncStatus.synced.wireValue &&
-          row.syncStatus != SyncStatus.localOnly.wireValue,
+    final modeMatches = switch (modeFilter) {
+      DumpModeFilter.all => true,
+      DumpModeFilter.brainDump => row.mode == 'brain_dump',
+      DumpModeFilter.meeting => row.mode == 'meeting',
     };
+    final status = TranscriptionStatus.fromWire(row.transcriptionStatus);
+    final transcriptMatches = switch (transcriptFilter) {
+      TranscriptFilter.all => true,
+      TranscriptFilter.needsTranscript =>
+        status == TranscriptionStatus.notTranscribed,
+      TranscriptFilter.inProgress => status.isInProgress,
+      TranscriptFilter.transcribed => status == TranscriptionStatus.completed,
+      TranscriptFilter.failed => status == TranscriptionStatus.failed,
+    };
+    return modeMatches && transcriptMatches;
   }).toList(growable: false);
 }
 
-/// This provider intentionally is not auto-disposed so selection survives
-/// detail-screen navigation for the lifetime of the app process.
-final dumpFilterProvider = StateProvider<DumpFilter>((_) => DumpFilter.all);
+/// These providers intentionally are not auto-disposed so both selections
+/// survive detail-screen navigation for the lifetime of the app process.
+final dumpModeFilterProvider =
+    StateProvider<DumpModeFilter>((_) => DumpModeFilter.all);
+final transcriptFilterProvider =
+    StateProvider<TranscriptFilter>((_) => TranscriptFilter.all);
 
 /// Watch all dumps ordered by created_at DESC.
 final dumpsProvider = StreamProvider<List<DumpRow>>((ref) {
@@ -39,18 +65,22 @@ final dumpsProvider = StreamProvider<List<DumpRow>>((ref) {
 });
 
 final filteredDumpsProvider = Provider<AsyncValue<List<DumpRow>>>((ref) {
-  final filter = ref.watch(dumpFilterProvider);
-  return ref.watch(dumpsProvider).whenData((rows) => filterDumps(rows, filter));
+  final modeFilter = ref.watch(dumpModeFilterProvider);
+  final transcriptFilter = ref.watch(transcriptFilterProvider);
+  return ref.watch(dumpsProvider).whenData(
+        (rows) => filterDumps(rows, modeFilter, transcriptFilter),
+      );
 });
 
-/// Reactive search across title + transcript, constrained by the active filter.
+/// Reactive search across title + transcript, constrained by both filters.
 final searchQueryProvider = StateProvider<String>((_) => '');
 
 final searchResultsProvider = FutureProvider<List<DumpRow>>((ref) async {
   final query = ref.watch(searchQueryProvider);
-  final filter = ref.watch(dumpFilterProvider);
+  final modeFilter = ref.watch(dumpModeFilterProvider);
+  final transcriptFilter = ref.watch(transcriptFilterProvider);
   final db = ref.watch(localDbProvider);
   if (query.trim().isEmpty) return <DumpRow>[];
   final rows = await db.searchDumps(query.trim(), limit: 100);
-  return filterDumps(rows, filter);
+  return filterDumps(rows, modeFilter, transcriptFilter);
 });

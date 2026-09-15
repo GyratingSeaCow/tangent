@@ -13,13 +13,13 @@ import '../data/recording_metadata.dart';
 import '../models/api_exception.dart';
 import '../models/transcription_status.dart';
 import 'meeting_notes_processor.dart';
-import 'server_transcription.dart';
 import 'transcription_client.dart';
 
-/// Per-dump and aggregate state for server-side transcription.
+/// Durable coordinator for server-side transcription.
 ///
-/// The server owns execution while this service tracks per-dump state for
-/// the Dumps list and detail progress panel.
+/// The server owns execution and SQLite owns presentation state. This service
+/// serializes local starts, persists ownership before network I/O, and repairs
+/// interrupted attempts without exposing a second in-memory status model.
 
 final class _QueuedTranscription {
   _QueuedTranscription(this.dumpId, {this.recoveryOnly = false});
@@ -100,17 +100,7 @@ class ServerTranscriptionService extends ChangeNotifier {
   int _processedReconciliationGeneration = 0;
   _QueuedTranscription? _activeJob;
   _OwnedJobEventStream? _activeStream;
-  ServerTranscriptionOperation _activeOperation =
-      const ServerTranscriptionOperation.idle();
-  String? _lastDumpId;
   bool _disposed = false;
-
-  ServerTranscriptionOperation get operation {
-    if (_activeJob != null) return operationFor(_activeJob!.dumpId);
-    return _lastDumpId == null
-        ? const ServerTranscriptionOperation.idle()
-        : operationFor(_lastDumpId!);
-  }
 
   List<String> get queuedDumpIds =>
       List.unmodifiable(_queue.map((job) => job.dumpId));
@@ -580,12 +570,7 @@ class ServerTranscriptionService extends ChangeNotifier {
     String transcript,
   ) async {
     _throwIfDisposed();
-    final meetingNotes = row.mode == 'meeting'
-        ? _meetingNotesProcessor.process(
-            title: row.title,
-            transcript: transcript,
-          )
-        : null;
+    final meetingNotes = _meetingNotesForCompletion(row, transcript);
     final completed = await _db.completeTranscriptionAttempt(
       row.id,
       attempt: row.transcriptionAttempt,
@@ -603,6 +588,16 @@ class ServerTranscriptionService extends ChangeNotifier {
     _durableRows[row.id] = committed;
     await _repairCompletedSidecar(committed);
     _throwIfDisposed();
+  }
+
+  String? _meetingNotesForCompletion(DumpRow row, String transcript) {
+    if (row.mode != 'meeting') return null;
+    final isReplacement = row.transcript?.trim().isNotEmpty ?? false;
+    if (isReplacement) return row.meetingNotes;
+    return _meetingNotesProcessor.process(
+      title: row.title,
+      transcript: transcript,
+    );
   }
 
   Future<void> _repairCompletedSidecar(DumpRow row) async {
@@ -648,11 +643,6 @@ class ServerTranscriptionService extends ChangeNotifier {
     _throwIfDisposed();
   }
 
-  int? queuePosition(String dumpId) {
-    final index = _queue.indexWhere((job) => job.dumpId == dumpId);
-    return index < 0 ? null : index + 1;
-  }
-
   bool _isLocallyOwned(String dumpId) {
     return _activeJob?.dumpId == dumpId ||
         _queue.any((job) => job.dumpId == dumpId);
@@ -665,28 +655,6 @@ class ServerTranscriptionService extends ChangeNotifier {
     for (final queued in _queue) {
       if (queued.dumpId == dumpId) queued.recoveryOnly = true;
     }
-  }
-
-  ServerTranscriptionOperation operationFor(
-    String dumpId, {
-    DumpRow? currentRow,
-  }) {
-    if (_activeJob?.dumpId == dumpId) return _activeOperation;
-    final position = queuePosition(dumpId);
-    if (position != null) {
-      return ServerTranscriptionOperation(
-        status: ServerTranscriptionStatus.queued,
-        dumpId: dumpId,
-        startedAt: _activeOperation.startedAt,
-      );
-    }
-    if (currentRow != null) {
-      _durableRows[dumpId] = currentRow;
-      return _operationFromRow(currentRow);
-    }
-    final durable = _durableRows[dumpId];
-    if (durable != null) return _operationFromRow(durable);
-    return const ServerTranscriptionOperation.idle();
   }
 
   /// Upload audio (if not yet on the server) and enqueue a transcription
@@ -718,11 +686,6 @@ class ServerTranscriptionService extends ChangeNotifier {
 
   Future<void> _run(_QueuedTranscription job) async {
     final dumpId = job.dumpId;
-    _activeOperation = ServerTranscriptionOperation(
-      status: ServerTranscriptionStatus.uploading,
-      dumpId: dumpId,
-      startedAt: DateTime.now(),
-    );
     _notify();
 
     DumpRow? attemptRow;
@@ -777,11 +740,6 @@ class ServerTranscriptionService extends ChangeNotifier {
       );
       _throwIfDisposed();
 
-      _activeOperation = ServerTranscriptionOperation(
-        status: ServerTranscriptionStatus.queued,
-        dumpId: dumpId,
-        startedAt: _activeOperation.startedAt,
-      );
       _notify();
 
       final TranscriptionJobSnapshot enqueuedJob;
@@ -837,11 +795,6 @@ class ServerTranscriptionService extends ChangeNotifier {
               if (!runningWon) throw const _StaleTranscriptionAttempt();
               _durableRows[row.id] = await _readCurrentAttempt(row);
               _throwIfDisposed();
-              _activeOperation = ServerTranscriptionOperation(
-                status: ServerTranscriptionStatus.running,
-                dumpId: dumpId,
-                startedAt: _activeOperation.startedAt,
-              );
               _notify();
             case 'completed':
               sawCompleted = true;
@@ -882,12 +835,7 @@ class ServerTranscriptionService extends ChangeNotifier {
         );
       }
 
-      final meetingNotes = row.mode == 'meeting'
-          ? _meetingNotesProcessor.process(
-              title: row.title,
-              transcript: transcript,
-            )
-          : null;
+      final meetingNotes = _meetingNotesForCompletion(row, transcript);
       bool completionWon;
       try {
         completionWon = await _db.completeTranscriptionAttempt(
@@ -1006,7 +954,6 @@ class ServerTranscriptionService extends ChangeNotifier {
         }
       }
     } finally {
-      _lastDumpId = dumpId;
       if (!_disposed) {
         await _refreshDurableRow(dumpId);
         _clearRecoveryRetryIfTerminal(dumpId);
@@ -1019,7 +966,6 @@ class ServerTranscriptionService extends ChangeNotifier {
           hadPendingHandoff;
       if (_activeJob == job) {
         _activeJob = null;
-        _activeOperation = const ServerTranscriptionOperation.idle();
       }
       if (!job.completer.isCompleted) job.completer.complete();
       _notify();
@@ -1030,53 +976,22 @@ class ServerTranscriptionService extends ChangeNotifier {
     }
   }
 
-  /// Cancel a queued or active dump. Active jobs have no server-side
-  /// cancellation in v1, so the request is purely advisory: queued jobs
-  /// are removed before they start; active jobs transition to `cancelling`
-  /// and the SSE stream is allowed to finish naturally.
+  /// Removes a not-yet-started local queue entry. Active work continues on
+  /// the server because v1 has no cancellation endpoint. Recovery-owned rows
+  /// are immediately handed back to reconciliation after queue removal.
   void cancel([String? dumpId]) {
-    final target = dumpId ?? _activeJob?.dumpId;
-    if (target == null) return;
-    if (_activeJob?.dumpId == target) {
-      if (!_activeOperation.isActive) return;
-      _activeOperation = ServerTranscriptionOperation(
-        status: ServerTranscriptionStatus.cancelling,
-        dumpId: target,
-        startedAt: _activeOperation.startedAt,
-      );
-      _notify();
-      return;
-    }
+    final target = dumpId;
+    if (target == null || _activeJob?.dumpId == target) return;
     final index = _queue.indexWhere((job) => job.dumpId == target);
     if (index < 0) return;
     final removed = _queue.removeAt(index);
     final hadPendingHandoff = _pendingLocalReattachmentHandoffs.remove(target);
     final shouldReconcile = removed.recoveryOnly || hadPendingHandoff;
     if (!removed.completer.isCompleted) removed.completer.complete();
-    _lastDumpId = target;
     _notify();
     if (shouldReconcile && !_disposed) {
       _scheduleRecoveryRetry(target);
     }
-  }
-
-  ServerTranscriptionOperation _operationFromRow(DumpRow row) {
-    final status =
-        switch (TranscriptionStatus.fromWire(row.transcriptionStatus)) {
-      TranscriptionStatus.notTranscribed => ServerTranscriptionStatus.idle,
-      TranscriptionStatus.uploading => ServerTranscriptionStatus.uploading,
-      TranscriptionStatus.queued => ServerTranscriptionStatus.queued,
-      TranscriptionStatus.running => ServerTranscriptionStatus.running,
-      TranscriptionStatus.completed => ServerTranscriptionStatus.complete,
-      TranscriptionStatus.failed => ServerTranscriptionStatus.error,
-    };
-    return ServerTranscriptionOperation(
-      status: status,
-      dumpId: row.id,
-      startedAt: row.transcriptionStartedAt,
-      transcript: row.transcript,
-      error: row.transcriptionError,
-    );
   }
 
   Future<bool> _guardedStatus(

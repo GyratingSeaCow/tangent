@@ -13,7 +13,6 @@ import 'package:tangent/data/recording_metadata.dart';
 import 'package:tangent/models/api_exception.dart';
 import 'package:tangent/models/server_info.dart';
 import 'package:tangent/models/transcription_status.dart';
-import 'package:tangent/services/server_transcription.dart';
 import 'package:tangent/services/server_transcription_service.dart';
 import 'package:tangent/services/transcription_client.dart';
 
@@ -642,7 +641,6 @@ void main() {
     expect(saved.transcriptionStatus, 'completed');
     expect(saved.transcript, 'safe in sqlite');
     expect(saved.transcriptionError, startsWith('sidecar_sync_pending:'));
-    expect(service.operation.status, ServerTranscriptionStatus.complete);
   });
 
   test('sidecar wait deadline releases the local FIFO', () async {
@@ -760,10 +758,6 @@ void main() {
     expect(current.transcript, 'newer transcript');
     expect(sidecar['transcriptionRequestId'], 'request-newer');
     expect(sidecar['transcript'], 'newer transcript');
-    expect(
-      service.operationFor('r1').status,
-      ServerTranscriptionStatus.complete,
-    );
   });
 
   test(
@@ -795,10 +789,6 @@ void main() {
     expect(current.transcriptionAttempt, 2);
     expect(current.transcriptionRequestId, 'request-existing');
     expect(current.transcriptionJobId, 'job-existing');
-    expect(
-      service.operationFor('r1').status,
-      ServerTranscriptionStatus.running,
-    );
   });
 
   test('reattaches a running job without creating uploading or enqueueing',
@@ -3701,86 +3691,6 @@ void main() {
     expect(second.transcript, 'row two recovered');
   });
 
-  test('presentation uses the caller current durable row', () async {
-    await seedRow(
-      row(
-        transcriptionStatus: 'running',
-        transcriptionRequestId: 'request-hydrated',
-        transcriptionJobId: 'job-hydrated',
-        transcriptionAttempt: 2,
-      ),
-    );
-    final fake = _FakeTranscriptionClient(completedTranscript: 'unused');
-    final service = ServerTranscriptionService(
-      client: fake,
-      db: db,
-      audioStorage: storage,
-    );
-    addTearDown(service.dispose);
-
-    final running = (await db.getDump('r1'))!;
-    expect(
-      service.operationFor('r1', currentRow: running).status,
-      ServerTranscriptionStatus.running,
-    );
-
-    await db.updateTranscriptionStatus(
-      'r1',
-      attempt: 2,
-      requestId: 'request-hydrated',
-      status: TranscriptionStatus.failed,
-      now: DateTime.utc(2026, 9, 14, 16),
-      jobId: 'job-hydrated',
-      error: 'external failure',
-    );
-    final failed = (await db.getDump('r1'))!;
-    expect(
-      service.operationFor('r1', currentRow: failed).status,
-      ServerTranscriptionStatus.error,
-    );
-    expect(
-      service.operationFor('r1', currentRow: failed).error,
-      'external failure',
-    );
-  });
-
-  test('active and queued presentation override stale durable rows', () async {
-    await seedRow(row());
-    await seedRow(row(id: 'q2'));
-    final staleActive = (await db.getDump('r1'))!;
-    final staleQueued = (await db.getDump('q2'))!;
-    final started = Completer<void>();
-    final release = Completer<void>();
-    final fake = _FakeTranscriptionClient(
-      completedTranscript: 'done',
-      onCreate: () async {
-        if (!started.isCompleted) {
-          started.complete();
-          await release.future;
-        }
-      },
-    );
-    final service = ServerTranscriptionService(
-      client: fake,
-      db: db,
-      audioStorage: storage,
-    );
-    addTearDown(service.dispose);
-
-    final activeFuture = service.transcribeDump('r1');
-    await started.future;
-    final activeStatus =
-        service.operationFor('r1', currentRow: staleActive).status;
-    final queuedFuture = service.transcribeDump('q2');
-    final queuedStatus =
-        service.operationFor('q2', currentRow: staleQueued).status;
-    release.complete();
-    await Future.wait([activeFuture, queuedFuture]);
-
-    expect(activeStatus, ServerTranscriptionStatus.uploading);
-    expect(queuedStatus, ServerTranscriptionStatus.queued);
-  });
-
   test('lost enqueue response keeps one recoverable request identity',
       () async {
     await seedRow(row());
@@ -4313,7 +4223,6 @@ void main() {
     expect(sidecar['transcript'], 'phone transcript');
     expect(sidecar['transcriptionStatus'], 'completed');
     expect(sidecar['transcriptionError'], isNull);
-    expect(service.operation.status, ServerTranscriptionStatus.complete);
     expect(fake.createCalls, 1);
     expect(fake.uploadCalls, 1);
     expect(fake.enqueueCalls, 1);
@@ -4340,7 +4249,7 @@ void main() {
     expect(fake.enqueueCalls, 1);
   });
 
-  test('createDump failure surfaces as an error operation', () async {
+  test('createDump failure persists the durable error', () async {
     await seedRow(row(id: 'err-1'));
     final fake = _FakeTranscriptionClient(
       completedTranscript: 'never seen',
@@ -4356,8 +4265,6 @@ void main() {
     await service.transcribeDump('err-1');
 
     final saved = (await db.getDump('err-1'))!;
-    expect(service.operation.status, ServerTranscriptionStatus.error);
-    expect(service.operation.error, contains('create failed'));
     expect(saved.transcriptionStatus, 'failed');
     expect(saved.transcriptionRequestId, isNotNull);
     expect(saved.transcriptionAttempt, 1);
@@ -4386,11 +4293,72 @@ void main() {
     expect(saved.meetingNotes, contains('Action Items'));
   });
 
-  test('cancel of a queued dump completes it as an error', () async {
-    await seedRow(row(id: 'q1'));
-    await seedRow(row(id: 'q2'));
+  test('meeting retranscription preserves existing notes until regeneration',
+      () async {
+    final original = row(
+      id: 'meet-retry',
+      mode: 'meeting',
+      transcriptionStatus: 'completed',
+      transcriptionRequestId: 'request-old',
+      transcriptionJobId: 'job-old',
+      transcriptionAttempt: 2,
+      transcriptionCompletedAt: DateTime.utc(2026, 9, 14, 20),
+    ).copyWith(
+      transcript: const Value('Original meeting transcript.'),
+      meetingNotes: const Value('Reviewed notes that must stay unchanged.'),
+    );
+    await seedRow(original);
+    await storage.writeMetadata(original.id, dumpMetadata(original));
     final fake = _FakeTranscriptionClient(
-      completedTranscript: 'irrelevant',
+      completedTranscript: 'Alice will replace the agenda by Friday.',
+    );
+    final service = ServerTranscriptionService(
+      client: fake,
+      db: db,
+      audioStorage: storage,
+      requestIdFactory: () => 'request-retry',
+    );
+    addTearDown(service.dispose);
+
+    await service.transcribeDump(original.id);
+
+    final saved = (await db.getDump(original.id))!;
+    final sidecar = jsonDecode(
+      await storage.metaPathFor(original.id).readAsString(),
+    ) as Map<String, dynamic>;
+    expect(saved.transcript, 'Alice will replace the agenda by Friday.');
+    expect(saved.meetingNotes, 'Reviewed notes that must stay unchanged.');
+    expect(sidecar['transcript'], 'Alice will replace the agenda by Friday.');
+    expect(
+      sidecar['meetingNotes'],
+      'Reviewed notes that must stay unchanged.',
+    );
+  });
+
+  test('recovered meeting retranscription preserves existing notes', () async {
+    final pending = row(
+      id: 'meet-recovery',
+      mode: 'meeting',
+      transcriptionStatus: 'running',
+      transcriptionRequestId: 'request-recovery',
+      transcriptionJobId: 'job-recovery',
+      transcriptionAttempt: 3,
+    ).copyWith(
+      transcript: const Value('Original recovered transcript.'),
+      meetingNotes: const Value('Reviewed recovery notes.'),
+    );
+    await seedRow(pending);
+    await storage.writeMetadata(pending.id, dumpMetadata(pending));
+    final fake = _FakeTranscriptionClient(
+      completedTranscript: 'unused',
+      onGetJob: (_) => const TranscriptionJobSnapshot(
+        id: 'job-recovery',
+        requestId: 'request-recovery',
+        dumpId: 'meet-recovery',
+        status: 'completed',
+        model: 'large-v3',
+        transcript: 'Recovered replacement transcript.',
+      ),
     );
     final service = ServerTranscriptionService(
       client: fake,
@@ -4399,23 +4367,16 @@ void main() {
     );
     addTearDown(service.dispose);
 
-    // Block q1's job by parking the fake on a never-completing completer.
-    // Easier: just enqueue both and cancel q2 mid-flight. Since the fake
-    // streams synchronously, cancel-after-start has no chance to fire.
-    // Instead, exercise the synchronous cancel path: enqueue both, cancel
-    // q2 BEFORE its turn starts by hijacking q1's start.
-    // Simplest deterministic test: start a single job, mark it cancelled
-    // mid-SSE by reading the queued operation and cancelling before we let
-    // the fake stream finish. Since the fake yields all events immediately,
-    // we instead verify the cancel API on a queued entry by:
-    //   1. starting job A,
-    //   2. before A completes (impossible with sync fake), test the
-    //      "queued" status by spawning a never-finishing client.
-    //
-    // Pragmatic alternative: just verify cancel(dumpId) on a non-active
-    // dump is a no-op and cancel() without args returns without throwing.
-    expect(() => service.cancel(), returnsNormally);
-    expect(() => service.cancel('nonexistent'), returnsNormally);
+    await service.reconcilePending();
+
+    final saved = (await db.getDump(pending.id))!;
+    final sidecar = jsonDecode(
+      await storage.metaPathFor(pending.id).readAsString(),
+    ) as Map<String, dynamic>;
+    expect(saved.transcript, 'Recovered replacement transcript.');
+    expect(saved.meetingNotes, 'Reviewed recovery notes.');
+    expect(sidecar['transcript'], 'Recovered replacement transcript.');
+    expect(sidecar['meetingNotes'], 'Reviewed recovery notes.');
   });
 
   test('only one same-attempt completion callback owns a delayed sidecar',
