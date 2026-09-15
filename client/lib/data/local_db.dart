@@ -495,20 +495,26 @@ class LocalDb extends _$LocalDb {
   }
 
   /// Rows whose latest attempt needs network or sidecar reconciliation.
-  Future<List<DumpRow>> dumpsNeedingTranscriptionRecovery() {
+  Future<List<DumpRow>> dumpsNeedingTranscriptionRecovery() =>
+      _transcriptionRecoveryQuery().get();
+
+  /// Observe commits even after their initiating route/coordinator disappears.
+  Stream<List<DumpRow>> watchDumpsNeedingTranscriptionRecovery() =>
+      _transcriptionRecoveryQuery().watch();
+
+  Selectable<DumpRow> _transcriptionRecoveryQuery() {
     return (select(dumps)
-          ..where(
-            (d) =>
-                d.transcriptionStatus.isIn([
-                  TranscriptionStatus.uploading.wireValue,
-                  TranscriptionStatus.queued.wireValue,
-                  TranscriptionStatus.running.wireValue,
-                ]) |
-                (d.transcriptionStatus.isIn(['completed', 'failed']) &
-                    d.transcriptionError.like('sidecar_sync_pending:%')),
-          )
-          ..orderBy([(d) => OrderingTerm.asc(d.transcriptionStartedAt)]))
-        .get();
+      ..where(
+        (d) =>
+            d.transcriptionStatus.isIn([
+              TranscriptionStatus.uploading.wireValue,
+              TranscriptionStatus.queued.wireValue,
+              TranscriptionStatus.running.wireValue,
+            ]) |
+            (d.transcriptionStatus.isIn(['completed', 'failed']) &
+                d.transcriptionError.like('sidecar_sync_pending:%')),
+      )
+      ..orderBy([(d) => OrderingTerm.asc(d.transcriptionStartedAt)]));
   }
 
   /// Update only the sync fields for a dump.

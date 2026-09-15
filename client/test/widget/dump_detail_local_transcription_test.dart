@@ -115,6 +115,35 @@ class _FakeTranscriptionClient implements TranscriptionClient {
   }
 }
 
+final class _PausedTranscriptReturnDb extends LocalDb {
+  _PausedTranscriptReturnDb() : super.forTesting(NativeDatabase.memory());
+  bool pauseReturn = false;
+  final committed = Completer<void>();
+  final release = Completer<void>();
+
+  @override
+  Future<DumpRow> updateDumpTranscript(
+    String id, {
+    required String expectedTranscript,
+    required int expectedTranscriptionAttempt,
+    required String? expectedTranscriptionRequestId,
+    required String transcript,
+    required DateTime now,
+  }) async {
+    final saved = await super.updateDumpTranscript(
+      id,
+      expectedTranscript: expectedTranscript,
+      expectedTranscriptionAttempt: expectedTranscriptionAttempt,
+      expectedTranscriptionRequestId: expectedTranscriptionRequestId,
+      transcript: transcript,
+      now: now,
+    );
+    committed.complete();
+    if (pauseReturn) await release.future;
+    return saved;
+  }
+}
+
 final class _PausingMeetingNotesDb extends LocalDb {
   _PausingMeetingNotesDb() : super.forTesting(NativeDatabase.memory());
 
@@ -650,7 +679,9 @@ void main() {
     final db = LocalDb.forTesting(NativeDatabase.memory());
     final storage = AudioStorage.test(temp);
     final fake = _FakeTranscriptionClient(
-        completedTranscript: 'Result', pauseBeforeTerminal: true,);
+      completedTranscript: 'Result',
+      pauseBeforeTerminal: true,
+    );
     final service =
         ServerTranscriptionService(client: fake, db: db, audioStorage: storage);
     addTearDown(() async {
@@ -680,14 +711,18 @@ void main() {
       unawaited(service.transcribeDump(second.id));
     });
     await _pumpRealUntil(
-        tester, () => find.text('Uploading…').evaluate().isNotEmpty,);
+      tester,
+      () => find.text('Uploading…').evaluate().isNotEmpty,
+    );
     expect(_editorText(tester, second.id), 'Retained transcript');
     expect(
-        tester
-            .widget<FilledButton>(
-                find.byKey(ValueKey('transcribe-${second.id}')),)
-            .onPressed,
-        isNull,);
+      tester
+          .widget<FilledButton>(
+            find.byKey(ValueKey('transcribe-${second.id}')),
+          )
+          .onPressed,
+      isNull,
+    );
     expect(fake.createCalls, 1);
     expect(fake.enqueueCalls, 1);
     service.dispose();
@@ -876,13 +911,7 @@ void main() {
       final db = LocalDb.forTesting(NativeDatabase.memory());
       final storage = AudioStorage.test(temp);
       final fake = _FakeTranscriptionClient(completedTranscript: 'unused');
-      final service = ServerTranscriptionService(
-        client: fake,
-        db: db,
-        audioStorage: storage,
-      );
       addTearDown(() async {
-        service.dispose();
         await db.close();
         temp.deleteSync(recursive: true);
       });
@@ -912,7 +941,7 @@ void main() {
         db,
         storage,
         fake,
-        service,
+        null, // Exercise the production app-scoped recovery owner.
         original,
         live: true,
       );
@@ -986,6 +1015,189 @@ void main() {
       });
       await _disposeDetail(tester);
     });
+  }
+
+  for (final failed in [false, true]) {
+    for (final pauseReturn in [false, true]) {
+      for (final replace in [false, true]) {
+        testWidgets(
+            'round 2 sidecar repair outlives route ${failed ? "failed" : "completed"} ${pauseReturn ? "pending DB return" : "blocked serializer"} replacement=$replace',
+            (tester) async {
+          tester.view.physicalSize = const Size(1080, 2600);
+          tester.view.devicePixelRatio = 1;
+          addTearDown(tester.view.resetPhysicalSize);
+          final temp = Directory.systemTemp.createTempSync('unmounted-repair-');
+          final db = _PausedTranscriptReturnDb()..pauseReturn = pauseReturn;
+          final storage = AudioStorage.test(temp);
+          final oldClient =
+              _FakeTranscriptionClient(completedTranscript: 'no network');
+          final newClient =
+              _FakeTranscriptionClient(completedTranscript: 'no network');
+          final container = ProviderContainer(
+            overrides: [
+              localDbProvider.overrideWithValue(db),
+              audioStorageProvider.overrideWithValue(storage),
+              transcriptionClientProvider.overrideWith((_) => oldClient),
+              recordingPlaybackEngineFactoryProvider
+                  .overrideWithValue(_TestPlaybackEngine.new),
+            ],
+          );
+          late ProviderSubscription<ServerTranscriptionService> subscription;
+          final releaseWrite = Completer<void>();
+          addTearDown(() async {
+            if (!releaseWrite.isCompleted) releaseWrite.complete();
+            if (!db.release.isCompleted) db.release.complete();
+            subscription.close();
+            container.dispose();
+            await db.close();
+            temp.deleteSync(recursive: true);
+          });
+          final original = _completedRow(
+            id: 'unmounted-repair',
+            transcript: 'Original',
+            attempt: 2,
+            requestId: 'retained-request',
+            jobId: 'retained-job',
+            meetingNotes: 'Keep notes',
+          ).copyWith(
+            transcriptionStatus: failed ? 'failed' : 'completed',
+            transcriptionRequestId:
+                Value(pauseReturn ? null : 'retained-request'),
+            transcriptionError: Value(failed ? 'original failure' : null),
+          );
+          final obstacle =
+              Directory('${storage.metaPathFor(original.id).path}.tmp');
+          late Future<void> heldWrite;
+          await tester.runAsync(() async {
+            await db.upsertDump(original);
+            await storage.pathFor(original.id).writeAsBytes([3, 1, 4]);
+            container.read(transcriptionRecoveryOwnerProvider);
+            subscription = container.listen(
+              serverTranscriptionServiceProvider,
+              (_, __) {},
+            );
+            await container
+                .read(serverTranscriptionServiceProvider)
+                .reconcilePending();
+            await obstacle.create();
+            heldWrite = storage.runSerializedMetadataWrite<void>(
+              original.id,
+              (_) => releaseWrite.future,
+            );
+          });
+          final navigator = GlobalKey<NavigatorState>();
+          await tester.pumpWidget(
+            UncontrolledProviderScope(
+              container: container,
+              child: MaterialApp(
+                navigatorKey: navigator,
+                home: const Scaffold(body: Text('Home kept alive')),
+              ),
+            ),
+          );
+          unawaited(
+            navigator.currentState!.push(
+              MaterialPageRoute<void>(
+                builder: (_) => DumpDetailScreen(
+                  dumpId: original.id,
+                  audioPath: original.audioPath,
+                  durationSeconds: 4,
+                ),
+              ),
+            ),
+          );
+          await tester.pumpAndSettle();
+          await _pumpRealUntil(
+            tester,
+            () =>
+                container.read(dumpByIdProvider(original.id)).valueOrNull !=
+                null,
+          );
+          await tester.pump();
+          final editor =
+              find.byKey(ValueKey('transcript-editor-${original.id}'));
+          final save = find.byKey(ValueKey('save-transcript-${original.id}'));
+          await tester.enterText(editor, 'Committed correction');
+          await tester.pump();
+          await tester.runAsync(() async {
+            tester.widget<FilledButton>(save).onPressed!();
+          });
+          await _pumpRealUntil(tester, () => db.committed.isCompleted);
+          navigator.currentState!.pop();
+          await tester.pumpAndSettle();
+          expect(find.byType(DumpDetailScreen), findsNothing);
+          expect(find.text('Home kept alive'), findsOneWidget);
+          await tester.runAsync(() async {
+            if (replace) {
+              container.read(transcriptionClientProvider.notifier).state =
+                  newClient;
+              container.read(serverTranscriptionServiceProvider);
+            }
+            if (pauseReturn) db.release.complete();
+          });
+          await tester.pump();
+          releaseWrite.complete();
+          await tester.pump();
+          await tester.runAsync(() => heldWrite);
+          var drained = false;
+          await tester.runAsync(() async {
+            unawaited(
+              storage.runSerializedMetadataWrite<void>(original.id, (_) async {
+                drained = true;
+              }),
+            );
+          });
+          await _pumpRealUntil(tester, () => drained);
+          await tester.runAsync(() async {
+            expect(
+              (await db.getDump(original.id))!.transcriptionError,
+              startsWith('sidecar_sync_pending:'),
+            );
+            await obstacle.delete();
+          });
+          // No explicit scan, resume, remount, or second save after navigation.
+          await _pumpRealUntil(
+            tester,
+            () async => storage.metaPathFor(original.id).exists(),
+          );
+          await _pumpRealUntil(
+            tester,
+            () async =>
+                (await db.getDump(original.id))!.transcriptionError ==
+                original.transcriptionError,
+          );
+          await tester.runAsync(() async {
+            final saved = (await db.getDump(original.id))!;
+            final metadata = jsonDecode(
+              await storage.metaPathFor(original.id).readAsString(),
+            ) as Map;
+            expect(saved.transcriptionStatus, original.transcriptionStatus);
+            expect(
+              saved.transcriptionRequestId,
+              original.transcriptionRequestId,
+            );
+            expect(saved.transcriptionAttempt, original.transcriptionAttempt);
+            expect(saved.meetingNotes, 'Keep notes');
+            expect(metadata['transcript'], 'Committed correction');
+            expect(metadata['transcriptionError'], original.transcriptionError);
+            expect(await storage.readBytes(original.id), [3, 1, 4]);
+            expect(
+              oldClient.createCalls +
+                  oldClient.uploadCalls +
+                  oldClient.enqueueCalls,
+              0,
+            );
+            expect(
+              newClient.createCalls +
+                  newClient.uploadCalls +
+                  newClient.enqueueCalls,
+              0,
+            );
+          });
+          await tester.pumpWidget(const SizedBox.shrink());
+        });
+      }
+    }
   }
 
   testWidgets('stale transcript draft cannot overwrite a newer result',
@@ -1430,7 +1642,7 @@ Future<void> _mountDetail(
   LocalDb db,
   AudioStorage storage,
   TranscriptionClient client,
-  ServerTranscriptionService service,
+  ServerTranscriptionService? service,
   DumpRow row, {
   bool live = false,
 }) async {
@@ -1440,7 +1652,8 @@ Future<void> _mountDetail(
         localDbProvider.overrideWithValue(db),
         audioStorageProvider.overrideWithValue(storage),
         transcriptionClientProvider.overrideWith((_) => client),
-        serverTranscriptionServiceProvider.overrideWith((_) => service),
+        if (service != null)
+          serverTranscriptionServiceProvider.overrideWith((_) => service),
         if (!live)
           dumpByIdProvider(row.id).overrideWith((_) => Stream.value(row)),
         recordingPlaybackEngineFactoryProvider.overrideWithValue(
@@ -1462,6 +1675,13 @@ Future<void> _mountDetail(
         tester.element(find.byType(DumpDetailScreen)),
       );
       await container.read(dumpByIdProvider(row.id).future);
+      if (service == null) {
+        // main() bootstraps recovery before showing detail routes.
+        container.read(transcriptionRecoveryOwnerProvider);
+        await container
+            .read(serverTranscriptionServiceProvider)
+            .reconcilePending();
+      }
     });
   }
   await tester.pump();

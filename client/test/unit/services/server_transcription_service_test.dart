@@ -185,6 +185,95 @@ class _PausedOwnershipDb extends LocalDb {
   }
 }
 
+class _ObservedRecoveryDb extends LocalDb {
+  _ObservedRecoveryDb() : super.forTesting(NativeDatabase.memory());
+  int subscriptions = 0;
+  int activeSubscriptions = 0;
+  int deliveries = 0;
+  int scans = 0;
+
+  @override
+  Stream<List<DumpRow>> watchDumpsNeedingTranscriptionRecovery() =>
+      Stream<List<DumpRow>>.multi((controller) {
+        subscriptions++;
+        activeSubscriptions++;
+        final subscription =
+            super.watchDumpsNeedingTranscriptionRecovery().listen(
+          (rows) {
+            deliveries++;
+            controller.add(rows);
+          },
+          onError: controller.addError,
+          onDone: controller.close,
+        );
+        controller.onCancel = () async {
+          await subscription.cancel();
+          activeSubscriptions--;
+        };
+      });
+
+  @override
+  Future<List<DumpRow>> dumpsNeedingTranscriptionRecovery() {
+    scans++;
+    return super.dumpsNeedingTranscriptionRecovery();
+  }
+}
+
+Future<void> _eventually(
+  FutureOr<bool> Function() condition,
+  String reason,
+) async {
+  final deadline = DateTime.now().add(const Duration(seconds: 3));
+  while (!await condition()) {
+    if (DateTime.now().isAfter(deadline)) fail(reason);
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+  }
+}
+
+class _LateAcceptanceDb extends LocalDb {
+  _LateAcceptanceDb(this.pauseRead) : super.forTesting(NativeDatabase.memory());
+  final bool pauseRead;
+  bool armed = false;
+  final entered = Completer<void>();
+  final release = Completer<void>();
+  String? allocatedRequest;
+  int scans = 0;
+  int allocations = 0;
+
+  @override
+  Future<List<DumpRow>> dumpsNeedingTranscriptionRecovery() {
+    scans++;
+    return super.dumpsNeedingTranscriptionRecovery();
+  }
+
+  @override
+  Future<DumpRow?> getDump(String id) async {
+    final row = await super.getDump(id);
+    if (pauseRead && armed) {
+      armed = false;
+      entered.complete();
+      await release.future;
+    }
+    return row;
+  }
+
+  @override
+  Future<DumpRow> beginTranscriptionAttempt(
+    String id, {
+    required String requestId,
+    required DateTime now,
+  }) async {
+    allocatedRequest = requestId;
+    allocations++;
+    if (!pauseRead && armed) {
+      armed = false;
+      entered.complete();
+      await release.future;
+    }
+    return super.beginTranscriptionAttempt(id, requestId: requestId, now: now);
+  }
+}
+
 class _FlakyRecoveryQueryDb extends LocalDb {
   _FlakyRecoveryQueryDb() : super.forTesting(NativeDatabase.memory());
 
@@ -4407,6 +4496,7 @@ void main() {
       container.dispose();
       if (!release.isCompleted) release.complete();
     });
+    container.read(transcriptionRecoveryOwnerProvider);
     final first = container.read(serverTranscriptionServiceProvider);
     await first.reconcilePending();
     final firstWork = first.transcribeDump('fifo-first');
@@ -4486,6 +4576,228 @@ void main() {
     expect(fake.createCalls, 0);
     expect(fake.enqueueCalls, 0);
   });
+
+  test(
+      'round 2 durable signals coalesce and retain backoff across unrelated work and scope replacement',
+      () async {
+    await db.close();
+    final observed = _ObservedRecoveryDb();
+    db = observed;
+    await seedRow(
+      row().copyWith(
+        transcriptionStatus: 'uploading',
+        transcriptionAttempt: 1,
+        transcriptionRequestId: const Value('durable-request'),
+      ),
+    );
+    await seedRow(
+      row(id: 'r2').copyWith(
+        transcriptionStatus: 'completed',
+        transcript: const Value('Before'),
+      ),
+    );
+    final failing = _FakeTranscriptionClient(
+      completedTranscript: 'unused',
+      onEnqueue: (_, __, ___) => throw const ApiException(
+        statusCode: 503,
+        code: 'unavailable',
+        message: 'offline',
+      ),
+    );
+    final container = ProviderContainer(
+      overrides: [
+        localDbProvider.overrideWithValue(db),
+        audioStorageProvider.overrideWithValue(storage),
+        transcriptionClientProvider.overrideWith((_) => failing),
+      ],
+    );
+    var disposed = false;
+    addTearDown(() {
+      if (!disposed) container.dispose();
+    });
+    await container.read(serverTranscriptionServiceProvider).reconcilePending();
+    await _eventually(
+      () => failing.enqueueCalls == 2,
+      'bootstrap plus immediate retry',
+    );
+    container.read(transcriptionRecoveryOwnerProvider);
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+    final scansBefore = observed.scans;
+    final deliveriesBefore = observed.deliveries;
+    for (var i = 0; i < 20; i++) {
+      await db.updateTranscriptionStatus(
+        'r1',
+        attempt: 1,
+        requestId: 'durable-request',
+        status: TranscriptionStatus.uploading,
+        error: 'reconciliation_pending: probe $i',
+        now: DateTime.now(),
+      );
+    }
+    await _eventually(
+      () => observed.deliveries > deliveriesBefore,
+      'real SQLite notifications delivered',
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+    expect(
+      observed.scans,
+      scansBefore,
+      reason: 'same-work writes must not trigger scans',
+    );
+    expect(failing.enqueueCalls, 2);
+    // A different row needs immediate sidecar repair while r1 is in backoff.
+    await db.updateDumpTranscript(
+      'r2',
+      expectedTranscript: 'Before',
+      expectedTranscriptionAttempt: 0,
+      expectedTranscriptionRequestId: null,
+      transcript: 'After',
+      now: DateTime.now(),
+    );
+    await _eventually(
+      () async => (await db.getDump('r2'))!.transcriptionError == null,
+      'unrelated repair',
+    );
+    expect(
+      failing.enqueueCalls,
+      2,
+      reason: 'unrelated work cannot accelerate a pending retry',
+    );
+    expect(failing.enqueueRequestIds.toSet(), {'durable-request'});
+
+    final recovered = _FakeTranscriptionClient(
+      completedTranscript: 'unused',
+      onEnqueue: (id, request, model) => TranscriptionJobSnapshot(
+        id: 'job-replacement',
+        requestId: request,
+        dumpId: id,
+        model: model,
+        status: 'completed',
+        transcript: 'Recovered',
+      ),
+    );
+    container.read(transcriptionClientProvider.notifier).state = recovered;
+    await container.read(serverTranscriptionServiceProvider).reconcilePending();
+    expect(recovered.enqueueRequestIds, ['durable-request']);
+    final idleClients = <_FakeTranscriptionClient>[];
+    for (var i = 0; i < 4; i++) {
+      final idle =
+          _FakeTranscriptionClient(completedTranscript: 'must not run');
+      idleClients.add(idle);
+      container.read(transcriptionClientProvider.notifier).state = idle;
+      await container
+          .read(serverTranscriptionServiceProvider)
+          .reconcilePending();
+    }
+    expect(observed.subscriptions, 1);
+    expect(observed.activeSubscriptions, 1);
+    final finalScans = observed.scans;
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    expect(
+      observed.scans,
+      finalScans,
+      reason: 'settled work cannot self-trigger',
+    );
+    container.dispose();
+    disposed = true;
+    await _eventually(
+      () => observed.activeSubscriptions == 0,
+      'subscription cancelled on scope disposal',
+    );
+    await db.beginTranscriptionAttempt(
+      'r1',
+      requestId: 'after-scope-shutdown',
+      now: DateTime.now(),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 1100));
+    expect(observed.scans, finalScans);
+    expect(failing.enqueueCalls, 2, reason: 'disposed retry timer cannot fire');
+    expect(recovered.enqueueCalls, 1);
+    expect(idleClients.every((c) => c.calls.isEmpty), isTrue);
+    expect(await storage.readBytes('r1'), [1, 2, 3]);
+    expect(await storage.readBytes('r2'), [1, 2, 3]);
+  });
+
+  for (final pauseRead in [false, true]) {
+    for (final eagerRead in [true, false]) {
+      test(
+          'round 2 late acceptance after replacement empty scan ${pauseRead ? "row read" : "begin attempt"} consumer-read=$eagerRead',
+          () async {
+        await db.close();
+        final paused = _LateAcceptanceDb(pauseRead);
+        db = paused;
+        await seedRow(row());
+        final oldClient =
+            _FakeTranscriptionClient(completedTranscript: 'old must not run');
+        final newClient = _FakeTranscriptionClient(
+          completedTranscript: 'unused',
+          onEnqueue: (id, request, model) => TranscriptionJobSnapshot(
+            id: 'recovered-job',
+            requestId: request,
+            dumpId: id,
+            model: model,
+            status: 'completed',
+            transcript: 'Recovered late acceptance',
+          ),
+        );
+        final container = ProviderContainer(
+          overrides: [
+            localDbProvider.overrideWithValue(db),
+            audioStorageProvider.overrideWithValue(storage),
+            transcriptionClientProvider.overrideWith((_) => oldClient),
+          ],
+        );
+        addTearDown(() {
+          container.dispose();
+          if (!paused.release.isCompleted) paused.release.complete();
+        });
+        final oldService = container.read(serverTranscriptionServiceProvider);
+        await oldService.reconcilePending();
+        container.read(transcriptionRecoveryOwnerProvider);
+        paused.armed = true;
+        final work = oldService.transcribeDump('r1');
+        await paused.entered.future;
+        final scansBeforeReplacement = paused.scans;
+        container.read(transcriptionClientProvider.notifier).state = newClient;
+        if (eagerRead) {
+          final replacement =
+              container.read(serverTranscriptionServiceProvider);
+          expect(identical(oldService, replacement), isFalse);
+          await replacement.reconcilePending();
+        } else {
+          await _eventually(
+            () => paused.scans > scansBeforeReplacement,
+            'app owner must resolve lazy replacement without a consumer read',
+          );
+        }
+        expect(await db.dumpsNeedingTranscriptionRecovery(), isEmpty);
+        paused.release.complete();
+        await work;
+        final deadline = DateTime.now().add(const Duration(seconds: 1));
+        late DumpRow saved;
+        do {
+          saved = (await db.getDump('r1'))!;
+          if (saved.transcriptionStatus == 'completed' &&
+              saved.transcriptionError == null) {
+            break;
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+        } while (DateTime.now().isBefore(deadline));
+        expect(
+          saved.transcriptionStatus,
+          'completed',
+          reason: 'no explicit rescue scan or lifecycle event',
+        );
+        expect(saved.transcriptionRequestId, paused.allocatedRequest);
+        expect(saved.transcriptionAttempt, 1);
+        expect(paused.allocations, 1);
+        expect(oldClient.calls, isEmpty);
+        expect(newClient.enqueueRequestIds, [paused.allocatedRequest]);
+        expect(newClient.createCalls, 0);
+        expect(await storage.readBytes('r1'), [1, 2, 3]);
+      });
+    }
+  }
 
   test('meeting retranscription preserves existing notes until regeneration',
       () async {

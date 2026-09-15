@@ -87,6 +87,8 @@ void main() {
       (tester) async {
     final temp = Directory.systemTemp.createTempSync('tangent-lifecycle-');
     final db = LocalDb.forTesting(NativeDatabase.memory());
+    // Open real SQLite outside the widget fake clock before its watch starts.
+    await tester.runAsync(() => db.getDump('startup-empty'));
     final service = _CountingServerTranscriptionService(
       db: db,
       audioStorage: AudioStorage.test(temp),
@@ -95,6 +97,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          localDbProvider.overrideWithValue(db),
           serverTranscriptionServiceProvider.overrideWith((ref) => service),
         ],
         child: const TangentApp(),
@@ -108,6 +111,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(service.reconcileCalls, 2);
+    final container =
+        ProviderScope.containerOf(tester.element(find.byType(TangentApp)));
+    expect(container.exists(transcriptionRecoveryOwnerProvider), isTrue);
 
     await tester.pumpWidget(const SizedBox.shrink());
     binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
@@ -115,7 +121,22 @@ void main() {
     await tester.pump();
     expect(service.reconcileCalls, 2);
 
-    await db.close();
+    var closed = false;
+    await tester.runAsync(() async {
+      unawaited(db.close().then((_) => closed = true));
+    });
+    final closeDeadline = DateTime.now().add(const Duration(seconds: 3));
+    while (!closed && DateTime.now().isBefore(closeDeadline)) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 5)),
+      );
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+    expect(
+      closed,
+      isTrue,
+      reason: 'drain the real DB watch across the widget clock',
+    );
     temp.deleteSync(recursive: true);
   });
 
@@ -134,6 +155,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          localDbProvider.overrideWithValue(db),
           serverTranscriptionServiceProvider.overrideWith((ref) => service),
         ],
         child: const TangentApp(),

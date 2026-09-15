@@ -120,6 +120,7 @@ class _TranscriptionLifecycleHostState
 
   void _reconcileAfterStartup(Duration _) {
     if (!mounted) return;
+    ref.read(transcriptionRecoveryOwnerProvider);
     unawaited(ref.read(serverTranscriptionServiceProvider).reconcilePending());
   }
 

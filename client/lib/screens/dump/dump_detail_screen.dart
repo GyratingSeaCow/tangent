@@ -156,7 +156,6 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
       _statusError = null;
       _statusMessage = 'Saving transcript…';
     });
-    var committed = false;
     try {
       final db = ref.read(localDbProvider);
       final audio = ref.read(audioStorageProvider);
@@ -168,7 +167,6 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
         transcript: transcript,
         now: DateTime.now().toUtc(),
       );
-      committed = true;
       // SQLite owns this revision even when the following sidecar write fails.
       // A retry must compare against it, not against the old editor base.
       if (mounted) {
@@ -209,11 +207,8 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
         });
       }
     } finally {
-      if (committed && _manualSidecarPending && mounted) {
-        unawaited(
-          ref.read(serverTranscriptionServiceProvider).reconcilePending(),
-        );
-      }
+      // The app-scoped durable-row observer owns repair, even after navigation
+      // or client replacement. mounted guards only the editor's UI state.
       if (mounted) setState(() => _savingTranscript = false);
     }
   }

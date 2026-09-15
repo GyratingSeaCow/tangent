@@ -108,8 +108,30 @@ class ServerTranscriptionService extends ChangeNotifier {
   List<String> get queuedDumpIds =>
       List.unmodifiable(_queue.map((job) => job.dumpId));
 
-  Future<void> reconcilePending() {
+  bool _forceRecoveryScan = false;
+
+  /// Durable commits are signals, never new attempts. The app-scoped observer
+  /// targets the current instance; disposal never resumes network execution.
+  void durableRecoveryChanged(Iterable<String> dumpIds) {
+    if (_disposed) return;
+    for (final id in dumpIds) {
+      if (_isLocallyOwned(id)) {
+        // Do not reclassify a fresh local acceptance as recovery-only when its
+        // transaction is observed before its Future returns.
+        _pendingLocalReattachmentHandoffs.add(id);
+      } else if (_reattachments.containsKey(id)) {
+        _pendingReattachmentHandoffs.add(id);
+      } else {
+        _scheduleRecoveryRetry(id);
+      }
+    }
+  }
+
+  Future<void> reconcilePending() => _requestReconciliation();
+
+  Future<void> _requestReconciliation({bool respectRetryBackoff = false}) {
     if (_disposed) return Future<void>.value();
+    _forceRecoveryScan |= !respectRetryBackoff;
     _requestedReconciliationGeneration += 1;
     final activeScan = _reconciliationScan;
     if (activeScan != null) return activeScan;
@@ -134,7 +156,9 @@ class ServerTranscriptionService extends ChangeNotifier {
           _processedReconciliationGeneration <
               _requestedReconciliationGeneration) {
         final generation = _requestedReconciliationGeneration;
-        await _scanPending();
+        final force = _forceRecoveryScan;
+        _forceRecoveryScan = false;
+        await _scanPending(respectRetryBackoff: !force);
         _processedReconciliationGeneration = generation;
       }
     } catch (error, stackTrace) {
@@ -174,7 +198,9 @@ class ServerTranscriptionService extends ChangeNotifier {
       if (identical(_recoveryRetryTimers[dumpId], timer)) {
         _recoveryRetryTimers.remove(dumpId);
       }
-      if (!_disposed) unawaited(reconcilePending());
+      if (!_disposed) {
+        unawaited(_requestReconciliation(respectRetryBackoff: true));
+      }
     });
     _recoveryRetryTimers[dumpId] = timer;
   }
@@ -192,7 +218,7 @@ class ServerTranscriptionService extends ChangeNotifier {
     }
   }
 
-  Future<void> _scanPending() async {
+  Future<void> _scanPending({required bool respectRetryBackoff}) async {
     if (_disposed) return;
     late final List<DumpRow> rows;
     try {
@@ -205,6 +231,11 @@ class ServerTranscriptionService extends ChangeNotifier {
       rows.map((row) async {
         try {
           if (_disposed) return;
+          // Another row's signal/timer must not accelerate this row's backoff.
+          // Explicit startup/resume scans may still force reconciliation.
+          if (respectRetryBackoff && _recoveryRetryTimers.containsKey(row.id)) {
+            return;
+          }
           if (_isLocallyOwned(row.id)) {
             _markLocalRecoveryHandoff(row.id);
             return;
