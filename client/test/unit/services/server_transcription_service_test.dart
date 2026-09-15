@@ -7,6 +7,11 @@ import 'package:dio/dio.dart';
 import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:tangent/screens/home/home_providers.dart';
+import 'package:tangent/screens/home/home_screen.dart' show localDbProvider;
+import 'package:tangent/screens/server/server_connection_screen.dart'
+    show transcriptionClientProvider;
 import 'package:tangent/data/audio_storage.dart';
 import 'package:tangent/data/local_db.dart';
 import 'package:tangent/data/recording_metadata.dart';
@@ -160,6 +165,23 @@ class _FakeTranscriptionClient implements TranscriptionClient {
       await afterEvent?.call(event.status);
     }
     if (streamError != null) throw streamError!;
+  }
+}
+
+class _PausedOwnershipDb extends LocalDb {
+  _PausedOwnershipDb() : super.forTesting(NativeDatabase.memory());
+  final entered = Completer<void>();
+  final release = Completer<void>();
+
+  @override
+  Future<DumpRow> beginTranscriptionAttempt(
+    String id, {
+    required String requestId,
+    required DateTime now,
+  }) async {
+    entered.complete();
+    await release.future;
+    return super.beginTranscriptionAttempt(id, requestId: requestId, now: now);
   }
 }
 
@@ -4291,6 +4313,178 @@ void main() {
     expect(saved!.transcript, 'Alice will send the notes by Friday.');
     expect(saved.meetingNotes, isNotNull);
     expect(saved.meetingNotes, contains('Action Items'));
+  });
+
+  for (final recovered in [false, true]) {
+    test(
+        'fix round notes regenerated in flight survive ${recovered ? "recovered" : "normal"} completion',
+        () async {
+      final original = row(
+        id: 'notes-in-flight',
+        mode: 'meeting',
+        transcriptionStatus: recovered ? 'running' : 'completed',
+        transcriptionAttempt: 1,
+        transcriptionRequestId: 'request-notes-old',
+        transcriptionJobId: recovered ? 'job-notes' : null,
+      ).copyWith(
+        transcript: const Value('Original transcript'),
+        meetingNotes: const Value('old notes'),
+      );
+      await seedRow(original);
+      Future<void> regenerate() async {
+        final current = (await db.getDump(original.id))!;
+        await db.updateDumpMeetingNotes(
+          original.id,
+          expectedTitle: current.title,
+          expectedTranscript: current.transcript!,
+          expectedTranscriptionAttempt: current.transcriptionAttempt,
+          expectedTranscriptionRequestId: current.transcriptionRequestId,
+          meetingNotes: 'newly regenerated notes',
+          now: DateTime.now(),
+        );
+      }
+
+      final fake = _FakeTranscriptionClient(
+        completedTranscript: 'Replacement transcript',
+        onStreamStart: regenerate,
+        onGetJob: (_) async {
+          await regenerate();
+          return const TranscriptionJobSnapshot(
+            id: 'job-notes',
+            requestId: 'request-notes-old',
+            dumpId: 'notes-in-flight',
+            status: 'completed',
+            model: 'large-v3',
+            transcript: 'Replacement transcript',
+          );
+        },
+      );
+      final service = ServerTranscriptionService(
+        client: fake,
+        db: db,
+        audioStorage: storage,
+        requestIdFactory: () => 'request-notes-new',
+      );
+      addTearDown(service.dispose);
+      if (recovered) {
+        await service.reconcilePending();
+      } else {
+        await service.transcribeDump(original.id);
+      }
+      final saved = (await db.getDump(original.id))!;
+      expect(saved.transcript, 'Replacement transcript');
+      expect(saved.meetingNotes, 'newly regenerated notes');
+      final metadata =
+          jsonDecode(await storage.metaPathFor(original.id).readAsString())
+              as Map;
+      expect(metadata['meetingNotes'], 'newly regenerated notes');
+      expect(await storage.readBytes(original.id), [1, 2, 3]);
+    });
+  }
+
+  test(
+      'fix round FIFO acceptance is durable before activation and provider recreation',
+      () async {
+    await seedRow(row(id: 'fifo-first'));
+    await seedRow(row(id: 'fifo-second'));
+    final entered = Completer<void>();
+    final release = Completer<void>();
+    final firstClient = _FakeTranscriptionClient(
+      completedTranscript: 'unused',
+      onCreate: () async {
+        if (!entered.isCompleted) entered.complete();
+        await release.future;
+      },
+    );
+    final container = ProviderContainer(
+      overrides: [
+        localDbProvider.overrideWithValue(db),
+        audioStorageProvider.overrideWithValue(storage),
+        transcriptionClientProvider.overrideWith((_) => firstClient),
+      ],
+    );
+    addTearDown(() {
+      container.dispose();
+      if (!release.isCompleted) release.complete();
+    });
+    final first = container.read(serverTranscriptionServiceProvider);
+    await first.reconcilePending();
+    final firstWork = first.transcribeDump('fifo-first');
+    await entered.future;
+    final secondWork = first.transcribeDump('fifo-second');
+    expect(identical(secondWork, first.transcribeDump('fifo-second')), isTrue);
+    final accepted = await db
+        .watchDump('fifo-second')
+        .firstWhere((r) => r?.transcriptionStatus == 'uploading')
+        .timeout(
+          const Duration(milliseconds: 300),
+          onTimeout: () => row(id: 'fifo-second'),
+        );
+    expect(accepted!.transcriptionStatus, 'uploading');
+    expect(accepted.transcriptionRequestId, isNotNull);
+    expect(accepted.transcriptionAttempt, 1);
+    expect(firstClient.createCalls, 1);
+    expect(firstClient.enqueueCalls, 0);
+    final replacementClient = _FakeTranscriptionClient(
+      completedTranscript: 'unused',
+      onEnqueue: (id, request, model) => TranscriptionJobSnapshot(
+        id: 'job-$id',
+        requestId: request,
+        dumpId: id,
+        model: model,
+        status: 'completed',
+        transcript: 'Recovered $id',
+      ),
+    );
+    container.read(transcriptionClientProvider.notifier).state =
+        replacementClient;
+    final replacement = container.read(serverTranscriptionServiceProvider);
+    await replacement.reconcilePending();
+    await firstWork;
+    await secondWork;
+    final saved = (await db.getDump('fifo-second'))!;
+    expect(saved.transcriptionStatus, 'completed');
+    expect(saved.transcriptionRequestId, accepted.transcriptionRequestId);
+    expect(saved.transcriptionAttempt, 1);
+    expect(
+      replacementClient.enqueueRequestIds
+          .where((id) => id == accepted.transcriptionRequestId),
+      hasLength(1),
+    );
+    expect(await storage.readBytes('fifo-second'), [1, 2, 3]);
+  });
+
+  test('fix round disposal waits for pending durable acceptance', () async {
+    await db.close();
+    final paused = _PausedOwnershipDb();
+    db = paused;
+    await seedRow(row());
+    final fake = _FakeTranscriptionClient(completedTranscript: 'unused');
+    final service = ServerTranscriptionService(
+      client: fake,
+      db: db,
+      audioStorage: storage,
+      requestIdFactory: () => 'request-before-disposal',
+    );
+    addTearDown(() {
+      service.dispose();
+      if (!paused.release.isCompleted) paused.release.complete();
+    });
+    var finished = false;
+    final work = service.transcribeDump('r1').then((_) {
+      finished = true;
+    });
+    await paused.entered.future;
+    service.dispose();
+    await Future<void>.delayed(Duration.zero);
+    expect(finished, isFalse);
+    paused.release.complete();
+    await work;
+    final accepted = (await db.getDump('r1'))!;
+    expect(accepted.transcriptionStatus, 'uploading');
+    expect(accepted.transcriptionRequestId, 'request-before-disposal');
+    expect(fake.createCalls, 0);
+    expect(fake.enqueueCalls, 0);
   });
 
   test('meeting retranscription preserves existing notes until regeneration',

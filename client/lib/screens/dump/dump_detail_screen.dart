@@ -96,7 +96,25 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
       (write) async {
         final latest = await db.getDump(widget.dumpId);
         if (latest == null) throw StateError('Dump not found');
-        await write(dumpMetadata(latest));
+        final pending =
+            latest.transcriptionError?.startsWith('sidecar_sync_pending:') ??
+                false;
+        final restoredError =
+            LocalDb.errorAfterSidecarSync(latest.transcriptionError);
+        final metadata = dumpMetadata(latest);
+        if (pending) metadata['transcriptionError'] = restoredError;
+        await write(metadata);
+        if (pending) {
+          await db.updateTranscriptionSidecarError(
+            latest.id,
+            attempt: latest.transcriptionAttempt,
+            requestId: latest.transcriptionRequestId,
+            error: restoredError,
+            now: DateTime.now().toUtc(),
+            expectedTranscript: latest.transcript,
+            expectedError: latest.transcriptionError,
+          );
+        }
       },
     );
   }
@@ -108,7 +126,7 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
         _editorBaseAttempt != row.transcriptionAttempt ||
         _editorBaseRequestId != row.transcriptionRequestId;
     if (_editorBaseTranscript == null ||
-        (!_transcriptDirty && revisionChanged)) {
+        (!_savingTranscript && !_transcriptDirty && revisionChanged)) {
       _transcriptController.value = TextEditingValue(
         text: transcript,
         selection: TextSelection.collapsed(offset: transcript.length),
@@ -125,6 +143,8 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
     setState(() => _transcriptDirty = dirty);
   }
 
+  bool _manualSidecarPending = false;
+
   Future<void> _saveTranscript() async {
     final expectedTranscript = _editorBaseTranscript;
     final expectedAttempt = _editorBaseAttempt;
@@ -136,6 +156,7 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
       _statusError = null;
       _statusMessage = 'Saving transcript…';
     });
+    var committed = false;
     try {
       final db = ref.read(localDbProvider);
       final audio = ref.read(audioStorageProvider);
@@ -147,14 +168,29 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
         transcript: transcript,
         now: DateTime.now().toUtc(),
       );
-      await _writeLatestMetadata(db, audio);
+      committed = true;
+      // SQLite owns this revision even when the following sidecar write fails.
+      // A retry must compare against it, not against the old editor base.
       if (mounted) {
         setState(() {
           _editorBaseTranscript = saved.transcript;
           _editorBaseAttempt = saved.transcriptionAttempt;
           _editorBaseRequestId = saved.transcriptionRequestId;
-          _transcriptDirty = false;
-          _statusMessage = 'Transcript saved';
+          _transcriptDirty = _transcriptController.text != saved.transcript;
+          _manualSidecarPending = true;
+        });
+      }
+      await _writeLatestMetadata(db, audio);
+      if (mounted) {
+        setState(() {
+          _manualSidecarPending = false;
+          _editorBaseTranscript = saved.transcript;
+          _editorBaseAttempt = saved.transcriptionAttempt;
+          _editorBaseRequestId = saved.transcriptionRequestId;
+          _transcriptDirty = _transcriptController.text != saved.transcript;
+          _statusMessage = _transcriptDirty
+              ? 'Previous edit saved; newer changes are unsaved'
+              : 'Transcript saved';
         });
       }
     } on StateError {
@@ -173,6 +209,11 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
         });
       }
     } finally {
+      if (committed && _manualSidecarPending && mounted) {
+        unawaited(
+          ref.read(serverTranscriptionServiceProvider).reconcilePending(),
+        );
+      }
       if (mounted) setState(() => _savingTranscript = false);
     }
   }
@@ -463,8 +504,9 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
                     )
                   : const Icon(Icons.save),
               label: const Text('Save transcript'),
-              onPressed: transcription == TranscriptionStatus.completed &&
-                      _transcriptDirty &&
+              onPressed: (transcription == TranscriptionStatus.completed ||
+                          transcription == TranscriptionStatus.failed) &&
+                      (_transcriptDirty || _manualSidecarPending) &&
                       _transcriptController.text.trim().isNotEmpty &&
                       !_savingTranscript
                   ? _saveTranscript

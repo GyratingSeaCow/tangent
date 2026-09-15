@@ -25,6 +25,9 @@ final class _QueuedTranscription {
   _QueuedTranscription(this.dumpId, {this.recoveryOnly = false});
   final String dumpId;
   bool recoveryOnly;
+  late final Future<void> ready;
+  DumpRow? ownedRow;
+  Object? preparationError;
   final Completer<void> completer = Completer<void>();
 }
 
@@ -213,7 +216,10 @@ class ServerTranscriptionService extends ChangeNotifier {
             if (attachment == null) {
               final current = _durableRows[row.id] ?? row;
               if (TranscriptionStatus.fromWire(current.transcriptionStatus)
-                  .isInProgress) {
+                      .isInProgress ||
+                  (current.transcriptionError
+                          ?.startsWith('sidecar_sync_pending:') ??
+                      false)) {
                 _scheduleRecoveryRetry(row.id);
               } else {
                 _clearRecoveryRetry(row.id);
@@ -237,8 +243,9 @@ class ServerTranscriptionService extends ChangeNotifier {
   Future<(DumpRow, String)?> _resolvePendingRow(DumpRow row) async {
     try {
       _throwIfDisposed();
-      if (TranscriptionStatus.fromWire(row.transcriptionStatus) ==
-          TranscriptionStatus.completed) {
+      if (TranscriptionStatus.fromWire(row.transcriptionStatus).isTerminal &&
+          (row.transcriptionError?.startsWith('sidecar_sync_pending:') ??
+              false)) {
         await _repairCompletedSidecar(row);
         _throwIfDisposed();
         return null;
@@ -409,8 +416,7 @@ class ServerTranscriptionService extends ChangeNotifier {
       return null;
     } catch (error) {
       if (_disposed) return null;
-      if (TranscriptionStatus.fromWire(row.transcriptionStatus) !=
-          TranscriptionStatus.completed) {
+      if (!TranscriptionStatus.fromWire(row.transcriptionStatus).isTerminal) {
         if (_isDefinitiveFailure(error)) {
           await _guardedStatus(
             row,
@@ -612,14 +618,17 @@ class ServerTranscriptionService extends ChangeNotifier {
           if (current == null ||
               current.transcriptionAttempt != row.transcriptionAttempt ||
               current.transcriptionRequestId != row.transcriptionRequestId ||
-              TranscriptionStatus.fromWire(current.transcriptionStatus) !=
-                  TranscriptionStatus.completed ||
+              !TranscriptionStatus.fromWire(current.transcriptionStatus)
+                  .isTerminal ||
               !(current.transcriptionError
                       ?.startsWith('sidecar_sync_pending:') ??
                   false)) {
             return;
           }
-          final metadata = dumpMetadata(current)..['transcriptionError'] = null;
+          final restoredError =
+              LocalDb.errorAfterSidecarSync(current.transcriptionError);
+          final metadata = dumpMetadata(current)
+            ..['transcriptionError'] = restoredError;
           final override = _metadataWriterOverride;
           if (override == null) {
             await write(metadata);
@@ -630,8 +639,10 @@ class ServerTranscriptionService extends ChangeNotifier {
           await _db.updateTranscriptionSidecarError(
             current.id,
             attempt: current.transcriptionAttempt,
-            requestId: current.transcriptionRequestId!,
-            error: null,
+            requestId: current.transcriptionRequestId,
+            error: restoredError,
+            expectedTranscript: current.transcript,
+            expectedError: current.transcriptionError,
             now: _now(),
           );
           _throwIfDisposed();
@@ -651,9 +662,13 @@ class ServerTranscriptionService extends ChangeNotifier {
   void _markLocalRecoveryHandoff(String dumpId) {
     _pendingLocalReattachmentHandoffs.add(dumpId);
     final active = _activeJob;
-    if (active?.dumpId == dumpId) active!.recoveryOnly = true;
+    if (active?.dumpId == dumpId && active?.ownedRow == null) {
+      active!.recoveryOnly = true;
+    }
     for (final queued in _queue) {
-      if (queued.dumpId == dumpId) queued.recoveryOnly = true;
+      if (queued.dumpId == dumpId && queued.ownedRow == null) {
+        queued.recoveryOnly = true;
+      }
     }
   }
 
@@ -672,9 +687,33 @@ class ServerTranscriptionService extends ChangeNotifier {
       recoveryOnly: _resolvingRecoveryDumpIds.contains(dumpId),
     );
     _queue.add(job);
+    job.ready = _prepareOwnership(job);
     _notify();
     _startNext();
     return job.completer.future;
+  }
+
+  Future<void> _prepareOwnership(_QueuedTranscription job) async {
+    try {
+      final existing = await _db.getDump(job.dumpId);
+      if (existing == null) {
+        throw const LocalTranscriptionServerError('Dump not found');
+      }
+      if (job.recoveryOnly) return;
+      if (TranscriptionStatus.fromWire(existing.transcriptionStatus)
+          .isInProgress) {
+        throw const _ExistingDurableTranscription();
+      }
+      // Acceptance is independent of FIFO activation. Even disposal while this
+      // transaction is pending must not silently discard the accepted action.
+      job.ownedRow = await _db.beginTranscriptionAttempt(
+        job.dumpId,
+        requestId: _requestIdFactory(),
+        now: _now(),
+      );
+    } catch (error) {
+      job.preparationError = error;
+    }
   }
 
   void _startNext() {
@@ -693,24 +732,12 @@ class ServerTranscriptionService extends ChangeNotifier {
     var foundExistingAttempt = false;
     var recoverableExit = false;
     try {
-      final existing = await _db.getDump(dumpId);
+      await job.ready;
       _throwIfDisposed();
-      if (existing == null) {
-        throw const LocalTranscriptionServerError('Dump not found');
-      }
-      _durableRows[existing.id] = existing;
-      if (job.recoveryOnly) return;
-      if (TranscriptionStatus.fromWire(existing.transcriptionStatus)
-          .isInProgress) {
-        throw const _ExistingDurableTranscription();
-      }
+      if (job.preparationError != null) throw job.preparationError!;
+      final row = job.ownedRow;
+      if (row == null) return;
       _clearRecoveryRetry(dumpId);
-      final row = await _db.beginTranscriptionAttempt(
-        dumpId,
-        requestId: _requestIdFactory(),
-        now: _now(),
-      );
-      _throwIfDisposed();
       attemptRow = row;
       _durableRows[row.id] = row;
       final audioBytes = await _audioStorage.readBytes(row.id);
@@ -884,6 +911,8 @@ class ServerTranscriptionService extends ChangeNotifier {
                   attempt: completed.transcriptionAttempt,
                   requestId: completed.transcriptionRequestId!,
                   error: 'sidecar_sync_pending: $error',
+                  expectedTranscript: completed.transcript,
+                  expectedError: completed.transcriptionError,
                   now: _now(),
                 );
               } catch (_) {
@@ -897,6 +926,8 @@ class ServerTranscriptionService extends ChangeNotifier {
                 attempt: completed.transcriptionAttempt,
                 requestId: completed.transcriptionRequestId!,
                 error: null,
+                expectedTranscript: completed.transcript,
+                expectedError: completed.transcriptionError,
                 now: _now(),
               );
               if (!cleared) throw const _StaleTranscriptionAttempt();
@@ -987,7 +1018,14 @@ class ServerTranscriptionService extends ChangeNotifier {
     final removed = _queue.removeAt(index);
     final hadPendingHandoff = _pendingLocalReattachmentHandoffs.remove(target);
     final shouldReconcile = removed.recoveryOnly || hadPendingHandoff;
-    if (!removed.completer.isCompleted) removed.completer.complete();
+    unawaited(
+      removed.ready.then((_) {
+        if (!removed.completer.isCompleted) removed.completer.complete();
+        if (!_disposed && (removed.ownedRow != null || shouldReconcile)) {
+          _scheduleRecoveryRetry(target);
+        }
+      }),
+    );
     _notify();
     if (shouldReconcile && !_disposed) {
       _scheduleRecoveryRetry(target);
@@ -1148,8 +1186,12 @@ class ServerTranscriptionService extends ChangeNotifier {
     _activeStream = null;
     if (activeStream != null) unawaited(activeStream.cancel());
     final activeJob = _activeJob;
-    if (activeJob != null && !activeJob.completer.isCompleted) {
-      activeJob.completer.complete();
+    if (activeJob != null) {
+      unawaited(
+        activeJob.ready.then((_) {
+          if (!activeJob.completer.isCompleted) activeJob.completer.complete();
+        }),
+      );
     }
     final reattachments = _reattachments.values.toList();
     _reattachments.clear();
@@ -1164,7 +1206,11 @@ class ServerTranscriptionService extends ChangeNotifier {
       unawaited(attachment.cancel());
     }
     for (final job in _queue) {
-      if (!job.completer.isCompleted) job.completer.complete();
+      unawaited(
+        job.ready.then((_) {
+          if (!job.completer.isCompleted) job.completer.complete();
+        }),
+      );
     }
     _queue.clear();
     super.dispose();

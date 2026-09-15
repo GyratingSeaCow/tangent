@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import 'dart:io';
+import 'dart:convert';
 
 import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import 'package:uuid/uuid.dart';
 
 import '../models/sync_status.dart';
 import '../models/transcription_status.dart';
@@ -267,6 +269,8 @@ class LocalDb extends _$LocalDb {
       throw ArgumentError.value(transcript, 'transcript', 'must not be blank');
     }
     return transaction(() async {
+      final current = await getDump(id);
+      final priorError = errorAfterSidecarSync(current?.transcriptionError);
       final count = await (update(dumps)
             ..where(
               (d) {
@@ -276,9 +280,10 @@ class LocalDb extends _$LocalDb {
                         expectedTranscriptionRequestId,
                       );
                 return d.id.equals(id) &
-                    d.transcriptionStatus.equals(
+                    d.transcriptionStatus.isIn([
                       TranscriptionStatus.completed.wireValue,
-                    ) &
+                      TranscriptionStatus.failed.wireValue,
+                    ]) &
                     d.transcript.equals(expectedTranscript) &
                     d.transcriptionAttempt.equals(
                       expectedTranscriptionAttempt,
@@ -289,6 +294,11 @@ class LocalDb extends _$LocalDb {
           .write(
         DumpsCompanion(
           transcript: Value(transcript),
+          transcriptionError:
+              Value('sidecar_sync_pending: manual_edit:${jsonEncode({
+                'error': priorError,
+                'revision': const Uuid().v4(),
+              })}'),
           updatedAt: Value(now.toUtc()),
         ),
       );
@@ -299,6 +309,16 @@ class LocalDb extends _$LocalDb {
       }
       return (await getDump(id))!;
     });
+  }
+
+  /// Manual-edit markers retain a failed attempt's original diagnostic.
+  static String? errorAfterSidecarSync(String? error) {
+    const prefix = 'sidecar_sync_pending: manual_edit:';
+    if (error?.startsWith(prefix) ?? false) {
+      final payload = jsonDecode(error!.substring(prefix.length));
+      return payload is Map ? payload['error'] as String? : payload as String?;
+    }
+    return (error?.startsWith('sidecar_sync_pending:') ?? false) ? null : error;
   }
 
   /// Starts a new durable transcription attempt before any network I/O.
@@ -312,7 +332,7 @@ class LocalDb extends _$LocalDb {
       if (current == null) throw StateError('Dump not found: $id');
       final currentStatus =
           TranscriptionStatus.fromWire(current.transcriptionStatus);
-      final sidecarPending = currentStatus == TranscriptionStatus.completed &&
+      final sidecarPending = currentStatus.isTerminal &&
           (current.transcriptionError?.startsWith('sidecar_sync_pending:') ??
               false);
       if (currentStatus.isInProgress || sidecarPending) {
@@ -399,45 +419,53 @@ class LocalDb extends _$LocalDb {
     String? meetingNotes,
     required DateTime now,
     String? sidecarError,
-  }) async {
-    final timestamp = now.toUtc();
-    final count = await (update(dumps)
-          ..where(
-            (d) =>
-                d.id.equals(id) &
-                d.transcriptionAttempt.equals(attempt) &
-                d.transcriptionRequestId.equals(requestId) &
-                (d.transcriptionStatus.equals(
-                      TranscriptionStatus.uploading.wireValue,
-                    ) |
-                    d.transcriptionStatus.equals(
-                      TranscriptionStatus.queued.wireValue,
-                    ) |
-                    d.transcriptionStatus.equals(
-                      TranscriptionStatus.running.wireValue,
-                    )),
-          ))
-        .write(
-      DumpsCompanion(
-        updatedAt: Value(timestamp),
-        transcript: Value(transcript),
-        meetingNotes: Value(meetingNotes),
-        transcriptionStatus: Value(TranscriptionStatus.completed.wireValue),
-        transcriptionUpdatedAt: Value(timestamp),
-        transcriptionCompletedAt: Value(timestamp),
-        transcriptionError: Value(sidecarError),
-      ),
-    );
-    return count == 1;
-  }
+  }) =>
+      transaction(() async {
+        // Read and mutate under the same SQLite transaction. A replacement must
+        // never write a snapshot of notes over an explicit regeneration.
+        final current = await getDump(id);
+        final preserveNotes = current?.transcript?.trim().isNotEmpty ?? false;
+        final timestamp = now.toUtc();
+        final count = await (update(dumps)
+              ..where(
+                (d) =>
+                    d.id.equals(id) &
+                    d.transcriptionAttempt.equals(attempt) &
+                    d.transcriptionRequestId.equals(requestId) &
+                    (d.transcriptionStatus.equals(
+                          TranscriptionStatus.uploading.wireValue,
+                        ) |
+                        d.transcriptionStatus.equals(
+                          TranscriptionStatus.queued.wireValue,
+                        ) |
+                        d.transcriptionStatus.equals(
+                          TranscriptionStatus.running.wireValue,
+                        )),
+              ))
+            .write(
+          DumpsCompanion(
+            updatedAt: Value(timestamp),
+            transcript: Value(transcript),
+            meetingNotes:
+                preserveNotes ? const Value.absent() : Value(meetingNotes),
+            transcriptionStatus: Value(TranscriptionStatus.completed.wireValue),
+            transcriptionUpdatedAt: Value(timestamp),
+            transcriptionCompletedAt: Value(timestamp),
+            transcriptionError: Value(sidecarError),
+          ),
+        );
+        return count == 1;
+      });
 
   /// Updates the sidecar repair marker only for the winning completed attempt.
   Future<bool> updateTranscriptionSidecarError(
     String id, {
     required int attempt,
-    required String requestId,
+    required String? requestId,
     required String? error,
     required DateTime now,
+    String? expectedTranscript,
+    String? expectedError,
   }) async {
     final timestamp = now.toUtc();
     final count = await (update(dumps)
@@ -445,10 +473,16 @@ class LocalDb extends _$LocalDb {
             (d) =>
                 d.id.equals(id) &
                 d.transcriptionAttempt.equals(attempt) &
-                d.transcriptionRequestId.equals(requestId) &
-                d.transcriptionStatus.equals(
-                  TranscriptionStatus.completed.wireValue,
-                ),
+                (requestId == null
+                    ? d.transcriptionRequestId.isNull()
+                    : d.transcriptionRequestId.equals(requestId)) &
+                d.transcriptionStatus.isIn(['completed', 'failed']) &
+                (expectedTranscript == null
+                    ? const Constant(true)
+                    : d.transcript.equals(expectedTranscript)) &
+                (expectedError == null
+                    ? const Constant(true)
+                    : d.transcriptionError.equals(expectedError)),
           ))
         .write(
       DumpsCompanion(
@@ -470,9 +504,7 @@ class LocalDb extends _$LocalDb {
                   TranscriptionStatus.queued.wireValue,
                   TranscriptionStatus.running.wireValue,
                 ]) |
-                (d.transcriptionStatus.equals(
-                      TranscriptionStatus.completed.wireValue,
-                    ) &
+                (d.transcriptionStatus.isIn(['completed', 'failed']) &
                     d.transcriptionError.like('sidecar_sync_pending:%')),
           )
           ..orderBy([(d) => OrderingTerm.asc(d.transcriptionStartedAt)]))

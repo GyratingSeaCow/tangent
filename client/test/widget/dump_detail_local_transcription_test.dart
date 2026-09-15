@@ -376,11 +376,15 @@ void main() {
       completedTranscript: 'Replacement transcript',
       pauseBeforeTerminal: true,
     );
+    var requestAllocations = 0;
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
       audioStorage: storage,
-      requestIdFactory: () => 'request-replacement',
+      requestIdFactory: () {
+        requestAllocations++;
+        return 'request-replacement';
+      },
     );
     addTearDown(() async {
       fake.releaseTerminal();
@@ -420,6 +424,7 @@ void main() {
     expect(fake.enqueueCalls, 0);
     expect(cancelled.transcriptionAttempt, 4);
     expect(cancelled.transcriptionRequestId, 'request-original');
+    expect(requestAllocations, 0);
 
     await tester.tap(find.byKey(ValueKey('transcribe-${row.id}')));
     await tester.pumpAndSettle();
@@ -636,6 +641,353 @@ void main() {
     await _disposeDetail(tester);
   });
 
+  testWidgets('fix round FIFO wait is presented from the live durable row',
+      (tester) async {
+    tester.view.physicalSize = const Size(1080, 2600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    final temp = Directory.systemTemp.createTempSync('fifo-ui-');
+    final db = LocalDb.forTesting(NativeDatabase.memory());
+    final storage = AudioStorage.test(temp);
+    final fake = _FakeTranscriptionClient(
+        completedTranscript: 'Result', pauseBeforeTerminal: true,);
+    final service =
+        ServerTranscriptionService(client: fake, db: db, audioStorage: storage);
+    addTearDown(() async {
+      service.dispose();
+      fake.releaseTerminal();
+      await db.close();
+      temp.deleteSync(recursive: true);
+    });
+    final second = _completedRow(
+      id: 'fifo-ui-second',
+      transcript: 'Retained transcript',
+      attempt: 1,
+      requestId: 'old-request',
+      jobId: 'old-job',
+    );
+    final first = second.copyWith(id: 'fifo-ui-first');
+    await tester.runAsync(() async {
+      for (final row in [first, second]) {
+        await db.upsertDump(row);
+        await storage.pathFor(row.id).writeAsBytes([1, 2, 3]);
+      }
+      unawaited(service.transcribeDump(first.id));
+    });
+    await _pumpRealUntil(tester, () => fake.isWaitingBeforeTerminal);
+    await _mountDetail(tester, db, storage, fake, service, second, live: true);
+    await tester.runAsync(() async {
+      unawaited(service.transcribeDump(second.id));
+    });
+    await _pumpRealUntil(
+        tester, () => find.text('Uploading…').evaluate().isNotEmpty,);
+    expect(_editorText(tester, second.id), 'Retained transcript');
+    expect(
+        tester
+            .widget<FilledButton>(
+                find.byKey(ValueKey('transcribe-${second.id}')),)
+            .onPressed,
+        isNull,);
+    expect(fake.createCalls, 1);
+    expect(fake.enqueueCalls, 1);
+    service.dispose();
+    fake.releaseTerminal();
+    await _disposeDetail(tester);
+  });
+
+  testWidgets('fix round failed replacement permits guarded manual save',
+      (tester) async {
+    tester.view.physicalSize = const Size(1080, 2600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    final temp = Directory.systemTemp.createTempSync('failed-edit-');
+    final db = LocalDb.forTesting(NativeDatabase.memory());
+    final storage = AudioStorage.test(temp);
+    final fake = _FakeTranscriptionClient(completedTranscript: 'unused');
+    final service =
+        ServerTranscriptionService(client: fake, db: db, audioStorage: storage);
+    addTearDown(() async {
+      service.dispose();
+      await db.close();
+      temp.deleteSync(recursive: true);
+    });
+    final original = _completedRow(
+      id: 'failed-edit',
+      transcript: 'Retained transcript',
+      attempt: 2,
+      requestId: 'request-failed',
+      jobId: 'job-failed',
+      meetingNotes: 'Keep notes',
+    );
+    await tester.runAsync(() async {
+      await db.upsertDump(original);
+      await storage.pathFor(original.id).writeAsBytes([1, 2, 3]);
+    });
+    await _mountDetail(
+      tester,
+      db,
+      storage,
+      fake,
+      service,
+      original,
+      live: true,
+    );
+    await tester.runAsync(() async {
+      await db.upsertDump(
+        original.copyWith(
+          transcriptionStatus: 'failed',
+          transcriptionError: const Value('replacement rejected'),
+        ),
+      );
+    });
+    await tester.pump();
+    final editor = find.byKey(const ValueKey('transcript-editor-failed-edit'));
+    await tester.enterText(editor, 'Corrected retained transcript');
+    await tester.pump();
+    final button = tester.widget<FilledButton>(
+      find.byKey(const ValueKey('save-transcript-failed-edit')),
+    );
+    expect(button.onPressed, isNotNull);
+    await tester.runAsync(() async {
+      button.onPressed!();
+    });
+    await _pumpRealUntil(tester, () async {
+      final file = storage.metaPathFor(original.id);
+      return await file.exists() &&
+          (jsonDecode(await file.readAsString()) as Map)['transcript'] ==
+              'Corrected retained transcript';
+    });
+    await tester.runAsync(() async {
+      final saved = (await db.getDump(original.id))!;
+      expect(saved.transcriptionStatus, 'failed');
+      expect(saved.transcriptionError, 'replacement rejected');
+      expect(saved.transcriptionAttempt, 2);
+      expect(saved.transcriptionRequestId, 'request-failed');
+      expect(saved.meetingNotes, 'Keep notes');
+      expect(await storage.readBytes(original.id), [1, 2, 3]);
+    });
+    await tester.pump();
+    expect(find.text('Transcript saved'), findsOneWidget);
+    await _disposeDetail(tester);
+  });
+
+  testWidgets('fix round typing during blocked save remains dirty',
+      (tester) async {
+    tester.view.physicalSize = const Size(1080, 2600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    final temp = Directory.systemTemp.createTempSync('typing-save-');
+    final db = LocalDb.forTesting(NativeDatabase.memory());
+    final storage = AudioStorage.test(temp);
+    final fake = _FakeTranscriptionClient(completedTranscript: 'unused');
+    final service =
+        ServerTranscriptionService(client: fake, db: db, audioStorage: storage);
+    final release = Completer<void>();
+    addTearDown(() async {
+      if (!release.isCompleted) release.complete();
+      service.dispose();
+      await db.close();
+      temp.deleteSync(recursive: true);
+    });
+    final original = _completedRow(
+      id: 'typing-save',
+      transcript: 'Original',
+      attempt: 2,
+      requestId: 'request-typing',
+      jobId: 'job-typing',
+    );
+    await tester.runAsync(() async {
+      await db.upsertDump(original);
+    });
+
+    await _mountDetail(
+      tester,
+      db,
+      storage,
+      fake,
+      service,
+      original,
+      live: true,
+    );
+
+    late Future<void> lock;
+    await tester.runAsync(() async {
+      lock = storage.runSerializedMetadataWrite<void>(
+        original.id,
+        (_) => release.future,
+      );
+    });
+    final editor = find.byKey(const ValueKey('transcript-editor-typing-save'));
+    final save = find.byKey(const ValueKey('save-transcript-typing-save'));
+    await tester.enterText(editor, 'Submitted value');
+    await tester.pump();
+    await tester.runAsync(() async {
+      tester.widget<FilledButton>(save).onPressed!();
+    });
+    await _pumpRealUntil(
+      tester,
+      () =>
+          ProviderScope.containerOf(
+            tester.element(find.byType(DumpDetailScreen)),
+          ).read(dumpByIdProvider(original.id)).valueOrNull?.transcript ==
+          'Submitted value',
+    );
+
+    await tester.enterText(editor, 'Newer unsaved draft');
+    await tester.pump();
+
+    release.complete();
+    await _pumpRealUntil(
+      tester,
+      () => find
+          .descendant(
+            of: save,
+            matching: find.byType(CircularProgressIndicator),
+          )
+          .evaluate()
+          .isEmpty,
+    );
+
+    await tester.runAsync(() => lock);
+    expect(_editorText(tester, original.id), 'Newer unsaved draft');
+    expect(tester.widget<FilledButton>(save).onPressed, isNotNull);
+    expect(find.text('Transcript saved'), findsNothing);
+    await tester.runAsync(() async {
+      tester.widget<FilledButton>(save).onPressed!();
+    });
+    await _pumpRealUntil(
+      tester,
+      () async =>
+          (jsonDecode(await storage.metaPathFor(original.id).readAsString())
+              as Map)['transcript'] ==
+          'Newer unsaved draft',
+    );
+    await _disposeDetail(tester);
+  });
+
+  for (final failed in [false, true]) {
+    testWidgets(
+        'fix round manual sidecar failure repairs and permits retry ${failed ? "failed" : "completed"}',
+        (tester) async {
+      tester.view.physicalSize = const Size(1080, 2600);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      final temp = Directory.systemTemp.createTempSync('manual-sidecar-');
+      final db = LocalDb.forTesting(NativeDatabase.memory());
+      final storage = AudioStorage.test(temp);
+      final fake = _FakeTranscriptionClient(completedTranscript: 'unused');
+      final service = ServerTranscriptionService(
+        client: fake,
+        db: db,
+        audioStorage: storage,
+      );
+      addTearDown(() async {
+        service.dispose();
+        await db.close();
+        temp.deleteSync(recursive: true);
+      });
+      final original = _completedRow(
+        id: 'manual-sidecar',
+        transcript: 'Original',
+        attempt: 0,
+        requestId: 'unused',
+        jobId: 'unused',
+        meetingNotes: 'Keep notes',
+      ).copyWith(
+        transcriptionStatus: failed ? 'failed' : 'completed',
+        transcriptionRequestId: const Value(null),
+        transcriptionJobId: const Value(null),
+        transcriptionError: Value(failed ? 'replacement rejected' : null),
+      );
+      final obstacle =
+          Directory('${storage.metaPathFor(original.id).path}.tmp');
+      await tester.runAsync(() async {
+        await db.upsertDump(original);
+        await storage.pathFor(original.id).writeAsBytes([1, 2, 3]);
+        await obstacle
+            .create(); // Real filesystem write failure, not a mocked DB.
+      });
+      await _mountDetail(
+        tester,
+        db,
+        storage,
+        fake,
+        service,
+        original,
+        live: true,
+      );
+      final editor =
+          find.byKey(const ValueKey('transcript-editor-manual-sidecar'));
+      final save = find.byKey(const ValueKey('save-transcript-manual-sidecar'));
+      await tester.enterText(editor, 'First correction');
+      await tester.pump();
+      await tester.runAsync(() async {
+        tester.widget<FilledButton>(save).onPressed!();
+      });
+      await _pumpRealUntil(
+        tester,
+        () =>
+            ProviderScope.containerOf(
+              tester.element(find.byType(DumpDetailScreen)),
+            ).read(dumpByIdProvider(original.id)).valueOrNull?.transcript ==
+            'First correction',
+      );
+      await _pumpRealUntil(
+        tester,
+        () => find
+            .descendant(
+              of: save,
+              matching: find.byType(CircularProgressIndicator),
+            )
+            .evaluate()
+            .isEmpty,
+      );
+      await tester.runAsync(() async {
+        final committed = (await db.getDump(original.id))!;
+        expect(
+          committed.transcriptionError,
+          startsWith('sidecar_sync_pending:'),
+        );
+        expect(
+          (await db.dumpsNeedingTranscriptionRecovery()).map((r) => r.id),
+          contains(original.id),
+        );
+        await obstacle.delete();
+        // The save failure schedules recovery; no explicit scan is requested.
+      });
+      await _pumpRealUntil(tester, () async {
+        final file = storage.metaPathFor(original.id);
+        return await file.exists() &&
+            (jsonDecode(await file.readAsString()) as Map)['transcript'] ==
+                'First correction';
+      });
+      await tester.enterText(editor, 'Second correction');
+      await tester.pump();
+      expect(tester.widget<FilledButton>(save).onPressed, isNotNull);
+      await tester.runAsync(() async {
+        tester.widget<FilledButton>(save).onPressed!();
+      });
+      await _pumpRealUntil(
+        tester,
+        () async =>
+            (jsonDecode(await storage.metaPathFor(original.id).readAsString())
+                as Map)['transcript'] ==
+            'Second correction',
+      );
+      await tester.runAsync(() async {
+        final saved = (await db.getDump(original.id))!;
+        expect(saved.transcriptionStatus, original.transcriptionStatus);
+        expect(saved.transcriptionError, original.transcriptionError);
+        expect(saved.transcriptionAttempt, 0);
+        expect(saved.transcriptionRequestId, isNull);
+        expect(saved.meetingNotes, 'Keep notes');
+        expect(await storage.readBytes(original.id), [1, 2, 3]);
+        expect(fake.enqueueCalls, 0);
+      });
+      await _disposeDetail(tester);
+    });
+  }
+
   testWidgets('stale transcript draft cannot overwrite a newer result',
       (tester) async {
     tester.view.physicalSize = const Size(1080, 2600);
@@ -694,6 +1046,17 @@ void main() {
         now: now.add(const Duration(minutes: 2)),
       );
       newer = (await db.getDump(row.id))!;
+      // Replacement completion preserves notes; only explicit regeneration
+      // may install this newer fixture revision.
+      newer = await db.updateDumpMeetingNotes(
+        row.id,
+        expectedTitle: newer.title,
+        expectedTranscript: newer.transcript!,
+        expectedTranscriptionAttempt: newer.transcriptionAttempt,
+        expectedTranscriptionRequestId: newer.transcriptionRequestId,
+        meetingNotes: 'Newer notes',
+        now: now.add(const Duration(minutes: 3)),
+      );
       await storage
           .metaPathFor(row.id)
           .writeAsString(jsonEncode(dumpMetadata(newer)));
@@ -981,6 +1344,10 @@ void main() {
         now: now.add(const Duration(minutes: 2)),
       );
       expect(completed, isTrue);
+      // Seed an explicitly regenerated notes revision, not completion output.
+      await (db.update(db.dumps)..where((d) => d.id.equals(original.id))).write(
+        const DumpsCompanion(meetingNotes: Value('attempt two notes')),
+      );
       final newer = (await db.getDump(original.id))!;
       await storage.writeMetadata(original.id, dumpMetadata(newer));
 
@@ -1064,8 +1431,9 @@ Future<void> _mountDetail(
   AudioStorage storage,
   TranscriptionClient client,
   ServerTranscriptionService service,
-  DumpRow row,
-) async {
+  DumpRow row, {
+  bool live = false,
+}) async {
   await tester.pumpWidget(
     ProviderScope(
       overrides: [
@@ -1073,7 +1441,8 @@ Future<void> _mountDetail(
         audioStorageProvider.overrideWithValue(storage),
         transcriptionClientProvider.overrideWith((_) => client),
         serverTranscriptionServiceProvider.overrideWith((_) => service),
-        dumpByIdProvider(row.id).overrideWith((_) => Stream.value(row)),
+        if (!live)
+          dumpByIdProvider(row.id).overrideWith((_) => Stream.value(row)),
         recordingPlaybackEngineFactoryProvider.overrideWithValue(
           _TestPlaybackEngine.new,
         ),
@@ -1087,8 +1456,34 @@ Future<void> _mountDetail(
       ),
     ),
   );
+  if (live) {
+    await tester.runAsync(() async {
+      final container = ProviderScope.containerOf(
+        tester.element(find.byType(DumpDetailScreen)),
+      );
+      await container.read(dumpByIdProvider(row.id).future);
+    });
+  }
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 100));
+}
+
+Future<void> _pumpRealUntil(
+  WidgetTester tester,
+  FutureOr<bool> Function() predicate,
+) async {
+  final deadline = DateTime.now().add(const Duration(seconds: 5));
+  while (true) {
+    final done = await tester.runAsync(() async {
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+      return await predicate();
+    });
+    await tester.pump(const Duration(milliseconds: 10));
+    if (done == true) return;
+    if (DateTime.now().isAfter(deadline)) {
+      fail('real reactive condition timed out');
+    }
+  }
 }
 
 Future<void> _invokeButton(WidgetTester tester, Finder finder) async {

@@ -748,6 +748,85 @@ void main() {
       );
     });
 
+    test(
+        'fix round stale sidecar acknowledgement cannot clear a newer identical edit',
+        () async {
+      final now = DateTime.utc(2026, 9, 15);
+      final original = DumpRow(
+        id: 'manual-aba',
+        createdAt: now,
+        updatedAt: now,
+        mode: 'meeting',
+        durationSeconds: 1,
+        title: 'ABA',
+        transcript: 'Original',
+        meetingNotes: 'Keep notes',
+        audioPath: '/manual-aba.opus',
+        audioSizeBytes: 3,
+        syncStatus: 'pending',
+        syncAttempts: 0,
+        transcriptionStatus: 'failed',
+        transcriptionAttempt: 0,
+        transcriptionError: 'server rejection',
+      );
+      await db.upsertDump(original);
+      Future<DumpRow> edit(String expected, String value) =>
+          db.updateDumpTranscript(
+            original.id,
+            expectedTranscript: expected,
+            expectedTranscriptionAttempt: 0,
+            expectedTranscriptionRequestId: null,
+            transcript: value,
+            now: now,
+          );
+      final first = await edit('Original', 'Edited');
+      final second = await edit('Edited', 'Edited');
+      expect(
+        await db.updateTranscriptionSidecarError(
+          original.id,
+          attempt: 0,
+          requestId: null,
+          error: 'server rejection',
+          now: now,
+          expectedTranscript: first.transcript,
+          expectedError: first.transcriptionError,
+        ),
+        isFalse,
+      );
+      expect(
+        (await db.getDump(original.id))!.transcriptionError,
+        second.transcriptionError,
+      );
+      await expectLater(
+        db.beginTranscriptionAttempt(
+          original.id,
+          requestId: 'request-new',
+          now: now,
+        ),
+        throwsStateError,
+      );
+      expect(
+        LocalDb.errorAfterSidecarSync(second.transcriptionError),
+        'server rejection',
+      );
+      expect(
+        await db.updateTranscriptionSidecarError(
+          original.id,
+          attempt: 0,
+          requestId: null,
+          error: 'server rejection',
+          now: now,
+          expectedTranscript: second.transcript,
+          expectedError: second.transcriptionError,
+        ),
+        isTrue,
+      );
+      final saved = (await db.getDump(original.id))!;
+      expect(saved.transcriptionStatus, 'failed');
+      expect(saved.meetingNotes, 'Keep notes');
+      expect(saved.transcriptionError, 'server rejection');
+    });
+
     test('transcript edit rejects blank, in-progress, and stale revisions',
         () async {
       final now = DateTime.utc(2026, 9, 15, 9);
