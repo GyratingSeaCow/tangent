@@ -77,6 +77,8 @@ class ServerTranscriptionService extends ChangeNotifier {
   final List<_QueuedTranscription> _queue = [];
   final Map<String, DumpRow> _durableRows = {};
   final Map<String, _OwnedJobEventStream> _reattachments = {};
+  final Set<String> _pendingLocalReattachmentHandoffs = {};
+  final Set<String> _pendingReattachmentHandoffs = {};
   Future<void>? _reconciliationScan;
   _QueuedTranscription? _activeJob;
   _OwnedJobEventStream? _activeStream;
@@ -108,6 +110,13 @@ class ServerTranscriptionService extends ChangeNotifier {
     return scan;
   }
 
+  Future<void> _reconcileAfterOwnershipHandoff() async {
+    final activeScan = _reconciliationScan;
+    if (activeScan != null) await activeScan;
+    if (_disposed) return;
+    await reconcilePending();
+  }
+
   Future<void> _scanPending() async {
     if (_disposed) return;
     late final List<DumpRow> rows;
@@ -120,7 +129,11 @@ class ServerTranscriptionService extends ChangeNotifier {
     await Future.wait(
       rows.map((row) async {
         try {
-          if (_disposed || _isLocallyOwned(row.id)) return;
+          if (_disposed) return;
+          if (_isLocallyOwned(row.id)) {
+            _pendingLocalReattachmentHandoffs.add(row.id);
+            return;
+          }
           final attachment = await _resolvePendingRow(row);
           if (_disposed || attachment == null) return;
           final (attachmentRow, jobId) = attachment;
@@ -339,19 +352,30 @@ class ServerTranscriptionService extends ChangeNotifier {
   }
 
   void _startReattachment(DumpRow row, String jobId) {
-    if (_disposed ||
-        _isLocallyOwned(row.id) ||
-        _reattachments.containsKey(row.id)) {
+    if (_disposed) return;
+    if (_isLocallyOwned(row.id)) {
+      _pendingLocalReattachmentHandoffs.add(row.id);
+      return;
+    }
+    if (_reattachments.containsKey(row.id)) {
+      _pendingReattachmentHandoffs.add(row.id);
       return;
     }
     final attachment = _OwnedJobEventStream(_client.streamJob(jobId));
     _reattachments[row.id] = attachment;
     final watcher =
         _watchReattachedJob(row, jobId, attachment).whenComplete(() async {
+      var releasedOwnership = false;
       if (identical(_reattachments[row.id], attachment)) {
         _reattachments.remove(row.id);
+        releasedOwnership = true;
       }
       await attachment.cancel();
+      if (releasedOwnership &&
+          _pendingReattachmentHandoffs.remove(row.id) &&
+          !_disposed) {
+        unawaited(_reconcileAfterOwnershipHandoff());
+      }
     });
     unawaited(watcher);
   }
@@ -578,6 +602,7 @@ class ServerTranscriptionService extends ChangeNotifier {
 
     DumpRow? attemptRow;
     String? remoteJobId;
+    var foundExistingAttempt = false;
     try {
       final existing = await _db.getDump(dumpId);
       _throwIfDisposed();
@@ -815,6 +840,7 @@ class ServerTranscriptionService extends ChangeNotifier {
       // A newer attempt owns the row; this flow must not touch it.
     } on _ExistingDurableTranscription {
       // Another coordinator already owns the durable attempt.
+      foundExistingAttempt = true;
     } catch (error) {
       if (!_disposed && attemptRow != null) {
         final postEnqueueUncertain =
@@ -848,6 +874,14 @@ class ServerTranscriptionService extends ChangeNotifier {
       if (!job.completer.isCompleted) job.completer.complete();
       _notify();
       _startNext();
+      final shouldAdoptExistingAttempt = foundExistingAttempt &&
+          _pendingLocalReattachmentHandoffs.remove(dumpId);
+      if (!foundExistingAttempt) {
+        _pendingLocalReattachmentHandoffs.remove(dumpId);
+      }
+      if (shouldAdoptExistingAttempt && !_disposed) {
+        unawaited(_reconcileAfterOwnershipHandoff());
+      }
     }
   }
 
@@ -1053,6 +1087,8 @@ class ServerTranscriptionService extends ChangeNotifier {
     }
     final reattachments = _reattachments.values.toList();
     _reattachments.clear();
+    _pendingLocalReattachmentHandoffs.clear();
+    _pendingReattachmentHandoffs.clear();
     for (final attachment in reattachments) {
       unawaited(attachment.cancel());
     }

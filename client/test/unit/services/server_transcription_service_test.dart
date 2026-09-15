@@ -1044,6 +1044,122 @@ void main() {
     await Future.wait([blocker, queued]);
   });
 
+  test('local handoff waits for an in-flight scan before adopting the job',
+      () async {
+    await seedRow(row(id: 'blocker'));
+    await seedRow(
+      row(
+        id: 'queued',
+        transcriptionStatus: 'running',
+        transcriptionRequestId: 'request-queued',
+        transcriptionJobId: 'job-queued',
+        transcriptionAttempt: 2,
+      ),
+    );
+    await seedRow(
+      row(
+        id: 'scan-blocker',
+        transcriptionStatus: 'running',
+        transcriptionRequestId: 'request-scan-blocker',
+        transcriptionJobId: 'job-scan-blocker',
+        transcriptionAttempt: 1,
+      ),
+    );
+    final blockerStream = StreamController<JobEvent>.broadcast();
+    final blockerStarted = Completer<void>();
+    final targetGetStarted = Completer<void>();
+    final releaseTargetGet = Completer<void>();
+    final scanBlockerGetStarted = Completer<void>();
+    final releaseScanBlockerGet = Completer<void>();
+    final handoffGetStarted = Completer<void>();
+    var targetGetCalls = 0;
+    final fake = _FakeTranscriptionClient(
+      completedTranscript: 'unused',
+      onGetJob: (jobId) async {
+        if (jobId == 'job-scan-blocker') {
+          scanBlockerGetStarted.complete();
+          await releaseScanBlockerGet.future;
+          return const TranscriptionJobSnapshot(
+            id: 'job-scan-blocker',
+            requestId: 'request-scan-blocker',
+            dumpId: 'scan-blocker',
+            status: 'completed',
+            model: 'large-v3',
+            transcript: 'scan blocker complete',
+          );
+        }
+        targetGetCalls += 1;
+        if (targetGetCalls == 1) {
+          targetGetStarted.complete();
+          await releaseTargetGet.future;
+        } else if (!handoffGetStarted.isCompleted) {
+          handoffGetStarted.complete();
+        }
+        return const TranscriptionJobSnapshot(
+          id: 'job-queued',
+          requestId: 'request-queued',
+          dumpId: 'queued',
+          status: 'running',
+          model: 'large-v3',
+        );
+      },
+      streamForJob: (jobId) {
+        if (jobId == 'job-blocker') {
+          blockerStarted.complete();
+          return blockerStream.stream;
+        }
+        return Stream<JobEvent>.fromIterable(const [
+          JobEvent('completed', {'transcript': 'handoff after scan'}),
+        ]);
+      },
+    );
+    final service = ServerTranscriptionService(
+      client: fake,
+      db: db,
+      audioStorage: storage,
+      requestIdFactory: () => 'request-blocker',
+    );
+    addTearDown(service.dispose);
+    addTearDown(blockerStream.close);
+
+    final blocker = service.transcribeDump('blocker');
+    await blockerStarted.future;
+    final initialScan = service.reconcilePending();
+    await Future.wait([targetGetStarted.future, scanBlockerGetStarted.future]);
+    final queued = service.transcribeDump('queued');
+    releaseTargetGet.complete();
+    await Future<void>.delayed(Duration.zero);
+    expect(fake.streamJobIds, ['job-blocker']);
+
+    blockerStream.add(
+      const JobEvent('completed', {'transcript': 'blocker complete'}),
+    );
+    await Future.wait([blocker, queued]).timeout(
+      const Duration(milliseconds: 200),
+    );
+    expect(handoffGetStarted.isCompleted, isFalse);
+
+    releaseScanBlockerGet.complete();
+    await initialScan.timeout(const Duration(milliseconds: 200));
+    await handoffGetStarted.future.timeout(const Duration(milliseconds: 200));
+
+    final deadline = DateTime.now().add(const Duration(seconds: 2));
+    late DumpRow recovered;
+    while (true) {
+      recovered = (await db.getDump('queued'))!;
+      if (recovered.transcriptionStatus == 'completed' &&
+          recovered.transcriptionError == null) {
+        break;
+      }
+      if (DateTime.now().isAfter(deadline)) {
+        fail('the local handoff was lost behind the in-flight scan');
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+    }
+    expect(targetGetCalls, 2);
+    expect(recovered.transcript, 'handoff after scan');
+  });
+
   test('contains recovery query errors and allows a later scan', () async {
     await db.close();
     db = _FlakyRecoveryQueryDb();
@@ -1747,6 +1863,95 @@ void main() {
     expect(recovered.transcriptionError, startsWith('reconciliation_pending:'));
     expect(recovered.transcriptionError, contains('stream disconnected'));
     expect(await storage.pathFor('r1').readAsBytes(), [1, 2, 3]);
+  });
+
+  test('a finishing reattachment hands a suppressed scan to a new watcher',
+      () async {
+    await seedRow(
+      row(
+        transcriptionStatus: 'running',
+        transcriptionRequestId: 'request-existing',
+        transcriptionJobId: 'job-existing',
+        transcriptionAttempt: 2,
+      ),
+    );
+    final firstStream = StreamController<JobEvent>.broadcast();
+    final firstStreamStarted = Completer<void>();
+    final handoffGetStarted = Completer<void>();
+    final releaseHandoffGet = Completer<void>();
+    var getCalls = 0;
+    var streamCalls = 0;
+    final fake = _FakeTranscriptionClient(
+      completedTranscript: 'unused',
+      onGetJob: (jobId) async {
+        getCalls += 1;
+        if (getCalls == 3) {
+          handoffGetStarted.complete();
+          await releaseHandoffGet.future;
+        }
+        return const TranscriptionJobSnapshot(
+          id: 'job-existing',
+          requestId: 'request-existing',
+          dumpId: 'r1',
+          status: 'running',
+          model: 'large-v3',
+        );
+      },
+      streamForJob: (_) {
+        streamCalls += 1;
+        if (streamCalls == 1) {
+          firstStreamStarted.complete();
+          return firstStream.stream;
+        }
+        return Stream<JobEvent>.fromIterable(const [
+          JobEvent('completed', {'transcript': 'replacement watcher'}),
+        ]);
+      },
+    );
+    final service = ServerTranscriptionService(
+      client: fake,
+      db: db,
+      audioStorage: storage,
+    );
+    addTearDown(service.dispose);
+    addTearDown(firstStream.close);
+
+    await service.reconcilePending();
+    await firstStreamStarted.future.timeout(const Duration(milliseconds: 200));
+    await service.reconcilePending().timeout(const Duration(milliseconds: 200));
+    expect(getCalls, 2);
+    expect(streamCalls, 1);
+
+    firstStream.add(
+      const JobEvent('error', {'error': 'first watcher disconnected'}),
+    );
+    await handoffGetStarted.future.timeout(const Duration(milliseconds: 200));
+    final disconnected = (await db.getDump('r1'))!;
+    expect(
+      disconnected.transcriptionError,
+      contains('first watcher disconnected'),
+    );
+    releaseHandoffGet.complete();
+
+    final completionDeadline = DateTime.now().add(const Duration(seconds: 2));
+    late DumpRow recovered;
+    while (true) {
+      recovered = (await db.getDump('r1'))!;
+      if (recovered.transcriptionStatus == 'completed' &&
+          recovered.transcriptionError == null) {
+        break;
+      }
+      if (DateTime.now().isAfter(completionDeadline)) {
+        fail('the suppressed scan was lost when its watcher finished');
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+    }
+    expect(getCalls, 3);
+    expect(streamCalls, 2);
+    expect(recovered.transcript, 'replacement watcher');
+    expect(recovered.transcriptionRequestId, 'request-existing');
+    expect(recovered.transcriptionJobId, 'job-existing');
+    expect(recovered.transcriptionAttempt, 2);
   });
 
   test('does not let one running stream block another row completion',
