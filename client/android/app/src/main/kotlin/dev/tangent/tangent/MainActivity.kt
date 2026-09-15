@@ -21,6 +21,10 @@ import java.io.RandomAccessFile
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.charset.StandardCharsets
+import dev.tangent.tangent.storage.AndroidDocumentsPort
+import dev.tangent.tangent.storage.NativeIoSupervisor
+import dev.tangent.tangent.storage.NativeStorageException
+import dev.tangent.tangent.storage.StorageChannel
 
 class MainActivity : FlutterActivity() {
     private val channelName = "dev.tangent.tangent/storage"
@@ -29,14 +33,20 @@ class MainActivity : FlutterActivity() {
     private val preferencesName = "tangent_storage"
     private val treeUriKey = "recordings_tree_uri"
     private var pendingTreeResult: MethodChannel.Result? = null
+    private var candidatePicker = false
+    private var storageOwner: StorageChannel? = null
+    private val documentsPort by lazy { AndroidDocumentsPort(applicationContext) }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        storageOwner?.detach()
+        storageOwner = StorageChannel(NativeIoSupervisor.process, documentsPort::execute)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "hasStorageAccess" -> result.success(hasStorageAccess())
                     "chooseStorageFolder" -> chooseStorageFolder(result)
+                    "pickDirectory" -> chooseStorageFolder(result, true)
                     "persistRecording" -> runIo(result) {
                         val id = requiredArgument(call.argument<String>("id"), "id")
                         val source = requiredArgument(call.argument<String>("sourcePath"), "sourcePath")
@@ -72,7 +82,17 @@ class MainActivity : FlutterActivity() {
                         }
                         result.success(null)
                     }
-                    else -> result.notImplemented()
+                    else -> {
+                        if (call.method in StorageChannel.methods || call.method in setOf("activeOperations", "operationState", "acknowledgeOperation")) {
+                            try {
+                                val raw = call.arguments as? Map<*, *> ?: emptyMap<Any?, Any?>()
+                                val args = raw.entries.associate { (key, value) -> key.toString() to value }
+                                val owner = storageOwner ?: throw NativeStorageException("unavailable", "Storage channel detached")
+                                result.success(owner.handle(call.method, args))
+                            } catch (error: NativeStorageException) { result.error(error.code, error.message, null) }
+                            catch (error: Exception) { result.error("invalid", "Invalid storage request", null) }
+                        } else result.notImplemented()
+                    }
                 }
             }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, audioChannelName)
@@ -94,12 +114,13 @@ class MainActivity : FlutterActivity() {
             }
     }
 
-    private fun chooseStorageFolder(result: MethodChannel.Result) {
+    private fun chooseStorageFolder(result: MethodChannel.Result, candidate: Boolean = false) {
         if (pendingTreeResult != null) {
             result.error("picker_active", "A recording-folder picker is already open", null)
             return
         }
         pendingTreeResult = result
+        candidatePicker = candidate
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
             addFlags(
                 Intent.FLAG_GRANT_READ_URI_PERMISSION or
@@ -123,15 +144,22 @@ class MainActivity : FlutterActivity() {
         if (requestCode != requestTree) return
         val pending = pendingTreeResult ?: return
         pendingTreeResult = null
+        val candidate = candidatePicker
+        candidatePicker = false
         val selected = data?.data
         if (resultCode != Activity.RESULT_OK || selected == null) {
-            pending.success(false)
+            pending.success(if (candidate) null else false)
             return
         }
         try {
             val flags = data.flags and
                 (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
             contentResolver.takePersistableUriPermission(selected, flags)
+            if (candidate) {
+                // A candidate never mutates the frozen legacy preference/default.
+                pending.success(documentsPort.picked(selected))
+                return
+            }
             val selectedDoc = DocumentFile.fromTreeUri(this, selected)
                 ?: throw IllegalStateException("Selected folder is unavailable")
             if (!selectedDoc.canRead() || !selectedDoc.canWrite()) {
@@ -439,9 +467,17 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun onDestroy() {
+        storageOwner?.detach()
+        storageOwner = null
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         pendingTreeResult?.error("activity_destroyed", "Folder picker was interrupted", null)
         pendingTreeResult = null
         super.onDestroy()
+    }
+
+    override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+        storageOwner?.detach()
+        storageOwner = null
+        super.cleanUpFlutterEngine(flutterEngine)
     }
 }
