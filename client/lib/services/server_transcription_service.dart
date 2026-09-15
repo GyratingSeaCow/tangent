@@ -22,8 +22,9 @@ import 'transcription_client.dart';
 /// the Dumps list and detail progress panel.
 
 final class _QueuedTranscription {
-  _QueuedTranscription(this.dumpId);
+  _QueuedTranscription(this.dumpId, {this.recoveryOnly = false});
   final String dumpId;
+  bool recoveryOnly;
   final Completer<void> completer = Completer<void>();
 }
 
@@ -77,9 +78,12 @@ class ServerTranscriptionService extends ChangeNotifier {
   final List<_QueuedTranscription> _queue = [];
   final Map<String, DumpRow> _durableRows = {};
   final Map<String, _OwnedJobEventStream> _reattachments = {};
+  final Set<String> _resolvingRecoveryDumpIds = {};
   final Set<String> _pendingLocalReattachmentHandoffs = {};
   final Set<String> _pendingReattachmentHandoffs = {};
   Future<void>? _reconciliationScan;
+  int _requestedReconciliationGeneration = 0;
+  int _processedReconciliationGeneration = 0;
   _QueuedTranscription? _activeJob;
   _OwnedJobEventStream? _activeStream;
   ServerTranscriptionOperation _activeOperation =
@@ -99,20 +103,47 @@ class ServerTranscriptionService extends ChangeNotifier {
 
   Future<void> reconcilePending() {
     if (_disposed) return Future<void>.value();
+    _requestedReconciliationGeneration += 1;
     final activeScan = _reconciliationScan;
     if (activeScan != null) return activeScan;
 
-    late final Future<void> scan;
-    scan = _scanPending().whenComplete(() {
-      if (identical(_reconciliationScan, scan)) _reconciliationScan = null;
-    });
+    final completer = Completer<void>();
+    final scan = completer.future;
     _reconciliationScan = scan;
+    scheduleMicrotask(() {
+      unawaited(_drainReconciliationGenerations(completer, scan));
+    });
     return scan;
   }
 
+  Future<void> _drainReconciliationGenerations(
+    Completer<void> completer,
+    Future<void> scan,
+  ) async {
+    Object? failure;
+    StackTrace? failureStack;
+    try {
+      while (!_disposed &&
+          _processedReconciliationGeneration <
+              _requestedReconciliationGeneration) {
+        final generation = _requestedReconciliationGeneration;
+        await _scanPending();
+        _processedReconciliationGeneration = generation;
+      }
+    } catch (error, stackTrace) {
+      failure = error;
+      failureStack = stackTrace;
+    }
+
+    if (identical(_reconciliationScan, scan)) _reconciliationScan = null;
+    if (failure == null) {
+      completer.complete();
+    } else {
+      completer.completeError(failure, failureStack!);
+    }
+  }
+
   Future<void> _reconcileAfterOwnershipHandoff() async {
-    final activeScan = _reconciliationScan;
-    if (activeScan != null) await activeScan;
     if (_disposed) return;
     await reconcilePending();
   }
@@ -131,13 +162,18 @@ class ServerTranscriptionService extends ChangeNotifier {
         try {
           if (_disposed) return;
           if (_isLocallyOwned(row.id)) {
-            _pendingLocalReattachmentHandoffs.add(row.id);
+            _markLocalRecoveryHandoff(row.id);
             return;
           }
-          final attachment = await _resolvePendingRow(row);
-          if (_disposed || attachment == null) return;
-          final (attachmentRow, jobId) = attachment;
-          _startReattachment(attachmentRow, jobId);
+          _resolvingRecoveryDumpIds.add(row.id);
+          try {
+            final attachment = await _resolvePendingRow(row);
+            if (_disposed || attachment == null) return;
+            final (attachmentRow, jobId) = attachment;
+            _startReattachment(attachmentRow, jobId);
+          } finally {
+            _resolvingRecoveryDumpIds.remove(row.id);
+          }
         } on _ServiceDisposed {
           // Provider replacement owns all work after this scan was disposed.
         } catch (_) {
@@ -354,7 +390,7 @@ class ServerTranscriptionService extends ChangeNotifier {
   void _startReattachment(DumpRow row, String jobId) {
     if (_disposed) return;
     if (_isLocallyOwned(row.id)) {
-      _pendingLocalReattachmentHandoffs.add(row.id);
+      _markLocalRecoveryHandoff(row.id);
       return;
     }
     if (_reattachments.containsKey(row.id)) {
@@ -545,6 +581,15 @@ class ServerTranscriptionService extends ChangeNotifier {
         _queue.any((job) => job.dumpId == dumpId);
   }
 
+  void _markLocalRecoveryHandoff(String dumpId) {
+    _pendingLocalReattachmentHandoffs.add(dumpId);
+    final active = _activeJob;
+    if (active?.dumpId == dumpId) active!.recoveryOnly = true;
+    for (final queued in _queue) {
+      if (queued.dumpId == dumpId) queued.recoveryOnly = true;
+    }
+  }
+
   ServerTranscriptionOperation operationFor(
     String dumpId, {
     DumpRow? currentRow,
@@ -577,7 +622,10 @@ class ServerTranscriptionService extends ChangeNotifier {
     final existing = _queue.where((job) => job.dumpId == dumpId).firstOrNull;
     if (existing != null) return existing.completer.future;
 
-    final job = _QueuedTranscription(dumpId);
+    final job = _QueuedTranscription(
+      dumpId,
+      recoveryOnly: _resolvingRecoveryDumpIds.contains(dumpId),
+    );
     _queue.add(job);
     _notify();
     _startNext();
@@ -610,6 +658,7 @@ class ServerTranscriptionService extends ChangeNotifier {
         throw const LocalTranscriptionServerError('Dump not found');
       }
       _durableRows[existing.id] = existing;
+      if (job.recoveryOnly) return;
       if (TranscriptionStatus.fromWire(existing.transcriptionStatus)
           .isInProgress) {
         throw const _ExistingDurableTranscription();
@@ -652,9 +701,9 @@ class ServerTranscriptionService extends ChangeNotifier {
       );
       _notify();
 
-      final TranscriptionJobSnapshot job;
+      final TranscriptionJobSnapshot enqueuedJob;
       try {
-        job = await _client.enqueueTranscription(
+        enqueuedJob = await _client.enqueueTranscription(
           row.id,
           requestId: row.transcriptionRequestId!,
         );
@@ -670,11 +719,11 @@ class ServerTranscriptionService extends ChangeNotifier {
         );
         throw _RecoverableTranscriptionAttempt(marker);
       }
-      remoteJobId = job.id;
+      remoteJobId = enqueuedJob.id;
       final queuedWon = await _guardedStatus(
         row,
         status: TranscriptionStatus.queued,
-        jobId: job.id,
+        jobId: enqueuedJob.id,
       );
       _throwIfDisposed();
       if (!queuedWon) throw const _StaleTranscriptionAttempt();
@@ -682,7 +731,8 @@ class ServerTranscriptionService extends ChangeNotifier {
       _throwIfDisposed();
       String? transcript;
       var sawCompleted = false;
-      final activeStream = _OwnedJobEventStream(_client.streamJob(job.id));
+      final activeStream =
+          _OwnedJobEventStream(_client.streamJob(enqueuedJob.id));
       _activeStream = activeStream;
       try {
         while (await activeStream.iterator.moveNext()) {
@@ -696,7 +746,7 @@ class ServerTranscriptionService extends ChangeNotifier {
               final runningWon = await _guardedStatus(
                 row,
                 status: TranscriptionStatus.running,
-                jobId: job.id,
+                jobId: enqueuedJob.id,
               );
               _throwIfDisposed();
               if (!runningWon) throw const _StaleTranscriptionAttempt();
@@ -867,6 +917,10 @@ class ServerTranscriptionService extends ChangeNotifier {
     } finally {
       _lastDumpId = dumpId;
       if (!_disposed) await _refreshDurableRow(dumpId);
+      final hadPendingHandoff =
+          _pendingLocalReattachmentHandoffs.remove(dumpId);
+      final shouldReconcile =
+          job.recoveryOnly || foundExistingAttempt || hadPendingHandoff;
       if (_activeJob == job) {
         _activeJob = null;
         _activeOperation = const ServerTranscriptionOperation.idle();
@@ -874,12 +928,7 @@ class ServerTranscriptionService extends ChangeNotifier {
       if (!job.completer.isCompleted) job.completer.complete();
       _notify();
       _startNext();
-      final shouldAdoptExistingAttempt = foundExistingAttempt &&
-          _pendingLocalReattachmentHandoffs.remove(dumpId);
-      if (!foundExistingAttempt) {
-        _pendingLocalReattachmentHandoffs.remove(dumpId);
-      }
-      if (shouldAdoptExistingAttempt && !_disposed) {
+      if (shouldReconcile && !_disposed) {
         unawaited(_reconcileAfterOwnershipHandoff());
       }
     }
@@ -905,9 +954,14 @@ class ServerTranscriptionService extends ChangeNotifier {
     final index = _queue.indexWhere((job) => job.dumpId == target);
     if (index < 0) return;
     final removed = _queue.removeAt(index);
+    final hadPendingHandoff = _pendingLocalReattachmentHandoffs.remove(target);
+    final shouldReconcile = removed.recoveryOnly || hadPendingHandoff;
     if (!removed.completer.isCompleted) removed.completer.complete();
     _lastDumpId = target;
     _notify();
+    if (shouldReconcile && !_disposed) {
+      unawaited(_reconcileAfterOwnershipHandoff());
+    }
   }
 
   ServerTranscriptionOperation _operationFromRow(DumpRow row) {
