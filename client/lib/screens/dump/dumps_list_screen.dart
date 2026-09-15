@@ -146,11 +146,12 @@ class _DumpList extends StatelessWidget {
       itemBuilder: (context, i) {
         final d = dumps[i];
         final sync = SyncStatusX.fromWire(d.syncStatus);
-        final rowOperation = transcription.operationFor(d.id);
-        final isActive = rowOperation.status ==
-                ServerTranscriptionStatus.uploading ||
-            rowOperation.status == ServerTranscriptionStatus.running;
-        final isQueued = rowOperation.status == ServerTranscriptionStatus.queued;
+        final rowOperation = transcription.operationFor(d.id, currentRow: d);
+        final isActive =
+            rowOperation.status == ServerTranscriptionStatus.uploading ||
+                rowOperation.status == ServerTranscriptionStatus.running;
+        final isQueued =
+            rowOperation.status == ServerTranscriptionStatus.queued;
         return ListTile(
           title: Text(
             d.title.isEmpty ? '(untitled)' : d.title,
@@ -212,15 +213,12 @@ class _DumpList extends StatelessWidget {
       return 'Queued on server #${operation.dumpId == null ? "?" : ""}';
     }
     return switch (operation.status) {
-      ServerTranscriptionStatus.uploading =>
-        'Uploading to your server…',
+      ServerTranscriptionStatus.uploading => 'Uploading to your server…',
       ServerTranscriptionStatus.queued => 'Waiting for server…',
-      ServerTranscriptionStatus.running =>
-        'Transcribing on your server…',
+      ServerTranscriptionStatus.running => 'Transcribing on your server…',
       ServerTranscriptionStatus.cancelling => 'Cancelling…',
       ServerTranscriptionStatus.complete => 'Transcript saved',
-      ServerTranscriptionStatus.error =>
-        'Server transcription failed',
+      ServerTranscriptionStatus.error => 'Server transcription failed',
       ServerTranscriptionStatus.idle => 'Idle',
     };
   }

@@ -427,6 +427,15 @@ class TranscriptionClient {
           message: body['error']['message'] as String,
         );
       }
+      if (status == 409 &&
+          body is Map &&
+          body['detail'] == 'request_id conflict') {
+        throw const ApiException(
+          statusCode: 409,
+          code: 'request_id_conflict',
+          message: 'request_id conflict',
+        );
+      }
       throw ApiException(
         statusCode: status,
         code: 'http_error',

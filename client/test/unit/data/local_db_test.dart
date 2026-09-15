@@ -371,17 +371,33 @@ void main() {
         requestId: 'request-first',
         now: now,
       );
+      await expectLater(
+        db.beginTranscriptionAttempt(
+          'guarded',
+          requestId: 'request-racing',
+          now: now.add(const Duration(milliseconds: 500)),
+        ),
+        throwsStateError,
+      );
+      final firstFailure = await db.updateTranscriptionStatus(
+        'guarded',
+        attempt: first.transcriptionAttempt,
+        requestId: 'request-first',
+        status: TranscriptionStatus.failed,
+        now: now.add(const Duration(seconds: 1)),
+        error: 'first attempt failed',
+      );
       final second = await db.beginTranscriptionAttempt(
         'guarded',
         requestId: 'request-second',
-        now: now.add(const Duration(seconds: 1)),
+        now: now.add(const Duration(seconds: 2)),
       );
       final staleStatus = await db.updateTranscriptionStatus(
         'guarded',
         attempt: first.transcriptionAttempt,
         requestId: 'request-first',
         status: TranscriptionStatus.failed,
-        now: now.add(const Duration(seconds: 2)),
+        now: now.add(const Duration(seconds: 3)),
         error: 'old failure',
       );
       final staleCompletion = await db.completeTranscriptionAttempt(
@@ -389,14 +405,14 @@ void main() {
         attempt: first.transcriptionAttempt,
         requestId: 'request-first',
         transcript: 'stale transcript',
-        now: now.add(const Duration(seconds: 3)),
+        now: now.add(const Duration(seconds: 4)),
       );
       final currentStatus = await db.updateTranscriptionStatus(
         'guarded',
         attempt: second.transcriptionAttempt,
         requestId: 'request-second',
         status: TranscriptionStatus.running,
-        now: now.add(const Duration(seconds: 4)),
+        now: now.add(const Duration(seconds: 5)),
         jobId: 'job-second',
       );
       final currentCompletion = await db.completeTranscriptionAttempt(
@@ -405,11 +421,12 @@ void main() {
         requestId: 'request-second',
         transcript: 'winning transcript',
         meetingNotes: 'winning notes',
-        now: now.add(const Duration(seconds: 5)),
+        now: now.add(const Duration(seconds: 6)),
       );
       final saved = await db.getDump('guarded');
 
       expect(first.transcriptionAttempt, 1);
+      expect(firstFailure, isTrue);
       expect(second.transcriptionAttempt, 2);
       expect(staleStatus, isFalse);
       expect(staleCompletion, isFalse);
@@ -423,7 +440,7 @@ void main() {
       expect(saved.transcriptionError, isNull);
       expect(
         saved.transcriptionCompletedAt!.toUtc(),
-        now.add(const Duration(seconds: 5)),
+        now.add(const Duration(seconds: 6)),
       );
     });
 
@@ -477,6 +494,263 @@ void main() {
         rows.map((row) => row.id).toSet(),
         {'uploading', 'queued', 'running', 'sidecar'},
       );
+    });
+
+    test('sidecar completion barrier blocks a newer attempt until cleared',
+        () async {
+      final now = DateTime.utc(2026, 9, 14, 20);
+      await db.upsertDump(
+        DumpRow(
+          id: 'sidecar-barrier',
+          createdAt: now,
+          updatedAt: now,
+          mode: 'brain_dump',
+          durationSeconds: 5,
+          title: 'Sidecar barrier',
+          audioPath: '/sidecar-barrier.opus',
+          audioSizeBytes: 1,
+          syncStatus: 'pending',
+          syncAttempts: 0,
+          transcriptionStatus: 'not_transcribed',
+          transcriptionAttempt: 0,
+        ),
+      );
+      final attempt = await db.beginTranscriptionAttempt(
+        'sidecar-barrier',
+        requestId: 'request-sidecar',
+        now: now,
+      );
+
+      final completed = await db.completeTranscriptionAttempt(
+        'sidecar-barrier',
+        attempt: attempt.transcriptionAttempt,
+        requestId: 'request-sidecar',
+        transcript: 'done',
+        now: now.add(const Duration(seconds: 1)),
+        sidecarError: 'sidecar_sync_pending: write pending',
+      );
+      final lateRunning = await db.updateTranscriptionStatus(
+        'sidecar-barrier',
+        attempt: attempt.transcriptionAttempt,
+        requestId: 'request-sidecar',
+        status: TranscriptionStatus.running,
+        now: now.add(const Duration(milliseconds: 1500)),
+        jobId: 'job-sidecar',
+      );
+      final pending = await db.getDump('sidecar-barrier');
+      await expectLater(
+        db.beginTranscriptionAttempt(
+          'sidecar-barrier',
+          requestId: 'request-too-early',
+          now: now.add(const Duration(seconds: 2)),
+        ),
+        throwsStateError,
+      );
+      final cleared = await db.updateTranscriptionSidecarError(
+        'sidecar-barrier',
+        attempt: attempt.transcriptionAttempt,
+        requestId: 'request-sidecar',
+        error: null,
+        now: now.add(const Duration(seconds: 3)),
+      );
+      final next = await db.beginTranscriptionAttempt(
+        'sidecar-barrier',
+        requestId: 'request-next',
+        now: now.add(const Duration(seconds: 4)),
+      );
+
+      expect(completed, isTrue);
+      expect(lateRunning, isFalse);
+      expect(pending!.transcriptionStatus, 'completed');
+      expect(
+        pending.transcriptionError,
+        'sidecar_sync_pending: write pending',
+      );
+      expect(cleared, isTrue);
+      expect(next.transcriptionAttempt, 2);
+    });
+
+    test('completion ownership can be acquired only once per attempt',
+        () async {
+      final now = DateTime.utc(2026, 9, 14, 21);
+      await db.upsertDump(
+        DumpRow(
+          id: 'single-completion-owner',
+          createdAt: now,
+          updatedAt: now,
+          mode: 'brain_dump',
+          durationSeconds: 5,
+          title: 'Single completion owner',
+          audioPath: '/single-completion-owner.opus',
+          audioSizeBytes: 1,
+          syncStatus: 'pending',
+          syncAttempts: 0,
+          transcriptionStatus: 'not_transcribed',
+          transcriptionAttempt: 0,
+        ),
+      );
+      final attempt = await db.beginTranscriptionAttempt(
+        'single-completion-owner',
+        requestId: 'request-single-owner',
+        now: now,
+      );
+
+      final first = await db.completeTranscriptionAttempt(
+        attempt.id,
+        attempt: attempt.transcriptionAttempt,
+        requestId: attempt.transcriptionRequestId!,
+        transcript: 'winning transcript',
+        now: now.add(const Duration(seconds: 1)),
+        sidecarError: 'sidecar_sync_pending: write pending',
+      );
+      final duplicate = await db.completeTranscriptionAttempt(
+        attempt.id,
+        attempt: attempt.transcriptionAttempt,
+        requestId: attempt.transcriptionRequestId!,
+        transcript: 'duplicate transcript',
+        now: now.add(const Duration(seconds: 2)),
+        sidecarError: 'sidecar_sync_pending: duplicate',
+      );
+      final saved = (await db.getDump(attempt.id))!;
+
+      expect(first, isTrue);
+      expect(duplicate, isFalse);
+      expect(saved.transcript, 'winning transcript');
+      expect(saved.transcriptionError, 'sidecar_sync_pending: write pending');
+    });
+
+    test('partial detail edits preserve durable transcription ownership',
+        () async {
+      final now = DateTime.utc(2026, 9, 14, 22);
+      await db.upsertDump(
+        DumpRow(
+          id: 'partial-detail-edit',
+          createdAt: now,
+          updatedAt: now,
+          mode: 'meeting',
+          durationSeconds: 5,
+          title: 'Original title',
+          audioPath: '/partial-detail-edit.opus',
+          audioSizeBytes: 1,
+          syncStatus: 'pending',
+          syncAttempts: 0,
+          transcriptionStatus: 'not_transcribed',
+          transcriptionAttempt: 0,
+        ),
+      );
+      final attempt = await db.beginTranscriptionAttempt(
+        'partial-detail-edit',
+        requestId: 'request-partial-edit',
+        now: now,
+      );
+      await db.updateTranscriptionStatus(
+        attempt.id,
+        attempt: attempt.transcriptionAttempt,
+        requestId: attempt.transcriptionRequestId!,
+        status: TranscriptionStatus.running,
+        jobId: 'job-partial-edit',
+        now: now.add(const Duration(seconds: 1)),
+      );
+
+      await db.updateDumpTitle(
+        attempt.id,
+        title: 'Edited title',
+        now: now.add(const Duration(seconds: 2)),
+      );
+      final running = (await db.getDump(attempt.id))!;
+      expect(running.title, 'Edited title');
+      expect(running.transcriptionStatus, 'running');
+      expect(running.transcriptionAttempt, 1);
+      expect(running.transcriptionRequestId, 'request-partial-edit');
+      expect(running.transcriptionJobId, 'job-partial-edit');
+
+      await db.completeTranscriptionAttempt(
+        attempt.id,
+        attempt: attempt.transcriptionAttempt,
+        requestId: attempt.transcriptionRequestId!,
+        transcript: 'Current transcript',
+        meetingNotes: 'Original notes',
+        now: now.add(const Duration(seconds: 3)),
+        sidecarError: 'sidecar_sync_pending: write pending',
+      );
+      await db.updateDumpMeetingNotes(
+        attempt.id,
+        expectedTitle: 'Edited title',
+        expectedTranscript: 'Current transcript',
+        expectedTranscriptionAttempt: attempt.transcriptionAttempt,
+        expectedTranscriptionRequestId: attempt.transcriptionRequestId,
+        meetingNotes: 'Edited notes',
+        now: now.add(const Duration(seconds: 4)),
+      );
+      final completed = (await db.getDump(attempt.id))!;
+      expect(completed.meetingNotes, 'Edited notes');
+      expect(completed.transcript, 'Current transcript');
+      expect(completed.transcriptionStatus, 'completed');
+      expect(completed.transcriptionAttempt, 1);
+      expect(completed.transcriptionRequestId, 'request-partial-edit');
+      expect(completed.transcriptionJobId, 'job-partial-edit');
+      expect(
+        completed.transcriptionError,
+        'sidecar_sync_pending: write pending',
+      );
+    });
+
+    test('late nonterminal updates cannot regress a running phase', () async {
+      final now = DateTime.utc(2026, 9, 14, 23, 30);
+      await db.upsertDump(
+        DumpRow(
+          id: 'monotonic-phase',
+          createdAt: now,
+          updatedAt: now,
+          mode: 'brain_dump',
+          durationSeconds: 5,
+          title: 'Monotonic phase',
+          audioPath: '/monotonic-phase.opus',
+          audioSizeBytes: 1,
+          syncStatus: 'pending',
+          syncAttempts: 0,
+          transcriptionStatus: 'not_transcribed',
+          transcriptionAttempt: 0,
+        ),
+      );
+      final attempt = await db.beginTranscriptionAttempt(
+        'monotonic-phase',
+        requestId: 'request-monotonic',
+        now: now,
+      );
+      final running = await db.updateTranscriptionStatus(
+        attempt.id,
+        attempt: attempt.transcriptionAttempt,
+        requestId: attempt.transcriptionRequestId!,
+        status: TranscriptionStatus.running,
+        jobId: 'job-monotonic',
+        now: now.add(const Duration(seconds: 1)),
+      );
+      final lateQueued = await db.updateTranscriptionStatus(
+        attempt.id,
+        attempt: attempt.transcriptionAttempt,
+        requestId: attempt.transcriptionRequestId!,
+        status: TranscriptionStatus.queued,
+        jobId: 'job-monotonic',
+        error: 'reconciliation_pending: late queued callback',
+        now: now.add(const Duration(seconds: 2)),
+      );
+      final lateUploading = await db.updateTranscriptionStatus(
+        attempt.id,
+        attempt: attempt.transcriptionAttempt,
+        requestId: attempt.transcriptionRequestId!,
+        status: TranscriptionStatus.uploading,
+        error: 'enqueue_pending: late upload callback',
+        now: now.add(const Duration(seconds: 3)),
+      );
+      final saved = (await db.getDump(attempt.id))!;
+
+      expect(running, isTrue);
+      expect(lateQueued, isFalse);
+      expect(lateUploading, isFalse);
+      expect(saved.transcriptionStatus, 'running');
+      expect(saved.transcriptionJobId, 'job-monotonic');
+      expect(saved.transcriptionError, isNull);
     });
   });
 }

@@ -166,6 +166,10 @@ class LocalDb extends _$LocalDb {
         .watch();
   }
 
+  /// Reactive stream for one dump without retaining or rescanning the table.
+  Stream<DumpRow?> watchDump(String id) =>
+      (select(dumps)..where((d) => d.id.equals(id))).watchSingleOrNull();
+
   /// Search across title and transcript using FTS5.
   Future<List<DumpRow>> searchDumps(String query, {int limit = 50}) {
     final escaped = query.replaceAll('"', '""');
@@ -186,6 +190,69 @@ class LocalDb extends _$LocalDb {
   Future<DumpRow?> getDump(String id) =>
       (select(dumps)..where((d) => d.id.equals(id))).getSingleOrNull();
 
+  /// Updates only the editable title columns, preserving transcription state.
+  Future<DumpRow> updateDumpTitle(
+    String id, {
+    required String title,
+    required DateTime now,
+  }) {
+    return transaction(() async {
+      final count = await (update(dumps)..where((d) => d.id.equals(id))).write(
+        DumpsCompanion(
+          title: Value(title),
+          updatedAt: Value(now.toUtc()),
+        ),
+      );
+      if (count != 1) throw StateError('Dump not found: $id');
+      return (await getDump(id))!;
+    });
+  }
+
+  /// Updates meeting notes only when they were derived from the current
+  /// title and durable transcript revision, preserving every transcription
+  /// ownership column.
+  Future<DumpRow> updateDumpMeetingNotes(
+    String id, {
+    required String expectedTitle,
+    required String expectedTranscript,
+    required int expectedTranscriptionAttempt,
+    required String? expectedTranscriptionRequestId,
+    required String meetingNotes,
+    required DateTime now,
+  }) {
+    return transaction(() async {
+      final count = await (update(dumps)
+            ..where(
+              (d) {
+                final requestIdMatches = expectedTranscriptionRequestId == null
+                    ? d.transcriptionRequestId.isNull()
+                    : d.transcriptionRequestId.equals(
+                        expectedTranscriptionRequestId,
+                      );
+                return d.id.equals(id) &
+                    d.title.equals(expectedTitle) &
+                    d.transcript.equals(expectedTranscript) &
+                    d.transcriptionAttempt.equals(
+                      expectedTranscriptionAttempt,
+                    ) &
+                    requestIdMatches;
+              },
+            ))
+          .write(
+        DumpsCompanion(
+          meetingNotes: Value(meetingNotes),
+          updatedAt: Value(now.toUtc()),
+        ),
+      );
+      if (count != 1) {
+        throw StateError(
+          'Dump title or transcript revision changed while editing notes: $id',
+        );
+      }
+      return (await getDump(id))!;
+    });
+  }
+
   /// Starts a new durable transcription attempt before any network I/O.
   Future<DumpRow> beginTranscriptionAttempt(
     String id, {
@@ -195,6 +262,14 @@ class LocalDb extends _$LocalDb {
     return transaction(() async {
       final current = await getDump(id);
       if (current == null) throw StateError('Dump not found: $id');
+      final currentStatus =
+          TranscriptionStatus.fromWire(current.transcriptionStatus);
+      final sidecarPending = currentStatus == TranscriptionStatus.completed &&
+          (current.transcriptionError?.startsWith('sidecar_sync_pending:') ??
+              false);
+      if (currentStatus.isInProgress || sidecarPending) {
+        throw StateError('Transcription already in progress: $id');
+      }
       final timestamp = now.toUtc();
       final nextAttempt = current.transcriptionAttempt + 1;
       await (update(dumps)..where((d) => d.id.equals(id))).write(
@@ -225,12 +300,33 @@ class LocalDb extends _$LocalDb {
     String? error,
   }) async {
     final timestamp = now.toUtc();
+    final allowedSourceStatuses = switch (status) {
+      TranscriptionStatus.notTranscribed => const <String>['__never__'],
+      TranscriptionStatus.uploading => <String>[
+          TranscriptionStatus.uploading.wireValue,
+        ],
+      TranscriptionStatus.queued => <String>[
+          TranscriptionStatus.uploading.wireValue,
+          TranscriptionStatus.queued.wireValue,
+        ],
+      TranscriptionStatus.running => <String>[
+          TranscriptionStatus.uploading.wireValue,
+          TranscriptionStatus.queued.wireValue,
+          TranscriptionStatus.running.wireValue,
+        ],
+      TranscriptionStatus.completed || TranscriptionStatus.failed => <String>[
+          TranscriptionStatus.uploading.wireValue,
+          TranscriptionStatus.queued.wireValue,
+          TranscriptionStatus.running.wireValue,
+        ],
+    };
     final count = await (update(dumps)
           ..where(
             (d) =>
                 d.id.equals(id) &
                 d.transcriptionAttempt.equals(attempt) &
-                d.transcriptionRequestId.equals(requestId),
+                d.transcriptionRequestId.equals(requestId) &
+                d.transcriptionStatus.isIn(allowedSourceStatuses),
           ))
         .write(
       DumpsCompanion(
@@ -254,6 +350,7 @@ class LocalDb extends _$LocalDb {
     required String transcript,
     String? meetingNotes,
     required DateTime now,
+    String? sidecarError,
   }) async {
     final timestamp = now.toUtc();
     final count = await (update(dumps)
@@ -261,7 +358,16 @@ class LocalDb extends _$LocalDb {
             (d) =>
                 d.id.equals(id) &
                 d.transcriptionAttempt.equals(attempt) &
-                d.transcriptionRequestId.equals(requestId),
+                d.transcriptionRequestId.equals(requestId) &
+                (d.transcriptionStatus.equals(
+                      TranscriptionStatus.uploading.wireValue,
+                    ) |
+                    d.transcriptionStatus.equals(
+                      TranscriptionStatus.queued.wireValue,
+                    ) |
+                    d.transcriptionStatus.equals(
+                      TranscriptionStatus.running.wireValue,
+                    )),
           ))
         .write(
       DumpsCompanion(
@@ -271,7 +377,36 @@ class LocalDb extends _$LocalDb {
         transcriptionStatus: Value(TranscriptionStatus.completed.wireValue),
         transcriptionUpdatedAt: Value(timestamp),
         transcriptionCompletedAt: Value(timestamp),
-        transcriptionError: const Value(null),
+        transcriptionError: Value(sidecarError),
+      ),
+    );
+    return count == 1;
+  }
+
+  /// Updates the sidecar repair marker only for the winning completed attempt.
+  Future<bool> updateTranscriptionSidecarError(
+    String id, {
+    required int attempt,
+    required String requestId,
+    required String? error,
+    required DateTime now,
+  }) async {
+    final timestamp = now.toUtc();
+    final count = await (update(dumps)
+          ..where(
+            (d) =>
+                d.id.equals(id) &
+                d.transcriptionAttempt.equals(attempt) &
+                d.transcriptionRequestId.equals(requestId) &
+                d.transcriptionStatus.equals(
+                  TranscriptionStatus.completed.wireValue,
+                ),
+          ))
+        .write(
+      DumpsCompanion(
+        updatedAt: Value(timestamp),
+        transcriptionUpdatedAt: Value(timestamp),
+        transcriptionError: Value(error),
       ),
     );
     return count == 1;

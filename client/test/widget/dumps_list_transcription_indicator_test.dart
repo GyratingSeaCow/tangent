@@ -155,7 +155,11 @@ class _QueuedService extends ServerTranscriptionService {
       );
 
   @override
-  ServerTranscriptionOperation operationFor(String dumpId) => switch (dumpId) {
+  ServerTranscriptionOperation operationFor(
+    String dumpId, {
+    DumpRow? currentRow,
+  }) =>
+      switch (dumpId) {
         'active' => operation,
         'queued' => const ServerTranscriptionOperation(
             status: ServerTranscriptionStatus.queued,

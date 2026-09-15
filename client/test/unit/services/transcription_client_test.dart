@@ -158,6 +158,39 @@ void main() {
       expect(snapshot.status, 'queued');
     });
 
+    test('enqueue maps the server request-id conflict response', () async {
+      when(
+        () => mock.post<dynamic>(
+          '/v1/dumps/dump-1/transcribe',
+          data: any(named: 'data'),
+        ),
+      ).thenAnswer(
+        (_) async => Response(
+          requestOptions: RequestOptions(
+            path: '/v1/dumps/dump-1/transcribe',
+          ),
+          statusCode: 409,
+          data: const {'detail': 'request_id conflict'},
+        ),
+      );
+
+      await expectLater(
+        client.enqueueTranscription(
+          'dump-1',
+          requestId: 'request-conflict',
+        ),
+        throwsA(
+          isA<ApiException>()
+              .having((error) => error.statusCode, 'statusCode', 409)
+              .having(
+                (error) => error.code,
+                'code',
+                'request_id_conflict',
+              ),
+        ),
+      );
+    });
+
     test('poll response maps result transcript into typed snapshot', () async {
       when(() => mock.get<dynamic>('/v1/jobs/job-1')).thenAnswer(
         (_) async => Response(

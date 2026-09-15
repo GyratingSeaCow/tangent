@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import 'dart:async';
 
-import 'package:drift/drift.dart' show Value;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../data/audio_storage.dart';
 import '../../data/local_db.dart';
 import '../../data/recording_metadata.dart';
 import '../../models/dump_mode.dart';
@@ -21,9 +21,9 @@ import '../home/home_providers.dart'
 
 /// Watch a single dump by id.
 final dumpByIdProvider =
-    FutureProvider.family<DumpRow?, String>((ref, id) async {
+    StreamProvider.autoDispose.family<DumpRow?, String>((ref, id) {
   final db = ref.watch(localDbProvider);
-  return db.getDump(id);
+  return db.watchDump(id);
 });
 
 class DumpDetailScreen extends ConsumerStatefulWidget {
@@ -82,6 +82,17 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
     if (mounted) setState(() {});
   }
 
+  Future<void> _writeLatestMetadata(LocalDb db, AudioStorage audio) {
+    return audio.runSerializedMetadataWrite<void>(
+      widget.dumpId,
+      (write) async {
+        final latest = await db.getDump(widget.dumpId);
+        if (latest == null) throw StateError('Dump not found');
+        await write(dumpMetadata(latest));
+      },
+    );
+  }
+
   Future<void> _save() async {
     setState(() {
       _saving = true;
@@ -90,20 +101,15 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
     });
     try {
       final db = ref.read(localDbProvider);
-      final existing = await db.getDump(widget.dumpId);
-      if (existing == null) {
-        throw StateError('Dump not found');
-      }
-      final updated = existing.copyWith(
-        title: _titleController.text.trim(),
-        updatedAt: DateTime.now(),
+      final audio = ref.read(audioStorageProvider);
+      final title = _titleController.text.trim();
+      if (title.isEmpty) throw StateError('Title cannot be empty');
+      await db.updateDumpTitle(
+        widget.dumpId,
+        title: title,
+        now: DateTime.now().toUtc(),
       );
-      if (updated.title.isEmpty) throw StateError('Title cannot be empty');
-      await ref.read(audioStorageProvider).writeMetadata(
-            updated.id,
-            dumpMetadata(updated),
-          );
-      await db.upsertDump(updated);
+      await _writeLatestMetadata(db, audio);
       if (mounted) {
         setState(() => _statusMessage = 'Saved');
       }
@@ -143,9 +149,7 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
   }
 
   void _cancelTranscription() {
-    ref
-        .read(serverTranscriptionServiceProvider)
-        .cancel(widget.dumpId);
+    ref.read(serverTranscriptionServiceProvider).cancel(widget.dumpId);
   }
 
   /// Regenerate secretary notes from the existing transcript without
@@ -166,12 +170,16 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
         title: existing.title,
         transcript: transcript,
       );
-      final updated = existing.copyWith(
-        meetingNotes: Value(notes),
-        updatedAt: DateTime.now().toUtc(),
+      await db.updateDumpMeetingNotes(
+        widget.dumpId,
+        expectedTitle: existing.title,
+        expectedTranscript: transcript,
+        expectedTranscriptionAttempt: existing.transcriptionAttempt,
+        expectedTranscriptionRequestId: existing.transcriptionRequestId,
+        meetingNotes: notes,
+        now: DateTime.now().toUtc(),
       );
-      await audio.writeMetadata(updated.id, dumpMetadata(updated));
-      await db.upsertDump(updated);
+      await _writeLatestMetadata(db, audio);
       ref.invalidate(dumpByIdProvider(widget.dumpId));
       if (mounted) {
         setState(() => _statusMessage = 'Meeting notes updated');
@@ -225,7 +233,10 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
   Widget build(BuildContext context) {
     final rowAsync = ref.watch(dumpByIdProvider(widget.dumpId));
     final service = ref.watch(serverTranscriptionServiceProvider);
-    final operation = service.operationFor(widget.dumpId);
+    final operation = service.operationFor(
+      widget.dumpId,
+      currentRow: rowAsync.valueOrNull,
+    );
 
     return Scaffold(
       appBar: AppBar(
@@ -354,8 +365,7 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
                     key: ValueKey('generate-notes-${widget.dumpId}'),
                     icon: const Icon(Icons.auto_awesome),
                     label: const Text('Generate meeting notes'),
-                    onPressed: () =>
-                        _regenerateMeetingNotes(displayTranscript),
+                    onPressed: () => _regenerateMeetingNotes(displayTranscript),
                   ),
                 ],
               ),
@@ -430,8 +440,7 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
                     : const Icon(Icons.cloud_upload),
                 label: Text(
                   switch (operation.status) {
-                    ServerTranscriptionStatus.uploading =>
-                      'Uploading…',
+                    ServerTranscriptionStatus.uploading => 'Uploading…',
                     ServerTranscriptionStatus.queued => 'Queued',
                     ServerTranscriptionStatus.running =>
                       'Transcribing on server',
@@ -442,8 +451,7 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
                   },
                 ),
                 onPressed: operationActive ||
-                        operation.status ==
-                            ServerTranscriptionStatus.queued
+                        operation.status == ServerTranscriptionStatus.queued
                     ? null
                     : _transcribe,
               ),
@@ -619,12 +627,9 @@ class _ServerTranscriptionProgressPanelState
   Widget build(BuildContext context) {
     final operation = widget.operation;
     final title = switch (operation.status) {
-      ServerTranscriptionStatus.uploading =>
-        'Uploading audio to your server',
-      ServerTranscriptionStatus.queued =>
-        'Queued on your server',
-      ServerTranscriptionStatus.running =>
-        'Transcribing on your server',
+      ServerTranscriptionStatus.uploading => 'Uploading audio to your server',
+      ServerTranscriptionStatus.queued => 'Queued on your server',
+      ServerTranscriptionStatus.running => 'Transcribing on your server',
       ServerTranscriptionStatus.cancelling => 'Cancelling',
       ServerTranscriptionStatus.complete => 'Transcription complete',
       ServerTranscriptionStatus.error => 'Server transcription failed',
@@ -696,7 +701,8 @@ class _ServerTranscriptionProgressPanelState
       ServerTranscriptionStatus.cancelling =>
         'Cancelling the queued or active job · Elapsed $elapsedText',
       ServerTranscriptionStatus.complete => 'Saved locally',
-      ServerTranscriptionStatus.error => 'The recording is preserved on this device.',
+      ServerTranscriptionStatus.error =>
+        'The recording is preserved on this device.',
       ServerTranscriptionStatus.idle => 'Elapsed $elapsedText',
     };
   }

@@ -138,6 +138,9 @@ void main() {
     await tester.tap(find.byTooltip('Pause recording'));
     await tester.pump();
     expect(engine.pauseCount, 1);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(milliseconds: 1));
   });
 }
 

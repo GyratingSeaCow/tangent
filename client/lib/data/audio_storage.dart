@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -20,6 +21,7 @@ class AudioStorage {
   final Directory _stagingDir;
   final Directory? _filesystemDir;
   bool _ready;
+  final Map<String, Future<void>> _metadataWriteTails = {};
 
   AudioStorage._(this._stagingDir, this._filesystemDir, this._ready);
 
@@ -74,16 +76,19 @@ class AudioStorage {
     final source = File(temporaryPath);
     if (!await source.exists()) {
       throw AudioStorageException(
-          'Recording staging file is missing: $temporaryPath',);
+        'Recording staging file is missing: $temporaryPath',
+      );
     }
     final size = await source.length();
     if (size <= 0) {
       throw const AudioStorageException(
-          'Recorder produced an empty file; the staging file was kept for recovery',);
+        'Recorder produced an empty file; the staging file was kept for recovery',
+      );
     }
     if (!_ready) {
       throw const AudioStorageException(
-          'No durable recording folder is authorized. Select Documents or Tangent first.',);
+        'No durable recording folder is authorized. Select Documents or Tangent first.',
+      );
     }
 
     StoredAudio stored;
@@ -108,7 +113,8 @@ class AudioStorage {
           result['uri'] == null ||
           result['sizeBytes'] == null) {
         throw const AudioStorageException(
-            'Android did not confirm durable storage',);
+          'Android did not confirm durable storage',
+        );
       }
       stored = StoredAudio(
         locator: result['uri'] as String,
@@ -119,7 +125,53 @@ class AudioStorage {
     return stored;
   }
 
-  Future<void> writeMetadata(String id, Map<String, dynamic> metadata) async {
+  /// Runs a complete sidecar mutation under a per-recording lock.
+  ///
+  /// A caller that owns a database barrier must perform its guarded row read,
+  /// raw write, and barrier clear or failure update inside [operation]. A
+  /// queued operation therefore reads state only after older writers release
+  /// ownership.
+  Future<T> runSerializedMetadataWrite<T>(
+    String id,
+    Future<T> Function(
+      Future<void> Function(Map<String, dynamic> metadata) write,
+    ) operation,
+  ) {
+    final previous = _metadataWriteTails[id] ?? Future<void>.value();
+    final result = Completer<T>();
+    late final Future<void> tail;
+    tail = previous.then((_) async {
+      try {
+        final value = await operation(
+          (metadata) => _writeMetadataNow(id, metadata),
+        );
+        result.complete(value);
+      } catch (error, stackTrace) {
+        result.completeError(error, stackTrace);
+      }
+    });
+    _metadataWriteTails[id] = tail;
+    unawaited(
+      tail.whenComplete(() {
+        if (identical(_metadataWriteTails[id], tail)) {
+          _metadataWriteTails.remove(id);
+        }
+      }),
+    );
+    return result.future;
+  }
+
+  Future<void> writeMetadata(String id, Map<String, dynamic> metadata) {
+    return runSerializedMetadataWrite<void>(
+      id,
+      (write) => write(metadata),
+    );
+  }
+
+  Future<void> _writeMetadataNow(
+    String id,
+    Map<String, dynamic> metadata,
+  ) async {
     if (!_ready) {
       throw const AudioStorageException('Durable storage is unavailable');
     }
@@ -134,7 +186,9 @@ class AudioStorage {
   }
 
   Future<void> _writeMetadataFile(
-      String id, Map<String, dynamic> metadata,) async {
+    String id,
+    Map<String, dynamic> metadata,
+  ) async {
     final target = metaPathFor(id);
     final tmp = File('${target.path}.tmp');
     await tmp.writeAsString(jsonEncode(metadata), flush: true);
@@ -189,13 +243,15 @@ class AudioStorage {
             metadata = null;
           }
         }
-        result.add(ImportedAudio(
-          id: id,
-          locator: entity.path,
-          sizeBytes: await entity.length(),
-          modifiedAt: await entity.lastModified(),
-          metadata: metadata,
-        ),);
+        result.add(
+          ImportedAudio(
+            id: id,
+            locator: entity.path,
+            sizeBytes: await entity.length(),
+            modifiedAt: await entity.lastModified(),
+            metadata: metadata,
+          ),
+        );
       }
       return result;
     }

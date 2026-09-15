@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -45,6 +47,61 @@ void main() {
       final path = storage.pathFor('size-test');
       await path.writeAsBytes(List.filled(100, 0));
       expect(await storage.getSize('size-test'), 100);
+    });
+
+    test('serializes same-dump metadata operations and loads queued state late',
+        () async {
+      final firstStarted = Completer<void>();
+      final releaseFirst = Completer<void>();
+      var currentTitle = 'old title';
+      var activeOperations = 0;
+      var maximumActiveOperations = 0;
+
+      final first = storage.runSerializedMetadataWrite<void>(
+        'serialized',
+        (write) async {
+          activeOperations += 1;
+          maximumActiveOperations = maximumActiveOperations < activeOperations
+              ? activeOperations
+              : maximumActiveOperations;
+          final staleSnapshot = <String, dynamic>{
+            'id': 'serialized',
+            'title': currentTitle,
+          };
+          firstStarted.complete();
+          await releaseFirst.future;
+          await write(staleSnapshot);
+          activeOperations -= 1;
+        },
+      );
+      await firstStarted.future;
+
+      final second = storage.runSerializedMetadataWrite<void>(
+        'serialized',
+        (write) async {
+          activeOperations += 1;
+          maximumActiveOperations = maximumActiveOperations < activeOperations
+              ? activeOperations
+              : maximumActiveOperations;
+          await write(<String, dynamic>{
+            'id': 'serialized',
+            'title': currentTitle,
+          });
+          activeOperations -= 1;
+        },
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(activeOperations, 1);
+
+      currentTitle = 'latest title';
+      releaseFirst.complete();
+      await Future.wait<void>([first, second]);
+
+      final metadata = jsonDecode(
+        await storage.metaPathFor('serialized').readAsString(),
+      ) as Map<String, dynamic>;
+      expect(maximumActiveOperations, 1);
+      expect(metadata['title'], 'latest title');
     });
   });
 }
