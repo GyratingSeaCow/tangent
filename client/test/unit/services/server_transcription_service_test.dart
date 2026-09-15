@@ -2330,6 +2330,215 @@ void main() {
     expect(await storage.pathFor('r1').readAsBytes(), [1, 2, 3]);
   });
 
+  test('ordinary recoverable reattachment exit starts one recovery scan',
+      () async {
+    await seedRow(
+      row(
+        transcriptionStatus: 'running',
+        transcriptionRequestId: 'request-existing',
+        transcriptionJobId: 'job-existing',
+        transcriptionAttempt: 2,
+      ),
+    );
+    var getCalls = 0;
+    final fake = _FakeTranscriptionClient(
+      completedTranscript: 'unused',
+      onGetJob: (jobId) {
+        getCalls += 1;
+        return TranscriptionJobSnapshot(
+          id: 'job-existing',
+          requestId: 'request-existing',
+          dumpId: 'r1',
+          status: getCalls == 1 ? 'running' : 'completed',
+          model: 'large-v3',
+          transcript: getCalls == 1 ? null : 'recovered after watcher exit',
+        );
+      },
+      streamForJob: (_) => Stream<JobEvent>.fromIterable(const [
+        JobEvent('error', {'error': 'stream disconnected'}),
+      ]),
+    );
+    final service = ServerTranscriptionService(
+      client: fake,
+      db: db,
+      audioStorage: storage,
+    );
+    addTearDown(service.dispose);
+
+    await service.reconcilePending();
+
+    final deadline = DateTime.now().add(const Duration(milliseconds: 200));
+    late DumpRow recovered;
+    while (true) {
+      recovered = (await db.getDump('r1'))!;
+      if (recovered.transcriptionStatus == 'completed' &&
+          recovered.transcriptionError == null) {
+        break;
+      }
+      if (DateTime.now().isAfter(deadline)) {
+        fail('ordinary recoverable reattachment exit was not reconciled');
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+    }
+
+    expect(fake.getJobIds, ['job-existing', 'job-existing']);
+    expect(fake.enqueueCalls, 0);
+    expect(recovered.transcriptionAttempt, 2);
+    expect(recovered.transcriptionRequestId, 'request-existing');
+    expect(recovered.transcriptionJobId, 'job-existing');
+    expect(recovered.transcript, 'recovered after watcher exit');
+  });
+
+  test('terminal recovery resets retry backoff for a later attempt', () async {
+    await seedRow(
+      row(
+        transcriptionStatus: 'running',
+        transcriptionRequestId: 'request-existing',
+        transcriptionJobId: 'job-existing',
+        transcriptionAttempt: 1,
+      ),
+    );
+    var getCalls = 0;
+    var streamCalls = 0;
+    final fake = _FakeTranscriptionClient(
+      completedTranscript: 'unused',
+      onGetJob: (jobId) {
+        getCalls += 1;
+        return TranscriptionJobSnapshot(
+          id: getCalls < 3 ? 'job-existing' : 'job-new',
+          requestId: getCalls < 3 ? 'request-existing' : 'request-new',
+          dumpId: 'r1',
+          status: getCalls == 1 ? 'running' : 'completed',
+          model: 'large-v3',
+          transcript: getCalls == 2
+              ? 'first recovered transcript'
+              : getCalls == 3
+                  ? 'second recovered transcript'
+                  : null,
+        );
+      },
+      onEnqueue: (dumpId, requestId, model) => TranscriptionJobSnapshot(
+        id: 'job-new',
+        requestId: requestId,
+        dumpId: dumpId,
+        status: 'queued',
+        model: model,
+      ),
+      streamForJob: (jobId) {
+        streamCalls += 1;
+        if (streamCalls == 1) {
+          return Stream<JobEvent>.fromIterable(const [
+            JobEvent('error', {'error': 'first observer failed'}),
+          ]);
+        }
+        return Stream<JobEvent>.fromIterable(const [
+          JobEvent('queued', {}),
+          JobEvent('running', {}),
+          JobEvent('timeout', {'message': 'second observer failed'}),
+        ]);
+      },
+    );
+    final service = ServerTranscriptionService(
+      client: fake,
+      db: db,
+      audioStorage: storage,
+      requestIdFactory: () => 'request-new',
+      recoveryRetryBaseDelay: const Duration(seconds: 1),
+      recoveryRetryMaxDelay: const Duration(seconds: 1),
+    );
+    addTearDown(service.dispose);
+
+    await service.reconcilePending();
+    final firstDeadline = DateTime.now().add(const Duration(milliseconds: 200));
+    while (true) {
+      final recovered = (await db.getDump('r1'))!;
+      if (recovered.transcript == 'first recovered transcript' &&
+          recovered.transcriptionError == null) {
+        break;
+      }
+      if (DateTime.now().isAfter(firstDeadline)) {
+        fail('first recovery episode did not complete');
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+    }
+
+    await service.transcribeDump('r1');
+    final secondDeadline =
+        DateTime.now().add(const Duration(milliseconds: 200));
+    while (true) {
+      final recovered = (await db.getDump('r1'))!;
+      if (recovered.transcript == 'second recovered transcript' &&
+          recovered.transcriptionError == null) {
+        break;
+      }
+      if (DateTime.now().isAfter(secondDeadline)) {
+        fail('later attempt inherited stale retry backoff');
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+    }
+
+    expect(getCalls, 3);
+    expect(streamCalls, 2);
+    final recovered = (await db.getDump('r1'))!;
+    expect(recovered.transcriptionAttempt, 2);
+    expect(recovered.transcriptionRequestId, 'request-new');
+    expect(recovered.transcriptionJobId, 'job-new');
+  });
+
+  test('dispose cancels a pending delayed recovery retry', () async {
+    await seedRow(
+      row(
+        transcriptionStatus: 'running',
+        transcriptionRequestId: 'request-existing',
+        transcriptionJobId: 'job-existing',
+        transcriptionAttempt: 1,
+      ),
+    );
+    var getCalls = 0;
+    var streamCalls = 0;
+    final fake = _FakeTranscriptionClient(
+      completedTranscript: 'unused',
+      onGetJob: (jobId) {
+        getCalls += 1;
+        return const TranscriptionJobSnapshot(
+          id: 'job-existing',
+          requestId: 'request-existing',
+          dumpId: 'r1',
+          status: 'running',
+          model: 'large-v3',
+        );
+      },
+      streamForJob: (jobId) {
+        streamCalls += 1;
+        return Stream<JobEvent>.fromIterable(const [
+          JobEvent('error', {'error': 'observer failed'}),
+        ]);
+      },
+    );
+    final service = ServerTranscriptionService(
+      client: fake,
+      db: db,
+      audioStorage: storage,
+      recoveryRetryBaseDelay: const Duration(milliseconds: 100),
+      recoveryRetryMaxDelay: const Duration(milliseconds: 100),
+    );
+
+    await service.reconcilePending();
+    final armedDeadline = DateTime.now().add(const Duration(milliseconds: 200));
+    while (streamCalls < 2) {
+      if (DateTime.now().isAfter(armedDeadline)) {
+        fail('delayed retry was not armed');
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+    }
+
+    service.dispose();
+    await Future<void>.delayed(const Duration(milliseconds: 150));
+
+    expect(getCalls, 2);
+    expect(streamCalls, 2);
+  });
+
   test('a finishing reattachment hands a suppressed scan to a new watcher',
       () async {
     await seedRow(
@@ -3175,6 +3384,53 @@ void main() {
     }
   });
 
+  test('recovery auth failures preserve existing job identity', () async {
+    for (final statusCode in [401, 403]) {
+      await seedRow(
+        row(
+          id: 'auth-$statusCode',
+          transcriptionStatus: 'running',
+          transcriptionRequestId: 'request-$statusCode',
+          transcriptionJobId: 'job-$statusCode',
+          transcriptionAttempt: 3,
+        ),
+      );
+    }
+    final fake = _FakeTranscriptionClient(
+      completedTranscript: 'unused',
+      onGetJob: (jobId) => throw ApiException(
+        statusCode: int.parse(jobId.substring('job-'.length)),
+        code: 'http_error',
+        message: 'credentials rejected',
+      ),
+    );
+    final service = ServerTranscriptionService(
+      client: fake,
+      db: db,
+      audioStorage: storage,
+    );
+    addTearDown(service.dispose);
+
+    await service.reconcilePending();
+
+    for (final statusCode in [401, 403]) {
+      final recovered = (await db.getDump('auth-$statusCode'))!;
+      expect(recovered.transcriptionStatus, 'running');
+      expect(recovered.transcriptionAttempt, 3);
+      expect(recovered.transcriptionRequestId, 'request-$statusCode');
+      expect(recovered.transcriptionJobId, 'job-$statusCode');
+      expect(
+        recovered.transcriptionError,
+        startsWith('reconciliation_pending:'),
+      );
+      expect(
+        await storage.pathFor('auth-$statusCode').readAsBytes(),
+        [1, 2, 3],
+      );
+    }
+    expect(fake.enqueueCalls, 0);
+  });
+
   test('stores one row connection error and continues reconciling other rows',
       () async {
     await seedRow(
@@ -3465,6 +3721,118 @@ void main() {
     expect(saved.transcriptionError, startsWith('reconciliation_pending:'));
   });
 
+  test('ordinary recoverable local exit starts one recovery scan', () async {
+    await seedRow(row());
+    final fake = _FakeTranscriptionClient(
+      completedTranscript: 'unused',
+      streamEvents: const [
+        JobEvent('queued', {}),
+        JobEvent('running', {}),
+        JobEvent('timeout', {'message': 'deadline exhausted'}),
+      ],
+      onGetJob: (jobId) => const TranscriptionJobSnapshot(
+        id: 'job-r1',
+        requestId: 'request-auto-recovery',
+        dumpId: 'r1',
+        status: 'completed',
+        model: 'large-v3',
+        transcript: 'automatically recovered',
+      ),
+    );
+    final service = ServerTranscriptionService(
+      client: fake,
+      db: db,
+      audioStorage: storage,
+      requestIdFactory: () => 'request-auto-recovery',
+    );
+    addTearDown(service.dispose);
+
+    await service.transcribeDump('r1');
+
+    final deadline = DateTime.now().add(const Duration(milliseconds: 200));
+    late DumpRow saved;
+    while (true) {
+      saved = (await db.getDump('r1'))!;
+      if (saved.transcriptionStatus == 'completed' &&
+          saved.transcriptionError == null) {
+        break;
+      }
+      if (DateTime.now().isAfter(deadline)) {
+        fail('ordinary recoverable local exit was not reconciled');
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+    }
+
+    expect(fake.getJobIds, ['job-r1']);
+    expect(fake.enqueueCalls, 1);
+    expect(saved.transcriptionAttempt, 1);
+    expect(saved.transcriptionRequestId, 'request-auto-recovery');
+    expect(saved.transcriptionJobId, 'job-r1');
+    expect(saved.transcript, 'automatically recovered');
+  });
+
+  for (final stalledPhase in ['metadata', 'audio', 'enqueue']) {
+    test('$stalledPhase request deadline releases the local FIFO', () async {
+      await seedRow(row(id: 'r1'));
+      await seedRow(row(id: 'r2'));
+      final never = Completer<void>();
+      var createHookCalls = 0;
+      var uploadHookCalls = 0;
+      final fake = _FakeTranscriptionClient(
+        completedTranscript: 'completed after bounded predecessor',
+        onCreate: () async {
+          createHookCalls += 1;
+          if (stalledPhase == 'metadata' && createHookCalls == 1) {
+            await never.future;
+          }
+        },
+        onUpload: () async {
+          uploadHookCalls += 1;
+          if (stalledPhase == 'audio' && uploadHookCalls == 1) {
+            await never.future;
+          }
+        },
+        onEnqueue: (dumpId, requestId, model) async {
+          if (stalledPhase == 'enqueue' && dumpId == 'r1') {
+            await never.future;
+          }
+          return TranscriptionJobSnapshot(
+            id: 'job-$dumpId',
+            requestId: requestId,
+            dumpId: dumpId,
+            status: 'queued',
+            model: model,
+          );
+        },
+      );
+      var nextRequest = 0;
+      final service = ServerTranscriptionService(
+        client: fake,
+        db: db,
+        audioStorage: storage,
+        requestIdFactory: () => 'request-${++nextRequest}',
+        operationRequestTimeout: const Duration(milliseconds: 10),
+        recoveryRequestTimeout: const Duration(milliseconds: 10),
+      );
+      addTearDown(service.dispose);
+
+      final first = service.transcribeDump('r1');
+      final second = service.transcribeDump('r2');
+      await second.timeout(const Duration(milliseconds: 300));
+      await first.timeout(const Duration(milliseconds: 300));
+
+      final firstRow = (await db.getDump('r1'))!;
+      final secondRow = (await db.getDump('r2'))!;
+      expect(firstRow.transcriptionAttempt, 1);
+      expect(firstRow.transcriptionRequestId, 'request-1');
+      expect(secondRow.transcriptionStatus, 'completed');
+      expect(secondRow.transcriptionAttempt, 1);
+      expect(secondRow.transcriptionRequestId, 'request-2');
+      expect(await storage.pathFor('r1').readAsBytes(), [1, 2, 3]);
+      expect(await storage.pathFor('r2').readAsBytes(), [1, 2, 3]);
+    });
+  }
+
   test('post-enqueue socket failure retains the recoverable job identity',
       () async {
     await seedRow(row());
@@ -3537,6 +3905,43 @@ void main() {
       expect(saved.transcriptionJobId, 'job-r1');
       expect(saved.transcriptionAttempt, 1);
       expect(saved.transcriptionError, startsWith('reconciliation_pending:'));
+    });
+  }
+
+  for (final statusCode in [401, 403]) {
+    test('post-enqueue $statusCode preserves the current job identity',
+        () async {
+      await seedRow(row());
+      final fake = _FakeTranscriptionClient(
+        completedTranscript: 'unused',
+        streamEvents: const [
+          JobEvent('queued', {}),
+          JobEvent('running', {}),
+        ],
+        streamError: ApiException(
+          statusCode: statusCode,
+          code: 'http_error',
+          message: 'credentials rejected',
+        ),
+      );
+      final service = ServerTranscriptionService(
+        client: fake,
+        db: db,
+        audioStorage: storage,
+        requestIdFactory: () => 'request-auth-$statusCode',
+      );
+      addTearDown(service.dispose);
+
+      await service.transcribeDump('r1');
+      service.dispose();
+
+      final saved = (await db.getDump('r1'))!;
+      expect(saved.transcriptionStatus, 'running');
+      expect(saved.transcriptionAttempt, 1);
+      expect(saved.transcriptionRequestId, 'request-auth-$statusCode');
+      expect(saved.transcriptionJobId, 'job-r1');
+      expect(saved.transcriptionError, startsWith('reconciliation_pending:'));
+      expect(await storage.pathFor('r1').readAsBytes(), [1, 2, 3]);
     });
   }
 

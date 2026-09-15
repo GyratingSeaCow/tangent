@@ -56,6 +56,9 @@ class ServerTranscriptionService extends ChangeNotifier {
     DateTime Function()? now,
     Future<void> Function(String, Map<String, dynamic>)? metadataWriter,
     Duration recoveryRequestTimeout = const Duration(seconds: 30),
+    Duration operationRequestTimeout = const Duration(seconds: 30),
+    Duration recoveryRetryBaseDelay = const Duration(seconds: 1),
+    Duration recoveryRetryMaxDelay = const Duration(seconds: 30),
   })  : _client = client,
         _db = db,
         _audioStorage = audioStorage,
@@ -63,7 +66,10 @@ class ServerTranscriptionService extends ChangeNotifier {
         _requestIdFactory = requestIdFactory ?? const Uuid().v4,
         _now = now ?? (() => DateTime.now().toUtc()),
         _metadataWriterOverride = metadataWriter,
-        _recoveryRequestTimeout = recoveryRequestTimeout;
+        _recoveryRequestTimeout = recoveryRequestTimeout,
+        _operationRequestTimeout = operationRequestTimeout,
+        _recoveryRetryBaseDelay = recoveryRetryBaseDelay,
+        _recoveryRetryMaxDelay = recoveryRetryMaxDelay;
 
   final TranscriptionClient _client;
   final LocalDb _db;
@@ -74,6 +80,9 @@ class ServerTranscriptionService extends ChangeNotifier {
   final Future<void> Function(String, Map<String, dynamic>)?
       _metadataWriterOverride;
   final Duration _recoveryRequestTimeout;
+  final Duration _operationRequestTimeout;
+  final Duration _recoveryRetryBaseDelay;
+  final Duration _recoveryRetryMaxDelay;
 
   final List<_QueuedTranscription> _queue = [];
   final Map<String, DumpRow> _durableRows = {};
@@ -81,6 +90,8 @@ class ServerTranscriptionService extends ChangeNotifier {
   final Set<String> _resolvingRecoveryDumpIds = {};
   final Set<String> _pendingLocalReattachmentHandoffs = {};
   final Set<String> _pendingReattachmentHandoffs = {};
+  final Map<String, int> _recoveryRetryAttempts = {};
+  final Map<String, Timer> _recoveryRetryTimers = {};
   Future<void>? _reconciliationScan;
   int _requestedReconciliationGeneration = 0;
   int _processedReconciliationGeneration = 0;
@@ -143,9 +154,46 @@ class ServerTranscriptionService extends ChangeNotifier {
     }
   }
 
-  Future<void> _reconcileAfterOwnershipHandoff() async {
-    if (_disposed) return;
-    await reconcilePending();
+  void _scheduleRecoveryRetry(String dumpId) {
+    if (_disposed || _recoveryRetryTimers.containsKey(dumpId)) return;
+    final attempt = _recoveryRetryAttempts[dumpId] ?? 0;
+    _recoveryRetryAttempts[dumpId] = attempt + 1;
+    var delay = Duration.zero;
+    if (attempt > 0) {
+      delay = _recoveryRetryBaseDelay;
+      for (var i = 1; i < attempt; i += 1) {
+        final doubled = delay * 2;
+        if (doubled.compareTo(_recoveryRetryMaxDelay) >= 0) {
+          delay = _recoveryRetryMaxDelay;
+          break;
+        }
+        delay = doubled;
+      }
+      if (delay.compareTo(_recoveryRetryMaxDelay) > 0) {
+        delay = _recoveryRetryMaxDelay;
+      }
+    }
+    late final Timer timer;
+    timer = Timer(delay, () {
+      if (identical(_recoveryRetryTimers[dumpId], timer)) {
+        _recoveryRetryTimers.remove(dumpId);
+      }
+      if (!_disposed) unawaited(reconcilePending());
+    });
+    _recoveryRetryTimers[dumpId] = timer;
+  }
+
+  void _clearRecoveryRetry(String dumpId) {
+    _recoveryRetryTimers.remove(dumpId)?.cancel();
+    _recoveryRetryAttempts.remove(dumpId);
+  }
+
+  void _clearRecoveryRetryIfTerminal(String dumpId) {
+    final row = _durableRows[dumpId];
+    if (row == null) return;
+    if (!TranscriptionStatus.fromWire(row.transcriptionStatus).isInProgress) {
+      _clearRecoveryRetry(dumpId);
+    }
   }
 
   Future<void> _scanPending() async {
@@ -168,7 +216,11 @@ class ServerTranscriptionService extends ChangeNotifier {
           _resolvingRecoveryDumpIds.add(row.id);
           try {
             final attachment = await _resolvePendingRow(row);
-            if (_disposed || attachment == null) return;
+            if (_disposed) return;
+            if (attachment == null) {
+              _clearRecoveryRetryIfTerminal(row.id);
+              return;
+            }
             final (attachmentRow, jobId) = attachment;
             _startReattachment(attachmentRow, jobId);
           } finally {
@@ -387,6 +439,10 @@ class ServerTranscriptionService extends ChangeNotifier {
     return request.timeout(_recoveryRequestTimeout);
   }
 
+  Future<T> _awaitOperationRequest<T>(Future<T> request) {
+    return request.timeout(_operationRequestTimeout);
+  }
+
   void _startReattachment(DumpRow row, String jobId) {
     if (_disposed) return;
     if (_isLocallyOwned(row.id)) {
@@ -407,10 +463,11 @@ class ServerTranscriptionService extends ChangeNotifier {
         releasedOwnership = true;
       }
       await attachment.cancel();
+      _clearRecoveryRetryIfTerminal(row.id);
       if (releasedOwnership &&
           _pendingReattachmentHandoffs.remove(row.id) &&
           !_disposed) {
-        unawaited(_reconcileAfterOwnershipHandoff());
+        _scheduleRecoveryRetry(row.id);
       }
     });
     unawaited(watcher);
@@ -492,13 +549,17 @@ class ServerTranscriptionService extends ChangeNotifier {
     String jobId,
     String error,
   ) async {
-    if (_disposed) return;
-    await _persistRecoverable(
-      row,
-      marker: 'reconciliation_pending: $error',
-      jobId: jobId,
-    );
-    await _refreshDurableRow(row.id);
+    try {
+      if (_disposed) return;
+      await _persistRecoverable(
+        row,
+        marker: 'reconciliation_pending: $error',
+        jobId: jobId,
+      );
+      await _refreshDurableRow(row.id);
+    } finally {
+      if (!_disposed) _scheduleRecoveryRetry(row.id);
+    }
   }
 
   Future<void> _persistRecoveredCompletion(
@@ -651,6 +712,7 @@ class ServerTranscriptionService extends ChangeNotifier {
     DumpRow? attemptRow;
     String? remoteJobId;
     var foundExistingAttempt = false;
+    var recoverableExit = false;
     try {
       final existing = await _db.getDump(dumpId);
       _throwIfDisposed();
@@ -663,6 +725,7 @@ class ServerTranscriptionService extends ChangeNotifier {
           .isInProgress) {
         throw const _ExistingDurableTranscription();
       }
+      _clearRecoveryRetry(dumpId);
       final row = await _db.beginTranscriptionAttempt(
         dumpId,
         requestId: _requestIdFactory(),
@@ -680,17 +743,21 @@ class ServerTranscriptionService extends ChangeNotifier {
       // Ensure the server has the dump metadata + audio. The server is
       // idempotent on `id`, so re-sending is safe even when a previous
       // sync already uploaded the audio but transcription failed.
-      await _client.createDump(
-        id: row.id,
-        mode: row.mode,
-        durationSeconds: row.durationSeconds,
-        title: row.title,
-        createdAt: row.createdAt,
+      await _awaitOperationRequest(
+        _client.createDump(
+          id: row.id,
+          mode: row.mode,
+          durationSeconds: row.durationSeconds,
+          title: row.title,
+          createdAt: row.createdAt,
+        ),
       );
       _throwIfDisposed();
-      await _client.uploadAudio(
-        dumpId: row.id,
-        audioBytes: audioBytes,
+      await _awaitOperationRequest(
+        _client.uploadAudio(
+          dumpId: row.id,
+          audioBytes: audioBytes,
+        ),
       );
       _throwIfDisposed();
 
@@ -703,9 +770,11 @@ class ServerTranscriptionService extends ChangeNotifier {
 
       final TranscriptionJobSnapshot enqueuedJob;
       try {
-        enqueuedJob = await _client.enqueueTranscription(
-          row.id,
-          requestId: row.transcriptionRequestId!,
+        enqueuedJob = await _awaitOperationRequest(
+          _client.enqueueTranscription(
+            row.id,
+            requestId: row.transcriptionRequestId!,
+          ),
         );
         _throwIfDisposed();
       } catch (error) {
@@ -876,6 +945,7 @@ class ServerTranscriptionService extends ChangeNotifier {
       // Provider replacement only detaches this observer. The durable request
       // identity remains available for the replacement service to reconcile.
     } on _RecoverableTranscriptionAttempt catch (recoverable) {
+      recoverableExit = true;
       if (!_disposed && attemptRow != null) {
         await _persistRecoverable(
           attemptRow,
@@ -884,6 +954,7 @@ class ServerTranscriptionService extends ChangeNotifier {
         );
       }
     } on _TranscriptionPersistenceFailure {
+      recoverableExit = true;
       // Never convert a SQLite failure into a definitive remote-job failure.
       // The durable request/job identity remains eligible for reconciliation.
     } on _StaleTranscriptionAttempt {
@@ -896,6 +967,7 @@ class ServerTranscriptionService extends ChangeNotifier {
         final postEnqueueUncertain =
             remoteJobId != null && !_isDefinitiveFailure(error);
         if (postEnqueueUncertain || _isAmbiguousEnqueueFailure(error)) {
+          recoverableExit = true;
           await _persistRecoverable(
             attemptRow,
             marker: 'reconciliation_pending: $error',
@@ -916,11 +988,16 @@ class ServerTranscriptionService extends ChangeNotifier {
       }
     } finally {
       _lastDumpId = dumpId;
-      if (!_disposed) await _refreshDurableRow(dumpId);
+      if (!_disposed) {
+        await _refreshDurableRow(dumpId);
+        _clearRecoveryRetryIfTerminal(dumpId);
+      }
       final hadPendingHandoff =
           _pendingLocalReattachmentHandoffs.remove(dumpId);
-      final shouldReconcile =
-          job.recoveryOnly || foundExistingAttempt || hadPendingHandoff;
+      final shouldReconcile = recoverableExit ||
+          job.recoveryOnly ||
+          foundExistingAttempt ||
+          hadPendingHandoff;
       if (_activeJob == job) {
         _activeJob = null;
         _activeOperation = const ServerTranscriptionOperation.idle();
@@ -929,7 +1006,7 @@ class ServerTranscriptionService extends ChangeNotifier {
       _notify();
       _startNext();
       if (shouldReconcile && !_disposed) {
-        unawaited(_reconcileAfterOwnershipHandoff());
+        _scheduleRecoveryRetry(dumpId);
       }
     }
   }
@@ -960,7 +1037,7 @@ class ServerTranscriptionService extends ChangeNotifier {
     _lastDumpId = target;
     _notify();
     if (shouldReconcile && !_disposed) {
-      unawaited(_reconcileAfterOwnershipHandoff());
+      _scheduleRecoveryRetry(target);
     }
   }
 
@@ -1112,9 +1189,10 @@ class ServerTranscriptionService extends ChangeNotifier {
     }
 
     if (statusCode == 409) return code == 'request_id_conflict';
+    // Authentication failures do not prove that an already-created job failed
+    // or that an idempotent enqueue was not committed. Keep the durable
+    // identity so corrected credentials can reconcile the same request.
     return statusCode == 400 ||
-        statusCode == 401 ||
-        statusCode == 403 ||
         statusCode == 404 ||
         statusCode == 413 ||
         statusCode == 422;
@@ -1143,6 +1221,11 @@ class ServerTranscriptionService extends ChangeNotifier {
     _reattachments.clear();
     _pendingLocalReattachmentHandoffs.clear();
     _pendingReattachmentHandoffs.clear();
+    for (final timer in _recoveryRetryTimers.values) {
+      timer.cancel();
+    }
+    _recoveryRetryTimers.clear();
+    _recoveryRetryAttempts.clear();
     for (final attachment in reattachments) {
       unawaited(attachment.cancel());
     }

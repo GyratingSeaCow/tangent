@@ -19,6 +19,7 @@ from app.config import get_settings
 from app.db import init_db
 from app.errors import register_exception_handlers
 from app.logging_config import configure_logging, get_logger
+from app.services.job_queue import fail_interrupted_jobs
 from app.version import __version__
 
 log = get_logger(__name__)
@@ -40,6 +41,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     gen = get_db()
     db = next(gen)
     try:
+        fail_interrupted_jobs(db)
         if not is_setup_complete(db):
             print("")
             print("=" * 60)

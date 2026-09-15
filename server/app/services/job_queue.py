@@ -24,6 +24,24 @@ def _now_ts() -> int:
     return int(time.time())
 
 
+def fail_interrupted_jobs(db: sqlite3.Connection) -> int:
+    """Fail jobs whose in-process owner disappeared during a server restart."""
+    completed_at = _now_ts()
+    cursor = db.execute(
+        """
+        UPDATE jobs
+        SET status = 'failed', completed_at = ?,
+            error = 'Server restarted before transcription completed'
+        WHERE status IN ('queued', 'running')
+        """,
+        (completed_at,),
+    )
+    db.commit()
+    if cursor.rowcount:
+        log.warning("job.interrupted", count=cursor.rowcount)
+    return cursor.rowcount
+
+
 class RequestIdConflict(Exception):  # noqa: N818
     """A request ID was already used for a different dump or model."""
 
