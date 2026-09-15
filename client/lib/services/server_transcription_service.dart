@@ -36,13 +36,15 @@ class ServerTranscriptionService extends ChangeNotifier {
     String Function()? requestIdFactory,
     DateTime Function()? now,
     Future<void> Function(String, Map<String, dynamic>)? metadataWriter,
+    Duration recoveryRequestTimeout = const Duration(seconds: 30),
   })  : _client = client,
         _db = db,
         _audioStorage = audioStorage,
         _meetingNotesProcessor = meetingNotesProcessor,
         _requestIdFactory = requestIdFactory ?? const Uuid().v4,
         _now = now ?? (() => DateTime.now().toUtc()),
-        _metadataWriterOverride = metadataWriter;
+        _metadataWriterOverride = metadataWriter,
+        _recoveryRequestTimeout = recoveryRequestTimeout;
 
   final TranscriptionClient _client;
   final LocalDb _db;
@@ -52,6 +54,7 @@ class ServerTranscriptionService extends ChangeNotifier {
   final DateTime Function() _now;
   final Future<void> Function(String, Map<String, dynamic>)?
       _metadataWriterOverride;
+  final Duration _recoveryRequestTimeout;
 
   final List<_QueuedTranscription> _queue = [];
   final Map<String, DumpRow> _durableRows = {};
@@ -87,15 +90,20 @@ class ServerTranscriptionService extends ChangeNotifier {
   }
 
   Future<void> _scanPending() async {
-    final rows = await _db.dumpsNeedingTranscriptionRecovery();
-    final attachments = <(DumpRow, String)>[];
-    for (final row in rows) {
-      final attachment = await _resolvePendingRow(row);
-      if (attachment != null) attachments.add(attachment);
+    late final List<DumpRow> rows;
+    try {
+      rows = await _db.dumpsNeedingTranscriptionRecovery();
+    } catch (_) {
+      return;
     }
-    for (final (row, jobId) in attachments) {
-      _startReattachment(row, jobId);
-    }
+    await Future.wait(
+      rows.map((row) async {
+        final attachment = await _resolvePendingRow(row);
+        if (attachment == null) return;
+        final (attachmentRow, jobId) = attachment;
+        _startReattachment(attachmentRow, jobId);
+      }),
+    );
   }
 
   Future<(DumpRow, String)?> _resolvePendingRow(DumpRow row) async {
@@ -114,21 +122,25 @@ class ServerTranscriptionService extends ChangeNotifier {
         var repairedAudio = false;
         while (true) {
           try {
-            snapshot = await _client.enqueueTranscription(
-              row.id,
-              requestId: requestId,
-              model: 'large-v3',
+            snapshot = await _awaitRecoveryRequest(
+              _client.enqueueTranscription(
+                row.id,
+                requestId: requestId,
+                model: 'large-v3',
+              ),
             );
             break;
           } on ApiException catch (error) {
             if (error.statusCode == 404 && !repairedMetadata) {
               repairedMetadata = true;
-              await _client.createDump(
-                id: row.id,
-                mode: row.mode,
-                durationSeconds: row.durationSeconds,
-                title: row.title,
-                createdAt: row.createdAt,
+              await _awaitRecoveryRequest(
+                _client.createDump(
+                  id: row.id,
+                  mode: row.mode,
+                  durationSeconds: row.durationSeconds,
+                  title: row.title,
+                  createdAt: row.createdAt,
+                ),
               );
               continue;
             }
@@ -142,9 +154,11 @@ class ServerTranscriptionService extends ChangeNotifier {
                   'Audio file is empty',
                 );
               }
-              await _client.uploadAudio(
-                dumpId: row.id,
-                audioBytes: audioBytes,
+              await _awaitRecoveryRequest(
+                _client.uploadAudio(
+                  dumpId: row.id,
+                  audioBytes: audioBytes,
+                ),
               );
               continue;
             }
@@ -194,7 +208,7 @@ class ServerTranscriptionService extends ChangeNotifier {
         await _refreshDurableRow(row.id);
         return accepted ? (row, snapshot.id) : null;
       }
-      final snapshot = await _client.getJob(jobId);
+      final snapshot = await _awaitRecoveryRequest(_client.getJob(jobId));
       if (snapshot.status == 'failed') {
         await _guardedStatus(
           row,
@@ -239,6 +253,10 @@ class ServerTranscriptionService extends ChangeNotifier {
       await _refreshDurableRow(row.id);
     }
     return null;
+  }
+
+  Future<T> _awaitRecoveryRequest<T>(Future<T> request) {
+    return request.timeout(_recoveryRequestTimeout);
   }
 
   void _startReattachment(DumpRow row, String jobId) {

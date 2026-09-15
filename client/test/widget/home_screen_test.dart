@@ -86,6 +86,39 @@ void main() {
     temp.deleteSync(recursive: true);
   });
 
+  testWidgets('lifecycle reconciliation contains recovery query failures',
+      (tester) async {
+    final temp =
+        Directory.systemTemp.createTempSync('tangent-lifecycle-error-');
+    final db = LocalDb.forTesting(NativeDatabase.memory());
+    await db.close();
+    final service = ServerTranscriptionService(
+      client: _StubClient(),
+      db: db,
+      audioStorage: AudioStorage.test(temp),
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          serverTranscriptionServiceProvider.overrideWith((ref) => service),
+        ],
+        child: const TangentApp(),
+      ),
+    );
+    await tester.pump();
+
+    final binding = tester.binding;
+    binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump();
+
+    expect(tester.takeException(), isNull);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    temp.deleteSync(recursive: true);
+  });
+
   testWidgets('Home screen renders title and record button', (tester) async {
     final db = LocalDb.forTesting(NativeDatabase.memory());
     await tester.pumpWidget(
