@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/audio_storage.dart';
 import '../../data/local_db.dart';
+import '../../data/manual_transcript_publication.dart';
 import '../../data/recording_metadata.dart';
 import '../../models/dump_mode.dart';
 import '../../models/sync_status.dart';
@@ -178,7 +179,12 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
           _manualSidecarPending = true;
         });
       }
-      await _writeLatestMetadata(db, audio);
+      final published = await publishManualTranscriptSidecar(
+        db: db,
+        audio: audio,
+        revision: saved,
+      );
+      if (!published) throw StateError('Manual edit was superseded');
       if (mounted) {
         setState(() {
           _manualSidecarPending = false;

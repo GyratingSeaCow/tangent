@@ -9,6 +9,7 @@ import 'package:uuid/uuid.dart';
 
 import '../data/audio_storage.dart';
 import '../data/local_db.dart';
+import '../data/manual_transcript_publication.dart';
 import '../data/recording_metadata.dart';
 import '../models/api_exception.dart';
 import '../models/transcription_status.dart';
@@ -639,6 +640,24 @@ class ServerTranscriptionService extends ChangeNotifier {
 
   Future<void> _repairCompletedSidecar(DumpRow row) async {
     _throwIfDisposed();
+    if (row.transcriptionError
+            ?.startsWith('sidecar_sync_pending: manual_edit:') ??
+        false) {
+      await _awaitSidecarWrite(
+        publishManualTranscriptSidecar(
+          db: _db,
+          audio: _audioStorage,
+          revision: row,
+          now: _now,
+          checkActive: _throwIfDisposed,
+          metadataWriter: _metadataWriterOverride,
+        ).then<void>((_) {}),
+      );
+      _throwIfDisposed();
+      await _refreshDurableRow(row.id);
+      _throwIfDisposed();
+      return;
+    }
     await _awaitSidecarWrite(
       _audioStorage.runSerializedMetadataWrite<void>(
         row.id,

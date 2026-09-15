@@ -23,6 +23,9 @@ import 'package:tangent/services/recording_playback.dart';
 import 'package:tangent/services/server_transcription_service.dart';
 import 'package:tangent/services/transcription_client.dart';
 
+import 'manual_transcript_publication_cases.dart'
+    show manualTranscriptPublicationTests;
+
 class _FakeTranscriptionClient implements TranscriptionClient {
   _FakeTranscriptionClient({
     required this.completedTranscript,
@@ -200,6 +203,7 @@ final class _PausingMeetingNotesDb extends LocalDb {
 }
 
 void main() {
+  manualTranscriptPublicationTests();
   testWidgets('Transcribe uploads to the server and persists the transcript',
       (tester) async {
     final temp = Directory.systemTemp.createTempSync('tangent-detail-');
