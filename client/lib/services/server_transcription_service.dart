@@ -182,7 +182,15 @@ class ServerTranscriptionService extends ChangeNotifier {
                 error.code == 'missing_audio' &&
                 !repairedAudio) {
               repairedAudio = true;
-              final audioBytes = await _audioStorage.readBytes(row.id);
+              late final List<int> audioBytes;
+              try {
+                audioBytes = await _audioStorage.readBytes(row.id);
+              } catch (error) {
+                _throwIfDisposed();
+                throw LocalTranscriptionServerError(
+                  'Failed to read durable audio: $error',
+                );
+              }
               _throwIfDisposed();
               if (audioBytes.isEmpty) {
                 throw const LocalTranscriptionServerError(
@@ -266,7 +274,22 @@ class ServerTranscriptionService extends ChangeNotifier {
         _throwIfDisposed();
         return null;
       }
-      if (snapshot.status != 'completed') return (row, jobId);
+      if (snapshot.status != 'completed') {
+        final status = switch (snapshot.status) {
+          'running' => TranscriptionStatus.running,
+          'queued' => TranscriptionStatus.queued,
+          _ => throw FormatException(
+              'Unknown transcription status: ${snapshot.status}',
+            ),
+        };
+        final accepted =
+            await _guardedStatus(row, status: status, jobId: jobId);
+        _throwIfDisposed();
+        if (!accepted) return null;
+        await _refreshDurableRow(row.id);
+        _throwIfDisposed();
+        return (row, jobId);
+      }
       final transcript = snapshot.transcript?.trim();
       if (transcript == null || transcript.isEmpty) {
         await _guardedStatus(
@@ -343,6 +366,18 @@ class ServerTranscriptionService extends ChangeNotifier {
         if (_disposed) return;
         final event = attachment.iterator.current;
         switch (event.status) {
+          case 'queued':
+            break;
+          case 'running':
+            final runningWon = await _guardedStatus(
+              row,
+              status: TranscriptionStatus.running,
+              jobId: jobId,
+            );
+            _throwIfDisposed();
+            if (!runningWon) return;
+            await _refreshDurableRow(row.id);
+            _throwIfDisposed();
           case 'completed':
             final transcript = event.data['transcript']?.toString().trim();
             if (transcript == null || transcript.isEmpty) {
@@ -371,7 +406,8 @@ class ServerTranscriptionService extends ChangeNotifier {
             await _storeReattachmentError(
               row,
               jobId,
-              event.data['message']?.toString() ??
+              event.data['error']?.toString() ??
+                  event.data['message']?.toString() ??
                   'Server stream reported ${event.status}',
             );
             return;
@@ -1059,4 +1095,7 @@ final class _RecoverableTranscriptionAttempt implements Exception {
 final class _TranscriptionPersistenceFailure implements Exception {
   const _TranscriptionPersistenceFailure(this.cause);
   final Object cause;
+
+  @override
+  String toString() => cause.toString();
 }

@@ -226,6 +226,37 @@ class _ThrowingRecoveryStatusDb extends LocalDb {
   }
 }
 
+class _FailOnceRecoveryStatusDb extends LocalDb {
+  _FailOnceRecoveryStatusDb() : super.forTesting(NativeDatabase.memory());
+
+  bool _failNextStatusWrite = true;
+
+  @override
+  Future<bool> updateTranscriptionStatus(
+    String id, {
+    required int attempt,
+    required String requestId,
+    required TranscriptionStatus status,
+    required DateTime now,
+    String? jobId,
+    String? error,
+  }) {
+    if (_failNextStatusWrite) {
+      _failNextStatusWrite = false;
+      throw StateError('first recovery status write failed');
+    }
+    return super.updateTranscriptionStatus(
+      id,
+      attempt: attempt,
+      requestId: requestId,
+      status: status,
+      now: now,
+      jobId: jobId,
+      error: error,
+    );
+  }
+}
+
 class _ThrowingCompletionDb extends LocalDb {
   _ThrowingCompletionDb() : super.forTesting(NativeDatabase.memory());
 
@@ -1283,6 +1314,47 @@ void main() {
     expect(storage.metaPathFor('r1').existsSync(), isFalse);
   });
 
+  test('preserves the underlying persistence failure in recovery diagnostics',
+      () async {
+    await db.close();
+    db = _FailOnceRecoveryStatusDb();
+    await seedRow(
+      row(
+        transcriptionStatus: 'queued',
+        transcriptionRequestId: 'request-existing',
+        transcriptionJobId: 'job-existing',
+        transcriptionAttempt: 4,
+      ),
+    );
+    final fake = _FakeTranscriptionClient(
+      completedTranscript: 'unused',
+      onGetJob: (_) => const TranscriptionJobSnapshot(
+        id: 'job-existing',
+        requestId: 'request-existing',
+        dumpId: 'r1',
+        status: 'running',
+        model: 'large-v3',
+      ),
+    );
+    final service = ServerTranscriptionService(
+      client: fake,
+      db: db,
+      audioStorage: storage,
+    );
+    addTearDown(service.dispose);
+
+    await service.reconcilePending();
+
+    final recovered = (await db.getDump('r1'))!;
+    expect(recovered.transcriptionStatus, 'queued');
+    expect(recovered.transcriptionRequestId, 'request-existing');
+    expect(recovered.transcriptionJobId, 'job-existing');
+    expect(
+      recovered.transcriptionError,
+      contains('first recovery status write failed'),
+    );
+  });
+
   test('writes recovered terminal output to the sidecar before clearing marker',
       () async {
     await seedRow(
@@ -1365,6 +1437,96 @@ void main() {
     expect(fake.createCalls, 0);
     expect(fake.uploadCalls, 0);
     expect(fake.enqueueCalls, 0);
+  });
+
+  test('persists a running snapshot before reattaching its stream', () async {
+    await seedRow(
+      row(
+        transcriptionStatus: 'queued',
+        transcriptionRequestId: 'request-existing',
+        transcriptionJobId: 'job-existing',
+        transcriptionAttempt: 2,
+      ),
+    );
+    final stream = StreamController<JobEvent>.broadcast();
+    final streamStarted = Completer<void>();
+    final fake = _FakeTranscriptionClient(
+      completedTranscript: 'unused',
+      onGetJob: (jobId) => const TranscriptionJobSnapshot(
+        id: 'job-existing',
+        requestId: 'request-existing',
+        dumpId: 'r1',
+        status: 'running',
+        model: 'large-v3',
+      ),
+      streamForJob: (_) {
+        streamStarted.complete();
+        return stream.stream;
+      },
+    );
+    final service = ServerTranscriptionService(
+      client: fake,
+      db: db,
+      audioStorage: storage,
+    );
+    addTearDown(service.dispose);
+    addTearDown(stream.close);
+
+    await service.reconcilePending();
+    await streamStarted.future.timeout(const Duration(milliseconds: 200));
+
+    final recovered = (await db.getDump('r1'))!;
+    expect(recovered.transcriptionStatus, 'running');
+    expect(recovered.transcriptionRequestId, 'request-existing');
+    expect(recovered.transcriptionJobId, 'job-existing');
+    expect(recovered.transcriptionAttempt, 2);
+  });
+
+  test('persists running progress from a reattached stream', () async {
+    await seedRow(
+      row(
+        transcriptionStatus: 'queued',
+        transcriptionRequestId: 'request-existing',
+        transcriptionJobId: 'job-existing',
+        transcriptionAttempt: 2,
+      ),
+    );
+    final stream = StreamController<JobEvent>();
+    final fake = _FakeTranscriptionClient(
+      completedTranscript: 'unused',
+      onGetJob: (_) => const TranscriptionJobSnapshot(
+        id: 'job-existing',
+        requestId: 'request-existing',
+        dumpId: 'r1',
+        status: 'queued',
+        model: 'large-v3',
+      ),
+      streamForJob: (_) => stream.stream,
+    );
+    final service = ServerTranscriptionService(
+      client: fake,
+      db: db,
+      audioStorage: storage,
+    );
+    addTearDown(service.dispose);
+    addTearDown(stream.close);
+
+    await service.reconcilePending();
+    stream.add(const JobEvent('running', {}));
+
+    final deadline = DateTime.now().add(const Duration(seconds: 2));
+    late DumpRow recovered;
+    while (true) {
+      recovered = (await db.getDump('r1'))!;
+      if (recovered.transcriptionStatus == 'running') break;
+      if (DateTime.now().isAfter(deadline)) {
+        fail('reattached stream did not persist running progress');
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+    }
+    expect(recovered.transcriptionRequestId, 'request-existing');
+    expect(recovered.transcriptionJobId, 'job-existing');
+    expect(recovered.transcriptionAttempt, 2);
   });
 
   test('dispose cancels a reattached stream and ignores late completion',
@@ -1557,7 +1719,7 @@ void main() {
         model: 'large-v3',
       ),
       streamForJob: (_) => Stream<JobEvent>.fromIterable(const [
-        JobEvent('error', {'message': 'stream disconnected'}),
+        JobEvent('error', {'error': 'stream disconnected'}),
       ]),
     );
     final service = ServerTranscriptionService(
@@ -1583,6 +1745,7 @@ void main() {
     expect(recovered.transcriptionRequestId, 'request-existing');
     expect(recovered.transcriptionJobId, 'job-existing');
     expect(recovered.transcriptionError, startsWith('reconciliation_pending:'));
+    expect(recovered.transcriptionError, contains('stream disconnected'));
     expect(await storage.pathFor('r1').readAsBytes(), [1, 2, 3]);
   });
 
@@ -2223,6 +2386,47 @@ void main() {
     expect(recovered.transcriptionJobId, 'job-after-audio');
     expect(recovered.transcriptionRequestId, 'request-existing');
     expect(generatedIds, 0);
+  });
+
+  test('marks a missing local audio read as a terminal recovery failure',
+      () async {
+    await seedRow(
+      row(
+        transcriptionStatus: 'uploading',
+        transcriptionRequestId: 'request-existing',
+        transcriptionAttempt: 2,
+      ),
+    );
+    storage.pathFor('r1').deleteSync();
+    final fake = _FakeTranscriptionClient(
+      completedTranscript: 'unused',
+      onEnqueue: (_, __, ___) => throw const ApiException(
+        statusCode: 422,
+        code: 'missing_audio',
+        message: "No audio file uploaded for dump 'r1'. "
+            'POST the audio to /v1/dumps/{id}/audio first.',
+      ),
+    );
+    final service = ServerTranscriptionService(
+      client: fake,
+      db: db,
+      audioStorage: storage,
+    );
+    addTearDown(service.dispose);
+
+    await service.reconcilePending();
+
+    final recovered = (await db.getDump('r1'))!;
+    expect(fake.enqueueCalls, 1);
+    expect(fake.uploadCalls, 0);
+    expect(recovered.transcriptionStatus, 'failed');
+    expect(recovered.transcriptionRequestId, 'request-existing');
+    expect(recovered.transcriptionJobId, isNull);
+    expect(recovered.transcriptionAttempt, 2);
+    expect(
+      recovered.transcriptionError,
+      contains('Failed to read durable audio'),
+    );
   });
 
   test('reconciliation classifies enqueue outcomes before persisting state',
