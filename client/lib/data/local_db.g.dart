@@ -1286,16 +1286,2460 @@ class SyncQueueCompanion extends UpdateCompanion<SyncQueueRow> {
   }
 }
 
+class $StorageLocationsTable extends StorageLocations
+    with TableInfo<$StorageLocationsTable, StorageLocationRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $StorageLocationsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<String> id = GeneratedColumn<String>(
+      'id', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _canonicalKeyMeta =
+      const VerificationMeta('canonicalKey');
+  @override
+  late final GeneratedColumn<String> canonicalKey = GeneratedColumn<String>(
+      'canonical_key', aliasedName, false,
+      type: DriftSqlType.string,
+      requiredDuringInsert: true,
+      defaultConstraints: GeneratedColumn.constraintIsAlways('UNIQUE'));
+  static const VerificationMeta _directoryJsonMeta =
+      const VerificationMeta('directoryJson');
+  @override
+  late final GeneratedColumn<String> directoryJson = GeneratedColumn<String>(
+      'directory_json', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _labelMeta = const VerificationMeta('label');
+  @override
+  late final GeneratedColumn<String> label = GeneratedColumn<String>(
+      'label', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _legacyRestoreMeta =
+      const VerificationMeta('legacyRestore');
+  @override
+  late final GeneratedColumn<bool> legacyRestore = GeneratedColumn<bool>(
+      'legacy_restore', aliasedName, false,
+      type: DriftSqlType.bool,
+      requiredDuringInsert: false,
+      defaultConstraints: GeneratedColumn.constraintIsAlways(
+          'CHECK ("legacy_restore" IN (0, 1))'),
+      defaultValue: const Constant(false));
+  @override
+  List<GeneratedColumn> get $columns =>
+      [id, canonicalKey, directoryJson, label, legacyRestore];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'storage_locations';
+  @override
+  VerificationContext validateIntegrity(Insertable<StorageLocationRow> instance,
+      {bool isInserting = false}) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    } else if (isInserting) {
+      context.missing(_idMeta);
+    }
+    if (data.containsKey('canonical_key')) {
+      context.handle(
+          _canonicalKeyMeta,
+          canonicalKey.isAcceptableOrUnknown(
+              data['canonical_key']!, _canonicalKeyMeta));
+    } else if (isInserting) {
+      context.missing(_canonicalKeyMeta);
+    }
+    if (data.containsKey('directory_json')) {
+      context.handle(
+          _directoryJsonMeta,
+          directoryJson.isAcceptableOrUnknown(
+              data['directory_json']!, _directoryJsonMeta));
+    } else if (isInserting) {
+      context.missing(_directoryJsonMeta);
+    }
+    if (data.containsKey('label')) {
+      context.handle(
+          _labelMeta, label.isAcceptableOrUnknown(data['label']!, _labelMeta));
+    } else if (isInserting) {
+      context.missing(_labelMeta);
+    }
+    if (data.containsKey('legacy_restore')) {
+      context.handle(
+          _legacyRestoreMeta,
+          legacyRestore.isAcceptableOrUnknown(
+              data['legacy_restore']!, _legacyRestoreMeta));
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  StorageLocationRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return StorageLocationRow(
+      id: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}id'])!,
+      canonicalKey: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}canonical_key'])!,
+      directoryJson: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}directory_json'])!,
+      label: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}label'])!,
+      legacyRestore: attachedDatabase.typeMapping
+          .read(DriftSqlType.bool, data['${effectivePrefix}legacy_restore'])!,
+    );
+  }
+
+  @override
+  $StorageLocationsTable createAlias(String alias) {
+    return $StorageLocationsTable(attachedDatabase, alias);
+  }
+}
+
+class StorageLocationRow extends DataClass
+    implements Insertable<StorageLocationRow> {
+  final String id;
+  final String canonicalKey;
+  final String directoryJson;
+  final String label;
+  final bool legacyRestore;
+  const StorageLocationRow(
+      {required this.id,
+      required this.canonicalKey,
+      required this.directoryJson,
+      required this.label,
+      required this.legacyRestore});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<String>(id);
+    map['canonical_key'] = Variable<String>(canonicalKey);
+    map['directory_json'] = Variable<String>(directoryJson);
+    map['label'] = Variable<String>(label);
+    map['legacy_restore'] = Variable<bool>(legacyRestore);
+    return map;
+  }
+
+  StorageLocationsCompanion toCompanion(bool nullToAbsent) {
+    return StorageLocationsCompanion(
+      id: Value(id),
+      canonicalKey: Value(canonicalKey),
+      directoryJson: Value(directoryJson),
+      label: Value(label),
+      legacyRestore: Value(legacyRestore),
+    );
+  }
+
+  factory StorageLocationRow.fromJson(Map<String, dynamic> json,
+      {ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return StorageLocationRow(
+      id: serializer.fromJson<String>(json['id']),
+      canonicalKey: serializer.fromJson<String>(json['canonicalKey']),
+      directoryJson: serializer.fromJson<String>(json['directoryJson']),
+      label: serializer.fromJson<String>(json['label']),
+      legacyRestore: serializer.fromJson<bool>(json['legacyRestore']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<String>(id),
+      'canonicalKey': serializer.toJson<String>(canonicalKey),
+      'directoryJson': serializer.toJson<String>(directoryJson),
+      'label': serializer.toJson<String>(label),
+      'legacyRestore': serializer.toJson<bool>(legacyRestore),
+    };
+  }
+
+  StorageLocationRow copyWith(
+          {String? id,
+          String? canonicalKey,
+          String? directoryJson,
+          String? label,
+          bool? legacyRestore}) =>
+      StorageLocationRow(
+        id: id ?? this.id,
+        canonicalKey: canonicalKey ?? this.canonicalKey,
+        directoryJson: directoryJson ?? this.directoryJson,
+        label: label ?? this.label,
+        legacyRestore: legacyRestore ?? this.legacyRestore,
+      );
+  StorageLocationRow copyWithCompanion(StorageLocationsCompanion data) {
+    return StorageLocationRow(
+      id: data.id.present ? data.id.value : this.id,
+      canonicalKey: data.canonicalKey.present
+          ? data.canonicalKey.value
+          : this.canonicalKey,
+      directoryJson: data.directoryJson.present
+          ? data.directoryJson.value
+          : this.directoryJson,
+      label: data.label.present ? data.label.value : this.label,
+      legacyRestore: data.legacyRestore.present
+          ? data.legacyRestore.value
+          : this.legacyRestore,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('StorageLocationRow(')
+          ..write('id: $id, ')
+          ..write('canonicalKey: $canonicalKey, ')
+          ..write('directoryJson: $directoryJson, ')
+          ..write('label: $label, ')
+          ..write('legacyRestore: $legacyRestore')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode =>
+      Object.hash(id, canonicalKey, directoryJson, label, legacyRestore);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is StorageLocationRow &&
+          other.id == this.id &&
+          other.canonicalKey == this.canonicalKey &&
+          other.directoryJson == this.directoryJson &&
+          other.label == this.label &&
+          other.legacyRestore == this.legacyRestore);
+}
+
+class StorageLocationsCompanion extends UpdateCompanion<StorageLocationRow> {
+  final Value<String> id;
+  final Value<String> canonicalKey;
+  final Value<String> directoryJson;
+  final Value<String> label;
+  final Value<bool> legacyRestore;
+  final Value<int> rowid;
+  const StorageLocationsCompanion({
+    this.id = const Value.absent(),
+    this.canonicalKey = const Value.absent(),
+    this.directoryJson = const Value.absent(),
+    this.label = const Value.absent(),
+    this.legacyRestore = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  StorageLocationsCompanion.insert({
+    required String id,
+    required String canonicalKey,
+    required String directoryJson,
+    required String label,
+    this.legacyRestore = const Value.absent(),
+    this.rowid = const Value.absent(),
+  })  : id = Value(id),
+        canonicalKey = Value(canonicalKey),
+        directoryJson = Value(directoryJson),
+        label = Value(label);
+  static Insertable<StorageLocationRow> custom({
+    Expression<String>? id,
+    Expression<String>? canonicalKey,
+    Expression<String>? directoryJson,
+    Expression<String>? label,
+    Expression<bool>? legacyRestore,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (canonicalKey != null) 'canonical_key': canonicalKey,
+      if (directoryJson != null) 'directory_json': directoryJson,
+      if (label != null) 'label': label,
+      if (legacyRestore != null) 'legacy_restore': legacyRestore,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  StorageLocationsCompanion copyWith(
+      {Value<String>? id,
+      Value<String>? canonicalKey,
+      Value<String>? directoryJson,
+      Value<String>? label,
+      Value<bool>? legacyRestore,
+      Value<int>? rowid}) {
+    return StorageLocationsCompanion(
+      id: id ?? this.id,
+      canonicalKey: canonicalKey ?? this.canonicalKey,
+      directoryJson: directoryJson ?? this.directoryJson,
+      label: label ?? this.label,
+      legacyRestore: legacyRestore ?? this.legacyRestore,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<String>(id.value);
+    }
+    if (canonicalKey.present) {
+      map['canonical_key'] = Variable<String>(canonicalKey.value);
+    }
+    if (directoryJson.present) {
+      map['directory_json'] = Variable<String>(directoryJson.value);
+    }
+    if (label.present) {
+      map['label'] = Variable<String>(label.value);
+    }
+    if (legacyRestore.present) {
+      map['legacy_restore'] = Variable<bool>(legacyRestore.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('StorageLocationsCompanion(')
+          ..write('id: $id, ')
+          ..write('canonicalKey: $canonicalKey, ')
+          ..write('directoryJson: $directoryJson, ')
+          ..write('label: $label, ')
+          ..write('legacyRestore: $legacyRestore, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $StorageCatalogStatesTable extends StorageCatalogStates
+    with TableInfo<$StorageCatalogStatesTable, StorageCatalogStateRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $StorageCatalogStatesTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<int> id = GeneratedColumn<int>(
+      'id', aliasedName, false,
+      type: DriftSqlType.int, requiredDuringInsert: false);
+  static const VerificationMeta _defaultLocationIdMeta =
+      const VerificationMeta('defaultLocationId');
+  @override
+  late final GeneratedColumn<String> defaultLocationId =
+      GeneratedColumn<String>('default_location_id', aliasedName, true,
+          type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _revisionMeta =
+      const VerificationMeta('revision');
+  @override
+  late final GeneratedColumn<int> revision = GeneratedColumn<int>(
+      'revision', aliasedName, false,
+      type: DriftSqlType.int,
+      requiredDuringInsert: false,
+      defaultValue: const Constant(0));
+  static const VerificationMeta _bootstrapVersionMeta =
+      const VerificationMeta('bootstrapVersion');
+  @override
+  late final GeneratedColumn<int> bootstrapVersion = GeneratedColumn<int>(
+      'bootstrap_version', aliasedName, false,
+      type: DriftSqlType.int,
+      requiredDuringInsert: false,
+      defaultValue: const Constant(0));
+  static const VerificationMeta _legacyAnchorJsonMeta =
+      const VerificationMeta('legacyAnchorJson');
+  @override
+  late final GeneratedColumn<String> legacyAnchorJson = GeneratedColumn<String>(
+      'legacy_anchor_json', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _candidateJsonMeta =
+      const VerificationMeta('candidateJson');
+  @override
+  late final GeneratedColumn<String> candidateJson = GeneratedColumn<String>(
+      'candidate_json', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  @override
+  List<GeneratedColumn> get $columns => [
+        id,
+        defaultLocationId,
+        revision,
+        bootstrapVersion,
+        legacyAnchorJson,
+        candidateJson
+      ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'storage_catalog_state';
+  @override
+  VerificationContext validateIntegrity(
+      Insertable<StorageCatalogStateRow> instance,
+      {bool isInserting = false}) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    }
+    if (data.containsKey('default_location_id')) {
+      context.handle(
+          _defaultLocationIdMeta,
+          defaultLocationId.isAcceptableOrUnknown(
+              data['default_location_id']!, _defaultLocationIdMeta));
+    }
+    if (data.containsKey('revision')) {
+      context.handle(_revisionMeta,
+          revision.isAcceptableOrUnknown(data['revision']!, _revisionMeta));
+    }
+    if (data.containsKey('bootstrap_version')) {
+      context.handle(
+          _bootstrapVersionMeta,
+          bootstrapVersion.isAcceptableOrUnknown(
+              data['bootstrap_version']!, _bootstrapVersionMeta));
+    }
+    if (data.containsKey('legacy_anchor_json')) {
+      context.handle(
+          _legacyAnchorJsonMeta,
+          legacyAnchorJson.isAcceptableOrUnknown(
+              data['legacy_anchor_json']!, _legacyAnchorJsonMeta));
+    }
+    if (data.containsKey('candidate_json')) {
+      context.handle(
+          _candidateJsonMeta,
+          candidateJson.isAcceptableOrUnknown(
+              data['candidate_json']!, _candidateJsonMeta));
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  StorageCatalogStateRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return StorageCatalogStateRow(
+      id: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}id'])!,
+      defaultLocationId: attachedDatabase.typeMapping.read(
+          DriftSqlType.string, data['${effectivePrefix}default_location_id']),
+      revision: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}revision'])!,
+      bootstrapVersion: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}bootstrap_version'])!,
+      legacyAnchorJson: attachedDatabase.typeMapping.read(
+          DriftSqlType.string, data['${effectivePrefix}legacy_anchor_json']),
+      candidateJson: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}candidate_json']),
+    );
+  }
+
+  @override
+  $StorageCatalogStatesTable createAlias(String alias) {
+    return $StorageCatalogStatesTable(attachedDatabase, alias);
+  }
+}
+
+class StorageCatalogStateRow extends DataClass
+    implements Insertable<StorageCatalogStateRow> {
+  final int id;
+  final String? defaultLocationId;
+  final int revision;
+  final int bootstrapVersion;
+  final String? legacyAnchorJson;
+  final String? candidateJson;
+  const StorageCatalogStateRow(
+      {required this.id,
+      this.defaultLocationId,
+      required this.revision,
+      required this.bootstrapVersion,
+      this.legacyAnchorJson,
+      this.candidateJson});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<int>(id);
+    if (!nullToAbsent || defaultLocationId != null) {
+      map['default_location_id'] = Variable<String>(defaultLocationId);
+    }
+    map['revision'] = Variable<int>(revision);
+    map['bootstrap_version'] = Variable<int>(bootstrapVersion);
+    if (!nullToAbsent || legacyAnchorJson != null) {
+      map['legacy_anchor_json'] = Variable<String>(legacyAnchorJson);
+    }
+    if (!nullToAbsent || candidateJson != null) {
+      map['candidate_json'] = Variable<String>(candidateJson);
+    }
+    return map;
+  }
+
+  StorageCatalogStatesCompanion toCompanion(bool nullToAbsent) {
+    return StorageCatalogStatesCompanion(
+      id: Value(id),
+      defaultLocationId: defaultLocationId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(defaultLocationId),
+      revision: Value(revision),
+      bootstrapVersion: Value(bootstrapVersion),
+      legacyAnchorJson: legacyAnchorJson == null && nullToAbsent
+          ? const Value.absent()
+          : Value(legacyAnchorJson),
+      candidateJson: candidateJson == null && nullToAbsent
+          ? const Value.absent()
+          : Value(candidateJson),
+    );
+  }
+
+  factory StorageCatalogStateRow.fromJson(Map<String, dynamic> json,
+      {ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return StorageCatalogStateRow(
+      id: serializer.fromJson<int>(json['id']),
+      defaultLocationId:
+          serializer.fromJson<String?>(json['defaultLocationId']),
+      revision: serializer.fromJson<int>(json['revision']),
+      bootstrapVersion: serializer.fromJson<int>(json['bootstrapVersion']),
+      legacyAnchorJson: serializer.fromJson<String?>(json['legacyAnchorJson']),
+      candidateJson: serializer.fromJson<String?>(json['candidateJson']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<int>(id),
+      'defaultLocationId': serializer.toJson<String?>(defaultLocationId),
+      'revision': serializer.toJson<int>(revision),
+      'bootstrapVersion': serializer.toJson<int>(bootstrapVersion),
+      'legacyAnchorJson': serializer.toJson<String?>(legacyAnchorJson),
+      'candidateJson': serializer.toJson<String?>(candidateJson),
+    };
+  }
+
+  StorageCatalogStateRow copyWith(
+          {int? id,
+          Value<String?> defaultLocationId = const Value.absent(),
+          int? revision,
+          int? bootstrapVersion,
+          Value<String?> legacyAnchorJson = const Value.absent(),
+          Value<String?> candidateJson = const Value.absent()}) =>
+      StorageCatalogStateRow(
+        id: id ?? this.id,
+        defaultLocationId: defaultLocationId.present
+            ? defaultLocationId.value
+            : this.defaultLocationId,
+        revision: revision ?? this.revision,
+        bootstrapVersion: bootstrapVersion ?? this.bootstrapVersion,
+        legacyAnchorJson: legacyAnchorJson.present
+            ? legacyAnchorJson.value
+            : this.legacyAnchorJson,
+        candidateJson:
+            candidateJson.present ? candidateJson.value : this.candidateJson,
+      );
+  StorageCatalogStateRow copyWithCompanion(StorageCatalogStatesCompanion data) {
+    return StorageCatalogStateRow(
+      id: data.id.present ? data.id.value : this.id,
+      defaultLocationId: data.defaultLocationId.present
+          ? data.defaultLocationId.value
+          : this.defaultLocationId,
+      revision: data.revision.present ? data.revision.value : this.revision,
+      bootstrapVersion: data.bootstrapVersion.present
+          ? data.bootstrapVersion.value
+          : this.bootstrapVersion,
+      legacyAnchorJson: data.legacyAnchorJson.present
+          ? data.legacyAnchorJson.value
+          : this.legacyAnchorJson,
+      candidateJson: data.candidateJson.present
+          ? data.candidateJson.value
+          : this.candidateJson,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('StorageCatalogStateRow(')
+          ..write('id: $id, ')
+          ..write('defaultLocationId: $defaultLocationId, ')
+          ..write('revision: $revision, ')
+          ..write('bootstrapVersion: $bootstrapVersion, ')
+          ..write('legacyAnchorJson: $legacyAnchorJson, ')
+          ..write('candidateJson: $candidateJson')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(id, defaultLocationId, revision,
+      bootstrapVersion, legacyAnchorJson, candidateJson);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is StorageCatalogStateRow &&
+          other.id == this.id &&
+          other.defaultLocationId == this.defaultLocationId &&
+          other.revision == this.revision &&
+          other.bootstrapVersion == this.bootstrapVersion &&
+          other.legacyAnchorJson == this.legacyAnchorJson &&
+          other.candidateJson == this.candidateJson);
+}
+
+class StorageCatalogStatesCompanion
+    extends UpdateCompanion<StorageCatalogStateRow> {
+  final Value<int> id;
+  final Value<String?> defaultLocationId;
+  final Value<int> revision;
+  final Value<int> bootstrapVersion;
+  final Value<String?> legacyAnchorJson;
+  final Value<String?> candidateJson;
+  const StorageCatalogStatesCompanion({
+    this.id = const Value.absent(),
+    this.defaultLocationId = const Value.absent(),
+    this.revision = const Value.absent(),
+    this.bootstrapVersion = const Value.absent(),
+    this.legacyAnchorJson = const Value.absent(),
+    this.candidateJson = const Value.absent(),
+  });
+  StorageCatalogStatesCompanion.insert({
+    this.id = const Value.absent(),
+    this.defaultLocationId = const Value.absent(),
+    this.revision = const Value.absent(),
+    this.bootstrapVersion = const Value.absent(),
+    this.legacyAnchorJson = const Value.absent(),
+    this.candidateJson = const Value.absent(),
+  });
+  static Insertable<StorageCatalogStateRow> custom({
+    Expression<int>? id,
+    Expression<String>? defaultLocationId,
+    Expression<int>? revision,
+    Expression<int>? bootstrapVersion,
+    Expression<String>? legacyAnchorJson,
+    Expression<String>? candidateJson,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (defaultLocationId != null) 'default_location_id': defaultLocationId,
+      if (revision != null) 'revision': revision,
+      if (bootstrapVersion != null) 'bootstrap_version': bootstrapVersion,
+      if (legacyAnchorJson != null) 'legacy_anchor_json': legacyAnchorJson,
+      if (candidateJson != null) 'candidate_json': candidateJson,
+    });
+  }
+
+  StorageCatalogStatesCompanion copyWith(
+      {Value<int>? id,
+      Value<String?>? defaultLocationId,
+      Value<int>? revision,
+      Value<int>? bootstrapVersion,
+      Value<String?>? legacyAnchorJson,
+      Value<String?>? candidateJson}) {
+    return StorageCatalogStatesCompanion(
+      id: id ?? this.id,
+      defaultLocationId: defaultLocationId ?? this.defaultLocationId,
+      revision: revision ?? this.revision,
+      bootstrapVersion: bootstrapVersion ?? this.bootstrapVersion,
+      legacyAnchorJson: legacyAnchorJson ?? this.legacyAnchorJson,
+      candidateJson: candidateJson ?? this.candidateJson,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<int>(id.value);
+    }
+    if (defaultLocationId.present) {
+      map['default_location_id'] = Variable<String>(defaultLocationId.value);
+    }
+    if (revision.present) {
+      map['revision'] = Variable<int>(revision.value);
+    }
+    if (bootstrapVersion.present) {
+      map['bootstrap_version'] = Variable<int>(bootstrapVersion.value);
+    }
+    if (legacyAnchorJson.present) {
+      map['legacy_anchor_json'] = Variable<String>(legacyAnchorJson.value);
+    }
+    if (candidateJson.present) {
+      map['candidate_json'] = Variable<String>(candidateJson.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('StorageCatalogStatesCompanion(')
+          ..write('id: $id, ')
+          ..write('defaultLocationId: $defaultLocationId, ')
+          ..write('revision: $revision, ')
+          ..write('bootstrapVersion: $bootstrapVersion, ')
+          ..write('legacyAnchorJson: $legacyAnchorJson, ')
+          ..write('candidateJson: $candidateJson')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $RecordingBindingsTable extends RecordingBindings
+    with TableInfo<$RecordingBindingsTable, RecordingBindingRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $RecordingBindingsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _dumpIdMeta = const VerificationMeta('dumpId');
+  @override
+  late final GeneratedColumn<String> dumpId = GeneratedColumn<String>(
+      'dump_id', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _incarnationMeta =
+      const VerificationMeta('incarnation');
+  @override
+  late final GeneratedColumn<String> incarnation = GeneratedColumn<String>(
+      'incarnation', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _locationIdMeta =
+      const VerificationMeta('locationId');
+  @override
+  late final GeneratedColumn<String> locationId = GeneratedColumn<String>(
+      'location_id', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _audioJsonMeta =
+      const VerificationMeta('audioJson');
+  @override
+  late final GeneratedColumn<String> audioJson = GeneratedColumn<String>(
+      'audio_json', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _metadataNameMeta =
+      const VerificationMeta('metadataName');
+  @override
+  late final GeneratedColumn<String> metadataName = GeneratedColumn<String>(
+      'metadata_name', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _legacyAnchorJsonMeta =
+      const VerificationMeta('legacyAnchorJson');
+  @override
+  late final GeneratedColumn<String> legacyAnchorJson = GeneratedColumn<String>(
+      'legacy_anchor_json', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _resolvedMeta =
+      const VerificationMeta('resolved');
+  @override
+  late final GeneratedColumn<bool> resolved = GeneratedColumn<bool>(
+      'resolved', aliasedName, false,
+      type: DriftSqlType.bool,
+      requiredDuringInsert: false,
+      defaultConstraints:
+          GeneratedColumn.constraintIsAlways('CHECK ("resolved" IN (0, 1))'),
+      defaultValue: const Constant(false));
+  @override
+  List<GeneratedColumn> get $columns => [
+        dumpId,
+        incarnation,
+        locationId,
+        audioJson,
+        metadataName,
+        legacyAnchorJson,
+        resolved
+      ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'recording_bindings';
+  @override
+  VerificationContext validateIntegrity(
+      Insertable<RecordingBindingRow> instance,
+      {bool isInserting = false}) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('dump_id')) {
+      context.handle(_dumpIdMeta,
+          dumpId.isAcceptableOrUnknown(data['dump_id']!, _dumpIdMeta));
+    } else if (isInserting) {
+      context.missing(_dumpIdMeta);
+    }
+    if (data.containsKey('incarnation')) {
+      context.handle(
+          _incarnationMeta,
+          incarnation.isAcceptableOrUnknown(
+              data['incarnation']!, _incarnationMeta));
+    } else if (isInserting) {
+      context.missing(_incarnationMeta);
+    }
+    if (data.containsKey('location_id')) {
+      context.handle(
+          _locationIdMeta,
+          locationId.isAcceptableOrUnknown(
+              data['location_id']!, _locationIdMeta));
+    }
+    if (data.containsKey('audio_json')) {
+      context.handle(_audioJsonMeta,
+          audioJson.isAcceptableOrUnknown(data['audio_json']!, _audioJsonMeta));
+    } else if (isInserting) {
+      context.missing(_audioJsonMeta);
+    }
+    if (data.containsKey('metadata_name')) {
+      context.handle(
+          _metadataNameMeta,
+          metadataName.isAcceptableOrUnknown(
+              data['metadata_name']!, _metadataNameMeta));
+    } else if (isInserting) {
+      context.missing(_metadataNameMeta);
+    }
+    if (data.containsKey('legacy_anchor_json')) {
+      context.handle(
+          _legacyAnchorJsonMeta,
+          legacyAnchorJson.isAcceptableOrUnknown(
+              data['legacy_anchor_json']!, _legacyAnchorJsonMeta));
+    }
+    if (data.containsKey('resolved')) {
+      context.handle(_resolvedMeta,
+          resolved.isAcceptableOrUnknown(data['resolved']!, _resolvedMeta));
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {dumpId};
+  @override
+  RecordingBindingRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return RecordingBindingRow(
+      dumpId: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}dump_id'])!,
+      incarnation: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}incarnation'])!,
+      locationId: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}location_id']),
+      audioJson: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}audio_json'])!,
+      metadataName: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}metadata_name'])!,
+      legacyAnchorJson: attachedDatabase.typeMapping.read(
+          DriftSqlType.string, data['${effectivePrefix}legacy_anchor_json']),
+      resolved: attachedDatabase.typeMapping
+          .read(DriftSqlType.bool, data['${effectivePrefix}resolved'])!,
+    );
+  }
+
+  @override
+  $RecordingBindingsTable createAlias(String alias) {
+    return $RecordingBindingsTable(attachedDatabase, alias);
+  }
+}
+
+class RecordingBindingRow extends DataClass
+    implements Insertable<RecordingBindingRow> {
+  final String dumpId;
+  final String incarnation;
+  final String? locationId;
+  final String audioJson;
+  final String metadataName;
+  final String? legacyAnchorJson;
+  final bool resolved;
+  const RecordingBindingRow(
+      {required this.dumpId,
+      required this.incarnation,
+      this.locationId,
+      required this.audioJson,
+      required this.metadataName,
+      this.legacyAnchorJson,
+      required this.resolved});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['dump_id'] = Variable<String>(dumpId);
+    map['incarnation'] = Variable<String>(incarnation);
+    if (!nullToAbsent || locationId != null) {
+      map['location_id'] = Variable<String>(locationId);
+    }
+    map['audio_json'] = Variable<String>(audioJson);
+    map['metadata_name'] = Variable<String>(metadataName);
+    if (!nullToAbsent || legacyAnchorJson != null) {
+      map['legacy_anchor_json'] = Variable<String>(legacyAnchorJson);
+    }
+    map['resolved'] = Variable<bool>(resolved);
+    return map;
+  }
+
+  RecordingBindingsCompanion toCompanion(bool nullToAbsent) {
+    return RecordingBindingsCompanion(
+      dumpId: Value(dumpId),
+      incarnation: Value(incarnation),
+      locationId: locationId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(locationId),
+      audioJson: Value(audioJson),
+      metadataName: Value(metadataName),
+      legacyAnchorJson: legacyAnchorJson == null && nullToAbsent
+          ? const Value.absent()
+          : Value(legacyAnchorJson),
+      resolved: Value(resolved),
+    );
+  }
+
+  factory RecordingBindingRow.fromJson(Map<String, dynamic> json,
+      {ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return RecordingBindingRow(
+      dumpId: serializer.fromJson<String>(json['dumpId']),
+      incarnation: serializer.fromJson<String>(json['incarnation']),
+      locationId: serializer.fromJson<String?>(json['locationId']),
+      audioJson: serializer.fromJson<String>(json['audioJson']),
+      metadataName: serializer.fromJson<String>(json['metadataName']),
+      legacyAnchorJson: serializer.fromJson<String?>(json['legacyAnchorJson']),
+      resolved: serializer.fromJson<bool>(json['resolved']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'dumpId': serializer.toJson<String>(dumpId),
+      'incarnation': serializer.toJson<String>(incarnation),
+      'locationId': serializer.toJson<String?>(locationId),
+      'audioJson': serializer.toJson<String>(audioJson),
+      'metadataName': serializer.toJson<String>(metadataName),
+      'legacyAnchorJson': serializer.toJson<String?>(legacyAnchorJson),
+      'resolved': serializer.toJson<bool>(resolved),
+    };
+  }
+
+  RecordingBindingRow copyWith(
+          {String? dumpId,
+          String? incarnation,
+          Value<String?> locationId = const Value.absent(),
+          String? audioJson,
+          String? metadataName,
+          Value<String?> legacyAnchorJson = const Value.absent(),
+          bool? resolved}) =>
+      RecordingBindingRow(
+        dumpId: dumpId ?? this.dumpId,
+        incarnation: incarnation ?? this.incarnation,
+        locationId: locationId.present ? locationId.value : this.locationId,
+        audioJson: audioJson ?? this.audioJson,
+        metadataName: metadataName ?? this.metadataName,
+        legacyAnchorJson: legacyAnchorJson.present
+            ? legacyAnchorJson.value
+            : this.legacyAnchorJson,
+        resolved: resolved ?? this.resolved,
+      );
+  RecordingBindingRow copyWithCompanion(RecordingBindingsCompanion data) {
+    return RecordingBindingRow(
+      dumpId: data.dumpId.present ? data.dumpId.value : this.dumpId,
+      incarnation:
+          data.incarnation.present ? data.incarnation.value : this.incarnation,
+      locationId:
+          data.locationId.present ? data.locationId.value : this.locationId,
+      audioJson: data.audioJson.present ? data.audioJson.value : this.audioJson,
+      metadataName: data.metadataName.present
+          ? data.metadataName.value
+          : this.metadataName,
+      legacyAnchorJson: data.legacyAnchorJson.present
+          ? data.legacyAnchorJson.value
+          : this.legacyAnchorJson,
+      resolved: data.resolved.present ? data.resolved.value : this.resolved,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('RecordingBindingRow(')
+          ..write('dumpId: $dumpId, ')
+          ..write('incarnation: $incarnation, ')
+          ..write('locationId: $locationId, ')
+          ..write('audioJson: $audioJson, ')
+          ..write('metadataName: $metadataName, ')
+          ..write('legacyAnchorJson: $legacyAnchorJson, ')
+          ..write('resolved: $resolved')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(dumpId, incarnation, locationId, audioJson,
+      metadataName, legacyAnchorJson, resolved);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is RecordingBindingRow &&
+          other.dumpId == this.dumpId &&
+          other.incarnation == this.incarnation &&
+          other.locationId == this.locationId &&
+          other.audioJson == this.audioJson &&
+          other.metadataName == this.metadataName &&
+          other.legacyAnchorJson == this.legacyAnchorJson &&
+          other.resolved == this.resolved);
+}
+
+class RecordingBindingsCompanion extends UpdateCompanion<RecordingBindingRow> {
+  final Value<String> dumpId;
+  final Value<String> incarnation;
+  final Value<String?> locationId;
+  final Value<String> audioJson;
+  final Value<String> metadataName;
+  final Value<String?> legacyAnchorJson;
+  final Value<bool> resolved;
+  final Value<int> rowid;
+  const RecordingBindingsCompanion({
+    this.dumpId = const Value.absent(),
+    this.incarnation = const Value.absent(),
+    this.locationId = const Value.absent(),
+    this.audioJson = const Value.absent(),
+    this.metadataName = const Value.absent(),
+    this.legacyAnchorJson = const Value.absent(),
+    this.resolved = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  RecordingBindingsCompanion.insert({
+    required String dumpId,
+    required String incarnation,
+    this.locationId = const Value.absent(),
+    required String audioJson,
+    required String metadataName,
+    this.legacyAnchorJson = const Value.absent(),
+    this.resolved = const Value.absent(),
+    this.rowid = const Value.absent(),
+  })  : dumpId = Value(dumpId),
+        incarnation = Value(incarnation),
+        audioJson = Value(audioJson),
+        metadataName = Value(metadataName);
+  static Insertable<RecordingBindingRow> custom({
+    Expression<String>? dumpId,
+    Expression<String>? incarnation,
+    Expression<String>? locationId,
+    Expression<String>? audioJson,
+    Expression<String>? metadataName,
+    Expression<String>? legacyAnchorJson,
+    Expression<bool>? resolved,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (dumpId != null) 'dump_id': dumpId,
+      if (incarnation != null) 'incarnation': incarnation,
+      if (locationId != null) 'location_id': locationId,
+      if (audioJson != null) 'audio_json': audioJson,
+      if (metadataName != null) 'metadata_name': metadataName,
+      if (legacyAnchorJson != null) 'legacy_anchor_json': legacyAnchorJson,
+      if (resolved != null) 'resolved': resolved,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  RecordingBindingsCompanion copyWith(
+      {Value<String>? dumpId,
+      Value<String>? incarnation,
+      Value<String?>? locationId,
+      Value<String>? audioJson,
+      Value<String>? metadataName,
+      Value<String?>? legacyAnchorJson,
+      Value<bool>? resolved,
+      Value<int>? rowid}) {
+    return RecordingBindingsCompanion(
+      dumpId: dumpId ?? this.dumpId,
+      incarnation: incarnation ?? this.incarnation,
+      locationId: locationId ?? this.locationId,
+      audioJson: audioJson ?? this.audioJson,
+      metadataName: metadataName ?? this.metadataName,
+      legacyAnchorJson: legacyAnchorJson ?? this.legacyAnchorJson,
+      resolved: resolved ?? this.resolved,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (dumpId.present) {
+      map['dump_id'] = Variable<String>(dumpId.value);
+    }
+    if (incarnation.present) {
+      map['incarnation'] = Variable<String>(incarnation.value);
+    }
+    if (locationId.present) {
+      map['location_id'] = Variable<String>(locationId.value);
+    }
+    if (audioJson.present) {
+      map['audio_json'] = Variable<String>(audioJson.value);
+    }
+    if (metadataName.present) {
+      map['metadata_name'] = Variable<String>(metadataName.value);
+    }
+    if (legacyAnchorJson.present) {
+      map['legacy_anchor_json'] = Variable<String>(legacyAnchorJson.value);
+    }
+    if (resolved.present) {
+      map['resolved'] = Variable<bool>(resolved.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('RecordingBindingsCompanion(')
+          ..write('dumpId: $dumpId, ')
+          ..write('incarnation: $incarnation, ')
+          ..write('locationId: $locationId, ')
+          ..write('audioJson: $audioJson, ')
+          ..write('metadataName: $metadataName, ')
+          ..write('legacyAnchorJson: $legacyAnchorJson, ')
+          ..write('resolved: $resolved, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $CaptureReservationsTable extends CaptureReservations
+    with TableInfo<$CaptureReservationsTable, CaptureReservationRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $CaptureReservationsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _reservationIdMeta =
+      const VerificationMeta('reservationId');
+  @override
+  late final GeneratedColumn<String> reservationId = GeneratedColumn<String>(
+      'reservation_id', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _dumpIdMeta = const VerificationMeta('dumpId');
+  @override
+  late final GeneratedColumn<String> dumpId = GeneratedColumn<String>(
+      'dump_id', aliasedName, false,
+      type: DriftSqlType.string,
+      requiredDuringInsert: true,
+      defaultConstraints: GeneratedColumn.constraintIsAlways('UNIQUE'));
+  static const VerificationMeta _incarnationMeta =
+      const VerificationMeta('incarnation');
+  @override
+  late final GeneratedColumn<String> incarnation = GeneratedColumn<String>(
+      'incarnation', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _locationIdMeta =
+      const VerificationMeta('locationId');
+  @override
+  late final GeneratedColumn<String> locationId = GeneratedColumn<String>(
+      'location_id', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _stagingPathMeta =
+      const VerificationMeta('stagingPath');
+  @override
+  late final GeneratedColumn<String> stagingPath = GeneratedColumn<String>(
+      'staging_path', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _modeMeta = const VerificationMeta('mode');
+  @override
+  late final GeneratedColumn<String> mode = GeneratedColumn<String>(
+      'mode', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _startedAtMeta =
+      const VerificationMeta('startedAt');
+  @override
+  late final GeneratedColumn<int> startedAt = GeneratedColumn<int>(
+      'started_at', aliasedName, false,
+      type: DriftSqlType.int, requiredDuringInsert: true);
+  static const VerificationMeta _stateMeta = const VerificationMeta('state');
+  @override
+  late final GeneratedColumn<String> state = GeneratedColumn<String>(
+      'state', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _processEpochMeta =
+      const VerificationMeta('processEpoch');
+  @override
+  late final GeneratedColumn<String> processEpoch = GeneratedColumn<String>(
+      'process_epoch', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _publicationJsonMeta =
+      const VerificationMeta('publicationJson');
+  @override
+  late final GeneratedColumn<String> publicationJson = GeneratedColumn<String>(
+      'publication_json', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  @override
+  List<GeneratedColumn> get $columns => [
+        reservationId,
+        dumpId,
+        incarnation,
+        locationId,
+        stagingPath,
+        mode,
+        startedAt,
+        state,
+        processEpoch,
+        publicationJson
+      ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'capture_reservations';
+  @override
+  VerificationContext validateIntegrity(
+      Insertable<CaptureReservationRow> instance,
+      {bool isInserting = false}) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('reservation_id')) {
+      context.handle(
+          _reservationIdMeta,
+          reservationId.isAcceptableOrUnknown(
+              data['reservation_id']!, _reservationIdMeta));
+    } else if (isInserting) {
+      context.missing(_reservationIdMeta);
+    }
+    if (data.containsKey('dump_id')) {
+      context.handle(_dumpIdMeta,
+          dumpId.isAcceptableOrUnknown(data['dump_id']!, _dumpIdMeta));
+    } else if (isInserting) {
+      context.missing(_dumpIdMeta);
+    }
+    if (data.containsKey('incarnation')) {
+      context.handle(
+          _incarnationMeta,
+          incarnation.isAcceptableOrUnknown(
+              data['incarnation']!, _incarnationMeta));
+    } else if (isInserting) {
+      context.missing(_incarnationMeta);
+    }
+    if (data.containsKey('location_id')) {
+      context.handle(
+          _locationIdMeta,
+          locationId.isAcceptableOrUnknown(
+              data['location_id']!, _locationIdMeta));
+    } else if (isInserting) {
+      context.missing(_locationIdMeta);
+    }
+    if (data.containsKey('staging_path')) {
+      context.handle(
+          _stagingPathMeta,
+          stagingPath.isAcceptableOrUnknown(
+              data['staging_path']!, _stagingPathMeta));
+    } else if (isInserting) {
+      context.missing(_stagingPathMeta);
+    }
+    if (data.containsKey('mode')) {
+      context.handle(
+          _modeMeta, mode.isAcceptableOrUnknown(data['mode']!, _modeMeta));
+    } else if (isInserting) {
+      context.missing(_modeMeta);
+    }
+    if (data.containsKey('started_at')) {
+      context.handle(_startedAtMeta,
+          startedAt.isAcceptableOrUnknown(data['started_at']!, _startedAtMeta));
+    } else if (isInserting) {
+      context.missing(_startedAtMeta);
+    }
+    if (data.containsKey('state')) {
+      context.handle(
+          _stateMeta, state.isAcceptableOrUnknown(data['state']!, _stateMeta));
+    } else if (isInserting) {
+      context.missing(_stateMeta);
+    }
+    if (data.containsKey('process_epoch')) {
+      context.handle(
+          _processEpochMeta,
+          processEpoch.isAcceptableOrUnknown(
+              data['process_epoch']!, _processEpochMeta));
+    } else if (isInserting) {
+      context.missing(_processEpochMeta);
+    }
+    if (data.containsKey('publication_json')) {
+      context.handle(
+          _publicationJsonMeta,
+          publicationJson.isAcceptableOrUnknown(
+              data['publication_json']!, _publicationJsonMeta));
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {reservationId};
+  @override
+  CaptureReservationRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return CaptureReservationRow(
+      reservationId: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}reservation_id'])!,
+      dumpId: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}dump_id'])!,
+      incarnation: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}incarnation'])!,
+      locationId: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}location_id'])!,
+      stagingPath: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}staging_path'])!,
+      mode: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}mode'])!,
+      startedAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}started_at'])!,
+      state: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}state'])!,
+      processEpoch: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}process_epoch'])!,
+      publicationJson: attachedDatabase.typeMapping.read(
+          DriftSqlType.string, data['${effectivePrefix}publication_json']),
+    );
+  }
+
+  @override
+  $CaptureReservationsTable createAlias(String alias) {
+    return $CaptureReservationsTable(attachedDatabase, alias);
+  }
+}
+
+class CaptureReservationRow extends DataClass
+    implements Insertable<CaptureReservationRow> {
+  final String reservationId;
+  final String dumpId;
+  final String incarnation;
+  final String locationId;
+  final String stagingPath;
+  final String mode;
+  final int startedAt;
+  final String state;
+  final String processEpoch;
+  final String? publicationJson;
+  const CaptureReservationRow(
+      {required this.reservationId,
+      required this.dumpId,
+      required this.incarnation,
+      required this.locationId,
+      required this.stagingPath,
+      required this.mode,
+      required this.startedAt,
+      required this.state,
+      required this.processEpoch,
+      this.publicationJson});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['reservation_id'] = Variable<String>(reservationId);
+    map['dump_id'] = Variable<String>(dumpId);
+    map['incarnation'] = Variable<String>(incarnation);
+    map['location_id'] = Variable<String>(locationId);
+    map['staging_path'] = Variable<String>(stagingPath);
+    map['mode'] = Variable<String>(mode);
+    map['started_at'] = Variable<int>(startedAt);
+    map['state'] = Variable<String>(state);
+    map['process_epoch'] = Variable<String>(processEpoch);
+    if (!nullToAbsent || publicationJson != null) {
+      map['publication_json'] = Variable<String>(publicationJson);
+    }
+    return map;
+  }
+
+  CaptureReservationsCompanion toCompanion(bool nullToAbsent) {
+    return CaptureReservationsCompanion(
+      reservationId: Value(reservationId),
+      dumpId: Value(dumpId),
+      incarnation: Value(incarnation),
+      locationId: Value(locationId),
+      stagingPath: Value(stagingPath),
+      mode: Value(mode),
+      startedAt: Value(startedAt),
+      state: Value(state),
+      processEpoch: Value(processEpoch),
+      publicationJson: publicationJson == null && nullToAbsent
+          ? const Value.absent()
+          : Value(publicationJson),
+    );
+  }
+
+  factory CaptureReservationRow.fromJson(Map<String, dynamic> json,
+      {ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return CaptureReservationRow(
+      reservationId: serializer.fromJson<String>(json['reservationId']),
+      dumpId: serializer.fromJson<String>(json['dumpId']),
+      incarnation: serializer.fromJson<String>(json['incarnation']),
+      locationId: serializer.fromJson<String>(json['locationId']),
+      stagingPath: serializer.fromJson<String>(json['stagingPath']),
+      mode: serializer.fromJson<String>(json['mode']),
+      startedAt: serializer.fromJson<int>(json['startedAt']),
+      state: serializer.fromJson<String>(json['state']),
+      processEpoch: serializer.fromJson<String>(json['processEpoch']),
+      publicationJson: serializer.fromJson<String?>(json['publicationJson']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'reservationId': serializer.toJson<String>(reservationId),
+      'dumpId': serializer.toJson<String>(dumpId),
+      'incarnation': serializer.toJson<String>(incarnation),
+      'locationId': serializer.toJson<String>(locationId),
+      'stagingPath': serializer.toJson<String>(stagingPath),
+      'mode': serializer.toJson<String>(mode),
+      'startedAt': serializer.toJson<int>(startedAt),
+      'state': serializer.toJson<String>(state),
+      'processEpoch': serializer.toJson<String>(processEpoch),
+      'publicationJson': serializer.toJson<String?>(publicationJson),
+    };
+  }
+
+  CaptureReservationRow copyWith(
+          {String? reservationId,
+          String? dumpId,
+          String? incarnation,
+          String? locationId,
+          String? stagingPath,
+          String? mode,
+          int? startedAt,
+          String? state,
+          String? processEpoch,
+          Value<String?> publicationJson = const Value.absent()}) =>
+      CaptureReservationRow(
+        reservationId: reservationId ?? this.reservationId,
+        dumpId: dumpId ?? this.dumpId,
+        incarnation: incarnation ?? this.incarnation,
+        locationId: locationId ?? this.locationId,
+        stagingPath: stagingPath ?? this.stagingPath,
+        mode: mode ?? this.mode,
+        startedAt: startedAt ?? this.startedAt,
+        state: state ?? this.state,
+        processEpoch: processEpoch ?? this.processEpoch,
+        publicationJson: publicationJson.present
+            ? publicationJson.value
+            : this.publicationJson,
+      );
+  CaptureReservationRow copyWithCompanion(CaptureReservationsCompanion data) {
+    return CaptureReservationRow(
+      reservationId: data.reservationId.present
+          ? data.reservationId.value
+          : this.reservationId,
+      dumpId: data.dumpId.present ? data.dumpId.value : this.dumpId,
+      incarnation:
+          data.incarnation.present ? data.incarnation.value : this.incarnation,
+      locationId:
+          data.locationId.present ? data.locationId.value : this.locationId,
+      stagingPath:
+          data.stagingPath.present ? data.stagingPath.value : this.stagingPath,
+      mode: data.mode.present ? data.mode.value : this.mode,
+      startedAt: data.startedAt.present ? data.startedAt.value : this.startedAt,
+      state: data.state.present ? data.state.value : this.state,
+      processEpoch: data.processEpoch.present
+          ? data.processEpoch.value
+          : this.processEpoch,
+      publicationJson: data.publicationJson.present
+          ? data.publicationJson.value
+          : this.publicationJson,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('CaptureReservationRow(')
+          ..write('reservationId: $reservationId, ')
+          ..write('dumpId: $dumpId, ')
+          ..write('incarnation: $incarnation, ')
+          ..write('locationId: $locationId, ')
+          ..write('stagingPath: $stagingPath, ')
+          ..write('mode: $mode, ')
+          ..write('startedAt: $startedAt, ')
+          ..write('state: $state, ')
+          ..write('processEpoch: $processEpoch, ')
+          ..write('publicationJson: $publicationJson')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+      reservationId,
+      dumpId,
+      incarnation,
+      locationId,
+      stagingPath,
+      mode,
+      startedAt,
+      state,
+      processEpoch,
+      publicationJson);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is CaptureReservationRow &&
+          other.reservationId == this.reservationId &&
+          other.dumpId == this.dumpId &&
+          other.incarnation == this.incarnation &&
+          other.locationId == this.locationId &&
+          other.stagingPath == this.stagingPath &&
+          other.mode == this.mode &&
+          other.startedAt == this.startedAt &&
+          other.state == this.state &&
+          other.processEpoch == this.processEpoch &&
+          other.publicationJson == this.publicationJson);
+}
+
+class CaptureReservationsCompanion
+    extends UpdateCompanion<CaptureReservationRow> {
+  final Value<String> reservationId;
+  final Value<String> dumpId;
+  final Value<String> incarnation;
+  final Value<String> locationId;
+  final Value<String> stagingPath;
+  final Value<String> mode;
+  final Value<int> startedAt;
+  final Value<String> state;
+  final Value<String> processEpoch;
+  final Value<String?> publicationJson;
+  final Value<int> rowid;
+  const CaptureReservationsCompanion({
+    this.reservationId = const Value.absent(),
+    this.dumpId = const Value.absent(),
+    this.incarnation = const Value.absent(),
+    this.locationId = const Value.absent(),
+    this.stagingPath = const Value.absent(),
+    this.mode = const Value.absent(),
+    this.startedAt = const Value.absent(),
+    this.state = const Value.absent(),
+    this.processEpoch = const Value.absent(),
+    this.publicationJson = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  CaptureReservationsCompanion.insert({
+    required String reservationId,
+    required String dumpId,
+    required String incarnation,
+    required String locationId,
+    required String stagingPath,
+    required String mode,
+    required int startedAt,
+    required String state,
+    required String processEpoch,
+    this.publicationJson = const Value.absent(),
+    this.rowid = const Value.absent(),
+  })  : reservationId = Value(reservationId),
+        dumpId = Value(dumpId),
+        incarnation = Value(incarnation),
+        locationId = Value(locationId),
+        stagingPath = Value(stagingPath),
+        mode = Value(mode),
+        startedAt = Value(startedAt),
+        state = Value(state),
+        processEpoch = Value(processEpoch);
+  static Insertable<CaptureReservationRow> custom({
+    Expression<String>? reservationId,
+    Expression<String>? dumpId,
+    Expression<String>? incarnation,
+    Expression<String>? locationId,
+    Expression<String>? stagingPath,
+    Expression<String>? mode,
+    Expression<int>? startedAt,
+    Expression<String>? state,
+    Expression<String>? processEpoch,
+    Expression<String>? publicationJson,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (reservationId != null) 'reservation_id': reservationId,
+      if (dumpId != null) 'dump_id': dumpId,
+      if (incarnation != null) 'incarnation': incarnation,
+      if (locationId != null) 'location_id': locationId,
+      if (stagingPath != null) 'staging_path': stagingPath,
+      if (mode != null) 'mode': mode,
+      if (startedAt != null) 'started_at': startedAt,
+      if (state != null) 'state': state,
+      if (processEpoch != null) 'process_epoch': processEpoch,
+      if (publicationJson != null) 'publication_json': publicationJson,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  CaptureReservationsCompanion copyWith(
+      {Value<String>? reservationId,
+      Value<String>? dumpId,
+      Value<String>? incarnation,
+      Value<String>? locationId,
+      Value<String>? stagingPath,
+      Value<String>? mode,
+      Value<int>? startedAt,
+      Value<String>? state,
+      Value<String>? processEpoch,
+      Value<String?>? publicationJson,
+      Value<int>? rowid}) {
+    return CaptureReservationsCompanion(
+      reservationId: reservationId ?? this.reservationId,
+      dumpId: dumpId ?? this.dumpId,
+      incarnation: incarnation ?? this.incarnation,
+      locationId: locationId ?? this.locationId,
+      stagingPath: stagingPath ?? this.stagingPath,
+      mode: mode ?? this.mode,
+      startedAt: startedAt ?? this.startedAt,
+      state: state ?? this.state,
+      processEpoch: processEpoch ?? this.processEpoch,
+      publicationJson: publicationJson ?? this.publicationJson,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (reservationId.present) {
+      map['reservation_id'] = Variable<String>(reservationId.value);
+    }
+    if (dumpId.present) {
+      map['dump_id'] = Variable<String>(dumpId.value);
+    }
+    if (incarnation.present) {
+      map['incarnation'] = Variable<String>(incarnation.value);
+    }
+    if (locationId.present) {
+      map['location_id'] = Variable<String>(locationId.value);
+    }
+    if (stagingPath.present) {
+      map['staging_path'] = Variable<String>(stagingPath.value);
+    }
+    if (mode.present) {
+      map['mode'] = Variable<String>(mode.value);
+    }
+    if (startedAt.present) {
+      map['started_at'] = Variable<int>(startedAt.value);
+    }
+    if (state.present) {
+      map['state'] = Variable<String>(state.value);
+    }
+    if (processEpoch.present) {
+      map['process_epoch'] = Variable<String>(processEpoch.value);
+    }
+    if (publicationJson.present) {
+      map['publication_json'] = Variable<String>(publicationJson.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('CaptureReservationsCompanion(')
+          ..write('reservationId: $reservationId, ')
+          ..write('dumpId: $dumpId, ')
+          ..write('incarnation: $incarnation, ')
+          ..write('locationId: $locationId, ')
+          ..write('stagingPath: $stagingPath, ')
+          ..write('mode: $mode, ')
+          ..write('startedAt: $startedAt, ')
+          ..write('state: $state, ')
+          ..write('processEpoch: $processEpoch, ')
+          ..write('publicationJson: $publicationJson, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $LocalDeletionBatchesTable extends LocalDeletionBatches
+    with TableInfo<$LocalDeletionBatchesTable, LocalDeletionBatchRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $LocalDeletionBatchesTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _operationIdMeta =
+      const VerificationMeta('operationId');
+  @override
+  late final GeneratedColumn<String> operationId = GeneratedColumn<String>(
+      'operation_id', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _payloadJsonMeta =
+      const VerificationMeta('payloadJson');
+  @override
+  late final GeneratedColumn<String> payloadJson = GeneratedColumn<String>(
+      'payload_json', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _resultsJsonMeta =
+      const VerificationMeta('resultsJson');
+  @override
+  late final GeneratedColumn<String> resultsJson = GeneratedColumn<String>(
+      'results_json', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _stateMeta = const VerificationMeta('state');
+  @override
+  late final GeneratedColumn<String> state = GeneratedColumn<String>(
+      'state', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  @override
+  List<GeneratedColumn> get $columns =>
+      [operationId, payloadJson, resultsJson, state];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'local_deletion_batches';
+  @override
+  VerificationContext validateIntegrity(
+      Insertable<LocalDeletionBatchRow> instance,
+      {bool isInserting = false}) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('operation_id')) {
+      context.handle(
+          _operationIdMeta,
+          operationId.isAcceptableOrUnknown(
+              data['operation_id']!, _operationIdMeta));
+    } else if (isInserting) {
+      context.missing(_operationIdMeta);
+    }
+    if (data.containsKey('payload_json')) {
+      context.handle(
+          _payloadJsonMeta,
+          payloadJson.isAcceptableOrUnknown(
+              data['payload_json']!, _payloadJsonMeta));
+    } else if (isInserting) {
+      context.missing(_payloadJsonMeta);
+    }
+    if (data.containsKey('results_json')) {
+      context.handle(
+          _resultsJsonMeta,
+          resultsJson.isAcceptableOrUnknown(
+              data['results_json']!, _resultsJsonMeta));
+    } else if (isInserting) {
+      context.missing(_resultsJsonMeta);
+    }
+    if (data.containsKey('state')) {
+      context.handle(
+          _stateMeta, state.isAcceptableOrUnknown(data['state']!, _stateMeta));
+    } else if (isInserting) {
+      context.missing(_stateMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {operationId};
+  @override
+  LocalDeletionBatchRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return LocalDeletionBatchRow(
+      operationId: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}operation_id'])!,
+      payloadJson: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}payload_json'])!,
+      resultsJson: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}results_json'])!,
+      state: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}state'])!,
+    );
+  }
+
+  @override
+  $LocalDeletionBatchesTable createAlias(String alias) {
+    return $LocalDeletionBatchesTable(attachedDatabase, alias);
+  }
+}
+
+class LocalDeletionBatchRow extends DataClass
+    implements Insertable<LocalDeletionBatchRow> {
+  final String operationId;
+  final String payloadJson;
+  final String resultsJson;
+  final String state;
+  const LocalDeletionBatchRow(
+      {required this.operationId,
+      required this.payloadJson,
+      required this.resultsJson,
+      required this.state});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['operation_id'] = Variable<String>(operationId);
+    map['payload_json'] = Variable<String>(payloadJson);
+    map['results_json'] = Variable<String>(resultsJson);
+    map['state'] = Variable<String>(state);
+    return map;
+  }
+
+  LocalDeletionBatchesCompanion toCompanion(bool nullToAbsent) {
+    return LocalDeletionBatchesCompanion(
+      operationId: Value(operationId),
+      payloadJson: Value(payloadJson),
+      resultsJson: Value(resultsJson),
+      state: Value(state),
+    );
+  }
+
+  factory LocalDeletionBatchRow.fromJson(Map<String, dynamic> json,
+      {ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return LocalDeletionBatchRow(
+      operationId: serializer.fromJson<String>(json['operationId']),
+      payloadJson: serializer.fromJson<String>(json['payloadJson']),
+      resultsJson: serializer.fromJson<String>(json['resultsJson']),
+      state: serializer.fromJson<String>(json['state']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'operationId': serializer.toJson<String>(operationId),
+      'payloadJson': serializer.toJson<String>(payloadJson),
+      'resultsJson': serializer.toJson<String>(resultsJson),
+      'state': serializer.toJson<String>(state),
+    };
+  }
+
+  LocalDeletionBatchRow copyWith(
+          {String? operationId,
+          String? payloadJson,
+          String? resultsJson,
+          String? state}) =>
+      LocalDeletionBatchRow(
+        operationId: operationId ?? this.operationId,
+        payloadJson: payloadJson ?? this.payloadJson,
+        resultsJson: resultsJson ?? this.resultsJson,
+        state: state ?? this.state,
+      );
+  LocalDeletionBatchRow copyWithCompanion(LocalDeletionBatchesCompanion data) {
+    return LocalDeletionBatchRow(
+      operationId:
+          data.operationId.present ? data.operationId.value : this.operationId,
+      payloadJson:
+          data.payloadJson.present ? data.payloadJson.value : this.payloadJson,
+      resultsJson:
+          data.resultsJson.present ? data.resultsJson.value : this.resultsJson,
+      state: data.state.present ? data.state.value : this.state,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('LocalDeletionBatchRow(')
+          ..write('operationId: $operationId, ')
+          ..write('payloadJson: $payloadJson, ')
+          ..write('resultsJson: $resultsJson, ')
+          ..write('state: $state')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(operationId, payloadJson, resultsJson, state);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is LocalDeletionBatchRow &&
+          other.operationId == this.operationId &&
+          other.payloadJson == this.payloadJson &&
+          other.resultsJson == this.resultsJson &&
+          other.state == this.state);
+}
+
+class LocalDeletionBatchesCompanion
+    extends UpdateCompanion<LocalDeletionBatchRow> {
+  final Value<String> operationId;
+  final Value<String> payloadJson;
+  final Value<String> resultsJson;
+  final Value<String> state;
+  final Value<int> rowid;
+  const LocalDeletionBatchesCompanion({
+    this.operationId = const Value.absent(),
+    this.payloadJson = const Value.absent(),
+    this.resultsJson = const Value.absent(),
+    this.state = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  LocalDeletionBatchesCompanion.insert({
+    required String operationId,
+    required String payloadJson,
+    required String resultsJson,
+    required String state,
+    this.rowid = const Value.absent(),
+  })  : operationId = Value(operationId),
+        payloadJson = Value(payloadJson),
+        resultsJson = Value(resultsJson),
+        state = Value(state);
+  static Insertable<LocalDeletionBatchRow> custom({
+    Expression<String>? operationId,
+    Expression<String>? payloadJson,
+    Expression<String>? resultsJson,
+    Expression<String>? state,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (operationId != null) 'operation_id': operationId,
+      if (payloadJson != null) 'payload_json': payloadJson,
+      if (resultsJson != null) 'results_json': resultsJson,
+      if (state != null) 'state': state,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  LocalDeletionBatchesCompanion copyWith(
+      {Value<String>? operationId,
+      Value<String>? payloadJson,
+      Value<String>? resultsJson,
+      Value<String>? state,
+      Value<int>? rowid}) {
+    return LocalDeletionBatchesCompanion(
+      operationId: operationId ?? this.operationId,
+      payloadJson: payloadJson ?? this.payloadJson,
+      resultsJson: resultsJson ?? this.resultsJson,
+      state: state ?? this.state,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (operationId.present) {
+      map['operation_id'] = Variable<String>(operationId.value);
+    }
+    if (payloadJson.present) {
+      map['payload_json'] = Variable<String>(payloadJson.value);
+    }
+    if (resultsJson.present) {
+      map['results_json'] = Variable<String>(resultsJson.value);
+    }
+    if (state.present) {
+      map['state'] = Variable<String>(state.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('LocalDeletionBatchesCompanion(')
+          ..write('operationId: $operationId, ')
+          ..write('payloadJson: $payloadJson, ')
+          ..write('resultsJson: $resultsJson, ')
+          ..write('state: $state, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $LocalDeletionTicketsTable extends LocalDeletionTickets
+    with TableInfo<$LocalDeletionTicketsTable, LocalDeletionTicketRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $LocalDeletionTicketsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _dumpIdMeta = const VerificationMeta('dumpId');
+  @override
+  late final GeneratedColumn<String> dumpId = GeneratedColumn<String>(
+      'dump_id', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _incarnationMeta =
+      const VerificationMeta('incarnation');
+  @override
+  late final GeneratedColumn<String> incarnation = GeneratedColumn<String>(
+      'incarnation', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _ticketIdMeta =
+      const VerificationMeta('ticketId');
+  @override
+  late final GeneratedColumn<String> ticketId = GeneratedColumn<String>(
+      'ticket_id', aliasedName, false,
+      type: DriftSqlType.string,
+      requiredDuringInsert: true,
+      defaultConstraints: GeneratedColumn.constraintIsAlways('UNIQUE'));
+  static const VerificationMeta _operationIdMeta =
+      const VerificationMeta('operationId');
+  @override
+  late final GeneratedColumn<String> operationId = GeneratedColumn<String>(
+      'operation_id', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _bindingJsonMeta =
+      const VerificationMeta('bindingJson');
+  @override
+  late final GeneratedColumn<String> bindingJson = GeneratedColumn<String>(
+      'binding_json', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _audioStateMeta =
+      const VerificationMeta('audioState');
+  @override
+  late final GeneratedColumn<String> audioState = GeneratedColumn<String>(
+      'audio_state', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _metadataStateMeta =
+      const VerificationMeta('metadataState');
+  @override
+  late final GeneratedColumn<String> metadataState = GeneratedColumn<String>(
+      'metadata_state', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _stateMeta = const VerificationMeta('state');
+  @override
+  late final GeneratedColumn<String> state = GeneratedColumn<String>(
+      'state', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _problemJsonMeta =
+      const VerificationMeta('problemJson');
+  @override
+  late final GeneratedColumn<String> problemJson = GeneratedColumn<String>(
+      'problem_json', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  @override
+  List<GeneratedColumn> get $columns => [
+        dumpId,
+        incarnation,
+        ticketId,
+        operationId,
+        bindingJson,
+        audioState,
+        metadataState,
+        state,
+        problemJson
+      ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'local_deletion_tickets';
+  @override
+  VerificationContext validateIntegrity(
+      Insertable<LocalDeletionTicketRow> instance,
+      {bool isInserting = false}) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('dump_id')) {
+      context.handle(_dumpIdMeta,
+          dumpId.isAcceptableOrUnknown(data['dump_id']!, _dumpIdMeta));
+    } else if (isInserting) {
+      context.missing(_dumpIdMeta);
+    }
+    if (data.containsKey('incarnation')) {
+      context.handle(
+          _incarnationMeta,
+          incarnation.isAcceptableOrUnknown(
+              data['incarnation']!, _incarnationMeta));
+    } else if (isInserting) {
+      context.missing(_incarnationMeta);
+    }
+    if (data.containsKey('ticket_id')) {
+      context.handle(_ticketIdMeta,
+          ticketId.isAcceptableOrUnknown(data['ticket_id']!, _ticketIdMeta));
+    } else if (isInserting) {
+      context.missing(_ticketIdMeta);
+    }
+    if (data.containsKey('operation_id')) {
+      context.handle(
+          _operationIdMeta,
+          operationId.isAcceptableOrUnknown(
+              data['operation_id']!, _operationIdMeta));
+    } else if (isInserting) {
+      context.missing(_operationIdMeta);
+    }
+    if (data.containsKey('binding_json')) {
+      context.handle(
+          _bindingJsonMeta,
+          bindingJson.isAcceptableOrUnknown(
+              data['binding_json']!, _bindingJsonMeta));
+    } else if (isInserting) {
+      context.missing(_bindingJsonMeta);
+    }
+    if (data.containsKey('audio_state')) {
+      context.handle(
+          _audioStateMeta,
+          audioState.isAcceptableOrUnknown(
+              data['audio_state']!, _audioStateMeta));
+    } else if (isInserting) {
+      context.missing(_audioStateMeta);
+    }
+    if (data.containsKey('metadata_state')) {
+      context.handle(
+          _metadataStateMeta,
+          metadataState.isAcceptableOrUnknown(
+              data['metadata_state']!, _metadataStateMeta));
+    } else if (isInserting) {
+      context.missing(_metadataStateMeta);
+    }
+    if (data.containsKey('state')) {
+      context.handle(
+          _stateMeta, state.isAcceptableOrUnknown(data['state']!, _stateMeta));
+    } else if (isInserting) {
+      context.missing(_stateMeta);
+    }
+    if (data.containsKey('problem_json')) {
+      context.handle(
+          _problemJsonMeta,
+          problemJson.isAcceptableOrUnknown(
+              data['problem_json']!, _problemJsonMeta));
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {dumpId};
+  @override
+  LocalDeletionTicketRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return LocalDeletionTicketRow(
+      dumpId: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}dump_id'])!,
+      incarnation: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}incarnation'])!,
+      ticketId: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}ticket_id'])!,
+      operationId: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}operation_id'])!,
+      bindingJson: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}binding_json'])!,
+      audioState: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}audio_state'])!,
+      metadataState: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}metadata_state'])!,
+      state: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}state'])!,
+      problemJson: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}problem_json']),
+    );
+  }
+
+  @override
+  $LocalDeletionTicketsTable createAlias(String alias) {
+    return $LocalDeletionTicketsTable(attachedDatabase, alias);
+  }
+}
+
+class LocalDeletionTicketRow extends DataClass
+    implements Insertable<LocalDeletionTicketRow> {
+  final String dumpId;
+  final String incarnation;
+  final String ticketId;
+  final String operationId;
+  final String bindingJson;
+  final String audioState;
+  final String metadataState;
+  final String state;
+  final String? problemJson;
+  const LocalDeletionTicketRow(
+      {required this.dumpId,
+      required this.incarnation,
+      required this.ticketId,
+      required this.operationId,
+      required this.bindingJson,
+      required this.audioState,
+      required this.metadataState,
+      required this.state,
+      this.problemJson});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['dump_id'] = Variable<String>(dumpId);
+    map['incarnation'] = Variable<String>(incarnation);
+    map['ticket_id'] = Variable<String>(ticketId);
+    map['operation_id'] = Variable<String>(operationId);
+    map['binding_json'] = Variable<String>(bindingJson);
+    map['audio_state'] = Variable<String>(audioState);
+    map['metadata_state'] = Variable<String>(metadataState);
+    map['state'] = Variable<String>(state);
+    if (!nullToAbsent || problemJson != null) {
+      map['problem_json'] = Variable<String>(problemJson);
+    }
+    return map;
+  }
+
+  LocalDeletionTicketsCompanion toCompanion(bool nullToAbsent) {
+    return LocalDeletionTicketsCompanion(
+      dumpId: Value(dumpId),
+      incarnation: Value(incarnation),
+      ticketId: Value(ticketId),
+      operationId: Value(operationId),
+      bindingJson: Value(bindingJson),
+      audioState: Value(audioState),
+      metadataState: Value(metadataState),
+      state: Value(state),
+      problemJson: problemJson == null && nullToAbsent
+          ? const Value.absent()
+          : Value(problemJson),
+    );
+  }
+
+  factory LocalDeletionTicketRow.fromJson(Map<String, dynamic> json,
+      {ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return LocalDeletionTicketRow(
+      dumpId: serializer.fromJson<String>(json['dumpId']),
+      incarnation: serializer.fromJson<String>(json['incarnation']),
+      ticketId: serializer.fromJson<String>(json['ticketId']),
+      operationId: serializer.fromJson<String>(json['operationId']),
+      bindingJson: serializer.fromJson<String>(json['bindingJson']),
+      audioState: serializer.fromJson<String>(json['audioState']),
+      metadataState: serializer.fromJson<String>(json['metadataState']),
+      state: serializer.fromJson<String>(json['state']),
+      problemJson: serializer.fromJson<String?>(json['problemJson']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'dumpId': serializer.toJson<String>(dumpId),
+      'incarnation': serializer.toJson<String>(incarnation),
+      'ticketId': serializer.toJson<String>(ticketId),
+      'operationId': serializer.toJson<String>(operationId),
+      'bindingJson': serializer.toJson<String>(bindingJson),
+      'audioState': serializer.toJson<String>(audioState),
+      'metadataState': serializer.toJson<String>(metadataState),
+      'state': serializer.toJson<String>(state),
+      'problemJson': serializer.toJson<String?>(problemJson),
+    };
+  }
+
+  LocalDeletionTicketRow copyWith(
+          {String? dumpId,
+          String? incarnation,
+          String? ticketId,
+          String? operationId,
+          String? bindingJson,
+          String? audioState,
+          String? metadataState,
+          String? state,
+          Value<String?> problemJson = const Value.absent()}) =>
+      LocalDeletionTicketRow(
+        dumpId: dumpId ?? this.dumpId,
+        incarnation: incarnation ?? this.incarnation,
+        ticketId: ticketId ?? this.ticketId,
+        operationId: operationId ?? this.operationId,
+        bindingJson: bindingJson ?? this.bindingJson,
+        audioState: audioState ?? this.audioState,
+        metadataState: metadataState ?? this.metadataState,
+        state: state ?? this.state,
+        problemJson: problemJson.present ? problemJson.value : this.problemJson,
+      );
+  LocalDeletionTicketRow copyWithCompanion(LocalDeletionTicketsCompanion data) {
+    return LocalDeletionTicketRow(
+      dumpId: data.dumpId.present ? data.dumpId.value : this.dumpId,
+      incarnation:
+          data.incarnation.present ? data.incarnation.value : this.incarnation,
+      ticketId: data.ticketId.present ? data.ticketId.value : this.ticketId,
+      operationId:
+          data.operationId.present ? data.operationId.value : this.operationId,
+      bindingJson:
+          data.bindingJson.present ? data.bindingJson.value : this.bindingJson,
+      audioState:
+          data.audioState.present ? data.audioState.value : this.audioState,
+      metadataState: data.metadataState.present
+          ? data.metadataState.value
+          : this.metadataState,
+      state: data.state.present ? data.state.value : this.state,
+      problemJson:
+          data.problemJson.present ? data.problemJson.value : this.problemJson,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('LocalDeletionTicketRow(')
+          ..write('dumpId: $dumpId, ')
+          ..write('incarnation: $incarnation, ')
+          ..write('ticketId: $ticketId, ')
+          ..write('operationId: $operationId, ')
+          ..write('bindingJson: $bindingJson, ')
+          ..write('audioState: $audioState, ')
+          ..write('metadataState: $metadataState, ')
+          ..write('state: $state, ')
+          ..write('problemJson: $problemJson')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(dumpId, incarnation, ticketId, operationId,
+      bindingJson, audioState, metadataState, state, problemJson);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is LocalDeletionTicketRow &&
+          other.dumpId == this.dumpId &&
+          other.incarnation == this.incarnation &&
+          other.ticketId == this.ticketId &&
+          other.operationId == this.operationId &&
+          other.bindingJson == this.bindingJson &&
+          other.audioState == this.audioState &&
+          other.metadataState == this.metadataState &&
+          other.state == this.state &&
+          other.problemJson == this.problemJson);
+}
+
+class LocalDeletionTicketsCompanion
+    extends UpdateCompanion<LocalDeletionTicketRow> {
+  final Value<String> dumpId;
+  final Value<String> incarnation;
+  final Value<String> ticketId;
+  final Value<String> operationId;
+  final Value<String> bindingJson;
+  final Value<String> audioState;
+  final Value<String> metadataState;
+  final Value<String> state;
+  final Value<String?> problemJson;
+  final Value<int> rowid;
+  const LocalDeletionTicketsCompanion({
+    this.dumpId = const Value.absent(),
+    this.incarnation = const Value.absent(),
+    this.ticketId = const Value.absent(),
+    this.operationId = const Value.absent(),
+    this.bindingJson = const Value.absent(),
+    this.audioState = const Value.absent(),
+    this.metadataState = const Value.absent(),
+    this.state = const Value.absent(),
+    this.problemJson = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  LocalDeletionTicketsCompanion.insert({
+    required String dumpId,
+    required String incarnation,
+    required String ticketId,
+    required String operationId,
+    required String bindingJson,
+    required String audioState,
+    required String metadataState,
+    required String state,
+    this.problemJson = const Value.absent(),
+    this.rowid = const Value.absent(),
+  })  : dumpId = Value(dumpId),
+        incarnation = Value(incarnation),
+        ticketId = Value(ticketId),
+        operationId = Value(operationId),
+        bindingJson = Value(bindingJson),
+        audioState = Value(audioState),
+        metadataState = Value(metadataState),
+        state = Value(state);
+  static Insertable<LocalDeletionTicketRow> custom({
+    Expression<String>? dumpId,
+    Expression<String>? incarnation,
+    Expression<String>? ticketId,
+    Expression<String>? operationId,
+    Expression<String>? bindingJson,
+    Expression<String>? audioState,
+    Expression<String>? metadataState,
+    Expression<String>? state,
+    Expression<String>? problemJson,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (dumpId != null) 'dump_id': dumpId,
+      if (incarnation != null) 'incarnation': incarnation,
+      if (ticketId != null) 'ticket_id': ticketId,
+      if (operationId != null) 'operation_id': operationId,
+      if (bindingJson != null) 'binding_json': bindingJson,
+      if (audioState != null) 'audio_state': audioState,
+      if (metadataState != null) 'metadata_state': metadataState,
+      if (state != null) 'state': state,
+      if (problemJson != null) 'problem_json': problemJson,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  LocalDeletionTicketsCompanion copyWith(
+      {Value<String>? dumpId,
+      Value<String>? incarnation,
+      Value<String>? ticketId,
+      Value<String>? operationId,
+      Value<String>? bindingJson,
+      Value<String>? audioState,
+      Value<String>? metadataState,
+      Value<String>? state,
+      Value<String?>? problemJson,
+      Value<int>? rowid}) {
+    return LocalDeletionTicketsCompanion(
+      dumpId: dumpId ?? this.dumpId,
+      incarnation: incarnation ?? this.incarnation,
+      ticketId: ticketId ?? this.ticketId,
+      operationId: operationId ?? this.operationId,
+      bindingJson: bindingJson ?? this.bindingJson,
+      audioState: audioState ?? this.audioState,
+      metadataState: metadataState ?? this.metadataState,
+      state: state ?? this.state,
+      problemJson: problemJson ?? this.problemJson,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (dumpId.present) {
+      map['dump_id'] = Variable<String>(dumpId.value);
+    }
+    if (incarnation.present) {
+      map['incarnation'] = Variable<String>(incarnation.value);
+    }
+    if (ticketId.present) {
+      map['ticket_id'] = Variable<String>(ticketId.value);
+    }
+    if (operationId.present) {
+      map['operation_id'] = Variable<String>(operationId.value);
+    }
+    if (bindingJson.present) {
+      map['binding_json'] = Variable<String>(bindingJson.value);
+    }
+    if (audioState.present) {
+      map['audio_state'] = Variable<String>(audioState.value);
+    }
+    if (metadataState.present) {
+      map['metadata_state'] = Variable<String>(metadataState.value);
+    }
+    if (state.present) {
+      map['state'] = Variable<String>(state.value);
+    }
+    if (problemJson.present) {
+      map['problem_json'] = Variable<String>(problemJson.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('LocalDeletionTicketsCompanion(')
+          ..write('dumpId: $dumpId, ')
+          ..write('incarnation: $incarnation, ')
+          ..write('ticketId: $ticketId, ')
+          ..write('operationId: $operationId, ')
+          ..write('bindingJson: $bindingJson, ')
+          ..write('audioState: $audioState, ')
+          ..write('metadataState: $metadataState, ')
+          ..write('state: $state, ')
+          ..write('problemJson: $problemJson, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$LocalDb extends GeneratedDatabase {
   _$LocalDb(QueryExecutor e) : super(e);
   $LocalDbManager get managers => $LocalDbManager(this);
   late final $DumpsTable dumps = $DumpsTable(this);
   late final $SyncQueueTable syncQueue = $SyncQueueTable(this);
+  late final $StorageLocationsTable storageLocations =
+      $StorageLocationsTable(this);
+  late final $StorageCatalogStatesTable storageCatalogStates =
+      $StorageCatalogStatesTable(this);
+  late final $RecordingBindingsTable recordingBindings =
+      $RecordingBindingsTable(this);
+  late final $CaptureReservationsTable captureReservations =
+      $CaptureReservationsTable(this);
+  late final $LocalDeletionBatchesTable localDeletionBatches =
+      $LocalDeletionBatchesTable(this);
+  late final $LocalDeletionTicketsTable localDeletionTickets =
+      $LocalDeletionTicketsTable(this);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
   @override
-  List<DatabaseSchemaEntity> get allSchemaEntities => [dumps, syncQueue];
+  List<DatabaseSchemaEntity> get allSchemaEntities => [
+        dumps,
+        syncQueue,
+        storageLocations,
+        storageCatalogStates,
+        recordingBindings,
+        captureReservations,
+        localDeletionBatches,
+        localDeletionTickets
+      ];
   @override
   StreamQueryUpdateRules get streamUpdateRules => const StreamQueryUpdateRules(
         [
@@ -2055,6 +4499,1247 @@ typedef $$SyncQueueTableProcessedTableManager = ProcessedTableManager<
     (SyncQueueRow, $$SyncQueueTableReferences),
     SyncQueueRow,
     PrefetchHooks Function({bool dumpId})>;
+typedef $$StorageLocationsTableCreateCompanionBuilder
+    = StorageLocationsCompanion Function({
+  required String id,
+  required String canonicalKey,
+  required String directoryJson,
+  required String label,
+  Value<bool> legacyRestore,
+  Value<int> rowid,
+});
+typedef $$StorageLocationsTableUpdateCompanionBuilder
+    = StorageLocationsCompanion Function({
+  Value<String> id,
+  Value<String> canonicalKey,
+  Value<String> directoryJson,
+  Value<String> label,
+  Value<bool> legacyRestore,
+  Value<int> rowid,
+});
+
+class $$StorageLocationsTableFilterComposer
+    extends Composer<_$LocalDb, $StorageLocationsTable> {
+  $$StorageLocationsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get id => $composableBuilder(
+      column: $table.id, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get canonicalKey => $composableBuilder(
+      column: $table.canonicalKey, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get directoryJson => $composableBuilder(
+      column: $table.directoryJson, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get label => $composableBuilder(
+      column: $table.label, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<bool> get legacyRestore => $composableBuilder(
+      column: $table.legacyRestore, builder: (column) => ColumnFilters(column));
+}
+
+class $$StorageLocationsTableOrderingComposer
+    extends Composer<_$LocalDb, $StorageLocationsTable> {
+  $$StorageLocationsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get id => $composableBuilder(
+      column: $table.id, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get canonicalKey => $composableBuilder(
+      column: $table.canonicalKey,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get directoryJson => $composableBuilder(
+      column: $table.directoryJson,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get label => $composableBuilder(
+      column: $table.label, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<bool> get legacyRestore => $composableBuilder(
+      column: $table.legacyRestore,
+      builder: (column) => ColumnOrderings(column));
+}
+
+class $$StorageLocationsTableAnnotationComposer
+    extends Composer<_$LocalDb, $StorageLocationsTable> {
+  $$StorageLocationsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<String> get canonicalKey => $composableBuilder(
+      column: $table.canonicalKey, builder: (column) => column);
+
+  GeneratedColumn<String> get directoryJson => $composableBuilder(
+      column: $table.directoryJson, builder: (column) => column);
+
+  GeneratedColumn<String> get label =>
+      $composableBuilder(column: $table.label, builder: (column) => column);
+
+  GeneratedColumn<bool> get legacyRestore => $composableBuilder(
+      column: $table.legacyRestore, builder: (column) => column);
+}
+
+class $$StorageLocationsTableTableManager extends RootTableManager<
+    _$LocalDb,
+    $StorageLocationsTable,
+    StorageLocationRow,
+    $$StorageLocationsTableFilterComposer,
+    $$StorageLocationsTableOrderingComposer,
+    $$StorageLocationsTableAnnotationComposer,
+    $$StorageLocationsTableCreateCompanionBuilder,
+    $$StorageLocationsTableUpdateCompanionBuilder,
+    (
+      StorageLocationRow,
+      BaseReferences<_$LocalDb, $StorageLocationsTable, StorageLocationRow>
+    ),
+    StorageLocationRow,
+    PrefetchHooks Function()> {
+  $$StorageLocationsTableTableManager(
+      _$LocalDb db, $StorageLocationsTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$StorageLocationsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$StorageLocationsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$StorageLocationsTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback: ({
+            Value<String> id = const Value.absent(),
+            Value<String> canonicalKey = const Value.absent(),
+            Value<String> directoryJson = const Value.absent(),
+            Value<String> label = const Value.absent(),
+            Value<bool> legacyRestore = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              StorageLocationsCompanion(
+            id: id,
+            canonicalKey: canonicalKey,
+            directoryJson: directoryJson,
+            label: label,
+            legacyRestore: legacyRestore,
+            rowid: rowid,
+          ),
+          createCompanionCallback: ({
+            required String id,
+            required String canonicalKey,
+            required String directoryJson,
+            required String label,
+            Value<bool> legacyRestore = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              StorageLocationsCompanion.insert(
+            id: id,
+            canonicalKey: canonicalKey,
+            directoryJson: directoryJson,
+            label: label,
+            legacyRestore: legacyRestore,
+            rowid: rowid,
+          ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ));
+}
+
+typedef $$StorageLocationsTableProcessedTableManager = ProcessedTableManager<
+    _$LocalDb,
+    $StorageLocationsTable,
+    StorageLocationRow,
+    $$StorageLocationsTableFilterComposer,
+    $$StorageLocationsTableOrderingComposer,
+    $$StorageLocationsTableAnnotationComposer,
+    $$StorageLocationsTableCreateCompanionBuilder,
+    $$StorageLocationsTableUpdateCompanionBuilder,
+    (
+      StorageLocationRow,
+      BaseReferences<_$LocalDb, $StorageLocationsTable, StorageLocationRow>
+    ),
+    StorageLocationRow,
+    PrefetchHooks Function()>;
+typedef $$StorageCatalogStatesTableCreateCompanionBuilder
+    = StorageCatalogStatesCompanion Function({
+  Value<int> id,
+  Value<String?> defaultLocationId,
+  Value<int> revision,
+  Value<int> bootstrapVersion,
+  Value<String?> legacyAnchorJson,
+  Value<String?> candidateJson,
+});
+typedef $$StorageCatalogStatesTableUpdateCompanionBuilder
+    = StorageCatalogStatesCompanion Function({
+  Value<int> id,
+  Value<String?> defaultLocationId,
+  Value<int> revision,
+  Value<int> bootstrapVersion,
+  Value<String?> legacyAnchorJson,
+  Value<String?> candidateJson,
+});
+
+class $$StorageCatalogStatesTableFilterComposer
+    extends Composer<_$LocalDb, $StorageCatalogStatesTable> {
+  $$StorageCatalogStatesTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get id => $composableBuilder(
+      column: $table.id, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get defaultLocationId => $composableBuilder(
+      column: $table.defaultLocationId,
+      builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get revision => $composableBuilder(
+      column: $table.revision, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get bootstrapVersion => $composableBuilder(
+      column: $table.bootstrapVersion,
+      builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get legacyAnchorJson => $composableBuilder(
+      column: $table.legacyAnchorJson,
+      builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get candidateJson => $composableBuilder(
+      column: $table.candidateJson, builder: (column) => ColumnFilters(column));
+}
+
+class $$StorageCatalogStatesTableOrderingComposer
+    extends Composer<_$LocalDb, $StorageCatalogStatesTable> {
+  $$StorageCatalogStatesTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get id => $composableBuilder(
+      column: $table.id, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get defaultLocationId => $composableBuilder(
+      column: $table.defaultLocationId,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get revision => $composableBuilder(
+      column: $table.revision, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get bootstrapVersion => $composableBuilder(
+      column: $table.bootstrapVersion,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get legacyAnchorJson => $composableBuilder(
+      column: $table.legacyAnchorJson,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get candidateJson => $composableBuilder(
+      column: $table.candidateJson,
+      builder: (column) => ColumnOrderings(column));
+}
+
+class $$StorageCatalogStatesTableAnnotationComposer
+    extends Composer<_$LocalDb, $StorageCatalogStatesTable> {
+  $$StorageCatalogStatesTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<String> get defaultLocationId => $composableBuilder(
+      column: $table.defaultLocationId, builder: (column) => column);
+
+  GeneratedColumn<int> get revision =>
+      $composableBuilder(column: $table.revision, builder: (column) => column);
+
+  GeneratedColumn<int> get bootstrapVersion => $composableBuilder(
+      column: $table.bootstrapVersion, builder: (column) => column);
+
+  GeneratedColumn<String> get legacyAnchorJson => $composableBuilder(
+      column: $table.legacyAnchorJson, builder: (column) => column);
+
+  GeneratedColumn<String> get candidateJson => $composableBuilder(
+      column: $table.candidateJson, builder: (column) => column);
+}
+
+class $$StorageCatalogStatesTableTableManager extends RootTableManager<
+    _$LocalDb,
+    $StorageCatalogStatesTable,
+    StorageCatalogStateRow,
+    $$StorageCatalogStatesTableFilterComposer,
+    $$StorageCatalogStatesTableOrderingComposer,
+    $$StorageCatalogStatesTableAnnotationComposer,
+    $$StorageCatalogStatesTableCreateCompanionBuilder,
+    $$StorageCatalogStatesTableUpdateCompanionBuilder,
+    (
+      StorageCatalogStateRow,
+      BaseReferences<_$LocalDb, $StorageCatalogStatesTable,
+          StorageCatalogStateRow>
+    ),
+    StorageCatalogStateRow,
+    PrefetchHooks Function()> {
+  $$StorageCatalogStatesTableTableManager(
+      _$LocalDb db, $StorageCatalogStatesTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$StorageCatalogStatesTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$StorageCatalogStatesTableOrderingComposer(
+                  $db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$StorageCatalogStatesTableAnnotationComposer(
+                  $db: db, $table: table),
+          updateCompanionCallback: ({
+            Value<int> id = const Value.absent(),
+            Value<String?> defaultLocationId = const Value.absent(),
+            Value<int> revision = const Value.absent(),
+            Value<int> bootstrapVersion = const Value.absent(),
+            Value<String?> legacyAnchorJson = const Value.absent(),
+            Value<String?> candidateJson = const Value.absent(),
+          }) =>
+              StorageCatalogStatesCompanion(
+            id: id,
+            defaultLocationId: defaultLocationId,
+            revision: revision,
+            bootstrapVersion: bootstrapVersion,
+            legacyAnchorJson: legacyAnchorJson,
+            candidateJson: candidateJson,
+          ),
+          createCompanionCallback: ({
+            Value<int> id = const Value.absent(),
+            Value<String?> defaultLocationId = const Value.absent(),
+            Value<int> revision = const Value.absent(),
+            Value<int> bootstrapVersion = const Value.absent(),
+            Value<String?> legacyAnchorJson = const Value.absent(),
+            Value<String?> candidateJson = const Value.absent(),
+          }) =>
+              StorageCatalogStatesCompanion.insert(
+            id: id,
+            defaultLocationId: defaultLocationId,
+            revision: revision,
+            bootstrapVersion: bootstrapVersion,
+            legacyAnchorJson: legacyAnchorJson,
+            candidateJson: candidateJson,
+          ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ));
+}
+
+typedef $$StorageCatalogStatesTableProcessedTableManager
+    = ProcessedTableManager<
+        _$LocalDb,
+        $StorageCatalogStatesTable,
+        StorageCatalogStateRow,
+        $$StorageCatalogStatesTableFilterComposer,
+        $$StorageCatalogStatesTableOrderingComposer,
+        $$StorageCatalogStatesTableAnnotationComposer,
+        $$StorageCatalogStatesTableCreateCompanionBuilder,
+        $$StorageCatalogStatesTableUpdateCompanionBuilder,
+        (
+          StorageCatalogStateRow,
+          BaseReferences<_$LocalDb, $StorageCatalogStatesTable,
+              StorageCatalogStateRow>
+        ),
+        StorageCatalogStateRow,
+        PrefetchHooks Function()>;
+typedef $$RecordingBindingsTableCreateCompanionBuilder
+    = RecordingBindingsCompanion Function({
+  required String dumpId,
+  required String incarnation,
+  Value<String?> locationId,
+  required String audioJson,
+  required String metadataName,
+  Value<String?> legacyAnchorJson,
+  Value<bool> resolved,
+  Value<int> rowid,
+});
+typedef $$RecordingBindingsTableUpdateCompanionBuilder
+    = RecordingBindingsCompanion Function({
+  Value<String> dumpId,
+  Value<String> incarnation,
+  Value<String?> locationId,
+  Value<String> audioJson,
+  Value<String> metadataName,
+  Value<String?> legacyAnchorJson,
+  Value<bool> resolved,
+  Value<int> rowid,
+});
+
+class $$RecordingBindingsTableFilterComposer
+    extends Composer<_$LocalDb, $RecordingBindingsTable> {
+  $$RecordingBindingsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get dumpId => $composableBuilder(
+      column: $table.dumpId, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get incarnation => $composableBuilder(
+      column: $table.incarnation, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get locationId => $composableBuilder(
+      column: $table.locationId, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get audioJson => $composableBuilder(
+      column: $table.audioJson, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get metadataName => $composableBuilder(
+      column: $table.metadataName, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get legacyAnchorJson => $composableBuilder(
+      column: $table.legacyAnchorJson,
+      builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<bool> get resolved => $composableBuilder(
+      column: $table.resolved, builder: (column) => ColumnFilters(column));
+}
+
+class $$RecordingBindingsTableOrderingComposer
+    extends Composer<_$LocalDb, $RecordingBindingsTable> {
+  $$RecordingBindingsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get dumpId => $composableBuilder(
+      column: $table.dumpId, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get incarnation => $composableBuilder(
+      column: $table.incarnation, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get locationId => $composableBuilder(
+      column: $table.locationId, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get audioJson => $composableBuilder(
+      column: $table.audioJson, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get metadataName => $composableBuilder(
+      column: $table.metadataName,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get legacyAnchorJson => $composableBuilder(
+      column: $table.legacyAnchorJson,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<bool> get resolved => $composableBuilder(
+      column: $table.resolved, builder: (column) => ColumnOrderings(column));
+}
+
+class $$RecordingBindingsTableAnnotationComposer
+    extends Composer<_$LocalDb, $RecordingBindingsTable> {
+  $$RecordingBindingsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get dumpId =>
+      $composableBuilder(column: $table.dumpId, builder: (column) => column);
+
+  GeneratedColumn<String> get incarnation => $composableBuilder(
+      column: $table.incarnation, builder: (column) => column);
+
+  GeneratedColumn<String> get locationId => $composableBuilder(
+      column: $table.locationId, builder: (column) => column);
+
+  GeneratedColumn<String> get audioJson =>
+      $composableBuilder(column: $table.audioJson, builder: (column) => column);
+
+  GeneratedColumn<String> get metadataName => $composableBuilder(
+      column: $table.metadataName, builder: (column) => column);
+
+  GeneratedColumn<String> get legacyAnchorJson => $composableBuilder(
+      column: $table.legacyAnchorJson, builder: (column) => column);
+
+  GeneratedColumn<bool> get resolved =>
+      $composableBuilder(column: $table.resolved, builder: (column) => column);
+}
+
+class $$RecordingBindingsTableTableManager extends RootTableManager<
+    _$LocalDb,
+    $RecordingBindingsTable,
+    RecordingBindingRow,
+    $$RecordingBindingsTableFilterComposer,
+    $$RecordingBindingsTableOrderingComposer,
+    $$RecordingBindingsTableAnnotationComposer,
+    $$RecordingBindingsTableCreateCompanionBuilder,
+    $$RecordingBindingsTableUpdateCompanionBuilder,
+    (
+      RecordingBindingRow,
+      BaseReferences<_$LocalDb, $RecordingBindingsTable, RecordingBindingRow>
+    ),
+    RecordingBindingRow,
+    PrefetchHooks Function()> {
+  $$RecordingBindingsTableTableManager(
+      _$LocalDb db, $RecordingBindingsTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$RecordingBindingsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$RecordingBindingsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$RecordingBindingsTableAnnotationComposer(
+                  $db: db, $table: table),
+          updateCompanionCallback: ({
+            Value<String> dumpId = const Value.absent(),
+            Value<String> incarnation = const Value.absent(),
+            Value<String?> locationId = const Value.absent(),
+            Value<String> audioJson = const Value.absent(),
+            Value<String> metadataName = const Value.absent(),
+            Value<String?> legacyAnchorJson = const Value.absent(),
+            Value<bool> resolved = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              RecordingBindingsCompanion(
+            dumpId: dumpId,
+            incarnation: incarnation,
+            locationId: locationId,
+            audioJson: audioJson,
+            metadataName: metadataName,
+            legacyAnchorJson: legacyAnchorJson,
+            resolved: resolved,
+            rowid: rowid,
+          ),
+          createCompanionCallback: ({
+            required String dumpId,
+            required String incarnation,
+            Value<String?> locationId = const Value.absent(),
+            required String audioJson,
+            required String metadataName,
+            Value<String?> legacyAnchorJson = const Value.absent(),
+            Value<bool> resolved = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              RecordingBindingsCompanion.insert(
+            dumpId: dumpId,
+            incarnation: incarnation,
+            locationId: locationId,
+            audioJson: audioJson,
+            metadataName: metadataName,
+            legacyAnchorJson: legacyAnchorJson,
+            resolved: resolved,
+            rowid: rowid,
+          ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ));
+}
+
+typedef $$RecordingBindingsTableProcessedTableManager = ProcessedTableManager<
+    _$LocalDb,
+    $RecordingBindingsTable,
+    RecordingBindingRow,
+    $$RecordingBindingsTableFilterComposer,
+    $$RecordingBindingsTableOrderingComposer,
+    $$RecordingBindingsTableAnnotationComposer,
+    $$RecordingBindingsTableCreateCompanionBuilder,
+    $$RecordingBindingsTableUpdateCompanionBuilder,
+    (
+      RecordingBindingRow,
+      BaseReferences<_$LocalDb, $RecordingBindingsTable, RecordingBindingRow>
+    ),
+    RecordingBindingRow,
+    PrefetchHooks Function()>;
+typedef $$CaptureReservationsTableCreateCompanionBuilder
+    = CaptureReservationsCompanion Function({
+  required String reservationId,
+  required String dumpId,
+  required String incarnation,
+  required String locationId,
+  required String stagingPath,
+  required String mode,
+  required int startedAt,
+  required String state,
+  required String processEpoch,
+  Value<String?> publicationJson,
+  Value<int> rowid,
+});
+typedef $$CaptureReservationsTableUpdateCompanionBuilder
+    = CaptureReservationsCompanion Function({
+  Value<String> reservationId,
+  Value<String> dumpId,
+  Value<String> incarnation,
+  Value<String> locationId,
+  Value<String> stagingPath,
+  Value<String> mode,
+  Value<int> startedAt,
+  Value<String> state,
+  Value<String> processEpoch,
+  Value<String?> publicationJson,
+  Value<int> rowid,
+});
+
+class $$CaptureReservationsTableFilterComposer
+    extends Composer<_$LocalDb, $CaptureReservationsTable> {
+  $$CaptureReservationsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get reservationId => $composableBuilder(
+      column: $table.reservationId, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get dumpId => $composableBuilder(
+      column: $table.dumpId, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get incarnation => $composableBuilder(
+      column: $table.incarnation, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get locationId => $composableBuilder(
+      column: $table.locationId, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get stagingPath => $composableBuilder(
+      column: $table.stagingPath, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get mode => $composableBuilder(
+      column: $table.mode, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get startedAt => $composableBuilder(
+      column: $table.startedAt, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get state => $composableBuilder(
+      column: $table.state, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get processEpoch => $composableBuilder(
+      column: $table.processEpoch, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get publicationJson => $composableBuilder(
+      column: $table.publicationJson,
+      builder: (column) => ColumnFilters(column));
+}
+
+class $$CaptureReservationsTableOrderingComposer
+    extends Composer<_$LocalDb, $CaptureReservationsTable> {
+  $$CaptureReservationsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get reservationId => $composableBuilder(
+      column: $table.reservationId,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get dumpId => $composableBuilder(
+      column: $table.dumpId, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get incarnation => $composableBuilder(
+      column: $table.incarnation, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get locationId => $composableBuilder(
+      column: $table.locationId, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get stagingPath => $composableBuilder(
+      column: $table.stagingPath, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get mode => $composableBuilder(
+      column: $table.mode, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get startedAt => $composableBuilder(
+      column: $table.startedAt, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get state => $composableBuilder(
+      column: $table.state, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get processEpoch => $composableBuilder(
+      column: $table.processEpoch,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get publicationJson => $composableBuilder(
+      column: $table.publicationJson,
+      builder: (column) => ColumnOrderings(column));
+}
+
+class $$CaptureReservationsTableAnnotationComposer
+    extends Composer<_$LocalDb, $CaptureReservationsTable> {
+  $$CaptureReservationsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get reservationId => $composableBuilder(
+      column: $table.reservationId, builder: (column) => column);
+
+  GeneratedColumn<String> get dumpId =>
+      $composableBuilder(column: $table.dumpId, builder: (column) => column);
+
+  GeneratedColumn<String> get incarnation => $composableBuilder(
+      column: $table.incarnation, builder: (column) => column);
+
+  GeneratedColumn<String> get locationId => $composableBuilder(
+      column: $table.locationId, builder: (column) => column);
+
+  GeneratedColumn<String> get stagingPath => $composableBuilder(
+      column: $table.stagingPath, builder: (column) => column);
+
+  GeneratedColumn<String> get mode =>
+      $composableBuilder(column: $table.mode, builder: (column) => column);
+
+  GeneratedColumn<int> get startedAt =>
+      $composableBuilder(column: $table.startedAt, builder: (column) => column);
+
+  GeneratedColumn<String> get state =>
+      $composableBuilder(column: $table.state, builder: (column) => column);
+
+  GeneratedColumn<String> get processEpoch => $composableBuilder(
+      column: $table.processEpoch, builder: (column) => column);
+
+  GeneratedColumn<String> get publicationJson => $composableBuilder(
+      column: $table.publicationJson, builder: (column) => column);
+}
+
+class $$CaptureReservationsTableTableManager extends RootTableManager<
+    _$LocalDb,
+    $CaptureReservationsTable,
+    CaptureReservationRow,
+    $$CaptureReservationsTableFilterComposer,
+    $$CaptureReservationsTableOrderingComposer,
+    $$CaptureReservationsTableAnnotationComposer,
+    $$CaptureReservationsTableCreateCompanionBuilder,
+    $$CaptureReservationsTableUpdateCompanionBuilder,
+    (
+      CaptureReservationRow,
+      BaseReferences<_$LocalDb, $CaptureReservationsTable,
+          CaptureReservationRow>
+    ),
+    CaptureReservationRow,
+    PrefetchHooks Function()> {
+  $$CaptureReservationsTableTableManager(
+      _$LocalDb db, $CaptureReservationsTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$CaptureReservationsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$CaptureReservationsTableOrderingComposer(
+                  $db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$CaptureReservationsTableAnnotationComposer(
+                  $db: db, $table: table),
+          updateCompanionCallback: ({
+            Value<String> reservationId = const Value.absent(),
+            Value<String> dumpId = const Value.absent(),
+            Value<String> incarnation = const Value.absent(),
+            Value<String> locationId = const Value.absent(),
+            Value<String> stagingPath = const Value.absent(),
+            Value<String> mode = const Value.absent(),
+            Value<int> startedAt = const Value.absent(),
+            Value<String> state = const Value.absent(),
+            Value<String> processEpoch = const Value.absent(),
+            Value<String?> publicationJson = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              CaptureReservationsCompanion(
+            reservationId: reservationId,
+            dumpId: dumpId,
+            incarnation: incarnation,
+            locationId: locationId,
+            stagingPath: stagingPath,
+            mode: mode,
+            startedAt: startedAt,
+            state: state,
+            processEpoch: processEpoch,
+            publicationJson: publicationJson,
+            rowid: rowid,
+          ),
+          createCompanionCallback: ({
+            required String reservationId,
+            required String dumpId,
+            required String incarnation,
+            required String locationId,
+            required String stagingPath,
+            required String mode,
+            required int startedAt,
+            required String state,
+            required String processEpoch,
+            Value<String?> publicationJson = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              CaptureReservationsCompanion.insert(
+            reservationId: reservationId,
+            dumpId: dumpId,
+            incarnation: incarnation,
+            locationId: locationId,
+            stagingPath: stagingPath,
+            mode: mode,
+            startedAt: startedAt,
+            state: state,
+            processEpoch: processEpoch,
+            publicationJson: publicationJson,
+            rowid: rowid,
+          ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ));
+}
+
+typedef $$CaptureReservationsTableProcessedTableManager = ProcessedTableManager<
+    _$LocalDb,
+    $CaptureReservationsTable,
+    CaptureReservationRow,
+    $$CaptureReservationsTableFilterComposer,
+    $$CaptureReservationsTableOrderingComposer,
+    $$CaptureReservationsTableAnnotationComposer,
+    $$CaptureReservationsTableCreateCompanionBuilder,
+    $$CaptureReservationsTableUpdateCompanionBuilder,
+    (
+      CaptureReservationRow,
+      BaseReferences<_$LocalDb, $CaptureReservationsTable,
+          CaptureReservationRow>
+    ),
+    CaptureReservationRow,
+    PrefetchHooks Function()>;
+typedef $$LocalDeletionBatchesTableCreateCompanionBuilder
+    = LocalDeletionBatchesCompanion Function({
+  required String operationId,
+  required String payloadJson,
+  required String resultsJson,
+  required String state,
+  Value<int> rowid,
+});
+typedef $$LocalDeletionBatchesTableUpdateCompanionBuilder
+    = LocalDeletionBatchesCompanion Function({
+  Value<String> operationId,
+  Value<String> payloadJson,
+  Value<String> resultsJson,
+  Value<String> state,
+  Value<int> rowid,
+});
+
+class $$LocalDeletionBatchesTableFilterComposer
+    extends Composer<_$LocalDb, $LocalDeletionBatchesTable> {
+  $$LocalDeletionBatchesTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get operationId => $composableBuilder(
+      column: $table.operationId, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get payloadJson => $composableBuilder(
+      column: $table.payloadJson, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get resultsJson => $composableBuilder(
+      column: $table.resultsJson, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get state => $composableBuilder(
+      column: $table.state, builder: (column) => ColumnFilters(column));
+}
+
+class $$LocalDeletionBatchesTableOrderingComposer
+    extends Composer<_$LocalDb, $LocalDeletionBatchesTable> {
+  $$LocalDeletionBatchesTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get operationId => $composableBuilder(
+      column: $table.operationId, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get payloadJson => $composableBuilder(
+      column: $table.payloadJson, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get resultsJson => $composableBuilder(
+      column: $table.resultsJson, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get state => $composableBuilder(
+      column: $table.state, builder: (column) => ColumnOrderings(column));
+}
+
+class $$LocalDeletionBatchesTableAnnotationComposer
+    extends Composer<_$LocalDb, $LocalDeletionBatchesTable> {
+  $$LocalDeletionBatchesTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get operationId => $composableBuilder(
+      column: $table.operationId, builder: (column) => column);
+
+  GeneratedColumn<String> get payloadJson => $composableBuilder(
+      column: $table.payloadJson, builder: (column) => column);
+
+  GeneratedColumn<String> get resultsJson => $composableBuilder(
+      column: $table.resultsJson, builder: (column) => column);
+
+  GeneratedColumn<String> get state =>
+      $composableBuilder(column: $table.state, builder: (column) => column);
+}
+
+class $$LocalDeletionBatchesTableTableManager extends RootTableManager<
+    _$LocalDb,
+    $LocalDeletionBatchesTable,
+    LocalDeletionBatchRow,
+    $$LocalDeletionBatchesTableFilterComposer,
+    $$LocalDeletionBatchesTableOrderingComposer,
+    $$LocalDeletionBatchesTableAnnotationComposer,
+    $$LocalDeletionBatchesTableCreateCompanionBuilder,
+    $$LocalDeletionBatchesTableUpdateCompanionBuilder,
+    (
+      LocalDeletionBatchRow,
+      BaseReferences<_$LocalDb, $LocalDeletionBatchesTable,
+          LocalDeletionBatchRow>
+    ),
+    LocalDeletionBatchRow,
+    PrefetchHooks Function()> {
+  $$LocalDeletionBatchesTableTableManager(
+      _$LocalDb db, $LocalDeletionBatchesTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$LocalDeletionBatchesTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$LocalDeletionBatchesTableOrderingComposer(
+                  $db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$LocalDeletionBatchesTableAnnotationComposer(
+                  $db: db, $table: table),
+          updateCompanionCallback: ({
+            Value<String> operationId = const Value.absent(),
+            Value<String> payloadJson = const Value.absent(),
+            Value<String> resultsJson = const Value.absent(),
+            Value<String> state = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              LocalDeletionBatchesCompanion(
+            operationId: operationId,
+            payloadJson: payloadJson,
+            resultsJson: resultsJson,
+            state: state,
+            rowid: rowid,
+          ),
+          createCompanionCallback: ({
+            required String operationId,
+            required String payloadJson,
+            required String resultsJson,
+            required String state,
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              LocalDeletionBatchesCompanion.insert(
+            operationId: operationId,
+            payloadJson: payloadJson,
+            resultsJson: resultsJson,
+            state: state,
+            rowid: rowid,
+          ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ));
+}
+
+typedef $$LocalDeletionBatchesTableProcessedTableManager
+    = ProcessedTableManager<
+        _$LocalDb,
+        $LocalDeletionBatchesTable,
+        LocalDeletionBatchRow,
+        $$LocalDeletionBatchesTableFilterComposer,
+        $$LocalDeletionBatchesTableOrderingComposer,
+        $$LocalDeletionBatchesTableAnnotationComposer,
+        $$LocalDeletionBatchesTableCreateCompanionBuilder,
+        $$LocalDeletionBatchesTableUpdateCompanionBuilder,
+        (
+          LocalDeletionBatchRow,
+          BaseReferences<_$LocalDb, $LocalDeletionBatchesTable,
+              LocalDeletionBatchRow>
+        ),
+        LocalDeletionBatchRow,
+        PrefetchHooks Function()>;
+typedef $$LocalDeletionTicketsTableCreateCompanionBuilder
+    = LocalDeletionTicketsCompanion Function({
+  required String dumpId,
+  required String incarnation,
+  required String ticketId,
+  required String operationId,
+  required String bindingJson,
+  required String audioState,
+  required String metadataState,
+  required String state,
+  Value<String?> problemJson,
+  Value<int> rowid,
+});
+typedef $$LocalDeletionTicketsTableUpdateCompanionBuilder
+    = LocalDeletionTicketsCompanion Function({
+  Value<String> dumpId,
+  Value<String> incarnation,
+  Value<String> ticketId,
+  Value<String> operationId,
+  Value<String> bindingJson,
+  Value<String> audioState,
+  Value<String> metadataState,
+  Value<String> state,
+  Value<String?> problemJson,
+  Value<int> rowid,
+});
+
+class $$LocalDeletionTicketsTableFilterComposer
+    extends Composer<_$LocalDb, $LocalDeletionTicketsTable> {
+  $$LocalDeletionTicketsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get dumpId => $composableBuilder(
+      column: $table.dumpId, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get incarnation => $composableBuilder(
+      column: $table.incarnation, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get ticketId => $composableBuilder(
+      column: $table.ticketId, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get operationId => $composableBuilder(
+      column: $table.operationId, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get bindingJson => $composableBuilder(
+      column: $table.bindingJson, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get audioState => $composableBuilder(
+      column: $table.audioState, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get metadataState => $composableBuilder(
+      column: $table.metadataState, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get state => $composableBuilder(
+      column: $table.state, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get problemJson => $composableBuilder(
+      column: $table.problemJson, builder: (column) => ColumnFilters(column));
+}
+
+class $$LocalDeletionTicketsTableOrderingComposer
+    extends Composer<_$LocalDb, $LocalDeletionTicketsTable> {
+  $$LocalDeletionTicketsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get dumpId => $composableBuilder(
+      column: $table.dumpId, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get incarnation => $composableBuilder(
+      column: $table.incarnation, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get ticketId => $composableBuilder(
+      column: $table.ticketId, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get operationId => $composableBuilder(
+      column: $table.operationId, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get bindingJson => $composableBuilder(
+      column: $table.bindingJson, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get audioState => $composableBuilder(
+      column: $table.audioState, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get metadataState => $composableBuilder(
+      column: $table.metadataState,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get state => $composableBuilder(
+      column: $table.state, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get problemJson => $composableBuilder(
+      column: $table.problemJson, builder: (column) => ColumnOrderings(column));
+}
+
+class $$LocalDeletionTicketsTableAnnotationComposer
+    extends Composer<_$LocalDb, $LocalDeletionTicketsTable> {
+  $$LocalDeletionTicketsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get dumpId =>
+      $composableBuilder(column: $table.dumpId, builder: (column) => column);
+
+  GeneratedColumn<String> get incarnation => $composableBuilder(
+      column: $table.incarnation, builder: (column) => column);
+
+  GeneratedColumn<String> get ticketId =>
+      $composableBuilder(column: $table.ticketId, builder: (column) => column);
+
+  GeneratedColumn<String> get operationId => $composableBuilder(
+      column: $table.operationId, builder: (column) => column);
+
+  GeneratedColumn<String> get bindingJson => $composableBuilder(
+      column: $table.bindingJson, builder: (column) => column);
+
+  GeneratedColumn<String> get audioState => $composableBuilder(
+      column: $table.audioState, builder: (column) => column);
+
+  GeneratedColumn<String> get metadataState => $composableBuilder(
+      column: $table.metadataState, builder: (column) => column);
+
+  GeneratedColumn<String> get state =>
+      $composableBuilder(column: $table.state, builder: (column) => column);
+
+  GeneratedColumn<String> get problemJson => $composableBuilder(
+      column: $table.problemJson, builder: (column) => column);
+}
+
+class $$LocalDeletionTicketsTableTableManager extends RootTableManager<
+    _$LocalDb,
+    $LocalDeletionTicketsTable,
+    LocalDeletionTicketRow,
+    $$LocalDeletionTicketsTableFilterComposer,
+    $$LocalDeletionTicketsTableOrderingComposer,
+    $$LocalDeletionTicketsTableAnnotationComposer,
+    $$LocalDeletionTicketsTableCreateCompanionBuilder,
+    $$LocalDeletionTicketsTableUpdateCompanionBuilder,
+    (
+      LocalDeletionTicketRow,
+      BaseReferences<_$LocalDb, $LocalDeletionTicketsTable,
+          LocalDeletionTicketRow>
+    ),
+    LocalDeletionTicketRow,
+    PrefetchHooks Function()> {
+  $$LocalDeletionTicketsTableTableManager(
+      _$LocalDb db, $LocalDeletionTicketsTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$LocalDeletionTicketsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$LocalDeletionTicketsTableOrderingComposer(
+                  $db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$LocalDeletionTicketsTableAnnotationComposer(
+                  $db: db, $table: table),
+          updateCompanionCallback: ({
+            Value<String> dumpId = const Value.absent(),
+            Value<String> incarnation = const Value.absent(),
+            Value<String> ticketId = const Value.absent(),
+            Value<String> operationId = const Value.absent(),
+            Value<String> bindingJson = const Value.absent(),
+            Value<String> audioState = const Value.absent(),
+            Value<String> metadataState = const Value.absent(),
+            Value<String> state = const Value.absent(),
+            Value<String?> problemJson = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              LocalDeletionTicketsCompanion(
+            dumpId: dumpId,
+            incarnation: incarnation,
+            ticketId: ticketId,
+            operationId: operationId,
+            bindingJson: bindingJson,
+            audioState: audioState,
+            metadataState: metadataState,
+            state: state,
+            problemJson: problemJson,
+            rowid: rowid,
+          ),
+          createCompanionCallback: ({
+            required String dumpId,
+            required String incarnation,
+            required String ticketId,
+            required String operationId,
+            required String bindingJson,
+            required String audioState,
+            required String metadataState,
+            required String state,
+            Value<String?> problemJson = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              LocalDeletionTicketsCompanion.insert(
+            dumpId: dumpId,
+            incarnation: incarnation,
+            ticketId: ticketId,
+            operationId: operationId,
+            bindingJson: bindingJson,
+            audioState: audioState,
+            metadataState: metadataState,
+            state: state,
+            problemJson: problemJson,
+            rowid: rowid,
+          ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ));
+}
+
+typedef $$LocalDeletionTicketsTableProcessedTableManager
+    = ProcessedTableManager<
+        _$LocalDb,
+        $LocalDeletionTicketsTable,
+        LocalDeletionTicketRow,
+        $$LocalDeletionTicketsTableFilterComposer,
+        $$LocalDeletionTicketsTableOrderingComposer,
+        $$LocalDeletionTicketsTableAnnotationComposer,
+        $$LocalDeletionTicketsTableCreateCompanionBuilder,
+        $$LocalDeletionTicketsTableUpdateCompanionBuilder,
+        (
+          LocalDeletionTicketRow,
+          BaseReferences<_$LocalDb, $LocalDeletionTicketsTable,
+              LocalDeletionTicketRow>
+        ),
+        LocalDeletionTicketRow,
+        PrefetchHooks Function()>;
 
 class $LocalDbManager {
   final _$LocalDb _db;
@@ -2063,4 +5748,16 @@ class $LocalDbManager {
       $$DumpsTableTableManager(_db, _db.dumps);
   $$SyncQueueTableTableManager get syncQueue =>
       $$SyncQueueTableTableManager(_db, _db.syncQueue);
+  $$StorageLocationsTableTableManager get storageLocations =>
+      $$StorageLocationsTableTableManager(_db, _db.storageLocations);
+  $$StorageCatalogStatesTableTableManager get storageCatalogStates =>
+      $$StorageCatalogStatesTableTableManager(_db, _db.storageCatalogStates);
+  $$RecordingBindingsTableTableManager get recordingBindings =>
+      $$RecordingBindingsTableTableManager(_db, _db.recordingBindings);
+  $$CaptureReservationsTableTableManager get captureReservations =>
+      $$CaptureReservationsTableTableManager(_db, _db.captureReservations);
+  $$LocalDeletionBatchesTableTableManager get localDeletionBatches =>
+      $$LocalDeletionBatchesTableTableManager(_db, _db.localDeletionBatches);
+  $$LocalDeletionTicketsTableTableManager get localDeletionTickets =>
+      $$LocalDeletionTicketsTableTableManager(_db, _db.localDeletionTickets);
 }

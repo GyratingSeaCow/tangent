@@ -10,6 +10,7 @@ import 'package:uuid/uuid.dart';
 
 import '../models/sync_status.dart';
 import '../models/transcription_status.dart';
+import 'storage/storage_tables.dart';
 
 part 'local_db.g.dart';
 
@@ -52,20 +53,32 @@ class SyncQueue extends Table {
   DateTimeColumn get queuedAt => dateTime()();
 }
 
-@DriftDatabase(tables: [Dumps, SyncQueue])
+@DriftDatabase(
+  tables: [
+    Dumps,
+    SyncQueue,
+    StorageLocations,
+    StorageCatalogStates,
+    RecordingBindings,
+    CaptureReservations,
+    LocalDeletionBatches,
+    LocalDeletionTickets,
+  ],
+)
 class LocalDb extends _$LocalDb {
   LocalDb() : super(_openConnection());
 
   LocalDb.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 4;
+  int get schemaVersion => 5;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
         onCreate: (m) async {
           await m.createAll();
           await _createFtsInfrastructure();
+          await initializeStorageCatalogRows();
         },
         onUpgrade: (m, from, to) async {
           if (from < 2) {
@@ -103,8 +116,33 @@ class LocalDb extends _$LocalDb {
               'ELSE NULL END',
             );
           }
+          if (from < 5) {
+            await _createStorageCatalog(m);
+          }
         },
       );
+
+  Future<void> _createStorageCatalog(Migrator m) async {
+    await m.createTable(storageLocations);
+    await m.createTable(storageCatalogStates);
+    await m.createTable(recordingBindings);
+    await m.createTable(captureReservations);
+    await m.createTable(localDeletionBatches);
+    await m.createTable(localDeletionTickets);
+    await initializeStorageCatalogRows();
+  }
+
+  Future<void> initializeStorageCatalogRows() async {
+    await customStatement(
+      'INSERT OR IGNORE INTO storage_catalog_state(id) VALUES(1)',
+    );
+    await customStatement(
+      'CREATE INDEX IF NOT EXISTS capture_state_idx ON capture_reservations(state)',
+    );
+    await customStatement(
+      'CREATE INDEX IF NOT EXISTS deletion_state_idx ON local_deletion_tickets(state)',
+    );
+  }
 
   Future<void> _createFtsInfrastructure() async {
     await customStatement(
