@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:drift/native.dart';
@@ -24,6 +26,37 @@ import 'package:tangent/services/transcription_client.dart';
 
 class _StubClient extends TranscriptionClient {
   _StubClient() : super(baseUrl: 'http://test');
+}
+
+class _StorageRecoveryClient extends TranscriptionClient {
+  _StorageRecoveryClient(this.db) : super(baseUrl: 'http://test');
+
+  final LocalDb db;
+  int getJobCalls = 0;
+  DumpRow? rowWhenRecoveryStarted;
+  Completer<TranscriptionJobSnapshot>? _pendingGet;
+
+  @override
+  Future<TranscriptionJobSnapshot> getJob(String jobId) async {
+    rowWhenRecoveryStarted = await db.getDump('import-recovery');
+    getJobCalls += 1;
+    final pending = Completer<TranscriptionJobSnapshot>();
+    _pendingGet = pending;
+    return pending.future;
+  }
+
+  void completeRecovery() {
+    _pendingGet!.complete(
+      const TranscriptionJobSnapshot(
+        id: 'job-import',
+        requestId: 'request-import',
+        dumpId: 'import-recovery',
+        status: 'completed',
+        model: 'large-v3',
+        transcript: 'recovered immediately after import',
+      ),
+    );
+  }
 }
 
 class _NoopScreenAwake implements ScreenAwake {
@@ -116,6 +149,93 @@ void main() {
     expect(tester.takeException(), isNull);
 
     await tester.pumpWidget(const SizedBox.shrink());
+    temp.deleteSync(recursive: true);
+  });
+
+  testWidgets(
+      'storage access imports rows then starts recovery without blocking readiness',
+      (tester) async {
+    final temp = Directory.systemTemp.createTempSync('tangent-storage-ready-');
+    final db = LocalDb.forTesting(NativeDatabase.memory());
+    final storage = AudioStorage.test(temp);
+    final client = _StorageRecoveryClient(db);
+    storage.pathFor('import-recovery').writeAsBytesSync([1, 2, 3]);
+    storage.metaPathFor('import-recovery').writeAsStringSync(
+          jsonEncode({
+            'schemaVersion': 2,
+            'id': 'import-recovery',
+            'createdAt': DateTime.utc(2026, 9, 15).toIso8601String(),
+            'updatedAt': DateTime.utc(2026, 9, 15).toIso8601String(),
+            'mode': 'brain_dump',
+            'durationSeconds': 5,
+            'title': 'Imported recovery',
+            'transcriptionStatus': 'running',
+            'transcriptionRequestId': 'request-import',
+            'transcriptionJobId': 'job-import',
+            'transcriptionAttempt': 1,
+          }),
+        );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          localDbProvider.overrideWithValue(db),
+          audioStorageProvider.overrideWithValue(storage),
+          transcriptionClientProvider.overrideWith((ref) => client),
+          storageReadyProvider.overrideWith((ref) => false),
+        ],
+        child: const MaterialApp(home: StorageSetupScreen()),
+      ),
+    );
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(StorageSetupScreen)),
+    );
+    final chooseButton = tester.widget<FilledButton>(
+      find.byWidgetPredicate((widget) => widget is FilledButton),
+    );
+
+    await tester.runAsync(() async {
+      chooseButton.onPressed!();
+      final deadline = DateTime.now().add(const Duration(seconds: 2));
+      while (client.getJobCalls == 0) {
+        if (DateTime.now().isAfter(deadline)) {
+          fail('storage readiness did not start transcription recovery');
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 1));
+      }
+    });
+    await tester.pump();
+
+    expect(client.rowWhenRecoveryStarted?.id, 'import-recovery');
+    expect(client.rowWhenRecoveryStarted?.transcriptionStatus, 'running');
+    expect(container.read(storageReadyProvider), isTrue);
+    expect(find.text('Choose folder'), findsOneWidget);
+    expect(find.text('Opening…'), findsNothing);
+
+    await tester.runAsync(() async {
+      client.completeRecovery();
+      final deadline = DateTime.now().add(const Duration(seconds: 2));
+      while (true) {
+        final recovered = await db.getDump('import-recovery');
+        if (recovered?.transcriptionStatus == 'completed' &&
+            recovered?.transcriptionError == null) {
+          break;
+        }
+        if (DateTime.now().isAfter(deadline)) {
+          fail('imported durable row did not finish recovery');
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 1));
+      }
+    });
+
+    final recovered = (await db.getDump('import-recovery'))!;
+    expect(recovered.transcript, 'recovered immediately after import');
+    expect(recovered.transcriptionRequestId, 'request-import');
+    expect(recovered.transcriptionJobId, 'job-import');
+    expect(recovered.transcriptionAttempt, 1);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await db.close();
     temp.deleteSync(recursive: true);
   });
 

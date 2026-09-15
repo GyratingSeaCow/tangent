@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/audio_storage.dart';
@@ -25,11 +27,13 @@ final connectivityServiceProvider = Provider<ConnectivityService>((ref) {
 /// container and listens for the SSE transcript event.
 final serverTranscriptionServiceProvider =
     ChangeNotifierProvider<ServerTranscriptionService>((ref) {
-  return ServerTranscriptionService(
+  final service = ServerTranscriptionService(
     client: ref.watch(transcriptionClientProvider),
     db: ref.watch(localDbProvider),
     audioStorage: ref.watch(audioStorageProvider),
   );
+  unawaited(service.reconcilePending());
+  return service;
 });
 
 final recordingPlaybackEngineFactoryProvider =

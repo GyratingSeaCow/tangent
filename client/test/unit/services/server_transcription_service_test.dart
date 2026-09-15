@@ -359,6 +359,109 @@ void main() {
     expect(completed.transcriptionCompletedAt, isNotNull);
   });
 
+  test('dispose cancels the active stream and preserves its durable identity',
+      () async {
+    await seedRow(row());
+    final streamStarted = Completer<void>();
+    final streamCanceled = Completer<void>();
+    final stream = StreamController<JobEvent>.broadcast(
+      onCancel: streamCanceled.complete,
+    );
+    final fake = _FakeTranscriptionClient(
+      completedTranscript: 'unused',
+      onStreamStart: streamStarted.complete,
+      streamForJob: (_) => stream.stream,
+    );
+    final service = ServerTranscriptionService(
+      client: fake,
+      db: db,
+      audioStorage: storage,
+      requestIdFactory: () => 'request-active',
+    );
+    var disposed = false;
+    addTearDown(() {
+      if (!disposed) service.dispose();
+    });
+    addTearDown(stream.close);
+
+    final operation = service.transcribeDump('r1');
+    await streamStarted.future;
+    final beforeDispose = (await db.getDump('r1'))!;
+
+    service.dispose();
+    disposed = true;
+    await streamCanceled.future.timeout(const Duration(milliseconds: 200));
+    stream.add(
+      const JobEvent('completed', {'transcript': 'must be ignored'}),
+    );
+    await operation.timeout(const Duration(milliseconds: 200));
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+
+    final afterLateEvent = (await db.getDump('r1'))!;
+    expect(
+      afterLateEvent.transcriptionStatus,
+      beforeDispose.transcriptionStatus,
+    );
+    expect(afterLateEvent.transcript, beforeDispose.transcript);
+    expect(afterLateEvent.transcriptionError, beforeDispose.transcriptionError);
+    expect(afterLateEvent.transcriptionRequestId, 'request-active');
+    expect(afterLateEvent.transcriptionJobId, 'job-r1');
+    expect(afterLateEvent.transcriptionAttempt, 1);
+    expect(storage.metaPathFor('r1').existsSync(), isFalse);
+  });
+
+  test('dispose prevents a pending enqueue from starting a late stream',
+      () async {
+    await seedRow(row());
+    final enqueueStarted = Completer<void>();
+    final enqueueResult = Completer<TranscriptionJobSnapshot>();
+    final fake = _FakeTranscriptionClient(
+      completedTranscript: 'must not run',
+      onEnqueue: (dumpId, requestId, model) {
+        enqueueStarted.complete();
+        return enqueueResult.future;
+      },
+    );
+    final service = ServerTranscriptionService(
+      client: fake,
+      db: db,
+      audioStorage: storage,
+      requestIdFactory: () => 'request-pending-enqueue',
+    );
+    var disposed = false;
+    addTearDown(() {
+      if (!disposed) service.dispose();
+    });
+
+    final operation = service.transcribeDump('r1');
+    await enqueueStarted.future;
+    final beforeDispose = (await db.getDump('r1'))!;
+
+    service.dispose();
+    disposed = true;
+    enqueueResult.complete(
+      const TranscriptionJobSnapshot(
+        id: 'job-late-enqueue',
+        requestId: 'request-pending-enqueue',
+        dumpId: 'r1',
+        status: 'queued',
+        model: 'large-v3',
+      ),
+    );
+    await operation.timeout(const Duration(milliseconds: 200));
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+
+    final afterLateResponse = (await db.getDump('r1'))!;
+    expect(fake.streamJobCalls, 0);
+    expect(
+      afterLateResponse.transcriptionStatus,
+      beforeDispose.transcriptionStatus,
+    );
+    expect(afterLateResponse.transcriptionRequestId, 'request-pending-enqueue');
+    expect(afterLateResponse.transcriptionJobId, isNull);
+    expect(afterLateResponse.transcriptionAttempt, 1);
+  });
+
   test('commits the winning completion before writing its sidecar', () async {
     await seedRow(row());
     final fake = _FakeTranscriptionClient(
@@ -842,6 +945,69 @@ void main() {
     expect(fake.createCalls, 0);
     expect(fake.uploadCalls, 0);
     expect(fake.enqueueCalls, 0);
+  });
+
+  test('dispose cancels a reattached stream and ignores late completion',
+      () async {
+    await seedRow(
+      row(
+        transcriptionStatus: 'running',
+        transcriptionRequestId: 'request-existing',
+        transcriptionJobId: 'job-existing',
+        transcriptionAttempt: 2,
+      ),
+    );
+    final streamStarted = Completer<void>();
+    final streamCanceled = Completer<void>();
+    final stream = StreamController<JobEvent>.broadcast(
+      onCancel: streamCanceled.complete,
+    );
+    final fake = _FakeTranscriptionClient(
+      completedTranscript: 'unused',
+      onGetJob: (jobId) => const TranscriptionJobSnapshot(
+        id: 'job-existing',
+        requestId: 'request-existing',
+        dumpId: 'r1',
+        status: 'running',
+        model: 'large-v3',
+      ),
+      onStreamStart: streamStarted.complete,
+      streamForJob: (_) => stream.stream,
+    );
+    final service = ServerTranscriptionService(
+      client: fake,
+      db: db,
+      audioStorage: storage,
+    );
+    var disposed = false;
+    addTearDown(() {
+      if (!disposed) service.dispose();
+    });
+    addTearDown(stream.close);
+
+    await service.reconcilePending();
+    await streamStarted.future;
+    final beforeDispose = (await db.getDump('r1'))!;
+
+    service.dispose();
+    disposed = true;
+    await streamCanceled.future.timeout(const Duration(milliseconds: 200));
+    stream.add(
+      const JobEvent('completed', {'transcript': 'must be ignored'}),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+
+    final afterLateEvent = (await db.getDump('r1'))!;
+    expect(
+      afterLateEvent.transcriptionStatus,
+      beforeDispose.transcriptionStatus,
+    );
+    expect(afterLateEvent.transcript, beforeDispose.transcript);
+    expect(afterLateEvent.transcriptionError, beforeDispose.transcriptionError);
+    expect(afterLateEvent.transcriptionRequestId, 'request-existing');
+    expect(afterLateEvent.transcriptionJobId, 'job-existing');
+    expect(afterLateEvent.transcriptionAttempt, 2);
+    expect(storage.metaPathFor('r1').existsSync(), isFalse);
   });
 
   test('persists completion received from a reattached job stream', () async {

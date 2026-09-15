@@ -27,6 +27,24 @@ final class _QueuedTranscription {
   final Completer<void> completer = Completer<void>();
 }
 
+final class _OwnedJobEventStream {
+  _OwnedJobEventStream(Stream<JobEvent> stream)
+      : iterator = StreamIterator<JobEvent>(stream);
+
+  final StreamIterator<JobEvent> iterator;
+  Future<void>? _cancellation;
+
+  Future<void> cancel() => _cancellation ??= _cancel();
+
+  Future<void> _cancel() async {
+    try {
+      await iterator.cancel();
+    } catch (_) {
+      // Cancellation is best-effort during synchronous service disposal.
+    }
+  }
+}
+
 class ServerTranscriptionService extends ChangeNotifier {
   ServerTranscriptionService({
     required TranscriptionClient client,
@@ -58,9 +76,10 @@ class ServerTranscriptionService extends ChangeNotifier {
 
   final List<_QueuedTranscription> _queue = [];
   final Map<String, DumpRow> _durableRows = {};
-  final Map<String, Future<void>> _reattachments = {};
+  final Map<String, _OwnedJobEventStream> _reattachments = {};
   Future<void>? _reconciliationScan;
   _QueuedTranscription? _activeJob;
+  _OwnedJobEventStream? _activeStream;
   ServerTranscriptionOperation _activeOperation =
       const ServerTranscriptionOperation.idle();
   String? _lastDumpId;
@@ -261,19 +280,27 @@ class ServerTranscriptionService extends ChangeNotifier {
 
   void _startReattachment(DumpRow row, String jobId) {
     if (_disposed || _reattachments.containsKey(row.id)) return;
-    late final Future<void> attachment;
-    attachment = _watchReattachedJob(row, jobId).whenComplete(() {
+    final attachment = _OwnedJobEventStream(_client.streamJob(jobId));
+    _reattachments[row.id] = attachment;
+    final watcher =
+        _watchReattachedJob(row, jobId, attachment).whenComplete(() async {
       if (identical(_reattachments[row.id], attachment)) {
         _reattachments.remove(row.id);
       }
+      await attachment.cancel();
     });
-    _reattachments[row.id] = attachment;
-    unawaited(attachment);
+    unawaited(watcher);
   }
 
-  Future<void> _watchReattachedJob(DumpRow row, String jobId) async {
+  Future<void> _watchReattachedJob(
+    DumpRow row,
+    String jobId,
+    _OwnedJobEventStream attachment,
+  ) async {
     try {
-      await for (final event in _client.streamJob(jobId)) {
+      while (await attachment.iterator.moveNext()) {
+        if (_disposed) return;
+        final event = attachment.iterator.current;
         switch (event.status) {
           case 'completed':
             final transcript = event.data['transcript']?.toString().trim();
@@ -311,12 +338,14 @@ class ServerTranscriptionService extends ChangeNotifier {
             break;
         }
       }
+      if (_disposed) return;
       await _storeReattachmentError(
         row,
         jobId,
         'Event stream ended before a terminal event',
       );
     } catch (error) {
+      if (_disposed) return;
       await _storeReattachmentError(row, jobId, error.toString());
     }
   }
@@ -326,6 +355,7 @@ class ServerTranscriptionService extends ChangeNotifier {
     String jobId,
     String error,
   ) async {
+    if (_disposed) return;
     await _persistRecoverable(
       row,
       marker: 'reconciliation_pending: $error',
@@ -338,6 +368,7 @@ class ServerTranscriptionService extends ChangeNotifier {
     DumpRow row,
     String transcript,
   ) async {
+    if (_disposed) return;
     final meetingNotes = row.mode == 'meeting'
         ? _meetingNotesProcessor.process(
             title: row.title,
@@ -457,6 +488,7 @@ class ServerTranscriptionService extends ChangeNotifier {
     String? remoteJobId;
     try {
       final existing = await _db.getDump(dumpId);
+      _throwIfDisposed();
       if (existing == null) {
         throw const LocalTranscriptionServerError('Dump not found');
       }
@@ -470,9 +502,11 @@ class ServerTranscriptionService extends ChangeNotifier {
         requestId: _requestIdFactory(),
         now: _now(),
       );
+      _throwIfDisposed();
       attemptRow = row;
       _durableRows[row.id] = row;
       final audioBytes = await _audioStorage.readBytes(row.id);
+      _throwIfDisposed();
       if (audioBytes.isEmpty) {
         throw const LocalTranscriptionServerError('Audio file is empty');
       }
@@ -487,10 +521,12 @@ class ServerTranscriptionService extends ChangeNotifier {
         title: row.title,
         createdAt: row.createdAt,
       );
+      _throwIfDisposed();
       await _client.uploadAudio(
         dumpId: row.id,
         audioBytes: audioBytes,
       );
+      _throwIfDisposed();
 
       _activeOperation = ServerTranscriptionOperation(
         status: ServerTranscriptionStatus.queued,
@@ -505,7 +541,9 @@ class ServerTranscriptionService extends ChangeNotifier {
           row.id,
           requestId: row.transcriptionRequestId!,
         );
+        _throwIfDisposed();
       } catch (error) {
+        _throwIfDisposed();
         if (_isDefinitiveEnqueueRejection(error)) rethrow;
         final marker = 'enqueue_pending: $error';
         await _guardedStatus(
@@ -521,52 +559,66 @@ class ServerTranscriptionService extends ChangeNotifier {
         status: TranscriptionStatus.queued,
         jobId: job.id,
       );
+      _throwIfDisposed();
       if (!queuedWon) throw const _StaleTranscriptionAttempt();
       _durableRows[row.id] = await _readCurrentAttempt(row);
+      _throwIfDisposed();
       String? transcript;
       var sawCompleted = false;
-      await for (final event in _client.streamJob(job.id)) {
-        switch (event.status) {
-          case 'queued':
-            // Server confirmed queue position; no action needed.
-            break;
-          case 'running':
-            final runningWon = await _guardedStatus(
-              row,
-              status: TranscriptionStatus.running,
-              jobId: job.id,
-            );
-            if (!runningWon) throw const _StaleTranscriptionAttempt();
-            _durableRows[row.id] = await _readCurrentAttempt(row);
-            _activeOperation = ServerTranscriptionOperation(
-              status: ServerTranscriptionStatus.running,
-              dumpId: dumpId,
-              startedAt: _activeOperation.startedAt,
-            );
-            _notify();
-          case 'completed':
-            sawCompleted = true;
-            transcript = event.data['transcript']?.toString().trim() ?? '';
-            break;
-          case 'failed':
-            throw LocalTranscriptionServerError(
-              event.data['error']?.toString() ?? 'Server job failed',
-            );
-          case 'error':
-            throw const _RecoverableTranscriptionAttempt(
-              'reconciliation_pending: Server SSE error',
-            );
-          case 'timeout':
-            throw const _RecoverableTranscriptionAttempt(
-              'reconciliation_pending: Server did not complete the job in time',
-            );
-          default:
-            // Unknown event: keep waiting.
-            break;
+      final activeStream = _OwnedJobEventStream(_client.streamJob(job.id));
+      _activeStream = activeStream;
+      try {
+        while (await activeStream.iterator.moveNext()) {
+          if (_disposed) throw const _ServiceDisposed();
+          final event = activeStream.iterator.current;
+          switch (event.status) {
+            case 'queued':
+              // Server confirmed queue position; no action needed.
+              break;
+            case 'running':
+              final runningWon = await _guardedStatus(
+                row,
+                status: TranscriptionStatus.running,
+                jobId: job.id,
+              );
+              _throwIfDisposed();
+              if (!runningWon) throw const _StaleTranscriptionAttempt();
+              _durableRows[row.id] = await _readCurrentAttempt(row);
+              _throwIfDisposed();
+              _activeOperation = ServerTranscriptionOperation(
+                status: ServerTranscriptionStatus.running,
+                dumpId: dumpId,
+                startedAt: _activeOperation.startedAt,
+              );
+              _notify();
+            case 'completed':
+              sawCompleted = true;
+              transcript = event.data['transcript']?.toString().trim() ?? '';
+              break;
+            case 'failed':
+              throw LocalTranscriptionServerError(
+                event.data['error']?.toString() ?? 'Server job failed',
+              );
+            case 'error':
+              throw const _RecoverableTranscriptionAttempt(
+                'reconciliation_pending: Server SSE error',
+              );
+            case 'timeout':
+              throw const _RecoverableTranscriptionAttempt(
+                'reconciliation_pending: Server did not complete the job in time',
+              );
+            default:
+              // Unknown event: keep waiting.
+              break;
+          }
+          if (event.status == 'completed') break;
         }
-        if (event.status == 'completed') break;
+      } finally {
+        if (identical(_activeStream, activeStream)) _activeStream = null;
+        await activeStream.cancel();
       }
 
+      if (_disposed) throw const _ServiceDisposed();
       if (!sawCompleted) {
         throw const _RecoverableTranscriptionAttempt(
           'reconciliation_pending: Event stream ended before a terminal event',
@@ -598,6 +650,7 @@ class ServerTranscriptionService extends ChangeNotifier {
       } catch (cause) {
         throw _TranscriptionPersistenceFailure(cause);
       }
+      _throwIfDisposed();
       if (!completionWon) throw const _StaleTranscriptionAttempt();
       await _audioStorage.runSerializedMetadataWrite<void>(
         row.id,
@@ -652,8 +705,11 @@ class ServerTranscriptionService extends ChangeNotifier {
           }
         },
       );
+    } on _ServiceDisposed {
+      // Provider replacement only detaches this observer. The durable request
+      // identity remains available for the replacement service to reconcile.
     } on _RecoverableTranscriptionAttempt catch (recoverable) {
-      if (attemptRow != null) {
+      if (!_disposed && attemptRow != null) {
         await _persistRecoverable(
           attemptRow,
           marker: recoverable.marker,
@@ -668,7 +724,7 @@ class ServerTranscriptionService extends ChangeNotifier {
     } on _ExistingDurableTranscription {
       // Another coordinator already owns the durable attempt.
     } catch (error) {
-      if (attemptRow != null) {
+      if (!_disposed && attemptRow != null) {
         final postEnqueueUncertain =
             remoteJobId != null && !_isDefinitiveFailure(error);
         if (postEnqueueUncertain || _isAmbiguousEnqueueFailure(error)) {
@@ -692,7 +748,7 @@ class ServerTranscriptionService extends ChangeNotifier {
       }
     } finally {
       _lastDumpId = dumpId;
-      await _refreshDurableRow(dumpId);
+      if (!_disposed) await _refreshDurableRow(dumpId);
       if (_activeJob == job) {
         _activeJob = null;
         _activeOperation = const ServerTranscriptionOperation.idle();
@@ -880,9 +936,26 @@ class ServerTranscriptionService extends ChangeNotifier {
     if (!_disposed) notifyListeners();
   }
 
+  void _throwIfDisposed() {
+    if (_disposed) throw const _ServiceDisposed();
+  }
+
   @override
   void dispose() {
+    if (_disposed) return;
     _disposed = true;
+    final activeStream = _activeStream;
+    _activeStream = null;
+    if (activeStream != null) unawaited(activeStream.cancel());
+    final activeJob = _activeJob;
+    if (activeJob != null && !activeJob.completer.isCompleted) {
+      activeJob.completer.complete();
+    }
+    final reattachments = _reattachments.values.toList();
+    _reattachments.clear();
+    for (final attachment in reattachments) {
+      unawaited(attachment.cancel());
+    }
     for (final job in _queue) {
       if (!job.completer.isCompleted) job.completer.complete();
     }
@@ -904,6 +977,10 @@ class LocalTranscriptionServerError implements Exception {
 
 final class _StaleTranscriptionAttempt implements Exception {
   const _StaleTranscriptionAttempt();
+}
+
+final class _ServiceDisposed implements Exception {
+  const _ServiceDisposed();
 }
 
 final class _ExistingDurableTranscription implements Exception {

@@ -174,6 +174,9 @@ class _StorageSetupScreenState extends ConsumerState<StorageSetupScreen> {
       final audio = ref.read(audioStorageProvider);
       if (!await audio.requestAccess()) return;
       await importDurableRecordings(ref.read(localDbProvider), audio);
+      unawaited(
+        ref.read(serverTranscriptionServiceProvider).reconcilePending(),
+      );
       ref.read(storageReadyProvider.notifier).state = true;
     } catch (error) {
       if (mounted) setState(() => _error = 'Folder access failed: $error');
