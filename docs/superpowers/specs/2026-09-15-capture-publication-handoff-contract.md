@@ -1,5 +1,10 @@
 # Adopted capture publication handoff contract
 
+## Controller phase-B activation
+
+Phase A and T5-I2A-I1 correction are accepted at `7985b982984260e0235ba7fdfe5500b0d50417b7` following independent spec/quality PASS. Phase B (section 9) is now authorized. Final C1 omits the transitional one-shot method. Mechanical removal includes AndroidDocumentsPort `publishCaptureAt` dispatch and StorageChannel old method/key allowlist entries, preserving shared semantic metadata publication helpers. Caller inventory additionally includes the negative assertion in capture_publication_test.dart (retain/adapt that assertion, not remove coverage); no other new caller path was found. Remaining approved files are exactly section 9 PhaseB plus the enumerated compatibility paths. LocalDb public ABI/schema/CAS remain unchanged unless a concrete missing behavior receives a further controller decision. PhaseB must satisfy the real receipt-checkpoint SQL trigger and true process-exit/cold-owner regressions, not merely same-process replay.
+
+
 Status: ADOPTED by controller for T5-I2. This is an engineering correction to approved owned-capture recovery, not implementation or acceptance evidence. Sections 1–10 below are binding; recommendation/adoption wording retained in the source report is superseded by this declaration. SQLite remains the only durable authority. No phone or live-data action is authorized.
 
 ## Controller adoption and compilation boundary

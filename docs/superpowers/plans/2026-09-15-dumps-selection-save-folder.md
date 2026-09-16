@@ -33,7 +33,7 @@ Preserve current durable request/attempt/job ownership, compare-and-set guards, 
 
 **Adopted Task 4 prerequisite clarification:** `docs/superpowers/specs/2026-09-15-frozen-legacy-inspection-contract.md` is binding and must be read with every task affected by legacy inspection. `inspectLegacyStorage` is capture-only when frozenAnchorJson is null, and resolve-only against exact persisted bytes when supplied. Capture precedes provider access; SQLite freeze precedes resolution. Nullable location is intentional. Never reread preferences/current defaults to recover a frozen source. This supersedes earlier capture-and-resolve wording and expands Task 4 only by the adopted document's bounded prerequisite inventory.
 
-**Adopted Task5 publication correction (phase-A transitional C1):** Read `docs/superpowers/specs/2026-09-15-capture-publication-handoff-contract.md` in full. It governs exact prepare/SQLite-freeze/initialize/reconcile behavior, identity ports, crypto dependency, journal/wire shapes, scoped files and test matrix. During phase A only, C1 retains legacy publishCapture alongside new primitives to remain compilable; phase B removes the legacy method and all callers atomically. Task5 is not accepted until integration and scoped review pass. Earlier one-shot publication wording is superseded. No old semantic metadata/timestamp/CAS changes or phone operations.
+**Adopted Task5 publication correction (final phase-B C1):** Read `docs/superpowers/specs/2026-09-15-capture-publication-handoff-contract.md` in full. It governs exact prepare/SQLite-freeze/initialize/reconcile behavior, identity ports, crypto dependency, journal/wire shapes, scoped files and test matrix. Phase A was accepted at 7985b982984260e0235ba7fdfe5500b0d50417b7 after scoped re-review. The C1 below is now FINAL phase-B C1: remove the legacy publishCapture method and ALL Dart/native routes and callers atomically with v2 persistence integration. Existing source remains transitional only until that phase-B implementation commit. Task5 is not accepted until integration and scoped review pass. Earlier one-shot publication wording is superseded. No old semantic metadata/timestamp/CAS changes or phone operations.
 
 ## Authority, execution boundary and source map
 
@@ -198,8 +198,6 @@ abstract interface class StorageBackend {
   IoOperation<Outcome<void>> inspectLocation(StorageLocation location);
   IoOperation<Outcome<Uint8List>> readAudio(BoundRecording binding);
   IoOperation<Outcome<AudioLocator>> playbackSource(BoundRecording binding);
-  // Transitional phase A only; REMOVE this old method in phase B.
-  IoOperation<Outcome<PublishedCapture>> publishCapture(CaptureReservation reservation, Map<String,dynamic> metadata);
   IoOperation<CapturePreparationResult> prepareCapture(CaptureReservation reservation, String metadataJson, String audioSha256, String operationId, {required bool observeOnly});
   IoOperation<Outcome<CaptureInspection>> inspectPreparedCapture(CaptureReservation reservation, PreparedCapture preparation);
   IoOperation<Outcome<PublishedCapture>> publishPreparedCapture(CaptureReservation reservation, PreparedCapture preparation);
@@ -437,8 +435,6 @@ abstract interface class StorageBackend {
   IoOperation<Outcome<void>> inspectLocation(StorageLocation location);
   IoOperation<Outcome<Uint8List>> readAudio(BoundRecording binding);
   IoOperation<Outcome<AudioLocator>> playbackSource(BoundRecording binding);
-  // Transitional phase A only; REMOVE this old method in phase B.
-  IoOperation<Outcome<PublishedCapture>> publishCapture(CaptureReservation reservation, Map<String,dynamic> metadata);
   IoOperation<CapturePreparationResult> prepareCapture(CaptureReservation reservation, String metadataJson, String audioSha256, String operationId, {required bool observeOnly});
   IoOperation<Outcome<CaptureInspection>> inspectPreparedCapture(CaptureReservation reservation, PreparedCapture preparation);
   IoOperation<Outcome<PublishedCapture>> publishPreparedCapture(CaptureReservation reservation, PreparedCapture preparation);
@@ -789,8 +785,6 @@ abstract interface class StorageBackend {
   IoOperation<Outcome<void>> inspectLocation(StorageLocation location);
   IoOperation<Outcome<Uint8List>> readAudio(BoundRecording binding);
   IoOperation<Outcome<AudioLocator>> playbackSource(BoundRecording binding);
-  // Transitional phase A only; REMOVE this old method in phase B.
-  IoOperation<Outcome<PublishedCapture>> publishCapture(CaptureReservation reservation, Map<String,dynamic> metadata);
   IoOperation<CapturePreparationResult> prepareCapture(CaptureReservation reservation, String metadataJson, String audioSha256, String operationId, {required bool observeOnly});
   IoOperation<Outcome<CaptureInspection>> inspectPreparedCapture(CaptureReservation reservation, PreparedCapture preparation);
   IoOperation<Outcome<PublishedCapture>> publishPreparedCapture(CaptureReservation reservation, PreparedCapture preparation);
@@ -1246,8 +1240,6 @@ abstract interface class StorageBackend {
   IoOperation<Outcome<void>> inspectLocation(StorageLocation location);
   IoOperation<Outcome<Uint8List>> readAudio(BoundRecording binding);
   IoOperation<Outcome<AudioLocator>> playbackSource(BoundRecording binding);
-  // Transitional phase A only; REMOVE this old method in phase B.
-  IoOperation<Outcome<PublishedCapture>> publishCapture(CaptureReservation reservation, Map<String,dynamic> metadata);
   IoOperation<CapturePreparationResult> prepareCapture(CaptureReservation reservation, String metadataJson, String audioSha256, String operationId, {required bool observeOnly});
   IoOperation<Outcome<CaptureInspection>> inspectPreparedCapture(CaptureReservation reservation, PreparedCapture preparation);
   IoOperation<Outcome<PublishedCapture>> publishPreparedCapture(CaptureReservation reservation, PreparedCapture preparation);
@@ -1537,8 +1529,6 @@ abstract interface class StorageBackend {
   IoOperation<Outcome<void>> inspectLocation(StorageLocation location);
   IoOperation<Outcome<Uint8List>> readAudio(BoundRecording binding);
   IoOperation<Outcome<AudioLocator>> playbackSource(BoundRecording binding);
-  // Transitional phase A only; REMOVE this old method in phase B.
-  IoOperation<Outcome<PublishedCapture>> publishCapture(CaptureReservation reservation, Map<String,dynamic> metadata);
   IoOperation<CapturePreparationResult> prepareCapture(CaptureReservation reservation, String metadataJson, String audioSha256, String operationId, {required bool observeOnly});
   IoOperation<Outcome<CaptureInspection>> inspectPreparedCapture(CaptureReservation reservation, PreparedCapture preparation);
   IoOperation<Outcome<PublishedCapture>> publishPreparedCapture(CaptureReservation reservation, PreparedCapture preparation);
@@ -1706,7 +1696,7 @@ Future<Outcome<DefaultFolderState>> serializeDefaultCommit(
 
 ## Task 5: Pinned capture persistence and source-bound import
 
-**Adopted Task5 publication correction (phase-A transitional C1):** Read `docs/superpowers/specs/2026-09-15-capture-publication-handoff-contract.md` in full. It governs exact prepare/SQLite-freeze/initialize/reconcile behavior, identity ports, crypto dependency, journal/wire shapes, scoped files and test matrix. During phase A only, C1 retains legacy publishCapture alongside new primitives to remain compilable; phase B removes the legacy method and all callers atomically. Task5 is not accepted until integration and scoped review pass. Earlier one-shot publication wording is superseded. No old semantic metadata/timestamp/CAS changes or phone operations.
+**Adopted Task5 publication correction (final phase-B C1):** Read `docs/superpowers/specs/2026-09-15-capture-publication-handoff-contract.md` in full. It governs exact prepare/SQLite-freeze/initialize/reconcile behavior, identity ports, crypto dependency, journal/wire shapes, scoped files and test matrix. Phase A was accepted at 7985b982984260e0235ba7fdfe5500b0d50417b7 after scoped re-review. The C1 below is now FINAL phase-B C1: remove the legacy publishCapture method and ALL Dart/native routes and callers atomically with v2 persistence integration. Existing source remains transitional only until that phase-B implementation commit. Task5 is not accepted until integration and scoped review pass. Earlier one-shot publication wording is superseded. No old semantic metadata/timestamp/CAS changes or phone operations.
 
 **Owner:** Ted. **Depends on:** 1–4. **Create:** `client/lib/services/recording_coordinator.dart`, `client/lib/data/storage/recording_importer.dart`, `client/test/unit/services/pinned_recording_test.dart`, `client/test/unit/data/storage_import_test.dart`. **Modify:** `client/lib/services/recording_service.dart`, `recording_persistence.dart`, `client/lib/data/recording_metadata.dart` (import validation only), `client/test/unit/services/recording_service_test.dart`, `recording_persistence_test.dart`, `client/test/widget/recording_controller_test.dart`. Existing runtime caller wiring completes in task 6.
 
@@ -1823,8 +1813,6 @@ abstract interface class StorageBackend {
   IoOperation<Outcome<void>> inspectLocation(StorageLocation location);
   IoOperation<Outcome<Uint8List>> readAudio(BoundRecording binding);
   IoOperation<Outcome<AudioLocator>> playbackSource(BoundRecording binding);
-  // Transitional phase A only; REMOVE this old method in phase B.
-  IoOperation<Outcome<PublishedCapture>> publishCapture(CaptureReservation reservation, Map<String,dynamic> metadata);
   IoOperation<CapturePreparationResult> prepareCapture(CaptureReservation reservation, String metadataJson, String audioSha256, String operationId, {required bool observeOnly});
   IoOperation<Outcome<CaptureInspection>> inspectPreparedCapture(CaptureReservation reservation, PreparedCapture preparation);
   IoOperation<Outcome<PublishedCapture>> publishPreparedCapture(CaptureReservation reservation, PreparedCapture preparation);
@@ -2117,8 +2105,6 @@ abstract interface class StorageBackend {
   IoOperation<Outcome<void>> inspectLocation(StorageLocation location);
   IoOperation<Outcome<Uint8List>> readAudio(BoundRecording binding);
   IoOperation<Outcome<AudioLocator>> playbackSource(BoundRecording binding);
-  // Transitional phase A only; REMOVE this old method in phase B.
-  IoOperation<Outcome<PublishedCapture>> publishCapture(CaptureReservation reservation, Map<String,dynamic> metadata);
   IoOperation<CapturePreparationResult> prepareCapture(CaptureReservation reservation, String metadataJson, String audioSha256, String operationId, {required bool observeOnly});
   IoOperation<Outcome<CaptureInspection>> inspectPreparedCapture(CaptureReservation reservation, PreparedCapture preparation);
   IoOperation<Outcome<PublishedCapture>> publishPreparedCapture(CaptureReservation reservation, PreparedCapture preparation);
@@ -2534,8 +2520,6 @@ abstract interface class StorageBackend {
   IoOperation<Outcome<void>> inspectLocation(StorageLocation location);
   IoOperation<Outcome<Uint8List>> readAudio(BoundRecording binding);
   IoOperation<Outcome<AudioLocator>> playbackSource(BoundRecording binding);
-  // Transitional phase A only; REMOVE this old method in phase B.
-  IoOperation<Outcome<PublishedCapture>> publishCapture(CaptureReservation reservation, Map<String,dynamic> metadata);
   IoOperation<CapturePreparationResult> prepareCapture(CaptureReservation reservation, String metadataJson, String audioSha256, String operationId, {required bool observeOnly});
   IoOperation<Outcome<CaptureInspection>> inspectPreparedCapture(CaptureReservation reservation, PreparedCapture preparation);
   IoOperation<Outcome<PublishedCapture>> publishPreparedCapture(CaptureReservation reservation, PreparedCapture preparation);
@@ -2855,8 +2839,6 @@ abstract interface class StorageBackend {
   IoOperation<Outcome<void>> inspectLocation(StorageLocation location);
   IoOperation<Outcome<Uint8List>> readAudio(BoundRecording binding);
   IoOperation<Outcome<AudioLocator>> playbackSource(BoundRecording binding);
-  // Transitional phase A only; REMOVE this old method in phase B.
-  IoOperation<Outcome<PublishedCapture>> publishCapture(CaptureReservation reservation, Map<String,dynamic> metadata);
   IoOperation<CapturePreparationResult> prepareCapture(CaptureReservation reservation, String metadataJson, String audioSha256, String operationId, {required bool observeOnly});
   IoOperation<Outcome<CaptureInspection>> inspectPreparedCapture(CaptureReservation reservation, PreparedCapture preparation);
   IoOperation<Outcome<PublishedCapture>> publishPreparedCapture(CaptureReservation reservation, PreparedCapture preparation);
