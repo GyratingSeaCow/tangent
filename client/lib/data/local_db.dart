@@ -527,6 +527,14 @@ class LocalDb extends _$LocalDb {
           ),
         );
       });
+  /// Read immutable deletion ownership, including completed replay receipts.
+  Future<DeletionTicket?> deletionTicketById(String ticketId) async {
+    final row = await (select(localDeletionTickets)
+          ..where((t) => t.ticketId.equals(ticketId)))
+        .getSingleOrNull();
+    return row == null ? null : _decodeTicket(row);
+  }
+
   Future<List<DeletionTicket>> pendingLocalDeletions() async =>
       (await (select(localDeletionTickets)
                 ..where((t) => t.state.isNotValue('completed')))
@@ -574,6 +582,22 @@ class LocalDb extends _$LocalDb {
   /// Reactive stream for one dump without retaining or rescanning the table.
   Stream<DumpRow?> watchDump(String id) =>
       (select(dumps)..where((d) => d.id.equals(id))).watchSingleOrNull();
+
+  /// Live ranked candidates. Presentation applies filters after this cap.
+  Stream<List<DumpRow>> watchSearchDumps(String query, {int limit = 100}) {
+    final escaped = query.replaceAll('"', '""');
+    return customSelect(
+      'SELECT d.* FROM dumps d '
+      'JOIN dumps_fts f ON d.rowid = f.rowid '
+      'WHERE dumps_fts MATCH ? '
+      'ORDER BY rank LIMIT ?',
+      variables: [
+        Variable.withString('"$escaped"'),
+        Variable.withInt(limit),
+      ],
+      readsFrom: {dumps},
+    ).map((row) => dumps.map(row.data)).watch();
+  }
 
   /// Search across title and transcript using FTS5.
   Future<List<DumpRow>> searchDumps(String query, {int limit = 50}) {
