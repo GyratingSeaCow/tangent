@@ -185,6 +185,27 @@ class LocalDb extends _$LocalDb {
     );
   }
 
+  /// Atomic catalog commit boundary, also used to reconcile uncertain acknowledgements.
+  Future<T> commitStorageCatalog<T>(Future<T> Function() action) =>
+      transaction(action);
+
+  /// Compare-and-install only. Callers must reread SQLite even after an uncertain
+  /// acknowledgement; the candidate in memory is never durable authority.
+  Future<void> freezeLegacyAnchor(String anchorJson) => transaction(() async {
+        await (update(storageCatalogStates)
+              ..where(
+                (s) =>
+                    s.id.equals(1) &
+                    s.legacyAnchorJson.isNull() &
+                    s.bootstrapVersion.equals(0),
+              ))
+            .write(
+          StorageCatalogStatesCompanion(
+            legacyAnchorJson: Value(anchorJson),
+          ),
+        );
+      });
+
   /// Resolve only persisted original ownership, never a current default.
   Future<BoundRecording?> boundRecording(String id) => transaction(() async {
         final row = await (select(recordingBindings)
@@ -258,7 +279,7 @@ class LocalDb extends _$LocalDb {
             .getSingleOrNull();
         if (prior != null) {
           if (prior.incarnation != binding.key.incarnation ||
-              prior.audioJson != StorageCodec.encodeAudio(binding.audio) ||
+              StorageCodec.decodeAudio(prior.audioJson) != binding.audio ||
               prior.metadataName != binding.metadataName ||
               (prior.resolved && await boundRecording(id) != binding)) {
             _storageFault(ProblemCode.conflict, 'Binding is immutable');

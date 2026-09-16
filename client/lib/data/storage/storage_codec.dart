@@ -54,6 +54,20 @@ abstract final class StorageCodec {
   }
 
   static AudioLocator decodeAudio(String json) => _audio(_parse(json));
+
+  /// Compares proven document identity, not grant URI spelling. The original
+  /// locator bytes remain immutable in SQLite. Call only after completed listing.
+  static bool sameAudioIdentity(AudioLocator original, AudioLocator observed) {
+    _validateAudio(original);
+    _validateAudio(observed);
+    if (original.kind != observed.kind) return false;
+    if (original.kind == 'file') return original.value == observed.value;
+    final left = _contentParts(original.value);
+    final right = _contentParts(observed.value);
+    return left.authority == right.authority &&
+        left.pathSegments.last == right.pathSegments.last;
+  }
+
   static String encodeKey(RecordingKey value) {
     _validateKey(value);
     return jsonEncode(_keyMap(value));
