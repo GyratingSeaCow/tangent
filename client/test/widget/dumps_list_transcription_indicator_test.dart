@@ -54,6 +54,9 @@ void main() {
         overrides: [
           localDbProvider.overrideWithValue(db),
           audioStorageProvider.overrideWithValue(storage),
+          // This status/filter presentation fixture has no bound storage owner.
+          // Eligibility/lifetime behavior is covered by the selection and bound detail suites.
+          deletionEligibilityProvider.overrideWith((_) => Stream.value(const {})),
           dumpsProvider.overrideWith((_) => Stream.value(rows)),
         ],
         child: const MaterialApp(home: DumpsListScreen()),
@@ -125,6 +128,9 @@ void main() {
         overrides: [
           localDbProvider.overrideWithValue(db),
           audioStorageProvider.overrideWithValue(storage),
+          // This status/filter presentation fixture has no bound storage owner.
+          // Eligibility/lifetime behavior is covered by the selection and bound detail suites.
+          deletionEligibilityProvider.overrideWith((_) => Stream.value(const {})),
           dumpsProvider.overrideWith((_) => rows.stream),
         ],
         child: const MaterialApp(home: DumpsListScreen()),

@@ -15,6 +15,7 @@ import '../../models/sync_status.dart';
 import '../../models/transcription_status.dart';
 import '../../services/meeting_notes_processor.dart';
 import '../../services/recording_playback.dart';
+import 'local_deletion_presentation.dart';
 import '../home/home_screen.dart' show localDbProvider;
 import '../home/home_providers.dart'
     show
@@ -49,7 +50,11 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
   late final TextEditingController _transcriptController;
   RecordingPlaybackController? _playbackController;
   PlaybackLease? _playbackLease;
-  late final Future<void> _playbackInitialization;
+  late Future<void> _playbackInitialization;
+  bool _playbackOpening = true;
+  bool _canRetryPlayback = false;
+  bool _deleteBusy = false;
+  BulkDeletionResult? _deletionResult;
   String? _playbackError;
   bool _closing = false;
   bool _saving = false;
@@ -125,7 +130,53 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
       if (mounted && !_closing) {
         setState(() => _playbackError = 'Playback unavailable: $error');
       }
+    } finally {
+      if (mounted) setState(() => _playbackOpening = false);
     }
+  }
+
+  Future<void> _retryPlayback() async {
+    if (_deleteBusy || _playbackOpening || !_canRetryPlayback || !mounted) return;
+    setState(() { _playbackOpening=true; _canRetryPlayback=false; });
+    final service=ref.read(localDeletionServiceProvider);
+    _playbackInitialization=() async {
+      try {
+        final preview=switch(await service.preview({widget.dumpId})) {
+          Ok<DeletionPreview>(:final value)=>value,
+          Fail<DeletionPreview>(:final problem)=>throw StorageFault(problem),
+        };
+        if(!mounted) return;
+        final target=preview.targets.single;
+        if(target.binding==null || !{Eligibility.eligible,Eligibility.busy,Eligibility.nonterminal,Eligibility.syncing,Eligibility.publicationPending}.contains(target.eligibility)) {
+          setState(()=>_playbackError='Playback unavailable: ${target.eligibility.name}. Resolve local storage or retry pending local deletion.');
+          return;
+        }
+        // The previous engine/lease has actually closed. Only this explicit
+        // user action may start a fresh binding lookup + engine on this route.
+        _closing=false;_playbackError=null;
+        await _initializePlayback();
+      } catch(e) {if(mounted)setState(()=>_playbackError='Playback unavailable: $e');}
+      finally {if(mounted)setState(()=>_playbackOpening=false);}
+    }();
+    await _playbackInitialization;
+  }
+
+  Future<void> _playbackAfterFailedDelete(LocalDeletionService service) async {
+    try {
+      final preview=switch(await service.preview({widget.dumpId})) {
+        Ok<DeletionPreview>(:final value)=>value,
+        Fail<DeletionPreview>(:final problem)=>throw StorageFault(problem),
+      };
+      if(!mounted) return;
+      final target=preview.targets.single;
+      final playable=target.binding!=null && {Eligibility.eligible,Eligibility.busy,Eligibility.nonterminal,Eligibility.syncing,Eligibility.publicationPending}.contains(target.eligibility);
+      setState(() {
+        _canRetryPlayback=playable;
+        _playbackError=playable ? 'Playback stopped after local deletion was blocked.'
+          : target.eligibility==Eligibility.retryOnly ? 'Playback unavailable while local deletion is pending. Retry failed local deletion.'
+          : 'Playback unavailable: ${target.eligibility.name}. Resolve local storage first.';
+      });
+    } catch(e) {if(mounted)setState((){_canRetryPlayback=false;_playbackError='Playback unavailable: $e';});}
   }
 
   Future<void> _closePlayback() async {
@@ -135,6 +186,8 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
     final lease = _playbackLease;
     _playbackController = null;
     _playbackLease = null;
+    _playbackError = 'Playback stopped for local deletion.';
+    if (mounted) setState(() {});
     if (controller != null) {
       controller.removeListener(_onPlaybackChanged);
       await controller.close();
@@ -417,27 +470,11 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
   }
 
   Future<void> _delete() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Delete dump?'),
-        content: const Text('This removes the local record and audio file.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton.tonal(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !mounted) return;
-
+    if(_deleteBusy || !mounted) return;
+    setState(()=>_deleteBusy=true);
+    final service=ref.read(localDeletionServiceProvider);
     try {
-      final service = ref.read(localDeletionServiceProvider);
+      if(!await confirmLocalDeletion(context,1) || !mounted) return;
       await _closePlayback();
       final preview = switch (await service.preview({widget.dumpId})) {
         Ok<DeletionPreview>(:final value) => value,
@@ -446,13 +483,14 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
       final result = switch (await service.deleteConfirmed(
         (
           operationId: const Uuid().v4(),
-          targets: preview.targets,
+          targets: List<DeleteTarget>.unmodifiable(preview.targets),
         ),
       )) {
         Ok<BulkDeletionResult>(:final value) => value,
         Fail<BulkDeletionResult>(:final problem) => throw StorageFault(problem),
       };
       final item = result.items.single;
+      if(mounted) setState(()=>_deletionResult=result);
       if (item.state != DeleteState.deleted) {
         throw StorageFault(
           item.problem ??
@@ -465,11 +503,34 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
       if (mounted) Navigator.of(context).pop();
     } catch (e) {
       if (mounted) {
+        await _playbackAfterFailedDelete(service);
+      }
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Delete failed: $e')),
         );
       }
-    }
+    } finally {if(mounted)setState(()=>_deleteBusy=false);}
+  }
+
+  Future<void> _retryLocalDeletion() async {
+    if(_deleteBusy || _deletionResult==null || !mounted) return;
+    final ids=failedDeletionTickets(_deletionResult!);
+    if(ids.isEmpty)return;
+    setState(()=>_deleteBusy=true);
+    final service=ref.read(localDeletionServiceProvider);
+    try {
+      if(!await confirmLocalDeletion(context,ids.length,retry:true) || !mounted)return;
+      final result=switch(await service.retryConfirmed((operationId:const Uuid().v4(),ticketIds:ids))) {
+        Ok<BulkDeletionResult>(:final value)=>value,
+        Fail<BulkDeletionResult>(:final problem)=>throw StorageFault(problem),
+      };
+      if(mounted){
+        setState(()=>_deletionResult=result);
+        if(result.items.every((i)=>i.state==DeleteState.deleted)) Navigator.of(context).pop();
+      }
+    } catch(e) {if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('Delete failed: $e')));}
+    finally {if(mounted)setState(()=>_deleteBusy=false);}
   }
 
   @override
@@ -483,7 +544,7 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
           IconButton(
             icon: const Icon(Icons.delete_outline),
             tooltip: 'Delete',
-            onPressed: _delete,
+            onPressed: _deleteBusy || (_playbackOpening && _canRetryPlayback) ? null : _delete,
           ),
         ],
       ),
@@ -536,10 +597,12 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
           ],
         ),
         const SizedBox(height: 16),
+        if(_deletionResult!=null) LocalDeletionResults(result:_deletionResult!,onRetry:_retryLocalDeletion,busy:_deleteBusy),
+        if(_canRetryPlayback || _playbackOpening && _closing) TextButton(key:const ValueKey('retry-playback'),onPressed:_playbackOpening || _deleteBusy ? null : _retryPlayback,child:const Text('Retry playback')),
         _RecordingPlaybackPanel(
           state: _playbackController?.state ??
               RecordingPlaybackState(
-                loading: _playbackError == null,
+                loading: _playbackOpening,
                 error: _playbackError,
               ),
           expectedDuration: Duration(seconds: row.durationSeconds),

@@ -2,8 +2,53 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/local_db.dart';
+import '../../data/storage/storage_contract.dart';
 import '../../models/transcription_status.dart';
 import '../../screens/home/home_screen.dart' show localDbProvider;
+
+import 'dart:convert';
+import '../../data/storage/storage_providers.dart';
+
+class _PresentedEpoch {
+  int generation = 0;
+}
+
+final _presentedEpochProvider = Provider<_PresentedEpoch>((ref) {
+  final epoch = _PresentedEpoch();
+  ref.listen(searchQueryProvider, (_, __) => epoch.generation++);
+  ref.listen(dumpModeFilterProvider, (_, __) => epoch.generation++);
+  ref.listen(transcriptFilterProvider, (_, __) => epoch.generation++);
+  return epoch;
+});
+
+final presentedDumpsProvider =
+    Provider<AsyncValue<PresentedDumpResults>>((ref) {
+  final epoch = ref.watch(_presentedEpochProvider);
+  final query = ref.watch(searchQueryProvider);
+  final mode = ref.watch(dumpModeFilterProvider);
+  final transcript = ref.watch(transcriptFilterProvider);
+  final search = query.trim().isNotEmpty;
+  final source = search
+      ? ref.watch(searchResultsProvider)
+      : ref.watch(filteredDumpsProvider);
+  final settled = source.hasValue && !source.isLoading && !source.hasError;
+  final PresentedDumpResults results = (
+    scopeKey: jsonEncode([query, mode.name, transcript.name]),
+    generation: epoch.generation,
+    settled: settled,
+    rows: List.unmodifiable(settled ? source.requireValue : <DumpRow>[]),
+    limit: search ? 100 : null,
+  );
+  if (source.hasError) {
+    return AsyncError<PresentedDumpResults>(source.error!, source.stackTrace!)
+        .copyWithPrevious(AsyncData(results));
+  }
+  return AsyncData(results);
+});
+
+final deletionEligibilityProvider = StreamProvider<Map<String, Eligibility>>(
+  (ref) => ref.watch(localDeletionServiceProvider).watchEligibility(),
+);
 
 enum DumpModeFilter { all, brainDump, meeting }
 

@@ -23,6 +23,9 @@ final class GatePlayer implements RecordingPlaybackEngine {
   final closing = Completer<void>(), release = Completer<void>();
   bool loaded = false;
   int closes = 0;
+  int plays = 0;
+  Completer<void>? loadGate;
+  bool loadEntered = false;
   @override
   Stream<Duration> get positionStream => const Stream.empty();
   @override
@@ -33,12 +36,14 @@ final class GatePlayer implements RecordingPlaybackEngine {
   Stream<bool> get completedStream => const Stream.empty();
   @override
   Future<Duration?> load(AudioLocator source) async {
+    loadEntered = true;
+    await loadGate?.future;
     loaded = true;
     return const Duration(seconds: 3);
   }
 
   @override
-  Future<void> play() async {}
+  Future<void> play() async { plays++; }
   @override
   Future<void> pause() async {}
   @override
@@ -93,7 +98,7 @@ Future<void> mount(
     GatePlayer player,
     GlobalKey<NavigatorState> navigator,
     BoundRecording a,
-    {StorageBackend? backend,}) async {
+    {StorageBackend? backend, RecordingPlaybackEngine Function()? factory,}) async {
   await tester.pumpWidget(
     ProviderScope(
       overrides: [
@@ -105,7 +110,7 @@ Future<void> mount(
                 db: f.db,
                 backend: backend ?? f.backend,
                 mutations: bound.mutations,),),
-        recordingPlaybackEngineFactoryProvider.overrideWithValue(() => player),
+        recordingPlaybackEngineFactoryProvider.overrideWithValue(factory ?? () => player),
       ],
       child: MaterialApp(
           navigatorKey: navigator, home: const Scaffold(body: Text('Library')),),
@@ -121,6 +126,62 @@ Future<void> mount(
 }
 
 void main() {
+  for (final unmount in [false,true]) {
+    testWidgets('B1-M1 same route fresh playback retry; unmount=$unmount', (tester) async {
+      final f=StorageFixture.create();final backend=ScriptedStorageBackend();
+      final bound=await createBoundServiceFixture(f.db,backend:backend,registerDrain:false);
+      final first=GatePlayer()..release.complete();
+      final fresh=GatePlayer()..release.complete()..loadGate=Completer<void>();
+      final otherPlayer=GatePlayer()..release.complete();PlaybackLease? other;
+      final navigator=GlobalKey<NavigatorState>();var creates=0;
+      addTearDown(() async {
+        if(!fresh.loadGate!.isCompleted)fresh.loadGate!.complete();
+        if(other!=null){var closed=false;unawaited(other!.close().then((_)=>closed=true));await pumpBoundUntil(tester,()=>closed);other=null;}
+        await disposeBoundWidget(tester,bound);await tester.runAsync(f.close);
+      });
+      final a=(await tester.runAsync(()=>f.seed('fixture-retry-playback')))!;
+      final originalRow=(await f.db.getDump(a.key.dumpId))!.toJson();
+      final originalMeta=await tester.runAsync(()=>f.metadata('A',a.key.dumpId).readAsString());
+      await mount(tester,f,bound,first,navigator,a,backend:backend,factory:()=>creates++==0 ? first : fresh);
+      final routeState=tester.state(find.byType(DumpDetailScreen));
+      unawaited(bound.access.openPlayback(a.key,otherPlayer).then((r)=>other=requireOk(r)));
+      await pumpBoundUntil(tester,()=>other!=null);
+      await tester.tap(find.byTooltip('Delete'));await tester.pumpAndSettle();
+      await tester.tap(find.text('Delete').last);await tester.pumpAndSettle();
+      await pumpBoundUntil(tester,()=>find.textContaining('Delete failed:').evaluate().isNotEmpty);
+      expect(backend.componentCalls,0);expect(first.closes,1);
+      expect((await f.db.getDump(a.key.dumpId))!.toJson(),originalRow);
+      expect(await tester.runAsync(()=>f.audio('A',a.key.dumpId).readAsBytes()),[1,2,3]);
+      expect(await tester.runAsync(()=>f.metadata('A',a.key.dumpId).readAsString()),originalMeta);
+      expect(find.text('Retry playback'),findsOneWidget);
+      await other!.close();other=null;
+      final retry=tester.widget<TextButton>(find.byKey(const ValueKey('retry-playback'))).onPressed!;
+      retry();retry();await pumpBoundUntil(tester,()=>fresh.loadEntered);
+      expect(creates,2);expect(first.plays,0);
+      if(unmount){navigator.currentState!.pop();await tester.pump();}
+      fresh.loadGate!.complete();await pumpBoundUntil(tester,()=>fresh.loaded);
+      if(!unmount){
+        expect(identical(tester.state(find.byType(DumpDetailScreen)),routeState),isTrue);
+        await tester.tap(find.byTooltip('Play recording'));await tester.pump();expect(fresh.plays,1);expect(first.plays,0);
+      }
+      await disposeBoundWidget(tester,bound);expect(fresh.closes,1);expect(tester.takeException(),isNull);
+    });
+  }
+  testWidgets('B1-M1 partial deletion shows retry-only guidance, never reopens playback',(tester) async {
+    final f=StorageFixture.create();final backend=ScriptedStorageBackend()..metadataDeleteFails=true;
+    final bound=await createBoundServiceFixture(f.db,backend:backend,registerDrain:false);
+    final first=GatePlayer()..release.complete();var creates=0;
+    addTearDown(() async {await disposeBoundWidget(tester,bound);await tester.runAsync(f.close);});
+    final a=(await tester.runAsync(()=>f.seed('fixture-partial-playback')))!;
+    await mount(tester,f,bound,first,GlobalKey<NavigatorState>(),a,backend:backend,factory:(){creates++;return first;});
+    await tester.tap(find.byTooltip('Delete'));await tester.pumpAndSettle();await tester.tap(find.text('Delete').last);await tester.pumpAndSettle();
+    await pumpBoundUntil(tester,()=>find.textContaining('Delete failed:').evaluate().isNotEmpty);
+    expect(find.textContaining('Playback unavailable while local deletion is pending'),findsOneWidget);
+    expect(find.text('Retry playback'),findsNothing);expect(find.byKey(const ValueKey('local-delete-retry')),findsOneWidget);
+    expect(creates,1);expect(await f.db.getDump(a.key.dumpId),isNotNull);
+    await disposeBoundWidget(tester,bound);
+  });
+
   for (final scenario in [
     'cancel',
     'confirm',
@@ -169,6 +230,8 @@ void main() {
         return;
       }
       await pumpBoundUntil(tester, () => player.closing.isCompleted);
+      expect(tester.widget<IconButton>(find.byWidgetPredicate((w)=>w is IconButton && w.tooltip=='Play recording')).onPressed,isNull,
+          reason:'the old disposed controller must not remain an enabled UI callback',);
       expect(backend.componentCalls, 0,
           reason: 'confirmation must await actual raw player close',);
       expect(await f.db.getDump(a.key.dumpId), isNotNull);
