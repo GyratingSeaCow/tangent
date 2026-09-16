@@ -112,6 +112,54 @@ typedef CaptureReservation = ({
   CapturePhase phase
 });
 typedef PublishedCapture = ({BoundRecording binding, int sizeBytes});
+
+// Capture preparation v1; semantic sidecar and database schemas are unchanged.
+typedef CaptureObjectIdentity = ({
+  String kind,
+  String scope,
+  String objectId,
+  String? generation
+});
+typedef CaptureComponentClaim = ({
+  RecordingComponent component,
+  String name,
+  AudioLocator locator,
+  CaptureObjectIdentity identity
+});
+typedef PreparedCapture = ({
+  String publicationId,
+  String reservationId,
+  RecordingKey key,
+  StorageLocation location,
+  String stagingPath,
+  CaptureObjectIdentity sourceIdentity,
+  CaptureObjectIdentity rootIdentity,
+  int audioSizeBytes,
+  String audioSha256,
+  String metadataJson,
+  CaptureComponentClaim? audio,
+  CaptureComponentClaim? metadata
+});
+
+enum CapturePreparationState { notStarted, uncertain, prepared }
+
+typedef CapturePreparationResult = ({
+  CapturePreparationState state,
+  PreparedCapture? preparation,
+  List<String> rawReturnedLocators,
+  StorageProblem? problem
+});
+
+enum CaptureContentState { empty, complete, partial, absent, foreign, unknown }
+
+typedef CaptureComponentInspection = ({
+  CaptureContentState state,
+  StorageProblem? problem
+});
+typedef CaptureInspection = ({
+  CaptureComponentInspection audio,
+  CaptureComponentInspection metadata
+});
 typedef RecordingLifecycleState = ({
   CapturePhase phase,
   CaptureReservation? reservation,
@@ -261,6 +309,25 @@ abstract interface class MetadataPublicationAccess {
 }
 
 abstract interface class StorageBackend {
+  // Transitional Phase A: the legacy publisher below remains unchanged until
+  // Phase B migrates the sole persistence owner and removes it atomically.
+  IoOperation<CapturePreparationResult> prepareCapture(
+    CaptureReservation reservation,
+    String metadataJson,
+    String audioSha256,
+    String operationId, {
+    required bool observeOnly,
+  });
+  IoOperation<Outcome<CaptureInspection>> inspectPreparedCapture(
+    CaptureReservation reservation,
+    PreparedCapture preparation,
+  );
+  IoOperation<Outcome<PublishedCapture>> publishPreparedCapture(
+    CaptureReservation reservation,
+    PreparedCapture preparation,
+  );
+  Future<Outcome<void>> acknowledgeCapturePreparation(String operationId);
+
   Future<List<RestoredUse>> unsettledUses();
   Future<Outcome<LegacyStorage?>> inspectLegacyStorage({
     required String filesystemLegacyDirectory,

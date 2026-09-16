@@ -4,6 +4,75 @@ import java.util.concurrent.*
 import org.junit.Assert.*
 import org.junit.Test
 class NativeIoSupervisorTest {
+    @Test fun detachedContentWorkerKeepsSameKeyDeletionDispatchQueued() {
+        val fixture=CapturePublicationFixture(); val policy=CapturePublication(fixture)
+        val preparation=policy.prepare(fixture.args())["preparation"]
+        val entered=CountDownLatch(1); val release=CountDownLatch(1); val deleted=CountDownLatch(1)
+        fixture.onInitialize={ entered.countDown(); check(release.await(5,TimeUnit.SECONDS)) }
+        val supervisor=NativeIoSupervisor(Executors.newFixedThreadPool(2))
+        val dispatch:(String,Map<String,Any?>)->Any?={ method,args ->
+            if(method == "deleteComponentAt") { deleted.countDown(); null } else policy.execute(method,args)
+        }
+        try {
+            val old=StorageChannel(supervisor,dispatch)
+            old.handle("publishPreparedCaptureAt",fixture.preparedArgs(preparation,"fixture-content"))
+            assertTrue(entered.await(5,TimeUnit.SECONDS)); old.detach()
+            val replacement=StorageChannel(supervisor,dispatch)
+            replacement.handle("deleteComponentAt",mapOf("operationId" to "fixture-delete-after-content","binding" to mapOf("key" to fixture.key)))
+            assertEquals(1L,deleted.count)
+            assertFalse(supervisor.operation("fixture-content")!!.settled.isDone)
+            assertFalse(supervisor.operation("fixture-delete-after-content")!!.settled.isDone)
+            assertEquals(supervisor.operation("fixture-content")!!.key,supervisor.operation("fixture-delete-after-content")!!.key)
+            release.countDown(); supervisor.operation("fixture-delete-after-content")!!.settled.get(5,TimeUnit.SECONDS)
+            assertEquals(0L,deleted.count); assertEquals(2,fixture.writes)
+            assertEquals("settled",(replacement.handle("operationState",mapOf("operationId" to "fixture-content")) as Map<*,*>)["state"])
+        } finally { release.countDown(); supervisor.close() }
+    }
+    @Test fun capturePreparationSurvivesDetachAndOnlyExplicitOwnerAckConsumesIt() {
+        val entered=CountDownLatch(1); val release=CountDownLatch(1)
+        val fixture=CapturePublicationFixture()
+        fixture.onReturn={ if(fixture.creates == 1) { entered.countDown(); check(release.await(5,TimeUnit.SECONDS)) } }
+        val supervisor=NativeIoSupervisor(Executors.newFixedThreadPool(2))
+        try {
+            val policy=CapturePublication(fixture)
+            val old=StorageChannel(supervisor,policy::execute)
+            val args=fixture.args(); val id=args["operationId"] as String
+            old.handle("prepareCaptureAt",args)
+            assertTrue(entered.await(5,TimeUnit.SECONDS)); old.detach()
+            val replacement=StorageChannel(supervisor,policy::execute)
+            val inventory=replacement.handle("activeOperations",emptyMap()) as List<*>
+            assertEquals("prepareCaptureAt",(inventory.single() as Map<*,*>)["method"])
+            assertEquals("capture",(inventory.single() as Map<*,*>)["kind"])
+            assertEquals("pending",(replacement.handle("operationState",mapOf("operationId" to id,"capturePayload" to args)) as Map<*,*>)["state"])
+            assertThrows(NativeStorageException::class.java) { replacement.handle("acknowledgeOperation",mapOf("operationId" to id,"preparationOnly" to true)) }
+            assertThrows(NativeStorageException::class.java) { replacement.handle("operationState",mapOf("operationId" to id,"capturePayload" to (args + ("metadataJson" to "{}")))) }
+            assertEquals(1,fixture.creates)
+            // Same-key work must not enter the policy while the preparation worker is paused.
+            val after=supervisor.submit(id+"-same-key",supervisor.operation(id)!!.key,emptyMap()) { fixture.creates }
+            assertFalse(after.settled.isDone)
+            release.countDown(); supervisor.operation(id)!!.settled.get(5,TimeUnit.SECONDS)
+            assertEquals(2,after.result.get(5,TimeUnit.SECONDS))
+            val observed=replacement.handle("operationState",mapOf("operationId" to id,"capturePayload" to args)) as Map<*,*>
+            assertEquals("prepared",(observed["result"] as Map<*,*>)["state"])
+            assertThrows(NativeStorageException::class.java) { replacement.handle("acknowledgeOperation",mapOf("operationId" to id)) }
+            assertNotNull(supervisor.operation(id))
+            replacement.handle("acknowledgeOperation",mapOf("operationId" to id,"preparationOnly" to true))
+            assertNull(supervisor.operation(id)); assertEquals(0,fixture.writes)
+        } finally { release.countDown(); supervisor.close() }
+    }
+    @Test fun unknownCaptureObservationAndWrongMethodAcknowledgementDoNotDispatch() {
+        val fixture=CapturePublicationFixture(); val policy=CapturePublication(fixture)
+        NativeIoSupervisor(Executors.newSingleThreadExecutor()).use { supervisor ->
+            val channel=StorageChannel(supervisor,policy::execute)
+            assertThrows(NativeStorageException::class.java) { channel.handle("operationState",mapOf("operationId" to "capture-fixture-reservation-prepare","capturePayload" to fixture.args())) }
+            assertEquals(0,fixture.creates)
+            val ordinary=supervisor.submit("fixture-ordinary","fixture-key",mapOf("method" to "readAudioAt")) { "retained" }
+            ordinary.settled.get(5,TimeUnit.SECONDS)
+            assertThrows(NativeStorageException::class.java) { channel.handle("acknowledgeOperation",mapOf("operationId" to ordinary.id,"preparationOnly" to true)) }
+            assertNotNull(supervisor.operation(ordinary.id))
+        }
+    }
+
     @Test fun renamedProbeReceiptsSurviveWorkerSettlementAndChannelReplacement() {
         for (cleanupThrows in listOf(false, true)) {
             val entered = CountDownLatch(1); val release = CountDownLatch(1)

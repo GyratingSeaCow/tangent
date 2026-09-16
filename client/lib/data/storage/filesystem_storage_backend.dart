@@ -6,9 +6,149 @@ import 'dart:typed_data';
 import 'package:path/path.dart' as p;
 import 'storage_codec.dart';
 import 'storage_contract.dart';
+import 'capture_publication_codec.dart';
+import 'filesystem_capture_io.dart';
 
 /// Explicit-root operations. The caller owns admission/publication leases.
 class FilesystemStorageBackend implements StorageBackend {
+  // Process-owned optimization only. SQLite, never this map, owns recovery.
+  static final _preparations = <String,
+      ({
+    String payload,
+    RecordingKey key,
+    _FileOperation<CapturePreparationResult> operation
+  })>{};
+  static final _acknowledgedPreparations = <String, String>{};
+  static final _captureWork = <String, RestoredUse>{};
+
+  @override
+  IoOperation<CapturePreparationResult> prepareCapture(
+    CaptureReservation r,
+    String metadataJson,
+    String audioSha256,
+    String operationId, {
+    required bool observeOnly,
+  }) {
+    CapturePreparationResult failure(ProblemCode code, String message) => (
+          state: observeOnly
+              ? CapturePreparationState.uncertain
+              : CapturePreparationState.notStarted,
+          preparation: null,
+          rawReturnedLocators: <String>[],
+          problem: (code: code, message: message)
+        );
+    late String payload;
+    try {
+      CapturePublicationCodec.operationId(r, operationId);
+      CapturePublicationCodec.digest(audioSha256);
+      payload = jsonEncode([
+        CapturePublicationCodec.reservationMap(r),
+        metadataJson,
+        audioSha256,
+      ]);
+    } on StorageFault catch (e) {
+      return _FileOperation(
+        operationId,
+        () async => failure(e.problem.code, e.problem.message),
+      );
+    }
+    final retained = _preparations[operationId];
+    if (retained != null) {
+      if (retained.payload != payload) {
+        return _FileOperation(
+          operationId,
+          () async => failure(
+            ProblemCode.conflict,
+            'Preparation ID has another payload',
+          ),
+        );
+      }
+      return retained.operation;
+    }
+    final acknowledged = _acknowledgedPreparations[operationId];
+    if (observeOnly || acknowledged != null) {
+      return _FileOperation(
+        operationId,
+        () async => (
+          state: CapturePreparationState.uncertain,
+          preparation: null,
+          rawReturnedLocators: <String>[],
+          problem: (
+            code: acknowledged != null && acknowledged != payload
+                ? ProblemCode.conflict
+                : ProblemCode.unresolved,
+            message: 'Preparation result is not retained'
+          )
+        ),
+      );
+    }
+    final operation = _FileOperation(
+      operationId,
+      () async => FilesystemCaptureIo.prepare(r, metadataJson, audioSha256),
+    );
+    _preparations[operationId] =
+        (payload: payload, key: r.key, operation: operation);
+    _pending.add(operation.settled);
+    unawaited(
+      operation.settled.then((_) => _pending.remove(operation.settled)),
+    );
+    return operation;
+  }
+
+  @override
+  Future<Outcome<void>> acknowledgeCapturePreparation(
+    String operationId,
+  ) async {
+    try {
+      StorageCodec.validateLiteralId(operationId);
+    } on StorageFault catch (e) {
+      return Fail(e.problem);
+    }
+    final retained = _preparations[operationId];
+    if (retained == null) {
+      return _acknowledgedPreparations.containsKey(operationId)
+          ? const Ok(null)
+          : const Fail(
+              (
+                code: ProblemCode.unresolved,
+                message: 'Preparation is not retained'
+              ),
+            );
+    }
+    if (!retained.operation._settled.isCompleted) {
+      return const Fail(
+        (code: ProblemCode.busy, message: 'Preparation has not settled'),
+      );
+    }
+    _acknowledgedPreparations[operationId] = retained.payload;
+    _preparations.remove(operationId);
+    return const Ok(null);
+  }
+
+  IoOperation<Outcome<T>> _captureOperation<T>(
+    CaptureReservation r,
+    Outcome<T> Function() action,
+  ) {
+    final op = _run(() async => action());
+    _captureWork[op.id] =
+        (key: r.key, kind: UseKind.capture, settled: op.settled);
+    unawaited(op.settled.then((_) => _captureWork.remove(op.id)));
+    return op;
+  }
+
+  @override
+  IoOperation<Outcome<CaptureInspection>> inspectPreparedCapture(
+    CaptureReservation r,
+    PreparedCapture preparation,
+  ) =>
+      _captureOperation(r, () => FilesystemCaptureIo.inspect(r, preparation));
+  @override
+  IoOperation<Outcome<PublishedCapture>> publishPreparedCapture(
+    CaptureReservation r,
+    PreparedCapture preparation,
+  ) =>
+      _captureOperation(r, () => FilesystemCaptureIo.publish(r, preparation));
+
   static int _sequence = 0;
   final Set<Future<void>> _pending = {};
   IoOperation<T> _run<T>(Future<T> Function() action) {
@@ -171,7 +311,16 @@ class FilesystemStorageBackend implements StorageBackend {
   }
 
   @override
-  Future<List<RestoredUse>> unsettledUses() async => [];
+  Future<List<RestoredUse>> unsettledUses() async => [
+        ..._preparations.values.map(
+          (entry) => (
+            key: entry.key,
+            kind: UseKind.capture,
+            settled: entry.operation.settled
+          ),
+        ),
+        ..._captureWork.values,
+      ];
   @override
   Future<Outcome<StorageLocation?>> pickDirectory() async => const Fail(
         (

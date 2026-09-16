@@ -8,13 +8,106 @@ import java.io.File
 import java.io.FileOutputStream
 import java.util.UUID
 import org.json.JSONObject
+import android.system.Os
+import android.system.OsConstants
+import android.system.ErrnoException
+import java.io.FileDescriptor
+import java.io.ByteArrayOutputStream
 
 /** Sole ContentResolver adapter. Never consults a current-default preference. */
-class AndroidDocumentsPort(context: Context) : DocumentsIoPort {
+class AndroidDocumentsPort(context: Context) : DocumentsIoPort, CaptureDocumentsPort {
     private val app = context.applicationContext
     private val resolver = app.contentResolver
     private val policy = SafPolicy(this)
     private val probeReceipts = ProbeReceipts()
+    private val capture = CapturePublication(this)
+    private fun <T> captureIo(action:()->T):T = try { action() }
+        catch(e:ErrnoException) { fault(if(e.errno == OsConstants.EACCES || e.errno == OsConstants.EPERM) "denied" else if(e.errno == OsConstants.ENOENT) "absent" else "io","Capture descriptor operation failed") }
+    private fun statIdentity(fd:FileDescriptor):Map<String,Any?> = captureIo {
+        val s=Os.fstat(fd)
+        if(!OsConstants.S_ISREG(s.st_mode)) fault("unsupported","Capture requires a regular descriptor")
+        val major=((s.st_dev ushr 8) and 0xfffL) or ((s.st_dev ushr 32) and -4096L)
+        val minor=(s.st_dev and 0xffL) or ((s.st_dev ushr 12) and -256L)
+        CaptureWire.identity(mapOf("version" to 1,"kind" to "posix-file","scope" to "${CaptureWire.unsigned64(major)}:${CaptureWire.unsigned64(minor)}","objectId" to CaptureWire.unsigned64(s.st_ino),"generation" to null))
+    }
+    private inner class CaptureFd(private val fd:FileDescriptor, private val writable:Boolean,
+                                  private val release:()->Unit) : CaptureDescriptor {
+        private val identity=statIdentity(fd)
+        private var closed=false
+        private fun check() {
+            if(closed || statIdentity(fd) != identity) fault("conflict","Capture descriptor identity changed")
+        }
+        override fun read():ByteArray = captureIo {
+            check(); Os.lseek(fd,0L,OsConstants.SEEK_SET)
+            val out=ByteArrayOutputStream(); val buffer=ByteArray(65536)
+            while(true) { val count=Os.read(fd,buffer,0,buffer.size); if(count == 0) break; if(count < 0) fault("io","Capture descriptor read failed"); out.write(buffer,0,count) }
+            check(); out.toByteArray()
+        }
+        override fun initializeEmpty(bytes:ByteArray) = captureIo {
+            check()
+            if(!writable || bytes.isEmpty() || Os.fstat(fd).st_size != 0L || read().isNotEmpty()) fault("conflict","Only an owned empty descriptor may be initialized")
+            Os.lseek(fd,0L,OsConstants.SEEK_SET)
+            var offset=0
+            while(offset < bytes.size) { val count=Os.write(fd,bytes,offset,bytes.size-offset); if(count <= 0) fault("io","Capture descriptor short write"); offset+=count }
+            Os.fsync(fd); check()
+            if(!read().contentEquals(bytes)) fault("io","Capture descriptor readback mismatch")
+        }
+        override fun close() { if(!closed) { closed=true; release() } }
+    }
+    private fun sourceHandle(path:String):FileDescriptor = captureIo {
+        if(!path.startsWith('/') || path.contains('\u0000') || path.split('/').any { it == "." || it == ".." }) fault("invalid","Invalid capture source path")
+        val parts=path.split('/').filter { it.isNotEmpty() }
+        if(parts.isEmpty()) fault("invalid","Missing capture source name")
+        var parent=Os.open("/",OsConstants.O_RDONLY or OsConstants.O_NONBLOCK or OsConstants.O_NOFOLLOW or OsConstants.O_CLOEXEC,0)
+        try {
+            for(part in parts.dropLast(1)) {
+                val next=sourceRelative(parent,part,OsConstants.O_RDONLY or OsConstants.O_NONBLOCK or OsConstants.O_NOFOLLOW or OsConstants.O_CLOEXEC)
+                Os.close(parent); parent=next
+            }
+            sourceRelative(parent,parts.last(),OsConstants.O_RDONLY or OsConstants.O_NONBLOCK or OsConstants.O_NOFOLLOW or OsConstants.O_CLOEXEC)
+        } finally { Os.close(parent) }
+    }
+    private fun sourceRelative(parent:FileDescriptor,name:String,flags:Int):FileDescriptor =
+        android.os.ParcelFileDescriptor.dup(parent).use { anchor ->
+            if(!OsConstants.S_ISDIR(Os.fstat(anchor.fileDescriptor).st_mode)) fault("invalid","Capture source parent is not a directory")
+            Os.open("/proc/self/fd/${anchor.fd}/$name",flags,0)
+        }
+    override fun captureSource(path:String):CaptureSource {
+        val fd=sourceHandle(path)
+        val descriptor=try { CaptureFd(fd,false) { Os.close(fd) } } catch(e:Exception) { Os.close(fd); throw e }
+        descriptor.use {
+            val identity=statIdentity(fd); val bytes=it.read()
+            val reopened=sourceHandle(path)
+            try { if(statIdentity(reopened) != identity) fault("conflict","Staging path was replaced") } finally { Os.close(reopened) }
+            return CaptureSource(identity,bytes)
+        }
+    }
+    override fun captureRoot(directory:NativeDirectory):Map<String,Any?> {
+        val row=query(document(directory)).singleOrNull() ?: fault("unavailable","Capture root unobservable")
+        if(row.id != directory.documentId || !row.directory || row.virtual) fault("conflict","Capture root identity differs")
+        return CaptureWire.safIdentity(directory,row.id)
+    }
+    override fun captureCreate(directory:NativeDirectory,name:String,mime:String,returned:(String)->Unit):String {
+        policy.requireAvailableNames(directory,setOf(name)); grant(directory,true)
+        val created=DC.createDocument(resolver,document(directory),mime,name) ?: fault("io","Provider refused capture create")
+        val exact=created.toString(); returned(exact); return exact
+    }
+    override fun captureNode(directory:NativeDirectory,exactUri:String):NativeNode {
+        val decoded=CaptureWire.uri(exactUri)
+        if(decoded.first != directory.authority) fault("invalid","Foreign capture authority")
+        grant(directory)
+        val node=query(Uri.parse(exactUri)).singleOrNull() ?: fault("unavailable","Capture document unobservable")
+        if(node.id != decoded.second || node.directory || node.virtual) fault("conflict","Capture returned identity differs")
+        val owned=policy.ownedNode(directory,node.name,node.id) ?: fault("unavailable","Capture document is not a child")
+        if(owned != node) fault("conflict","Capture membership differs")
+        return node
+    }
+    override fun captureOpen(directory:NativeDirectory,exactUri:String,writable:Boolean):CaptureDescriptor {
+        captureNode(directory,exactUri); grant(directory,writable)
+        val pfd=resolver.openFileDescriptor(Uri.parse(exactUri),if(writable) "rw" else "r") ?: fault("io","Could not open capture descriptor")
+        try { return CaptureFd(pfd.fileDescriptor,writable) { pfd.close() } }
+        catch(e:Exception) { pfd.close(); throw e }
+    }
     private fun fault(code:String,message:String):Nothing = throw NativeStorageException(code,message)
     private fun grant(directory:NativeDirectory,write:Boolean=false):Uri {
         val tree = Uri.parse(directory.treeUri)
@@ -139,6 +232,7 @@ class AndroidDocumentsPort(context: Context) : DocumentsIoPort {
         }
     }
     fun execute(method:String,args:Map<String,Any?>):Any? {
+        if(method in setOf("prepareCaptureAt","inspectPreparedCaptureAt","publishPreparedCaptureAt")) return capture.execute(method,args)
         if (method == "inspectLegacyStorage") {
             return LegacyStorageInspection(
                 { app.getSharedPreferences("tangent_storage",Context.MODE_PRIVATE).getString("recordings_tree_uri",null) },

@@ -11,11 +11,16 @@ class StorageChannel(private val supervisor: NativeIoSupervisor,
         fun id() = args["operationId"] as? String ?: throw NativeStorageException("invalid","Missing operation ID")
         return when(method) {
             "activeOperations" -> supervisor.retained().map { op ->
-                mapOf("operationId" to op.id,"key" to op.description["key"],"kind" to op.description["kind"])
+                mapOf("operationId" to op.id,"key" to op.description["key"],"kind" to op.description["kind"],"method" to op.description["method"])
             }
             "operationState" -> {
                 if (supervisor.wasAcknowledged(id())) return mapOf("state" to "settled","problem" to mapOf("code" to "interrupted","message" to "Result already acknowledged"))
                 val op = supervisor.operation(id()) ?: throw NativeStorageException("unknown","Operation is not retained")
+                if (args.containsKey("capturePayload")) {
+                    val expected = args["capturePayload"] as? Map<*,*> ?: throw NativeStorageException("invalid","Missing capture observation payload")
+                    if (op.description["method"] != "prepareCaptureAt" || expected["operationId"] != id() || op.description["args"] != expected)
+                        throw NativeStorageException("conflict","Preparation observation has another payload")
+                }
                 if (!op.settled.isDone) mapOf("state" to "pending")
                 else try { mapOf("state" to "settled","result" to op.result.join()) }
                 catch (e: java.util.concurrent.CompletionException) {
@@ -28,15 +33,38 @@ class StorageChannel(private val supervisor: NativeIoSupervisor,
                     mapOf("state" to "settled","problem" to mapOf("code" to problem.code,"message" to problem.message))
                 }
             }
-            "acknowledgeOperation" -> { supervisor.acknowledge(id()); null }
+            "acknowledgeOperation" -> {
+                val op = supervisor.operation(id())
+                val preparation = op?.description?.get("method") == "prepareCaptureAt"
+                if (args["preparationOnly"] == true) {
+                    if (op == null) throw NativeStorageException("unresolved","Preparation receipt is not retained")
+                    if (!preparation) throw NativeStorageException("conflict","Not a preparation receipt")
+                    val payload = op.description["args"] as? Map<*,*> ?: throw NativeStorageException("invalid","Missing retained preparation payload")
+                    val reservation = CaptureWire.reservation(payload["reservation"])
+                    if (id() != "capture-${reservation["id"]}-prepare") throw NativeStorageException("conflict","Preparation operation ID differs")
+                } else if (preparation) throw NativeStorageException("conflict","Preparation requires explicit owner acknowledgement")
+                supervisor.acknowledge(id()); null
+            }
             else -> {
                 if (method !in methods) throw NativeStorageException("unsupported","Unknown storage operation")
+                if (method in captureMethods) {
+                    val fields = if (method == "prepareCaptureAt") setOf("operationId","reservation","metadataJson","audioSha256") else setOf("operationId","reservation","preparation")
+                    if (args.keys != fields) throw NativeStorageException("invalid","Unexpected capture payload fields")
+                    CaptureWire.literal(id())
+                    val reservation = CaptureWire.reservation(args["reservation"])
+                    if (method == "prepareCaptureAt") {
+                        if (id() != "capture-${reservation["id"]}-prepare") throw NativeStorageException("invalid","Wrong preparation operation ID")
+                        CaptureWire.metadata(CaptureWire.text(args["metadataJson"]),reservation)
+                        CaptureWire.digest(args["audioSha256"])
+                    } else CaptureWire.preparation(args["preparation"],reservation)
+                }
                 val payload = (args["binding"] ?: args["reservation"]) as? Map<*,*>
                 val key = payload?.get("key") as? Map<*,*> ?: mapOf("dumpId" to "catalog", "incarnation" to id())
                 val dumpId = key["dumpId"] as? String ?: throw NativeStorageException("invalid","Missing recording ID")
                 val incarnation = key["incarnation"] as? String ?: throw NativeStorageException("invalid","Missing incarnation")
                 val kind = when(method) {
-                    "writeMetadataAt" -> "publication"; "deleteComponentAt" -> "deletion"; "publishCaptureAt" -> "capture"
+                    "writeMetadataAt" -> "publication"; "deleteComponentAt" -> "deletion"
+                    "publishCaptureAt", "prepareCaptureAt", "inspectPreparedCaptureAt", "publishPreparedCaptureAt" -> "capture"
                     "playbackSourceAt" -> "playback"; else -> "read"
                 }
                 val descriptor = mapOf("key" to key,"kind" to kind,"method" to method,"args" to args)
@@ -46,6 +74,7 @@ class StorageChannel(private val supervisor: NativeIoSupervisor,
         }
     }
     companion object {
-        val methods = setOf("inspectLegacyStorage","validateCandidate","readAudioAt","playbackSourceAt","publishCaptureAt","writeMetadataAt","deleteComponentAt","listRecordingsAt")
+        val captureMethods = setOf("prepareCaptureAt","inspectPreparedCaptureAt","publishPreparedCaptureAt")
+        val methods = setOf("inspectLegacyStorage","validateCandidate","readAudioAt","playbackSourceAt","publishCaptureAt","writeMetadataAt","deleteComponentAt","listRecordingsAt") + captureMethods
     }
 }
