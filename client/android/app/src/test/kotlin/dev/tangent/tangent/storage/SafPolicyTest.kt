@@ -19,6 +19,99 @@ private class MemoryDocuments : DocumentsPort {
     }
 }
 class SafPolicyTest {
+    private fun assertRenameReceipt(cleanupThrows: Boolean) {
+        for (emptyQuery in listOf(false, true)) {
+            val receipts = ProbeReceipts()
+            val port = ProbeRenameFailureFixture(receipts, cleanupThrows, emptyQuery)
+            val result = receipts.capture { SafPolicy(port).probe(ProbeRenameFailureFixture.DIRECTORY, "fixture-probe") }
+            assertEquals(false, result["cleaned"])
+            assertEquals(listOf(ProbeRenameFailureFixture.A, ProbeRenameFailureFixture.B), result["owned"])
+            assertEquals(listOf("A/opaque"), port.deleted)
+            assertEquals(setOf("unrelated", "B/Opaque"), port.nodes.map { it.id }.toSet())
+            // No operation's receipts may bleed into a later operation on this worker.
+            assertEquals(emptyList<String>(), receipts.capture { mapOf("owned" to emptyList<String>(), "cleaned" to true) }["owned"])
+        }
+    }
+    @Test fun renamedUriSurvivesFailedQueryAndFalseOldIdCleanup() = assertRenameReceipt(false)
+    @Test fun renamedUriSurvivesFailedQueryAndThrowingOldIdCleanup() = assertRenameReceipt(true)
+    @Test fun probeReceiptExceptionsRetainExactUriAndSuccessfulReceiptsDeduplicate() {
+        val receipts = ProbeReceipts()
+        val result = receipts.capture {
+            receipts.observe(ProbeRenameFailureFixture.A) { throw NativeStorageException("io", "Create query failed") }
+        }
+        assertEquals(mapOf("owned" to listOf(ProbeRenameFailureFixture.A), "cleaned" to false), result)
+        val success = receipts.capture {
+            receipts.observe(ProbeRenameFailureFixture.A) { Unit }
+            mapOf("owned" to listOf(ProbeRenameFailureFixture.A), "cleaned" to true)
+        }
+        assertEquals(mapOf("owned" to listOf(ProbeRenameFailureFixture.A), "cleaned" to true), success)
+        try {
+            receipts.capture { throw NativeStorageException("denied", "No mutation") }
+            fail("No-receipt errors must remain errors")
+        } catch (e: NativeStorageException) { assertEquals("denied", e.code) }
+    }
+    private fun assertIncompleteSnapshot(loading: Boolean, error: String?, rows: List<NativeNode>) {
+        val deleted = mutableListOf<String>()
+        val port = object : DocumentsPort {
+            override fun name(directory: NativeDirectory) = "Chosen folder"
+            override fun children(directory: NativeDirectory) =
+                ProviderQuerySnapshot(rows, loading, error).completedRows()
+            override fun delete(directory: NativeDirectory, node: NativeNode): Boolean {
+                deleted.add(node.id); return true
+            }
+        }
+        val policy = SafPolicy(port)
+        val expectedCode = if (error != null) "io" else "unavailable"
+        for (name in listOf("fixture-a.opus", "missing.meta.json")) {
+            try {
+                policy.ownedNode(dir, name, null)
+                fail("Incomplete snapshot must not establish ownership or absence")
+            } catch (e: NativeStorageException) { assertEquals(expectedCode, e.code) }
+            val result = policy.deleteComponent(dir, name, null)
+            assertEquals("failed", result.state)
+            assertEquals(expectedCode, result.problem?.code)
+        }
+        // Same guard as Android create, rename and capture conflict checks.
+        for (names in listOf(setOf("fixture-a.opus"), setOf("missing.opus", "missing.meta.json"))) {
+            try {
+                policy.requireAvailableNames(dir, names)
+                fail("Incomplete snapshot must not authorize publication")
+            } catch (e: NativeStorageException) { assertEquals(expectedCode, e.code) }
+        }
+        assertTrue(deleted.isEmpty())
+    }
+    @Test fun emptyLoadingSnapshotCannotProveAbsenceOrAuthorizePublication() =
+        assertIncompleteSnapshot(true, null, emptyList())
+    @Test fun partialLoadingSnapshotCannotProveOwnershipOrAuthorizePublication() =
+        assertIncompleteSnapshot(true, null, listOf(NativeNode("owned", "fixture-a.opus", false)))
+    @Test fun emptyErrorSnapshotCannotProveAbsenceOrAuthorizePublication() =
+        assertIncompleteSnapshot(false, "Network unavailable", emptyList())
+    @Test fun partialErrorSnapshotCannotProveOwnershipOrAuthorizePublication() =
+        assertIncompleteSnapshot(false, "Network unavailable", listOf(NativeNode("owned", "fixture-a.opus", false)))
+    @Test fun loadingWithErrorAndBlankErrorAreAlsoIncomplete() {
+        assertIncompleteSnapshot(true, "Network unavailable", emptyList())
+        assertIncompleteSnapshot(false, "", emptyList())
+    }
+    @Test fun completedEmptySnapshotProvesAbsenceAndCompletedRowsEnforceConflicts() {
+        var rows = emptyList<NativeNode>()
+        val port = object : DocumentsPort {
+            override fun name(directory: NativeDirectory) = "Chosen folder"
+            override fun children(directory: NativeDirectory) = ProviderQuerySnapshot(rows, false, null).completedRows()
+            override fun delete(directory: NativeDirectory, node: NativeNode): Boolean =
+                throw AssertionError("Empty enumeration must not delete")
+        }
+        val policy = SafPolicy(port)
+        assertNull(policy.ownedNode(dir, "fixture-a.opus", "owned"))
+        assertEquals("absent", policy.deleteComponent(dir, "fixture-a.opus", "owned").state)
+        policy.requireAvailableNames(dir, setOf("fixture-a.opus", "fixture-a.meta.json"))
+        rows = listOf(NativeNode("owned", "fixture-a.opus", false))
+        assertEquals("owned", policy.ownedNode(dir, "fixture-a.opus", "owned")?.id)
+        try {
+            policy.requireAvailableNames(dir, setOf("fixture-a.opus"))
+            fail("Completed snapshot must preserve conflicts")
+        } catch (e: NativeStorageException) { assertEquals("conflict", e.code) }
+        policy.requireAvailableNames(dir, setOf("fixture-a.opus"), "owned")
+    }
     @Test fun equivalentGrantIdentityIsNotUriPrefixMatching() {
         assertTrue(SafPolicy.sameGrant("Provider","opaque/root","Provider","opaque/root"))
         assertFalse(SafPolicy.sameGrant("Provider","opaque/root","Provider","opaque/root-other"))

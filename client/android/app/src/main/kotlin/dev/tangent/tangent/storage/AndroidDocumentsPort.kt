@@ -14,7 +14,7 @@ class AndroidDocumentsPort(context: Context) : DocumentsIoPort {
     private val app = context.applicationContext
     private val resolver = app.contentResolver
     private val policy = SafPolicy(this)
-    private val probeReceipts = ThreadLocal<MutableList<String>>()
+    private val probeReceipts = ProbeReceipts()
     private fun fault(code:String,message:String):Nothing = throw NativeStorageException(code,message)
     private fun grant(directory:NativeDirectory,write:Boolean=false):Uri {
         val tree = Uri.parse(directory.treeUri)
@@ -37,7 +37,9 @@ class AndroidDocumentsPort(context: Context) : DocumentsIoPort {
                     val id = cursor.getString(0) ?: fault("io","Missing document identity")
                     val name = cursor.getString(1) ?: fault("io","Missing display name")
                     result.add(NativeNode(id,name,cursor.getString(2) == DC.Document.MIME_TYPE_DIR,cursor.getLong(3) and DC.Document.FLAG_VIRTUAL_DOCUMENT.toLong() != 0L))
-                }; result
+                }
+                ProviderQuerySnapshot(result, cursor.extras.getBoolean(DC.EXTRA_LOADING, false),
+                    cursor.extras.getString(DC.EXTRA_ERROR)).completedRows()
             } ?: fault("unavailable","Provider query returned no cursor")
         } catch(e: SecurityException) { fault("denied","Provider access denied") }
     }
@@ -71,21 +73,23 @@ class AndroidDocumentsPort(context: Context) : DocumentsIoPort {
         } ?: fault("io","Could not open document for writing")
     }
     override fun create(directory:NativeDirectory,name:String,mime:String):NativeNode {
-        if (children(directory).any { it.name == name }) fault("conflict","Target exists")
+        policy.requireAvailableNames(directory, setOf(name))
         grant(directory,true)
         val created = DC.createDocument(resolver,document(directory),mime,name) ?: fault("io","Provider refused create")
-        probeReceipts.get()?.add(created.toString())
-        val node = query(created).singleOrNull() ?: fault("io","Created document not observable")
-        if (node.name != name || node.directory || node.virtual) fault("conflict","Provider changed created identity")
-        return node
+        return probeReceipts.observe(created.toString()) {
+            val node = query(created).singleOrNull() ?: fault("io","Created document not observable")
+            if (node.name != name || node.directory || node.virtual) fault("conflict","Provider changed created identity")
+            node
+        }
     }
     override fun rename(directory:NativeDirectory,node:NativeNode,name:String):NativeNode {
-        if (children(directory).any { it.name == name && it.id != node.id }) fault("conflict","Rename target exists")
+        policy.requireAvailableNames(directory, setOf(name), node.id)
         val target = DC.renameDocument(resolver,checked(directory,node,DC.Document.FLAG_SUPPORTS_RENAME),name) ?: fault("io","Provider refused rename")
-        probeReceipts.get()?.add(target.toString())
-        val renamed = query(target).singleOrNull() ?: fault("io","Renamed document not observable")
-        if (renamed.name != name || renamed.directory || renamed.virtual) fault("io","Provider changed rename target")
-        return renamed
+        return probeReceipts.observe(target.toString()) {
+            val renamed = query(target).singleOrNull() ?: fault("io","Renamed document not observable")
+            if (renamed.name != name || renamed.directory || renamed.virtual) fault("io","Provider changed rename target")
+            renamed
+        }
     }
     private fun map(value:Any?):Map<String,Any?> {
         @Suppress("UNCHECKED_CAST") return value as? Map<String,Any?> ?: fault("invalid","Missing object")
@@ -148,14 +152,7 @@ class AndroidDocumentsPort(context: Context) : DocumentsIoPort {
         val loc = map(binding?.get("location") ?: reservation?.get("location") ?: args["location"])
         val d = directory(loc)
         if (method == "validateCandidate") {
-            val receipts = mutableListOf<String>(); probeReceipts.set(receipts)
-            try { return policy.probe(d,literal(args["token"])) }
-            catch(e: Exception) {
-                if (receipts.isEmpty()) throw e
-                // Includes create/rename URIs even when subsequent query fails.
-                // Never authorize a default commit after an uncertain probe.
-                return mapOf("owned" to receipts.toList(),"cleaned" to false)
-            } finally { probeReceipts.remove() }
+            return probeReceipts.capture { policy.probe(d,literal(args["token"])) }
         }
         if (method == "listRecordingsAt") {
             val nodes = children(d)
@@ -178,7 +175,7 @@ class AndroidDocumentsPort(context: Context) : DocumentsIoPort {
             val key = map(reservation["key"]); val id = literal(key["dumpId"]); literal(key["incarnation"])
             val source = File(text(reservation["stagingPath"]))
             if (!source.isFile || source.length() <= 0 || source.canonicalFile != source.absoluteFile) fault("invalid","Staging audio unavailable")
-            if (children(d).any { it.name == "$id.opus" || it.name == "$id.meta.json" }) fault("conflict","Capture targets exist")
+            policy.requireAvailableNames(d, setOf("$id.opus", "$id.meta.json"))
             val bytes = source.readBytes(); val meta = metadata(args,id)
             val audio = publish(d,"$id.opus","audio/ogg",bytes,false)
             publish(d,"$id.meta.json","application/json",meta,false)

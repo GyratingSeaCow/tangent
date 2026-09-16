@@ -9,6 +9,67 @@ import '../../support/storage_fixture.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  for (final cleanup in ['false', 'throwing']) {
+    test('SAF probe preserves exact renamed receipts after $cleanup cleanup',
+        () async {
+      const channel = MethodChannel('fixture/probe-receipts');
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      // Same literal provider returns asserted at the native ProbeReceipts /
+      // StorageChannel seam. This tests transport/decoding, not a real provider.
+      const a =
+          'content://Fixture.Provider/tree/root%2Fgrant/document/A%2fopaque';
+      const b =
+          'content://Fixture.Provider/tree/root%2Fgrant/document/%42%2FOpaque';
+      final location = (
+        id: 'fixture-location',
+        label: 'fixture',
+        directory: (
+          kind: 'saf',
+          path: '',
+          treeUri: 'content://Fixture.Provider/tree/root%2Fgrant',
+          authority: 'Fixture.Provider',
+          documentId: 'root/grant'
+        )
+      );
+      String? operationId;
+      final acknowledged = Completer<void>();
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        final args = call.arguments as Map;
+        if (call.method == 'validateCandidate') {
+          expect(args['token'], 'fixture-probe');
+          operationId = args['operationId'] as String;
+          return {'operationId': operationId};
+        }
+        expect(args['operationId'], operationId);
+        if (call.method == 'operationState') {
+          return {
+            'state': 'settled',
+            'result': {
+              'owned': [a, b],
+              'cleaned': false,
+            },
+          };
+        }
+        if (call.method == 'acknowledgeOperation') {
+          acknowledged.complete();
+          return null;
+        }
+        throw PlatformException(code: 'unsupported');
+      });
+      final backend = SafStorageBackend(channel: channel);
+      addTearDown(() async {
+        await backend.drain();
+        messenger.setMockMethodCallHandler(channel, null);
+      });
+      final receipt = requireOk(
+        await settled(backend.validateCandidate('fixture-probe', location)),
+      );
+      expect(receipt.cleaned, isFalse);
+      expect(receipt.owned, [(kind: 'saf', value: a), (kind: 'saf', value: b)]);
+      await acknowledged.future.timeout(const Duration(seconds: 3));
+    });
+  }
   test(
       'SAF listing isolates malformed per-file metadata and preserves valid peers',
       () async {

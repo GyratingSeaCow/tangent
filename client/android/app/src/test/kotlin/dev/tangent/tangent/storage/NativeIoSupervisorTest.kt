@@ -4,6 +4,40 @@ import java.util.concurrent.*
 import org.junit.Assert.*
 import org.junit.Test
 class NativeIoSupervisorTest {
+    @Test fun renamedProbeReceiptsSurviveWorkerSettlementAndChannelReplacement() {
+        for (cleanupThrows in listOf(false, true)) {
+            val entered = CountDownLatch(1); val release = CountDownLatch(1)
+            val supervisor = NativeIoSupervisor(Executors.newFixedThreadPool(2))
+            val receipts = ProbeReceipts()
+            val port = ProbeRenameFailureFixture(receipts, cleanupThrows) {
+                entered.countDown(); check(release.await(5, TimeUnit.SECONDS))
+            }
+            val dispatch: (String, Map<String, Any?>) -> Any? = { _, _ ->
+                receipts.capture { SafPolicy(port).probe(ProbeRenameFailureFixture.DIRECTORY, "fixture-probe") }
+            }
+            val args = mapOf("operationId" to "fixture-probe-$cleanupThrows")
+            try {
+                val old = StorageChannel(supervisor, dispatch)
+                old.handle("validateCandidate", args)
+                assertTrue(entered.await(5, TimeUnit.SECONDS))
+                old.detach()
+                val replacement = StorageChannel(supervisor, dispatch)
+                assertEquals("pending", (replacement.handle("operationState", args) as Map<*, *>)["state"])
+                release.countDown()
+                supervisor.operation(args["operationId"]!!)!!.settled.get(5, TimeUnit.SECONDS)
+                val state = replacement.handle("operationState", args) as Map<*, *>
+                assertEquals("settled", state["state"])
+                assertEquals(mapOf("owned" to listOf(ProbeRenameFailureFixture.A, ProbeRenameFailureFixture.B), "cleaned" to false), state["result"])
+                assertEquals(listOf("A/opaque"), port.deleted)
+                assertEquals(setOf("unrelated", "B/Opaque"), port.nodes.map { it.id }.toSet())
+                replacement.detach()
+                val third = StorageChannel(supervisor, dispatch)
+                assertEquals(state, third.handle("operationState", args))
+                third.handle("acknowledgeOperation", args)
+                assertNull(supervisor.operation(args["operationId"]!!))
+            } finally { release.countDown(); supervisor.close() }
+        }
+    }
     @Test fun detachedRealStorageChannelReattachesSettlementAndRetainedResult() {
         val entered = CountDownLatch(1); val release = CountDownLatch(1); val deleted = CountDownLatch(1)
         val supervisor = NativeIoSupervisor(Executors.newFixedThreadPool(2))

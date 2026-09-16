@@ -33,6 +33,10 @@ class SafPolicy(private val port: DocumentsPort) {
             throw NativeStorageException("unresolved", "Legacy Tangent child is missing or ambiguous")
         return selected.copy(documentId = children.single().id)
     }
+    fun requireAvailableNames(directory: NativeDirectory, names: Set<String>, exceptId: String? = null) {
+        if (port.children(directory).any { it.name in names && it.id != exceptId })
+            throw NativeStorageException("conflict", "Target exists")
+    }
     fun ownedNode(directory: NativeDirectory, name: String, expectedDocumentId: String?): NativeNode? {
         if (name.isEmpty() || name == "." || name == ".." || name.any { it == '/' || it == '\\' || it == '\u0000' })
             throw NativeStorageException("invalid", "Invalid component name")
