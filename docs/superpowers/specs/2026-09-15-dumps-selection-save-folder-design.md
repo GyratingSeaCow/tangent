@@ -46,6 +46,10 @@ Two independently testable features share the existing storage boundary. Impleme
 
 The existing Flutter AudioStorage interface and Kotlin MainActivity storage channel currently route read, write, delete and list operations through one globally configured tree. Merely exposing requestAccess in Settings is unsafe. Establish persisted recording-specific location identity (audio plus corresponding sidecar directory), backward-compatible legacy binding, and locator-aware operations before adding the switch UI. Keep user-visible default selection separate from record ownership.
 
+### Adopted frozen legacy inspection clarification
+
+The binding engineering supplement is `docs/superpowers/specs/2026-09-15-frozen-legacy-inspection-contract.md`: capture the original source without provider access, freeze exact versioned anchor bytes in SQLite, then resolve only that supplied snapshot. This preserves the existing product scope and adds no database migration or second default authority. The optional frozenAnchorJson backend parameter and two-pass behavior are adopted for Task 4 onward.
+
 ### Controller architecture decisions after Sol source review
 
 The controller selects additive storage catalog/binding tables (Sol option B), not rewriting existing audioPath values or inferring opaque SAF parents. The next migration is Drift v4 to v5 unless another approved migration intervenes. Preserve all existing Dumps values and sidecar schema 2. SQLite is the sole authoritative default pointer and revision; native preferences are a frozen legacy-read source only. Platform-dependent legacy resolution is resumable bootstrap outside the schema migration transaction.

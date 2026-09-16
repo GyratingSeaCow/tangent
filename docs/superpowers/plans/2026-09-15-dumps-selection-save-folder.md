@@ -29,6 +29,10 @@ Preserve current durable request/attempt/job ownership, compare-and-set guards, 
 
 ---
 
+
+
+**Adopted Task 4 prerequisite clarification:** `docs/superpowers/specs/2026-09-15-frozen-legacy-inspection-contract.md` is binding and must be read with every task affected by legacy inspection. `inspectLegacyStorage` is capture-only when frozenAnchorJson is null, and resolve-only against exact persisted bytes when supplied. Capture precedes provider access; SQLite freeze precedes resolution. Nullable location is intentional. Never reread preferences/current defaults to recover a frozen source. This supersedes earlier capture-and-resolve wording and expands Task 4 only by the adopted document's bounded prerequisite inventory.
+
 ## Authority, execution boundary and source map
 
 This document is a plan submitted to the controller, not authorization to execute it. During plan authorship only this file and `.superpowers/sdd/2026-09-15-dumps-selection-save-folder/plan-self-review.md` may be written. No tests, package installation, production edits, phone/server commands, deployment, commits or agent dispatch occur in this lane. Commands below are instructions for later controller-authorized disposable-fixture implementation/build lanes. No physical acceptance commands are supplied.
@@ -143,7 +147,7 @@ abstract interface class PlaybackLease { RecordingKey get key; AudioLocator get 
 abstract interface class MetadataPublicationAccess { BoundRecording get binding; Future<void> write(Map<String,dynamic> metadata); }
 abstract interface class StorageBackend {
   Future<List<RestoredUse>> unsettledUses();
-  Future<Outcome<LegacyStorage?>> inspectLegacyStorage({required String filesystemLegacyDirectory});
+  Future<Outcome<LegacyStorage?>> inspectLegacyStorage({required String filesystemLegacyDirectory, String? frozenAnchorJson});
   Future<Outcome<StorageLocation?>> pickDirectory();
   IoOperation<Outcome<ProbeReceipt>> validateCandidate(String token, StorageLocation location);
   IoOperation<Outcome<void>> inspectLocation(StorageLocation location);
@@ -334,7 +338,7 @@ abstract interface class PlaybackLease { RecordingKey get key; AudioLocator get 
 abstract interface class MetadataPublicationAccess { BoundRecording get binding; Future<void> write(Map<String,dynamic> metadata); }
 abstract interface class StorageBackend {
   Future<List<RestoredUse>> unsettledUses();
-  Future<Outcome<LegacyStorage?>> inspectLegacyStorage({required String filesystemLegacyDirectory});
+  Future<Outcome<LegacyStorage?>> inspectLegacyStorage({required String filesystemLegacyDirectory, String? frozenAnchorJson});
   Future<Outcome<StorageLocation?>> pickDirectory();
   IoOperation<Outcome<ProbeReceipt>> validateCandidate(String token, StorageLocation location);
   IoOperation<Outcome<void>> inspectLocation(StorageLocation location);
@@ -570,6 +574,8 @@ The following briefs continue the same contract and dependency graph; no task is
 
 ## Task 2: Explicit-root filesystem and native SAF I/O
 
+**Later adopted interface clarification:** Legacy inspection semantics are superseded by `docs/superpowers/specs/2026-09-15-frozen-legacy-inspection-contract.md` for Task 4 onward. Existing Task 2 reviews certify their historical commits; do not redo Task 2.
+
 **Owner:** Ted. **Depends on:** 1. **Create:** `client/lib/data/storage/filesystem_storage_backend.dart`, `client/lib/data/storage/saf_storage_backend.dart`, `client/lib/data/storage/storage_codec.dart`, `client/android/app/src/main/kotlin/dev/tangent/tangent/storage/SafPolicy.kt`, `DocumentsPort.kt`, `AndroidDocumentsPort.kt`, `NativeIoSupervisor.kt`, `StorageChannel.kt`, `client/android/app/src/test/kotlin/dev/tangent/tangent/storage/SafPolicyTest.kt`, `NativeIoSupervisorTest.kt`, `client/test/support/storage_fixture.dart`, `client/test/unit/data/storage_backend_test.dart`. **Modify:** `client/android/app/src/main/kotlin/dev/tangent/tangent/MainActivity.kt:30–80,125–247,423–438` and `client/android/app/build.gradle:46–48`. Keep recorder/screen-awake methods intact.
 
 **Interfaces:** Implements C1 `StorageBackend` and `IoOperation`; produces explicit-root I/O and the reusable synthetic fixture. No current-default lookup is permitted inside an I/O method.
@@ -636,7 +642,7 @@ abstract interface class PlaybackLease { RecordingKey get key; AudioLocator get 
 abstract interface class MetadataPublicationAccess { BoundRecording get binding; Future<void> write(Map<String,dynamic> metadata); }
 abstract interface class StorageBackend {
   Future<List<RestoredUse>> unsettledUses();
-  Future<Outcome<LegacyStorage?>> inspectLegacyStorage({required String filesystemLegacyDirectory});
+  Future<Outcome<LegacyStorage?>> inspectLegacyStorage({required String filesystemLegacyDirectory, String? frozenAnchorJson});
   Future<Outcome<StorageLocation?>> pickDirectory();
   IoOperation<Outcome<ProbeReceipt>> validateCandidate(String token, StorageLocation location);
   IoOperation<Outcome<void>> inspectLocation(StorageLocation location);
@@ -1045,7 +1051,7 @@ abstract interface class PlaybackLease { RecordingKey get key; AudioLocator get 
 abstract interface class MetadataPublicationAccess { BoundRecording get binding; Future<void> write(Map<String,dynamic> metadata); }
 abstract interface class StorageBackend {
   Future<List<RestoredUse>> unsettledUses();
-  Future<Outcome<LegacyStorage?>> inspectLegacyStorage({required String filesystemLegacyDirectory});
+  Future<Outcome<LegacyStorage?>> inspectLegacyStorage({required String filesystemLegacyDirectory, String? frozenAnchorJson});
   Future<Outcome<StorageLocation?>> pickDirectory();
   IoOperation<Outcome<ProbeReceipt>> validateCandidate(String token, StorageLocation location);
   IoOperation<Outcome<void>> inspectLocation(StorageLocation location);
@@ -1220,6 +1226,8 @@ This primitive test models component receipts; task 6 independently proves that 
 
 ## Task 4: Frozen legacy bootstrap and SQLite-only default catalog
 
+**Required adopted prerequisite:** Read `docs/superpowers/specs/2026-09-15-frozen-legacy-inspection-contract.md` in full. Its exact API/envelope/capture-freeze-resolve/diagnostic/test decisions govern. Its bounded native/Dart/contract/test file inventory is explicitly added to Task 4 allowed scope, overriding the narrower Modify list below. Implement and verify the prerequisite before catalog recovery; preserve earlier accepted behavior outside that correction.
+
 **Owner:** Ted. **Depends on:** 1–3. **Create:** `client/lib/data/storage/storage_catalog.dart`, `client/test/support/scripted_storage_backend.dart`, `client/test/unit/data/storage_catalog_test.dart`, `storage_legacy_binding_test.dart`. **Modify:** only storage codecs/LocalDb storage helpers needed by the fixed catalog ABI. No Settings UI and no call to unrestricted import.
 
 **Interfaces:** Produces C1 `StorageCatalog`, candidate/default results and capture reservations; uses C1 backend and the coordinator's catalog admission lane. Legacy bootstrap accepts the explicit legacy filesystem path; Android reads the frozen native preference instead.
@@ -1286,7 +1294,7 @@ abstract interface class PlaybackLease { RecordingKey get key; AudioLocator get 
 abstract interface class MetadataPublicationAccess { BoundRecording get binding; Future<void> write(Map<String,dynamic> metadata); }
 abstract interface class StorageBackend {
   Future<List<RestoredUse>> unsettledUses();
-  Future<Outcome<LegacyStorage?>> inspectLegacyStorage({required String filesystemLegacyDirectory});
+  Future<Outcome<LegacyStorage?>> inspectLegacyStorage({required String filesystemLegacyDirectory, String? frozenAnchorJson});
   Future<Outcome<StorageLocation?>> pickDirectory();
   IoOperation<Outcome<ProbeReceipt>> validateCandidate(String token, StorageLocation location);
   IoOperation<Outcome<void>> inspectLocation(StorageLocation location);
@@ -1522,7 +1530,7 @@ abstract interface class PlaybackLease { RecordingKey get key; AudioLocator get 
 abstract interface class MetadataPublicationAccess { BoundRecording get binding; Future<void> write(Map<String,dynamic> metadata); }
 abstract interface class StorageBackend {
   Future<List<RestoredUse>> unsettledUses();
-  Future<Outcome<LegacyStorage?>> inspectLegacyStorage({required String filesystemLegacyDirectory});
+  Future<Outcome<LegacyStorage?>> inspectLegacyStorage({required String filesystemLegacyDirectory, String? frozenAnchorJson});
   Future<Outcome<StorageLocation?>> pickDirectory();
   IoOperation<Outcome<ProbeReceipt>> validateCandidate(String token, StorageLocation location);
   IoOperation<Outcome<void>> inspectLocation(StorageLocation location);
@@ -1768,7 +1776,7 @@ abstract interface class PlaybackLease { RecordingKey get key; AudioLocator get 
 abstract interface class MetadataPublicationAccess { BoundRecording get binding; Future<void> write(Map<String,dynamic> metadata); }
 abstract interface class StorageBackend {
   Future<List<RestoredUse>> unsettledUses();
-  Future<Outcome<LegacyStorage?>> inspectLegacyStorage({required String filesystemLegacyDirectory});
+  Future<Outcome<LegacyStorage?>> inspectLegacyStorage({required String filesystemLegacyDirectory, String? frozenAnchorJson});
   Future<Outcome<StorageLocation?>> pickDirectory();
   IoOperation<Outcome<ProbeReceipt>> validateCandidate(String token, StorageLocation location);
   IoOperation<Outcome<void>> inspectLocation(StorageLocation location);
@@ -2137,7 +2145,7 @@ abstract interface class PlaybackLease { RecordingKey get key; AudioLocator get 
 abstract interface class MetadataPublicationAccess { BoundRecording get binding; Future<void> write(Map<String,dynamic> metadata); }
 abstract interface class StorageBackend {
   Future<List<RestoredUse>> unsettledUses();
-  Future<Outcome<LegacyStorage?>> inspectLegacyStorage({required String filesystemLegacyDirectory});
+  Future<Outcome<LegacyStorage?>> inspectLegacyStorage({required String filesystemLegacyDirectory, String? frozenAnchorJson});
   Future<Outcome<StorageLocation?>> pickDirectory();
   IoOperation<Outcome<ProbeReceipt>> validateCandidate(String token, StorageLocation location);
   IoOperation<Outcome<void>> inspectLocation(StorageLocation location);
@@ -2410,7 +2418,7 @@ abstract interface class PlaybackLease { RecordingKey get key; AudioLocator get 
 abstract interface class MetadataPublicationAccess { BoundRecording get binding; Future<void> write(Map<String,dynamic> metadata); }
 abstract interface class StorageBackend {
   Future<List<RestoredUse>> unsettledUses();
-  Future<Outcome<LegacyStorage?>> inspectLegacyStorage({required String filesystemLegacyDirectory});
+  Future<Outcome<LegacyStorage?>> inspectLegacyStorage({required String filesystemLegacyDirectory, String? frozenAnchorJson});
   Future<Outcome<StorageLocation?>> pickDirectory();
   IoOperation<Outcome<ProbeReceipt>> validateCandidate(String token, StorageLocation location);
   IoOperation<Outcome<void>> inspectLocation(StorageLocation location);
