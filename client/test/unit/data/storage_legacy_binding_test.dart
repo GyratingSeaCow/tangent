@@ -74,6 +74,249 @@ class UncertainDb extends LocalDb {
 }
 
 void main() {
+  for (final exhausted in [false, true]) {
+    test('catalog identity collision retries safely, exhausted $exhausted',
+        () async {
+      final h = CatalogHarness();
+      addTearDown(h.close);
+      final original = await h.f.seed('fixture-collision-a');
+      await h.f.seed('fixture-collision-b', folder: 'B');
+      final anchorA = StorageCodec.encodeLegacyFileAnchor(h.f.directory('A'));
+      final anchorB = StorageCodec.encodeLegacyFileAnchor(h.f.directory('B'));
+      await h.f.db.customStatement(
+        'UPDATE recording_bindings SET resolved=0, location_id=NULL, legacy_anchor_json=? WHERE dump_id=?',
+        [anchorB, 'fixture-collision-b'],
+      );
+      await h.f.db
+          .customStatement('DELETE FROM storage_locations WHERE id=?', ['B']);
+      await h.f.db.customStatement(
+        'UPDATE storage_catalog_state SET legacy_anchor_json=?, default_location_id=?, revision=5',
+        [anchorA, 'A'],
+      );
+      var attempts = 0;
+      h.catalog = SqliteStorageCatalog(
+        db: h.f.db,
+        backend: h.backend,
+        mutations: h.mutations,
+        stagingDirectory: h.f.directory('stage'),
+        idFactory: () =>
+            attempts++ == 0 || exhausted ? 'A' : 'fixture-new-location',
+        now: () => DateTime.utc(2030),
+        canChooseDefault: true,
+      );
+      final result = requireOk(
+        await h.catalog.bootstrapLegacyBindings(
+          filesystemLegacyDirectory: h.f.directory('B'),
+        ),
+      );
+      expect(await h.f.db.boundRecording('fixture-collision-a'), original);
+      final state =
+          await h.f.db.select(h.f.db.storageCatalogStates).getSingle();
+      expect(state.defaultLocationId, 'A');
+      expect(state.revision, 5);
+      expect(state.legacyAnchorJson, anchorA);
+      final locations = await h.f.db.select(h.f.db.storageLocations).get();
+      if (exhausted) {
+        expect(attempts, 32);
+        expect(result.unresolvedIds, ['fixture-collision-b']);
+        expect(result.problems.single.code, ProblemCode.conflict);
+        expect(locations, hasLength(1));
+      } else {
+        expect(attempts, 2);
+        expect(result.unresolvedIds, isEmpty);
+        expect(result.problems, isEmpty);
+        expect(locations, hasLength(2));
+        expect(
+          (await h.f.db.boundRecording('fixture-collision-b'))!.location.id,
+          'fixture-new-location',
+        );
+      }
+    });
+  }
+  for (final kind in ['file', 'saf']) {
+    for (final registeredA in [false, true]) {
+      test(
+          'repeated legacy observation ID $kind with existing A $registeredA keeps separate catalog ownership across reopen',
+          () async {
+        final h = CatalogHarness();
+        addTearDown(h.close);
+        const idA = 'fixture-registration-a';
+        const idB = 'fixture-registration-b';
+        await h.f.seed(idA, folder: 'A', status: 'completed');
+        await h.f.seed(idB, folder: 'B', status: 'completed');
+        final roots = <String, StorageLocation>{};
+        final anchors = <String, String>{};
+        final audio = <String, String>{};
+        for (final folder in ['A', 'B']) {
+          final id = folder == 'A' ? idA : idB;
+          if (kind == 'file') {
+            anchors[folder] =
+                ' ${StorageCodec.encodeLegacyFileAnchor(h.f.directory(folder))}\n';
+            final inspection = requireOk(
+              await h.f.backend.inspectLegacyStorage(
+                filesystemLegacyDirectory: h.f.directory('stage'),
+                frozenAnchorJson: anchors[folder],
+              ),
+            );
+            roots[folder] = inspection!.location!;
+            audio[folder] = h.f.audio(folder, id).path;
+          } else {
+            final tree = 'content://Fixture.Provider/tree/opaque%2F$folder';
+            roots[folder] = (
+              id: 'legacy-saf',
+              label: folder,
+              directory: (
+                kind: 'saf',
+                path: '',
+                treeUri: tree,
+                authority: 'Fixture.Provider',
+                documentId: 'effective/$folder'
+              )
+            );
+            anchors[folder] = ' ${StorageCodec.encodeLegacySafAnchor(tree)}\n';
+            audio[folder] = '$tree/document/audio%2F$id';
+            await h.f.db.customStatement(
+              'UPDATE dumps SET audio_path=? WHERE id=?',
+              [audio[folder], id],
+            );
+          }
+          await h.f.db.customStatement(
+              'UPDATE recording_bindings SET location_id=NULL, resolved=0, audio_json=?, legacy_anchor_json=? WHERE dump_id=?',
+              [
+                ' ${StorageCodec.encodeAudio(
+                  (kind: kind, value: audio[folder]!),
+                )}\n',
+                anchors[folder],
+                id,
+              ]);
+        }
+        expect(
+          roots['A']!.id,
+          kind == 'file' ? 'legacy-filesystem' : 'legacy-saf',
+        );
+        expect(roots['B']!.id, roots['A']!.id);
+        await h.f.db.customStatement('DELETE FROM storage_locations');
+        await h.f.db.customStatement(
+          'UPDATE storage_catalog_state SET legacy_anchor_json=?',
+          [anchors['A']],
+        );
+        if (registeredA) {
+          final a = roots['A']!;
+          await h.f.db.customStatement(
+              'INSERT INTO storage_locations(id,canonical_key,directory_json,label,legacy_restore) VALUES(?,?,?,?,1)',
+              [
+                a.id,
+                StorageCodec.canonicalKey(a.directory),
+                StorageCodec.encodeDirectory(a.directory),
+                a.label,
+              ]);
+          await h.f.db.customStatement(
+            'UPDATE storage_catalog_state SET default_location_id=?, revision=7',
+            [a.id],
+          );
+        }
+        final originalLocations =
+            await h.f.db.select(h.f.db.storageLocations).get();
+        expect(originalLocations.length, registeredA ? 1 : 0);
+        final beforeRows =
+            (await h.f.db.customSelect('SELECT * FROM dumps ORDER BY id').get())
+                .map((r) => r.data)
+                .toList();
+        final beforeBindings =
+            await h.f.db.select(h.f.db.recordingBindings).get();
+        if (kind == 'saf') {
+          h.backend.legacy = (_, frozen) async {
+            expect(frozen, isNotNull);
+            final folder =
+                anchors.entries.singleWhere((e) => e.value == frozen).key;
+            return Ok((location: roots[folder], anchorJson: frozen!));
+          };
+          h.backend.listing = (location) {
+            final folder = roots.entries
+                .singleWhere((e) => e.value.directory == location.directory)
+                .key;
+            return ImmediateIo(
+              'fixture-list-$folder',
+              Ok([
+                entry(location, folder == 'A' ? idA : idB, audio[folder]!),
+              ]),
+            );
+          };
+        }
+        final result = requireOk(
+          await h.catalog.bootstrapLegacyBindings(
+            filesystemLegacyDirectory: h.f.directory('stage'),
+          ),
+        );
+        expect(result.unresolvedIds, isEmpty);
+        expect(result.problems, isEmpty);
+        final locations = await h.f.db.select(h.f.db.storageLocations).get();
+        expect(locations, hasLength(2));
+        expect(locations.map((l) => l.id).toSet(), hasLength(2));
+        final boundA = requireOk(await h.catalog.resolveRecording(idA));
+        final boundB = requireOk(await h.catalog.resolveRecording(idB));
+        expect(boundA.location.directory, roots['A']!.directory);
+        expect(boundB.location.directory, roots['B']!.directory);
+        expect(boundA.location.id, isNot(boundB.location.id));
+        expect(boundA.audio.value, audio['A']);
+        expect(boundB.audio.value, audio['B']);
+        if (registeredA) {
+          expect(
+            locations.singleWhere((l) => l.id == roots['A']!.id),
+            originalLocations.single,
+          );
+        }
+        final state =
+            await h.f.db.select(h.f.db.storageCatalogStates).getSingle();
+        expect(state.defaultLocationId, boundA.location.id);
+        expect(state.revision, registeredA ? 7 : 1);
+        expect(state.legacyAnchorJson, anchors['A']);
+        Future<void> assertOriginalBytes() async {
+          final bindings = await h.f.db.select(h.f.db.recordingBindings).get();
+          for (final old in beforeBindings) {
+            final current = bindings.singleWhere((b) => b.dumpId == old.dumpId);
+            expect(current.incarnation, old.incarnation);
+            expect(current.audioJson, old.audioJson);
+            expect(current.legacyAnchorJson, old.legacyAnchorJson);
+            expect(current.metadataName, old.metadataName);
+          }
+          expect(
+            (await h.f.db.customSelect('SELECT * FROM dumps ORDER BY id').get())
+                .map((r) => r.data)
+                .toList(),
+            beforeRows,
+          );
+        }
+
+        await assertOriginalBytes();
+        final allocations = h.counter;
+        // Retry and actual close/reopen must deduplicate, not allocate or rekey.
+        requireOk(
+          await h.catalog.bootstrapLegacyBindings(
+            filesystemLegacyDirectory: h.f.directory('B'),
+          ),
+        );
+        await h.reopen();
+        requireOk(
+          await h.catalog.bootstrapLegacyBindings(
+            filesystemLegacyDirectory: h.f.directory('B'),
+          ),
+        );
+        expect(h.counter, allocations);
+        expect(await h.f.db.boundRecording(idA), boundA);
+        expect(await h.f.db.boundRecording(idB), boundB);
+        expect(await h.f.db.select(h.f.db.storageLocations).get(), locations);
+        final restored =
+            await h.f.db.select(h.f.db.storageCatalogStates).getSingle();
+        expect(restored.defaultLocationId, state.defaultLocationId);
+        expect(restored.revision, state.revision);
+        expect(restored.legacyAnchorJson, state.legacyAnchorJson);
+        await assertOriginalBytes();
+        expect(h.backend.captureCalls, 0);
+      });
+    }
+  }
+
   test(
       'bootstrap is byte-read-only, isolates malformed metadata and unsupported IDs, and cannot bind a foreign same-name file',
       () async {

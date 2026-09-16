@@ -134,17 +134,39 @@ class SqliteStorageCatalog implements StorageCatalog {
         label: existing.label
       );
     }
-    StorageCodec.encodeLocation(location);
+    // Backend IDs label observations (for example, every legacy file root is
+    // 'legacy-filesystem'). Only canonical identity can reuse a catalog row.
+    // Callers hold the SQLite transaction across allocation and insertion.
+    String? id;
+    for (var attempt = 0; attempt < 32; attempt++) {
+      final next = _newId();
+      final occupied = await (_db.select(_db.storageLocations)
+            ..where((l) => l.id.equals(next)))
+          .getSingleOrNull();
+      if (occupied == null) {
+        id = next;
+        break;
+      }
+    }
+    if (id == null) {
+      _fault(ProblemCode.conflict, 'No unused storage location identity');
+    }
+    final registered = (
+      id: id,
+      directory: location.directory,
+      label: location.label,
+    );
+    StorageCodec.encodeLocation(registered);
     await _db.into(_db.storageLocations).insert(
           StorageLocationsCompanion.insert(
-            id: location.id,
+            id: registered.id,
             canonicalKey: canonical,
-            directoryJson: StorageCodec.encodeDirectory(location.directory),
-            label: location.label,
+            directoryJson: StorageCodec.encodeDirectory(registered.directory),
+            label: registered.label,
             legacyRestore: Value(legacy),
           ),
         );
-    return location;
+    return registered;
   }
 
   Future<StorageLocation?> _location(String? id) async {
