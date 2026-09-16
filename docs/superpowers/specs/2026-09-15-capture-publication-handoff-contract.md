@@ -12,6 +12,10 @@ Status: ADOPTED by controller for T5-I2. This is an engineering correction to ap
 - Real Windows and Linux filesystem identity tests are mandatory for claimed cross-platform support. Host has WSL Ubuntu and a responding linux/amd64 Docker engine; this is availability discovery, not evidence of a passing Linux port. Use isolated disposable test environments only; no server/container/gateway lifecycle changes or global installation. If platform execution cannot be established, report the precise blocker rather than waiving it.
 - Historical task reviews remain evidence for their exact commits only. New protocol schema version does not change sidecar schema, Drift schema, old timestamps, serializer or CAS behavior. Ambiguous empty CREATE/partial artifacts remain retained; successful complete content must be recoverable from prior durable claims.
 
+## Controller amendment — JVM JSON test runtime
+
+Authorize `client/android/app/build.gradle` solely to add `testImplementation "org.json:json:20240303"` beside JUnit. This is a test-only harness prerequisite, not an Android runtime dependency, protocol change or unrelated upgrade. It supplements section 9 allowed files and the earlier JUnit-only test-dependency wording. Maven Central artifact identity/license/test-dependency metadata was independently retrieved by controller; real Gradle resolution/execution remains an implementation gate. Do not enable returnDefaultValues or replace production parsing with canned mock success. JSON-java JVM results are not evidence of identical Android parser behavior for every malformed input: retain strict production validation and explicitly label physical Android acceptance unperformed.
+
 ## Adopted source specification (verbatim sections)
 
 ## 1. Decision

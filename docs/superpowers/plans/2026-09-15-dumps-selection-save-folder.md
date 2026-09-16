@@ -6,7 +6,7 @@
 
 **Architecture:** Implement the user-approved additive v5 storage catalog/bindings, SQLite-only default authority, frozen legacy anchors, pinned capture reservations and persistent deletion tickets. One app-owned mutation coordinator owns admission and actual I/O lifetime; all consumers use bound locators and the existing guarded publication semantics. Storage/data and mechanical adaptations precede independent backend reviews, then UI and independent integration reviews.
 
-**Tech Stack:** Existing Dart >=3.6.0 / Flutter >=3.27.0 project, Riverpod 2, Drift/SQLite/FTS5, filesystem adapters, Kotlin/Android SAF, AndroidX DocumentFile; existing flutter_test/sqlite3 and JVM JUnit tests. Adopted T5-I2 correction adds exactly crypto: 3.0.6 as a direct runtime dependency; retain JUnit 4.13.2 as the Android test dependency. No unrelated dependency upgrades.
+**Tech Stack:** Existing Dart >=3.6.0 / Flutter >=3.27.0 project, Riverpod 2, Drift/SQLite/FTS5, filesystem adapters, Kotlin/Android SAF, AndroidX DocumentFile; existing flutter_test/sqlite3 and JVM JUnit tests. Adopted T5-I2 correction adds exactly crypto: 3.0.6 as a direct runtime dependency; retain JUnit 4.13.2 and add org.json:json:20240303 as Android JVM test-only dependencies (adopted T5-I2 harness amendment). No unrelated dependency upgrades.
 
 ## Global Constraints
 
