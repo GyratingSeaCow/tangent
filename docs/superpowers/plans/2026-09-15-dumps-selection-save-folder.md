@@ -6,7 +6,7 @@
 
 **Architecture:** Implement the user-approved additive v5 storage catalog/bindings, SQLite-only default authority, frozen legacy anchors, pinned capture reservations and persistent deletion tickets. One app-owned mutation coordinator owns admission and actual I/O lifetime; all consumers use bound locators and the existing guarded publication semantics. Storage/data and mechanical adaptations precede independent backend reviews, then UI and independent integration reviews.
 
-**Tech Stack:** Existing Dart >=3.6.0 / Flutter >=3.27.0 project, Riverpod 2, Drift/SQLite/FTS5, filesystem adapters, Kotlin/Android SAF, AndroidX DocumentFile; existing flutter_test/sqlite3 and JVM JUnit tests. No new runtime package is required; add only JUnit 4.13.2 as an Android test dependency.
+**Tech Stack:** Existing Dart >=3.6.0 / Flutter >=3.27.0 project, Riverpod 2, Drift/SQLite/FTS5, filesystem adapters, Kotlin/Android SAF, AndroidX DocumentFile; existing flutter_test/sqlite3 and JVM JUnit tests. Adopted T5-I2 correction adds exactly crypto: 3.0.6 as a direct runtime dependency; retain JUnit 4.13.2 as the Android test dependency. No unrelated dependency upgrades.
 
 ## Global Constraints
 
@@ -32,6 +32,8 @@ Preserve current durable request/attempt/job ownership, compare-and-set guards, 
 
 
 **Adopted Task 4 prerequisite clarification:** `docs/superpowers/specs/2026-09-15-frozen-legacy-inspection-contract.md` is binding and must be read with every task affected by legacy inspection. `inspectLegacyStorage` is capture-only when frozenAnchorJson is null, and resolve-only against exact persisted bytes when supplied. Capture precedes provider access; SQLite freeze precedes resolution. Nullable location is intentional. Never reread preferences/current defaults to recover a frozen source. This supersedes earlier capture-and-resolve wording and expands Task 4 only by the adopted document's bounded prerequisite inventory.
+
+**Adopted Task5 publication correction (phase-A transitional C1):** Read `docs/superpowers/specs/2026-09-15-capture-publication-handoff-contract.md` in full. It governs exact prepare/SQLite-freeze/initialize/reconcile behavior, identity ports, crypto dependency, journal/wire shapes, scoped files and test matrix. During phase A only, C1 retains legacy publishCapture alongside new primitives to remain compilable; phase B removes the legacy method and all callers atomically. Task5 is not accepted until integration and scoped review pass. Earlier one-shot publication wording is superseded. No old semantic metadata/timestamp/CAS changes or phone operations.
 
 ## Authority, execution boundary and source map
 
@@ -114,6 +116,49 @@ typedef ProbeReceipt = ({List<AudioLocator> owned, bool cleaned});
 enum CapturePhase { idle, reserved, recording, stopped, publishing, failed, committed, interrupted }
 typedef CaptureReservation = ({String id, RecordingKey key, StorageLocation location, String stagingPath, String mode, DateTime startedAt, CapturePhase phase});
 typedef PublishedCapture = ({BoundRecording binding, int sizeBytes});
+// New C1 types; persisted encodings are specified in section 5.
+typedef CaptureObjectIdentity = ({
+  String kind,       // exactly windows-file, posix-file, or saf-document
+  String scope,      // volume/device identity or literal provider authority
+  String objectId,   // native file identity or literal opaque document ID
+  String? generation // stable birth/generation evidence, when supplied
+});
+typedef CaptureComponentClaim = ({
+  RecordingComponent component,
+  String name,
+  AudioLocator locator,
+  CaptureObjectIdentity identity
+});
+typedef PreparedCapture = ({
+  String publicationId,
+  String reservationId,
+  RecordingKey key,
+  StorageLocation location,
+  String stagingPath,
+  CaptureObjectIdentity sourceIdentity,
+  CaptureObjectIdentity rootIdentity,
+  int audioSizeBytes,
+  String audioSha256,
+  String metadataJson,
+  CaptureComponentClaim? audio,
+  CaptureComponentClaim? metadata
+});
+enum CapturePreparationState { notStarted, uncertain, prepared }
+typedef CapturePreparationResult = ({
+  CapturePreparationState state,
+  PreparedCapture? preparation,
+  List<String> rawReturnedLocators,
+  StorageProblem? problem
+});
+enum CaptureContentState { empty, complete, partial, absent, foreign, unknown }
+typedef CaptureComponentInspection = ({
+  CaptureContentState state,
+  StorageProblem? problem
+});
+typedef CaptureInspection = ({
+  CaptureComponentInspection audio,
+  CaptureComponentInspection metadata
+});
 typedef RecordingLifecycleState = ({CapturePhase phase, CaptureReservation? reservation, StorageProblem? problem});
 enum UseKind { read, playback, acceptance, sync, edit, publication, recovery, capture, deletion }
 enum Eligibility { eligible, busy, nonterminal, syncing, publicationPending, unresolved, retired, deleting, missing, denied, retryOnly }
@@ -153,7 +198,12 @@ abstract interface class StorageBackend {
   IoOperation<Outcome<void>> inspectLocation(StorageLocation location);
   IoOperation<Outcome<Uint8List>> readAudio(BoundRecording binding);
   IoOperation<Outcome<AudioLocator>> playbackSource(BoundRecording binding);
+  // Transitional phase A only; REMOVE this old method in phase B.
   IoOperation<Outcome<PublishedCapture>> publishCapture(CaptureReservation reservation, Map<String,dynamic> metadata);
+  IoOperation<CapturePreparationResult> prepareCapture(CaptureReservation reservation, String metadataJson, String audioSha256, String operationId, {required bool observeOnly});
+  IoOperation<Outcome<CaptureInspection>> inspectPreparedCapture(CaptureReservation reservation, PreparedCapture preparation);
+  IoOperation<Outcome<PublishedCapture>> publishPreparedCapture(CaptureReservation reservation, PreparedCapture preparation);
+  Future<Outcome<void>> acknowledgeCapturePreparation(String operationId);
   IoOperation<Outcome<void>> writeMetadata(BoundRecording binding, Map<String,dynamic> metadata, String operationId);
   IoOperation<ComponentResult> deleteComponent(BoundRecording binding, RecordingComponent component, String operationId);
   IoOperation<Outcome<List<ImportedEntry>>> listRecordingsAt(StorageLocation location);
@@ -305,6 +355,49 @@ typedef ProbeReceipt = ({List<AudioLocator> owned, bool cleaned});
 enum CapturePhase { idle, reserved, recording, stopped, publishing, failed, committed, interrupted }
 typedef CaptureReservation = ({String id, RecordingKey key, StorageLocation location, String stagingPath, String mode, DateTime startedAt, CapturePhase phase});
 typedef PublishedCapture = ({BoundRecording binding, int sizeBytes});
+// New C1 types; persisted encodings are specified in section 5.
+typedef CaptureObjectIdentity = ({
+  String kind,       // exactly windows-file, posix-file, or saf-document
+  String scope,      // volume/device identity or literal provider authority
+  String objectId,   // native file identity or literal opaque document ID
+  String? generation // stable birth/generation evidence, when supplied
+});
+typedef CaptureComponentClaim = ({
+  RecordingComponent component,
+  String name,
+  AudioLocator locator,
+  CaptureObjectIdentity identity
+});
+typedef PreparedCapture = ({
+  String publicationId,
+  String reservationId,
+  RecordingKey key,
+  StorageLocation location,
+  String stagingPath,
+  CaptureObjectIdentity sourceIdentity,
+  CaptureObjectIdentity rootIdentity,
+  int audioSizeBytes,
+  String audioSha256,
+  String metadataJson,
+  CaptureComponentClaim? audio,
+  CaptureComponentClaim? metadata
+});
+enum CapturePreparationState { notStarted, uncertain, prepared }
+typedef CapturePreparationResult = ({
+  CapturePreparationState state,
+  PreparedCapture? preparation,
+  List<String> rawReturnedLocators,
+  StorageProblem? problem
+});
+enum CaptureContentState { empty, complete, partial, absent, foreign, unknown }
+typedef CaptureComponentInspection = ({
+  CaptureContentState state,
+  StorageProblem? problem
+});
+typedef CaptureInspection = ({
+  CaptureComponentInspection audio,
+  CaptureComponentInspection metadata
+});
 typedef RecordingLifecycleState = ({CapturePhase phase, CaptureReservation? reservation, StorageProblem? problem});
 enum UseKind { read, playback, acceptance, sync, edit, publication, recovery, capture, deletion }
 enum Eligibility { eligible, busy, nonterminal, syncing, publicationPending, unresolved, retired, deleting, missing, denied, retryOnly }
@@ -344,7 +437,12 @@ abstract interface class StorageBackend {
   IoOperation<Outcome<void>> inspectLocation(StorageLocation location);
   IoOperation<Outcome<Uint8List>> readAudio(BoundRecording binding);
   IoOperation<Outcome<AudioLocator>> playbackSource(BoundRecording binding);
+  // Transitional phase A only; REMOVE this old method in phase B.
   IoOperation<Outcome<PublishedCapture>> publishCapture(CaptureReservation reservation, Map<String,dynamic> metadata);
+  IoOperation<CapturePreparationResult> prepareCapture(CaptureReservation reservation, String metadataJson, String audioSha256, String operationId, {required bool observeOnly});
+  IoOperation<Outcome<CaptureInspection>> inspectPreparedCapture(CaptureReservation reservation, PreparedCapture preparation);
+  IoOperation<Outcome<PublishedCapture>> publishPreparedCapture(CaptureReservation reservation, PreparedCapture preparation);
+  Future<Outcome<void>> acknowledgeCapturePreparation(String operationId);
   IoOperation<Outcome<void>> writeMetadata(BoundRecording binding, Map<String,dynamic> metadata, String operationId);
   IoOperation<ComponentResult> deleteComponent(BoundRecording binding, RecordingComponent component, String operationId);
   IoOperation<Outcome<List<ImportedEntry>>> listRecordingsAt(StorageLocation location);
@@ -609,6 +707,49 @@ typedef ProbeReceipt = ({List<AudioLocator> owned, bool cleaned});
 enum CapturePhase { idle, reserved, recording, stopped, publishing, failed, committed, interrupted }
 typedef CaptureReservation = ({String id, RecordingKey key, StorageLocation location, String stagingPath, String mode, DateTime startedAt, CapturePhase phase});
 typedef PublishedCapture = ({BoundRecording binding, int sizeBytes});
+// New C1 types; persisted encodings are specified in section 5.
+typedef CaptureObjectIdentity = ({
+  String kind,       // exactly windows-file, posix-file, or saf-document
+  String scope,      // volume/device identity or literal provider authority
+  String objectId,   // native file identity or literal opaque document ID
+  String? generation // stable birth/generation evidence, when supplied
+});
+typedef CaptureComponentClaim = ({
+  RecordingComponent component,
+  String name,
+  AudioLocator locator,
+  CaptureObjectIdentity identity
+});
+typedef PreparedCapture = ({
+  String publicationId,
+  String reservationId,
+  RecordingKey key,
+  StorageLocation location,
+  String stagingPath,
+  CaptureObjectIdentity sourceIdentity,
+  CaptureObjectIdentity rootIdentity,
+  int audioSizeBytes,
+  String audioSha256,
+  String metadataJson,
+  CaptureComponentClaim? audio,
+  CaptureComponentClaim? metadata
+});
+enum CapturePreparationState { notStarted, uncertain, prepared }
+typedef CapturePreparationResult = ({
+  CapturePreparationState state,
+  PreparedCapture? preparation,
+  List<String> rawReturnedLocators,
+  StorageProblem? problem
+});
+enum CaptureContentState { empty, complete, partial, absent, foreign, unknown }
+typedef CaptureComponentInspection = ({
+  CaptureContentState state,
+  StorageProblem? problem
+});
+typedef CaptureInspection = ({
+  CaptureComponentInspection audio,
+  CaptureComponentInspection metadata
+});
 typedef RecordingLifecycleState = ({CapturePhase phase, CaptureReservation? reservation, StorageProblem? problem});
 enum UseKind { read, playback, acceptance, sync, edit, publication, recovery, capture, deletion }
 enum Eligibility { eligible, busy, nonterminal, syncing, publicationPending, unresolved, retired, deleting, missing, denied, retryOnly }
@@ -648,7 +789,12 @@ abstract interface class StorageBackend {
   IoOperation<Outcome<void>> inspectLocation(StorageLocation location);
   IoOperation<Outcome<Uint8List>> readAudio(BoundRecording binding);
   IoOperation<Outcome<AudioLocator>> playbackSource(BoundRecording binding);
+  // Transitional phase A only; REMOVE this old method in phase B.
   IoOperation<Outcome<PublishedCapture>> publishCapture(CaptureReservation reservation, Map<String,dynamic> metadata);
+  IoOperation<CapturePreparationResult> prepareCapture(CaptureReservation reservation, String metadataJson, String audioSha256, String operationId, {required bool observeOnly});
+  IoOperation<Outcome<CaptureInspection>> inspectPreparedCapture(CaptureReservation reservation, PreparedCapture preparation);
+  IoOperation<Outcome<PublishedCapture>> publishPreparedCapture(CaptureReservation reservation, PreparedCapture preparation);
+  Future<Outcome<void>> acknowledgeCapturePreparation(String operationId);
   IoOperation<Outcome<void>> writeMetadata(BoundRecording binding, Map<String,dynamic> metadata, String operationId);
   IoOperation<ComponentResult> deleteComponent(BoundRecording binding, RecordingComponent component, String operationId);
   IoOperation<Outcome<List<ImportedEntry>>> listRecordingsAt(StorageLocation location);
@@ -1018,6 +1164,49 @@ typedef ProbeReceipt = ({List<AudioLocator> owned, bool cleaned});
 enum CapturePhase { idle, reserved, recording, stopped, publishing, failed, committed, interrupted }
 typedef CaptureReservation = ({String id, RecordingKey key, StorageLocation location, String stagingPath, String mode, DateTime startedAt, CapturePhase phase});
 typedef PublishedCapture = ({BoundRecording binding, int sizeBytes});
+// New C1 types; persisted encodings are specified in section 5.
+typedef CaptureObjectIdentity = ({
+  String kind,       // exactly windows-file, posix-file, or saf-document
+  String scope,      // volume/device identity or literal provider authority
+  String objectId,   // native file identity or literal opaque document ID
+  String? generation // stable birth/generation evidence, when supplied
+});
+typedef CaptureComponentClaim = ({
+  RecordingComponent component,
+  String name,
+  AudioLocator locator,
+  CaptureObjectIdentity identity
+});
+typedef PreparedCapture = ({
+  String publicationId,
+  String reservationId,
+  RecordingKey key,
+  StorageLocation location,
+  String stagingPath,
+  CaptureObjectIdentity sourceIdentity,
+  CaptureObjectIdentity rootIdentity,
+  int audioSizeBytes,
+  String audioSha256,
+  String metadataJson,
+  CaptureComponentClaim? audio,
+  CaptureComponentClaim? metadata
+});
+enum CapturePreparationState { notStarted, uncertain, prepared }
+typedef CapturePreparationResult = ({
+  CapturePreparationState state,
+  PreparedCapture? preparation,
+  List<String> rawReturnedLocators,
+  StorageProblem? problem
+});
+enum CaptureContentState { empty, complete, partial, absent, foreign, unknown }
+typedef CaptureComponentInspection = ({
+  CaptureContentState state,
+  StorageProblem? problem
+});
+typedef CaptureInspection = ({
+  CaptureComponentInspection audio,
+  CaptureComponentInspection metadata
+});
 typedef RecordingLifecycleState = ({CapturePhase phase, CaptureReservation? reservation, StorageProblem? problem});
 enum UseKind { read, playback, acceptance, sync, edit, publication, recovery, capture, deletion }
 enum Eligibility { eligible, busy, nonterminal, syncing, publicationPending, unresolved, retired, deleting, missing, denied, retryOnly }
@@ -1057,7 +1246,12 @@ abstract interface class StorageBackend {
   IoOperation<Outcome<void>> inspectLocation(StorageLocation location);
   IoOperation<Outcome<Uint8List>> readAudio(BoundRecording binding);
   IoOperation<Outcome<AudioLocator>> playbackSource(BoundRecording binding);
+  // Transitional phase A only; REMOVE this old method in phase B.
   IoOperation<Outcome<PublishedCapture>> publishCapture(CaptureReservation reservation, Map<String,dynamic> metadata);
+  IoOperation<CapturePreparationResult> prepareCapture(CaptureReservation reservation, String metadataJson, String audioSha256, String operationId, {required bool observeOnly});
+  IoOperation<Outcome<CaptureInspection>> inspectPreparedCapture(CaptureReservation reservation, PreparedCapture preparation);
+  IoOperation<Outcome<PublishedCapture>> publishPreparedCapture(CaptureReservation reservation, PreparedCapture preparation);
+  Future<Outcome<void>> acknowledgeCapturePreparation(String operationId);
   IoOperation<Outcome<void>> writeMetadata(BoundRecording binding, Map<String,dynamic> metadata, String operationId);
   IoOperation<ComponentResult> deleteComponent(BoundRecording binding, RecordingComponent component, String operationId);
   IoOperation<Outcome<List<ImportedEntry>>> listRecordingsAt(StorageLocation location);
@@ -1261,6 +1455,49 @@ typedef ProbeReceipt = ({List<AudioLocator> owned, bool cleaned});
 enum CapturePhase { idle, reserved, recording, stopped, publishing, failed, committed, interrupted }
 typedef CaptureReservation = ({String id, RecordingKey key, StorageLocation location, String stagingPath, String mode, DateTime startedAt, CapturePhase phase});
 typedef PublishedCapture = ({BoundRecording binding, int sizeBytes});
+// New C1 types; persisted encodings are specified in section 5.
+typedef CaptureObjectIdentity = ({
+  String kind,       // exactly windows-file, posix-file, or saf-document
+  String scope,      // volume/device identity or literal provider authority
+  String objectId,   // native file identity or literal opaque document ID
+  String? generation // stable birth/generation evidence, when supplied
+});
+typedef CaptureComponentClaim = ({
+  RecordingComponent component,
+  String name,
+  AudioLocator locator,
+  CaptureObjectIdentity identity
+});
+typedef PreparedCapture = ({
+  String publicationId,
+  String reservationId,
+  RecordingKey key,
+  StorageLocation location,
+  String stagingPath,
+  CaptureObjectIdentity sourceIdentity,
+  CaptureObjectIdentity rootIdentity,
+  int audioSizeBytes,
+  String audioSha256,
+  String metadataJson,
+  CaptureComponentClaim? audio,
+  CaptureComponentClaim? metadata
+});
+enum CapturePreparationState { notStarted, uncertain, prepared }
+typedef CapturePreparationResult = ({
+  CapturePreparationState state,
+  PreparedCapture? preparation,
+  List<String> rawReturnedLocators,
+  StorageProblem? problem
+});
+enum CaptureContentState { empty, complete, partial, absent, foreign, unknown }
+typedef CaptureComponentInspection = ({
+  CaptureContentState state,
+  StorageProblem? problem
+});
+typedef CaptureInspection = ({
+  CaptureComponentInspection audio,
+  CaptureComponentInspection metadata
+});
 typedef RecordingLifecycleState = ({CapturePhase phase, CaptureReservation? reservation, StorageProblem? problem});
 enum UseKind { read, playback, acceptance, sync, edit, publication, recovery, capture, deletion }
 enum Eligibility { eligible, busy, nonterminal, syncing, publicationPending, unresolved, retired, deleting, missing, denied, retryOnly }
@@ -1300,7 +1537,12 @@ abstract interface class StorageBackend {
   IoOperation<Outcome<void>> inspectLocation(StorageLocation location);
   IoOperation<Outcome<Uint8List>> readAudio(BoundRecording binding);
   IoOperation<Outcome<AudioLocator>> playbackSource(BoundRecording binding);
+  // Transitional phase A only; REMOVE this old method in phase B.
   IoOperation<Outcome<PublishedCapture>> publishCapture(CaptureReservation reservation, Map<String,dynamic> metadata);
+  IoOperation<CapturePreparationResult> prepareCapture(CaptureReservation reservation, String metadataJson, String audioSha256, String operationId, {required bool observeOnly});
+  IoOperation<Outcome<CaptureInspection>> inspectPreparedCapture(CaptureReservation reservation, PreparedCapture preparation);
+  IoOperation<Outcome<PublishedCapture>> publishPreparedCapture(CaptureReservation reservation, PreparedCapture preparation);
+  Future<Outcome<void>> acknowledgeCapturePreparation(String operationId);
   IoOperation<Outcome<void>> writeMetadata(BoundRecording binding, Map<String,dynamic> metadata, String operationId);
   IoOperation<ComponentResult> deleteComponent(BoundRecording binding, RecordingComponent component, String operationId);
   IoOperation<Outcome<List<ImportedEntry>>> listRecordingsAt(StorageLocation location);
@@ -1464,6 +1706,8 @@ Future<Outcome<DefaultFolderState>> serializeDefaultCommit(
 
 ## Task 5: Pinned capture persistence and source-bound import
 
+**Adopted Task5 publication correction (phase-A transitional C1):** Read `docs/superpowers/specs/2026-09-15-capture-publication-handoff-contract.md` in full. It governs exact prepare/SQLite-freeze/initialize/reconcile behavior, identity ports, crypto dependency, journal/wire shapes, scoped files and test matrix. During phase A only, C1 retains legacy publishCapture alongside new primitives to remain compilable; phase B removes the legacy method and all callers atomically. Task5 is not accepted until integration and scoped review pass. Earlier one-shot publication wording is superseded. No old semantic metadata/timestamp/CAS changes or phone operations.
+
 **Owner:** Ted. **Depends on:** 1–4. **Create:** `client/lib/services/recording_coordinator.dart`, `client/lib/data/storage/recording_importer.dart`, `client/test/unit/services/pinned_recording_test.dart`, `client/test/unit/data/storage_import_test.dart`. **Modify:** `client/lib/services/recording_service.dart`, `recording_persistence.dart`, `client/lib/data/recording_metadata.dart` (import validation only), `client/test/unit/services/recording_service_test.dart`, `recording_persistence_test.dart`, `client/test/widget/recording_controller_test.dart`. Existing runtime caller wiring completes in task 6.
 
 **Interfaces:** Produces C1 `RecordingCoordinator`, `RecordingImporter`; exact recorder ABI changes `RecordingService.start()` to `Future<String> start({required String stagingPath})`, on real/stub/fake implementations. Keep amplitude/stop/dispose contracts. Backend publish returns `PublishedCapture` and never removes staging.
@@ -1497,6 +1741,49 @@ typedef ProbeReceipt = ({List<AudioLocator> owned, bool cleaned});
 enum CapturePhase { idle, reserved, recording, stopped, publishing, failed, committed, interrupted }
 typedef CaptureReservation = ({String id, RecordingKey key, StorageLocation location, String stagingPath, String mode, DateTime startedAt, CapturePhase phase});
 typedef PublishedCapture = ({BoundRecording binding, int sizeBytes});
+// New C1 types; persisted encodings are specified in section 5.
+typedef CaptureObjectIdentity = ({
+  String kind,       // exactly windows-file, posix-file, or saf-document
+  String scope,      // volume/device identity or literal provider authority
+  String objectId,   // native file identity or literal opaque document ID
+  String? generation // stable birth/generation evidence, when supplied
+});
+typedef CaptureComponentClaim = ({
+  RecordingComponent component,
+  String name,
+  AudioLocator locator,
+  CaptureObjectIdentity identity
+});
+typedef PreparedCapture = ({
+  String publicationId,
+  String reservationId,
+  RecordingKey key,
+  StorageLocation location,
+  String stagingPath,
+  CaptureObjectIdentity sourceIdentity,
+  CaptureObjectIdentity rootIdentity,
+  int audioSizeBytes,
+  String audioSha256,
+  String metadataJson,
+  CaptureComponentClaim? audio,
+  CaptureComponentClaim? metadata
+});
+enum CapturePreparationState { notStarted, uncertain, prepared }
+typedef CapturePreparationResult = ({
+  CapturePreparationState state,
+  PreparedCapture? preparation,
+  List<String> rawReturnedLocators,
+  StorageProblem? problem
+});
+enum CaptureContentState { empty, complete, partial, absent, foreign, unknown }
+typedef CaptureComponentInspection = ({
+  CaptureContentState state,
+  StorageProblem? problem
+});
+typedef CaptureInspection = ({
+  CaptureComponentInspection audio,
+  CaptureComponentInspection metadata
+});
 typedef RecordingLifecycleState = ({CapturePhase phase, CaptureReservation? reservation, StorageProblem? problem});
 enum UseKind { read, playback, acceptance, sync, edit, publication, recovery, capture, deletion }
 enum Eligibility { eligible, busy, nonterminal, syncing, publicationPending, unresolved, retired, deleting, missing, denied, retryOnly }
@@ -1536,7 +1823,12 @@ abstract interface class StorageBackend {
   IoOperation<Outcome<void>> inspectLocation(StorageLocation location);
   IoOperation<Outcome<Uint8List>> readAudio(BoundRecording binding);
   IoOperation<Outcome<AudioLocator>> playbackSource(BoundRecording binding);
+  // Transitional phase A only; REMOVE this old method in phase B.
   IoOperation<Outcome<PublishedCapture>> publishCapture(CaptureReservation reservation, Map<String,dynamic> metadata);
+  IoOperation<CapturePreparationResult> prepareCapture(CaptureReservation reservation, String metadataJson, String audioSha256, String operationId, {required bool observeOnly});
+  IoOperation<Outcome<CaptureInspection>> inspectPreparedCapture(CaptureReservation reservation, PreparedCapture preparation);
+  IoOperation<Outcome<PublishedCapture>> publishPreparedCapture(CaptureReservation reservation, PreparedCapture preparation);
+  Future<Outcome<void>> acknowledgeCapturePreparation(String operationId);
   IoOperation<Outcome<void>> writeMetadata(BoundRecording binding, Map<String,dynamic> metadata, String operationId);
   IoOperation<ComponentResult> deleteComponent(BoundRecording binding, RecordingComponent component, String operationId);
   IoOperation<Outcome<List<ImportedEntry>>> listRecordingsAt(StorageLocation location);
@@ -1743,6 +2035,49 @@ typedef ProbeReceipt = ({List<AudioLocator> owned, bool cleaned});
 enum CapturePhase { idle, reserved, recording, stopped, publishing, failed, committed, interrupted }
 typedef CaptureReservation = ({String id, RecordingKey key, StorageLocation location, String stagingPath, String mode, DateTime startedAt, CapturePhase phase});
 typedef PublishedCapture = ({BoundRecording binding, int sizeBytes});
+// New C1 types; persisted encodings are specified in section 5.
+typedef CaptureObjectIdentity = ({
+  String kind,       // exactly windows-file, posix-file, or saf-document
+  String scope,      // volume/device identity or literal provider authority
+  String objectId,   // native file identity or literal opaque document ID
+  String? generation // stable birth/generation evidence, when supplied
+});
+typedef CaptureComponentClaim = ({
+  RecordingComponent component,
+  String name,
+  AudioLocator locator,
+  CaptureObjectIdentity identity
+});
+typedef PreparedCapture = ({
+  String publicationId,
+  String reservationId,
+  RecordingKey key,
+  StorageLocation location,
+  String stagingPath,
+  CaptureObjectIdentity sourceIdentity,
+  CaptureObjectIdentity rootIdentity,
+  int audioSizeBytes,
+  String audioSha256,
+  String metadataJson,
+  CaptureComponentClaim? audio,
+  CaptureComponentClaim? metadata
+});
+enum CapturePreparationState { notStarted, uncertain, prepared }
+typedef CapturePreparationResult = ({
+  CapturePreparationState state,
+  PreparedCapture? preparation,
+  List<String> rawReturnedLocators,
+  StorageProblem? problem
+});
+enum CaptureContentState { empty, complete, partial, absent, foreign, unknown }
+typedef CaptureComponentInspection = ({
+  CaptureContentState state,
+  StorageProblem? problem
+});
+typedef CaptureInspection = ({
+  CaptureComponentInspection audio,
+  CaptureComponentInspection metadata
+});
 typedef RecordingLifecycleState = ({CapturePhase phase, CaptureReservation? reservation, StorageProblem? problem});
 enum UseKind { read, playback, acceptance, sync, edit, publication, recovery, capture, deletion }
 enum Eligibility { eligible, busy, nonterminal, syncing, publicationPending, unresolved, retired, deleting, missing, denied, retryOnly }
@@ -1782,7 +2117,12 @@ abstract interface class StorageBackend {
   IoOperation<Outcome<void>> inspectLocation(StorageLocation location);
   IoOperation<Outcome<Uint8List>> readAudio(BoundRecording binding);
   IoOperation<Outcome<AudioLocator>> playbackSource(BoundRecording binding);
+  // Transitional phase A only; REMOVE this old method in phase B.
   IoOperation<Outcome<PublishedCapture>> publishCapture(CaptureReservation reservation, Map<String,dynamic> metadata);
+  IoOperation<CapturePreparationResult> prepareCapture(CaptureReservation reservation, String metadataJson, String audioSha256, String operationId, {required bool observeOnly});
+  IoOperation<Outcome<CaptureInspection>> inspectPreparedCapture(CaptureReservation reservation, PreparedCapture preparation);
+  IoOperation<Outcome<PublishedCapture>> publishPreparedCapture(CaptureReservation reservation, PreparedCapture preparation);
+  Future<Outcome<void>> acknowledgeCapturePreparation(String operationId);
   IoOperation<Outcome<void>> writeMetadata(BoundRecording binding, Map<String,dynamic> metadata, String operationId);
   IoOperation<ComponentResult> deleteComponent(BoundRecording binding, RecordingComponent component, String operationId);
   IoOperation<Outcome<List<ImportedEntry>>> listRecordingsAt(StorageLocation location);
@@ -2112,6 +2452,49 @@ typedef ProbeReceipt = ({List<AudioLocator> owned, bool cleaned});
 enum CapturePhase { idle, reserved, recording, stopped, publishing, failed, committed, interrupted }
 typedef CaptureReservation = ({String id, RecordingKey key, StorageLocation location, String stagingPath, String mode, DateTime startedAt, CapturePhase phase});
 typedef PublishedCapture = ({BoundRecording binding, int sizeBytes});
+// New C1 types; persisted encodings are specified in section 5.
+typedef CaptureObjectIdentity = ({
+  String kind,       // exactly windows-file, posix-file, or saf-document
+  String scope,      // volume/device identity or literal provider authority
+  String objectId,   // native file identity or literal opaque document ID
+  String? generation // stable birth/generation evidence, when supplied
+});
+typedef CaptureComponentClaim = ({
+  RecordingComponent component,
+  String name,
+  AudioLocator locator,
+  CaptureObjectIdentity identity
+});
+typedef PreparedCapture = ({
+  String publicationId,
+  String reservationId,
+  RecordingKey key,
+  StorageLocation location,
+  String stagingPath,
+  CaptureObjectIdentity sourceIdentity,
+  CaptureObjectIdentity rootIdentity,
+  int audioSizeBytes,
+  String audioSha256,
+  String metadataJson,
+  CaptureComponentClaim? audio,
+  CaptureComponentClaim? metadata
+});
+enum CapturePreparationState { notStarted, uncertain, prepared }
+typedef CapturePreparationResult = ({
+  CapturePreparationState state,
+  PreparedCapture? preparation,
+  List<String> rawReturnedLocators,
+  StorageProblem? problem
+});
+enum CaptureContentState { empty, complete, partial, absent, foreign, unknown }
+typedef CaptureComponentInspection = ({
+  CaptureContentState state,
+  StorageProblem? problem
+});
+typedef CaptureInspection = ({
+  CaptureComponentInspection audio,
+  CaptureComponentInspection metadata
+});
 typedef RecordingLifecycleState = ({CapturePhase phase, CaptureReservation? reservation, StorageProblem? problem});
 enum UseKind { read, playback, acceptance, sync, edit, publication, recovery, capture, deletion }
 enum Eligibility { eligible, busy, nonterminal, syncing, publicationPending, unresolved, retired, deleting, missing, denied, retryOnly }
@@ -2151,7 +2534,12 @@ abstract interface class StorageBackend {
   IoOperation<Outcome<void>> inspectLocation(StorageLocation location);
   IoOperation<Outcome<Uint8List>> readAudio(BoundRecording binding);
   IoOperation<Outcome<AudioLocator>> playbackSource(BoundRecording binding);
+  // Transitional phase A only; REMOVE this old method in phase B.
   IoOperation<Outcome<PublishedCapture>> publishCapture(CaptureReservation reservation, Map<String,dynamic> metadata);
+  IoOperation<CapturePreparationResult> prepareCapture(CaptureReservation reservation, String metadataJson, String audioSha256, String operationId, {required bool observeOnly});
+  IoOperation<Outcome<CaptureInspection>> inspectPreparedCapture(CaptureReservation reservation, PreparedCapture preparation);
+  IoOperation<Outcome<PublishedCapture>> publishPreparedCapture(CaptureReservation reservation, PreparedCapture preparation);
+  Future<Outcome<void>> acknowledgeCapturePreparation(String operationId);
   IoOperation<Outcome<void>> writeMetadata(BoundRecording binding, Map<String,dynamic> metadata, String operationId);
   IoOperation<ComponentResult> deleteComponent(BoundRecording binding, RecordingComponent component, String operationId);
   IoOperation<Outcome<List<ImportedEntry>>> listRecordingsAt(StorageLocation location);
@@ -2385,6 +2773,49 @@ typedef ProbeReceipt = ({List<AudioLocator> owned, bool cleaned});
 enum CapturePhase { idle, reserved, recording, stopped, publishing, failed, committed, interrupted }
 typedef CaptureReservation = ({String id, RecordingKey key, StorageLocation location, String stagingPath, String mode, DateTime startedAt, CapturePhase phase});
 typedef PublishedCapture = ({BoundRecording binding, int sizeBytes});
+// New C1 types; persisted encodings are specified in section 5.
+typedef CaptureObjectIdentity = ({
+  String kind,       // exactly windows-file, posix-file, or saf-document
+  String scope,      // volume/device identity or literal provider authority
+  String objectId,   // native file identity or literal opaque document ID
+  String? generation // stable birth/generation evidence, when supplied
+});
+typedef CaptureComponentClaim = ({
+  RecordingComponent component,
+  String name,
+  AudioLocator locator,
+  CaptureObjectIdentity identity
+});
+typedef PreparedCapture = ({
+  String publicationId,
+  String reservationId,
+  RecordingKey key,
+  StorageLocation location,
+  String stagingPath,
+  CaptureObjectIdentity sourceIdentity,
+  CaptureObjectIdentity rootIdentity,
+  int audioSizeBytes,
+  String audioSha256,
+  String metadataJson,
+  CaptureComponentClaim? audio,
+  CaptureComponentClaim? metadata
+});
+enum CapturePreparationState { notStarted, uncertain, prepared }
+typedef CapturePreparationResult = ({
+  CapturePreparationState state,
+  PreparedCapture? preparation,
+  List<String> rawReturnedLocators,
+  StorageProblem? problem
+});
+enum CaptureContentState { empty, complete, partial, absent, foreign, unknown }
+typedef CaptureComponentInspection = ({
+  CaptureContentState state,
+  StorageProblem? problem
+});
+typedef CaptureInspection = ({
+  CaptureComponentInspection audio,
+  CaptureComponentInspection metadata
+});
 typedef RecordingLifecycleState = ({CapturePhase phase, CaptureReservation? reservation, StorageProblem? problem});
 enum UseKind { read, playback, acceptance, sync, edit, publication, recovery, capture, deletion }
 enum Eligibility { eligible, busy, nonterminal, syncing, publicationPending, unresolved, retired, deleting, missing, denied, retryOnly }
@@ -2424,7 +2855,12 @@ abstract interface class StorageBackend {
   IoOperation<Outcome<void>> inspectLocation(StorageLocation location);
   IoOperation<Outcome<Uint8List>> readAudio(BoundRecording binding);
   IoOperation<Outcome<AudioLocator>> playbackSource(BoundRecording binding);
+  // Transitional phase A only; REMOVE this old method in phase B.
   IoOperation<Outcome<PublishedCapture>> publishCapture(CaptureReservation reservation, Map<String,dynamic> metadata);
+  IoOperation<CapturePreparationResult> prepareCapture(CaptureReservation reservation, String metadataJson, String audioSha256, String operationId, {required bool observeOnly});
+  IoOperation<Outcome<CaptureInspection>> inspectPreparedCapture(CaptureReservation reservation, PreparedCapture preparation);
+  IoOperation<Outcome<PublishedCapture>> publishPreparedCapture(CaptureReservation reservation, PreparedCapture preparation);
+  Future<Outcome<void>> acknowledgeCapturePreparation(String operationId);
   IoOperation<Outcome<void>> writeMetadata(BoundRecording binding, Map<String,dynamic> metadata, String operationId);
   IoOperation<ComponentResult> deleteComponent(BoundRecording binding, RecordingComponent component, String operationId);
   IoOperation<Outcome<List<ImportedEntry>>> listRecordingsAt(StorageLocation location);

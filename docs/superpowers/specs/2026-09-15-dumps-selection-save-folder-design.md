@@ -1,5 +1,7 @@
 # Dumps multi-selection and configurable default save folder
 
+**Adopted Task5 publication correction (phase-A transitional C1):** Read `docs/superpowers/specs/2026-09-15-capture-publication-handoff-contract.md` in full. It governs exact prepare/SQLite-freeze/initialize/reconcile behavior, identity ports, crypto dependency, journal/wire shapes, scoped files and test matrix. During phase A only, C1 retains legacy publishCapture alongside new primitives to remain compilable; phase B removes the legacy method and all callers atomically. Task5 is not accepted until integration and scoped review pass. Earlier one-shot publication wording is superseded. No old semantic metadata/timestamp/CAS changes or phone operations.
+
 ## Approval and scope
 
 Jeff approved the following design on 2026-09-15 in the controller conversation: Samsung Files-style Dumps selection and bulk local deletion, plus Settings default save folder changes affecting new recordings only. This document captures that approval; production implementation follows written-spec review and a reviewed implementation plan. Baseline is feature/durable-transcription-recovery at ac8696a9bf399c502cedec377011b871b3440236 in ~/Documents/ADH2/.worktrees/durable-transcription-recovery.
