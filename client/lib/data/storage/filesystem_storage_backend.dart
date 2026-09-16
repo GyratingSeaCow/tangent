@@ -405,7 +405,7 @@ class FilesystemStorageBackend implements StorageBackend {
                 final decoded = jsonDecode(await meta.readAsString());
                 if (decoded is! Map<String, dynamic> ||
                     decoded['id'] != id ||
-                    decoded['schemaVersion'] != 2) {
+                    !const [1, 2].contains(decoded['schemaVersion'])) {
                   _invalid('Metadata identity/schema mismatch');
                 }
                 metadata = decoded;

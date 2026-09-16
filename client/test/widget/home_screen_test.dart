@@ -11,6 +11,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:tangent/data/audio_storage.dart';
 import 'package:tangent/data/local_db.dart';
 import 'package:tangent/data/settings_store.dart';
+import 'package:tangent/data/storage/storage_providers.dart';
+import '../support/widget_recording_coordinator.dart';
 import 'package:tangent/main.dart';
 import 'package:tangent/screens/home/home_providers.dart';
 import 'package:tangent/screens/home/home_screen.dart';
@@ -269,6 +271,11 @@ void main() {
           localDbProvider.overrideWithValue(db),
           transcriptionClientProvider.overrideWith((ref) => _StubClient()),
           recordingServiceProvider.overrideWithValue(StubRecordingService()),
+          recordingCoordinatorProvider.overrideWith(
+            (ref) =>
+                WidgetRecordingCoordinator(ref.watch(recordingServiceProvider)),
+          ),
+          storageBootstrapProvider.overrideWith((ref) async {}),
           settingsStoreProvider.overrideWithValue(SettingsStore()),
           screenAwakeProvider.overrideWithValue(_NoopScreenAwake()),
         ],
@@ -293,6 +300,11 @@ void main() {
           localDbProvider.overrideWithValue(db),
           transcriptionClientProvider.overrideWith((ref) => _StubClient()),
           recordingServiceProvider.overrideWithValue(StubRecordingService()),
+          recordingCoordinatorProvider.overrideWith(
+            (ref) =>
+                WidgetRecordingCoordinator(ref.watch(recordingServiceProvider)),
+          ),
+          storageBootstrapProvider.overrideWith((ref) async {}),
           settingsStoreProvider.overrideWithValue(SettingsStore()),
           screenAwakeProvider.overrideWithValue(_NoopScreenAwake()),
         ],
@@ -322,6 +334,11 @@ void main() {
           localDbProvider.overrideWithValue(db),
           transcriptionClientProvider.overrideWith((ref) => _StubClient()),
           recordingServiceProvider.overrideWithValue(StubRecordingService()),
+          recordingCoordinatorProvider.overrideWith(
+            (ref) =>
+                WidgetRecordingCoordinator(ref.watch(recordingServiceProvider)),
+          ),
+          storageBootstrapProvider.overrideWith((ref) async {}),
           settingsStoreProvider.overrideWithValue(SettingsStore()),
           screenAwakeProvider.overrideWithValue(_NoopScreenAwake()),
         ],

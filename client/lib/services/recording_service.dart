@@ -23,7 +23,7 @@ abstract class RecordingService {
 
   Future<bool> requestPermission();
   Stream<double> amplitudeStream(Duration interval);
-  Future<String> start();
+  Future<String> start({required String stagingPath});
   Future<RecordingResult?> stop();
   Future<void> dispose();
 }
@@ -57,17 +57,19 @@ class DefaultRecordingService implements RecordingService {
       .map((value) => value.current);
 
   @override
-  Future<String> start() async {
+  Future<String> start({required String stagingPath}) async {
     if (_isRecording) throw StateError('Already recording');
     final recorder = _ensureRecorder;
     if (!await recorder.hasPermission()) {
       throw StateError('Microphone permission not granted');
     }
+    if (!p.isAbsolute(stagingPath) ||
+        !p.equals(p.dirname(stagingPath), _outputDir.path)) {
+      throw ArgumentError('Recording requires the reserved staging path');
+    }
     await _outputDir.create(recursive: true);
-    final path = p.join(
-      _outputDir.path,
-      '${DateTime.now().microsecondsSinceEpoch}.opus',
-    );
+    final path = stagingPath;
+    await File(path).create(exclusive: true);
     await recorder.start(
       const RecordConfig(
         encoder: AudioEncoder.opus,
@@ -147,10 +149,10 @@ class StubRecordingService implements RecordingService {
   void emitAmplitudeError(Object error) => _amplitudes.addError(error);
 
   @override
-  Future<String> start() async {
+  Future<String> start({required String stagingPath}) async {
     events.add('start');
     _isRecording = true;
-    _path = '/tmp/stub.opus';
+    _path = stagingPath;
     return _path!;
   }
 

@@ -46,7 +46,7 @@ void main() {
 
     test('start sets isRecording and currentPath', () async {
       final stub = StubRecordingService();
-      final path = await stub.start();
+      final path = await stub.start(stagingPath: '/fixture/stub.opus');
       expect(stub.isRecording, isTrue);
       expect(stub.currentPath, path);
       expect(stub.events, contains('start'));
@@ -59,7 +59,7 @@ void main() {
 
     test('stop returns RecordingResult after start', () async {
       final stub = StubRecordingService();
-      await stub.start();
+      await stub.start(stagingPath: '/fixture/stub.opus');
       final result = await stub.stop();
       expect(result, isNotNull);
       expect(result!.durationSeconds, 5);

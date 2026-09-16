@@ -336,6 +336,16 @@ class LocalDb extends _$LocalDb {
     );
   }
 
+  /// Task5 final row/binding/journal transaction; allows acknowledgment-loss tests.
+  Future<T> commitOwnedCapture<T>(Future<T> Function() action) =>
+      transaction(action);
+
+  /// Every retained capture journal owns staging cleanup, even after row commit.
+  Future<bool> hasCaptureJournal(String id) async =>
+      await (select(captureReservations)..where((r) => r.dumpId.equals(id)))
+          .getSingleOrNull() !=
+      null;
+
   Future<Outcome<DeletionTicket>> claimLocalDeletion(
     String operationId,
     DeleteTarget target,
@@ -372,6 +382,14 @@ class LocalDb extends _$LocalDb {
         if (prior == null && target.retryTicketId != null) {
           return const Fail(
             (code: ProblemCode.conflict, message: 'Retry ticket missing'),
+          );
+        }
+        if (await hasCaptureJournal(target.id)) {
+          return const Fail(
+            (
+              code: ProblemCode.busy,
+              message: 'Owned staging cleanup is pending'
+            ),
           );
         }
         final row = await getDump(target.id);
@@ -479,6 +497,9 @@ class LocalDb extends _$LocalDb {
             ProblemCode.busy,
             'Both components must be proven gone',
           );
+        }
+        if (await hasCaptureJournal(ticket.dumpId)) {
+          _storageFault(ProblemCode.busy, 'Owned staging cleanup is pending');
         }
         final binding = StorageCodec.decodeBinding(ticket.bindingJson);
         if (await boundRecording(ticket.dumpId) != binding) {

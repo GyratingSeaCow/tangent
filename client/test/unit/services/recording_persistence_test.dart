@@ -1,59 +1,61 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import 'dart:io';
-
-import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:tangent/data/audio_storage.dart';
-import 'package:tangent/data/local_db.dart';
-import 'package:tangent/models/sync_status.dart';
+import 'package:tangent/data/storage/storage_contract.dart';
 import 'package:tangent/services/recording_persistence.dart';
 import 'package:tangent/services/recording_service.dart';
+import '../../support/storage_fixture.dart';
+import '../../support/scripted_storage_backend.dart';
 
 void main() {
-  test('real filesystem save persists audio sidecar and valid DB row',
-      () async {
-    final root = await Directory.systemTemp.createTemp('tangent_pipeline_');
-    final db = LocalDb.forTesting(NativeDatabase.memory());
-    final storage = AudioStorage.test(root);
-    final staging = File('${root.path}/pipeline.opus')
-      ..writeAsBytesSync([0x4f, 0x67, 0x67, 0x53, 1], flush: true);
-    addTearDown(() async {
-      await db.close();
-      await root.delete(recursive: true);
+  for (final mode in ['brain_dump', 'meeting']) {
+    test(
+        mode == 'brain_dump'
+            ? 'real filesystem save persists audio sidecar and valid DB row'
+            : 'meeting recordings are private local-only from creation',
+        () async {
+      final h = CatalogHarness();
+      addTearDown(h.close);
+      await h.bootstrap();
+      final reservation = requireOk(await h.catalog.reserveCapture(mode: mode));
+      final lease = requireOk(
+        await h.mutations.acquire(
+          reservation.key.dumpId,
+          UseKind.capture,
+          expectedIncarnation: reservation.key.incarnation,
+        ),
+      );
+      final staging = File(reservation.stagingPath);
+      await staging.writeAsBytes([0x4f, 0x67, 0x67, 0x53, 1], flush: true);
+      try {
+        final row = await RecordingPersistence(
+          db: h.f.db,
+          backend: h.backend,
+          mutations: h.mutations,
+        ).save(
+          reservation,
+          RecordingResult(
+            path: staging.path,
+            durationSeconds: 3,
+            sizeBytes: 5,
+          ),
+          now: DateTime.utc(2030),
+          lease: lease,
+        );
+        expect(row.title, isNotEmpty);
+        expect(row.audioSizeBytes, 5);
+        expect(await h.f.audio('A', row.id).readAsBytes(), hasLength(5));
+        expect((await h.f.db.getDump(row.id))?.title, row.title);
+        final entries = requireOk(
+          await settled(h.backend.listRecordingsAt(reservation.location)),
+        );
+        expect(entries.single.metadata?['title'], row.title);
+        expect(row.syncStatus, mode == 'meeting' ? 'local_only' : 'pending');
+        expect(entries.single.metadata?['syncStatus'], row.syncStatus);
+        expect(await staging.exists(), isFalse);
+      } finally {
+        await lease.close();
+      }
     });
-
-    final row = await RecordingPersistence(db: db, storage: storage).save(
-      RecordingResult(path: staging.path, durationSeconds: 3, sizeBytes: 5),
-      mode: 'brain_dump',
-    );
-
-    expect(row.title, isNotEmpty);
-    expect(row.audioSizeBytes, 5);
-    expect(await storage.readBytes(row.id), hasLength(5));
-    expect((await db.getDump(row.id))?.title, row.title);
-    expect((await storage.listAll()).single.metadata?['title'], row.title);
-  });
-
-  test('meeting recordings are private local-only from creation', () async {
-    final root = await Directory.systemTemp.createTemp('tangent_meeting_');
-    final db = LocalDb.forTesting(NativeDatabase.memory());
-    final storage = AudioStorage.test(root);
-    final staging = File('${root.path}/meeting.opus')
-      ..writeAsBytesSync([0x4f, 0x67, 0x67, 0x53, 1], flush: true);
-    addTearDown(() async {
-      await db.close();
-      await root.delete(recursive: true);
-    });
-
-    final row = await RecordingPersistence(db: db, storage: storage).save(
-      RecordingResult(path: staging.path, durationSeconds: 3, sizeBytes: 5),
-      mode: 'meeting',
-    );
-
-    expect(row.syncStatus, SyncStatus.localOnly.wireValue);
-    expect(
-      (await storage.listAll()).single.metadata?['syncStatus'],
-      SyncStatus.localOnly.wireValue,
-    );
-  });
+  }
 }

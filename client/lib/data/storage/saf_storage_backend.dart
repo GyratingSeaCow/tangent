@@ -366,7 +366,7 @@ class SafStorageBackend implements StorageBackend {
               final decoded = jsonDecode(map['metadataJson'] as String);
               if (decoded is! Map<String, dynamic> ||
                   decoded['id'] != map['id'] ||
-                  decoded['schemaVersion'] != 2) {
+                  !const [1, 2].contains(decoded['schemaVersion'])) {
                 throw const FormatException(
                   'Metadata identity/schema mismatch',
                 );

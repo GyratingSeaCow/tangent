@@ -84,6 +84,22 @@ class ScriptedStorageBackend extends FilesystemStorageBackend {
   int inventoryCalls = 0;
   final resolutionInputs = <String>[];
   final listed = <StorageLocation>[];
+  final publishedReservations = <CaptureReservation>[];
+  IoOperation<Outcome<PublishedCapture>> Function(
+    CaptureReservation,
+    Map<String, dynamic>,
+  )? publication;
+  @override
+  IoOperation<Outcome<PublishedCapture>> publishCapture(
+    CaptureReservation r,
+    Map<String, dynamic> metadata,
+  ) {
+    publishedReservations.add(r);
+    return publication == null
+        ? super.publishCapture(r, metadata)
+        : publication!(r, metadata);
+  }
+
   Future<Outcome<StorageLocation?>> Function()? picker;
   Future<List<RestoredUse>> Function()? inventory;
   Future<Outcome<LegacyStorage?>> Function(String path, String? anchor)? legacy;

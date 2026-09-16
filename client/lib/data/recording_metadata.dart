@@ -1,6 +1,66 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import '../models/transcription_status.dart';
 import 'local_db.dart';
+import 'storage/storage_contract.dart';
+
+/// Validate external sidecars before the legacy-compatible serializer runs.
+/// Absent optional/nullable fields retain their existing restoration semantics.
+void validateImportedMetadata(String id, Map<String, dynamic>? metadata) {
+  if (metadata == null) return;
+  Never invalid() => throw const StorageFault(
+        (code: ProblemCode.invalid, message: 'Invalid recording sidecar'),
+      );
+  if (metadata['id'] != id ||
+      metadata['schemaVersion'] is! int ||
+      !const [1, 2].contains(metadata['schemaVersion'])) {
+    invalid();
+  }
+  for (final key in [
+    'title',
+    'mode',
+    'transcript',
+    'meetingNotes',
+    'syncStatus',
+    'lastSyncError',
+    'transcriptionStatus',
+    'transcriptionRequestId',
+    'transcriptionJobId',
+    'transcriptionError',
+  ]) {
+    if (metadata[key] != null && metadata[key] is! String) invalid();
+  }
+  for (final key in [
+    'durationSeconds',
+    'audioSizeBytes',
+    'syncAttempts',
+    'transcriptionAttempt',
+  ]) {
+    final value = metadata[key];
+    if (value != null && (value is! int || value < 0)) invalid();
+  }
+  for (final key in [
+    'createdAt',
+    'updatedAt',
+    'transcriptionStartedAt',
+    'transcriptionUpdatedAt',
+    'transcriptionCompletedAt',
+  ]) {
+    final value = metadata[key];
+    if (value != null &&
+        (value is! String || DateTime.tryParse(value) == null)) {
+      invalid();
+    }
+  }
+  if (metadata['mode'] != null &&
+      !const ['brain_dump', 'meeting'].contains(metadata['mode'])) {
+    invalid();
+  }
+  if (metadata['transcriptionStatus'] != null &&
+      !TranscriptionStatus.values
+          .any((s) => s.wireValue == metadata['transcriptionStatus'])) {
+    invalid();
+  }
+}
 
 const recordingMetadataSchemaVersion = 2;
 

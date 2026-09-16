@@ -98,6 +98,9 @@ class DefaultRecordingMutationCoordinator
     _changed();
     try {
       await _db.transaction(() async {
+        if (kind == UseKind.deletion && await _db.hasCaptureJournal(dumpId)) {
+          throw _fault(ProblemCode.busy, 'Owned staging cleanup is pending');
+        }
         final ticket = await (_db.select(_db.localDeletionTickets)
               ..where((t) => t.dumpId.equals(dumpId)))
             .getSingleOrNull();
@@ -277,6 +280,10 @@ class DefaultRecordingMutationCoordinator
         for (final t in await _db.select(_db.localDeletionTickets).get())
           t.dumpId: t,
       };
+      final journals = {
+        for (final r in await _db.select(_db.captureReservations).get())
+          r.dumpId,
+      };
       final bindings = {
         for (final b in await _db.select(_db.recordingBindings).get())
           b.dumpId: b,
@@ -297,10 +304,11 @@ class DefaultRecordingMutationCoordinator
                             ? Eligibility.nonterminal
                             : row.syncStatus == 'syncing'
                                 ? Eligibility.syncing
-                                : (row.transcriptionError?.startsWith(
-                                          'sidecar_sync_pending:',
-                                        ) ??
-                                        false)
+                                : journals.contains(row.id) ||
+                                        (row.transcriptionError?.startsWith(
+                                              'sidecar_sync_pending:',
+                                            ) ??
+                                            false)
                                     ? Eligibility.publicationPending
                                     : bindings[row.id]?.resolved != true
                                         ? Eligibility.unresolved
@@ -343,6 +351,7 @@ class DefaultRecordingMutationCoordinator
                 _db.recordingBindings,
                 _db.storageLocations,
                 _db.localDeletionTickets,
+                _db.captureReservations,
               },
             )
             .watch()

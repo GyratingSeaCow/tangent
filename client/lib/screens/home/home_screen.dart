@@ -5,7 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/local_db.dart';
 
 import '../../models/dump_mode.dart';
-import '../../services/recording_persistence.dart';
+
 import '../dump/dump_detail_screen.dart';
 import '../dump/dumps_list_screen.dart';
 import '../recording/recording_controller.dart';
@@ -48,23 +48,21 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final state = ref.read(recordingControllerProvider);
     try {
       if (state == RecordingState.recording) {
-        final result = await controller.stop();
-        if (result == null) throw StateError('Recorder returned no audio');
-        final row = await RecordingPersistence(
-          db: ref.read(localDbProvider),
-          storage: ref.read(audioStorageProvider),
-        ).save(result, mode: _mode.wireValue);
+        final row = await controller.stop();
+        if (row == null) throw StateError('Recorder returned no audio');
         if (mounted) {
-          await Navigator.of(context).push<void>(MaterialPageRoute<void>(
-            builder: (_) => DumpDetailScreen(
-              dumpId: row.id,
-              audioPath: row.audioPath,
-              durationSeconds: result.durationSeconds,
+          await Navigator.of(context).push<void>(
+            MaterialPageRoute<void>(
+              builder: (_) => DumpDetailScreen(
+                dumpId: row.id,
+                audioPath: row.audioPath,
+                durationSeconds: row.durationSeconds,
+              ),
             ),
-          ),);
+          );
         }
       } else if (state == RecordingState.idle) {
-        await controller.start();
+        await controller.start(mode: _mode.wireValue);
       }
     } catch (error) {
       if (mounted) {
