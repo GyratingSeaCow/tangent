@@ -11,6 +11,8 @@ import 'package:uuid/uuid.dart';
 import '../models/sync_status.dart';
 import '../models/transcription_status.dart';
 import 'storage/storage_tables.dart';
+import 'storage/storage_contract.dart';
+import 'storage/storage_codec.dart';
 
 part 'local_db.g.dart';
 
@@ -183,9 +185,330 @@ class LocalDb extends _$LocalDb {
     );
   }
 
+  /// Resolve only persisted original ownership, never a current default.
+  Future<BoundRecording?> boundRecording(String id) => transaction(() async {
+        final row = await (select(recordingBindings)
+              ..where((b) => b.dumpId.equals(id)))
+            .getSingleOrNull();
+        if (row == null || !row.resolved || row.locationId == null) return null;
+        final location = await (select(storageLocations)
+              ..where((l) => l.id.equals(row.locationId!)))
+            .getSingleOrNull();
+        if (location == null) return null;
+        final binding = (
+          key: (dumpId: row.dumpId, incarnation: row.incarnation),
+          location: (
+            id: location.id,
+            label: location.label,
+            directory: StorageCodec.decodeDirectory(location.directoryJson)
+          ),
+          audio: StorageCodec.decodeAudio(row.audioJson),
+          metadataName: row.metadataName,
+        );
+        StorageCodec.encodeBinding(binding);
+        return binding;
+      });
+
+  Never _storageFault(ProblemCode code, String message) =>
+      throw StorageFault((code: code, message: message));
+  Future<LocalDeletionTicketRow?> _deletionFence(String id) =>
+      (select(localDeletionTickets)..where((t) => t.dumpId.equals(id)))
+          .getSingleOrNull();
+  Future<bool> isRetired(String id) async =>
+      (await _deletionFence(id))?.state == 'completed';
+  Future<bool> mutationAllowed(RecordingKey key) => transaction(() async {
+        StorageCodec.encodeKey(key);
+        if (await _deletionFence(key.dumpId) != null) return false;
+        return await getDump(key.dumpId) != null &&
+            (await boundRecording(key.dumpId))?.key == key;
+      });
+  Future<void> bindRecording(BoundRecording binding) => transaction(() async {
+        StorageCodec.encodeBinding(binding);
+        final id = binding.key.dumpId;
+        final fence = await _deletionFence(id);
+        if (fence != null) {
+          _storageFault(
+            fence.state == 'completed'
+                ? ProblemCode.retired
+                : ProblemCode.fenced,
+            'Recording identity is fenced',
+          );
+        }
+        final row = await getDump(id);
+        if (row == null || row.audioPath != binding.audio.value) {
+          _storageFault(
+            ProblemCode.conflict,
+            'Original audio identity differs',
+          );
+        }
+        final location = await (select(storageLocations)
+              ..where((l) => l.id.equals(binding.location.id)))
+            .getSingleOrNull();
+        if (location == null ||
+            location.directoryJson !=
+                StorageCodec.encodeDirectory(binding.location.directory) ||
+            location.label != binding.location.label) {
+          _storageFault(
+            ProblemCode.conflict,
+            'Location is not the persisted capability',
+          );
+        }
+        final prior = await (select(recordingBindings)
+              ..where((b) => b.dumpId.equals(id)))
+            .getSingleOrNull();
+        if (prior != null) {
+          if (prior.incarnation != binding.key.incarnation ||
+              prior.audioJson != StorageCodec.encodeAudio(binding.audio) ||
+              prior.metadataName != binding.metadataName ||
+              (prior.resolved && await boundRecording(id) != binding)) {
+            _storageFault(ProblemCode.conflict, 'Binding is immutable');
+          }
+          if (prior.resolved) return;
+          await (update(recordingBindings)..where((b) => b.dumpId.equals(id)))
+              .write(
+            RecordingBindingsCompanion(
+              locationId: Value(binding.location.id),
+              resolved: const Value(true),
+            ),
+          );
+        } else {
+          await into(recordingBindings).insert(
+            RecordingBindingsCompanion.insert(
+              dumpId: id,
+              incarnation: binding.key.incarnation,
+              locationId: Value(binding.location.id),
+              audioJson: StorageCodec.encodeAudio(binding.audio),
+              metadataName: binding.metadataName,
+              resolved: const Value(true),
+            ),
+          );
+        }
+      });
+  DeletionTicket _decodeTicket(LocalDeletionTicketRow row) {
+    final problems = row.problemJson == null
+        ? <String, dynamic>{}
+        : jsonDecode(row.problemJson!) as Map<String, dynamic>;
+    ComponentResult component(String name, String state) {
+      final raw = problems[name] as Map<String, dynamic>?;
+      return (
+        state: ComponentState.values.byName(state),
+        problem: raw == null
+            ? null
+            : (
+                code: ProblemCode.values.byName(raw['code'] as String),
+                message: raw['message'] as String
+              )
+      );
+    }
+
+    final binding = StorageCodec.decodeBinding(row.bindingJson);
+    if (binding.key != (dumpId: row.dumpId, incarnation: row.incarnation)) {
+      _storageFault(ProblemCode.invalid, 'Ticket identity mismatch');
+    }
+    return (
+      id: row.ticketId,
+      operationId: row.operationId,
+      binding: binding,
+      audio: component('audio', row.audioState),
+      metadata: component('metadata', row.metadataState),
+      state: TicketState.values.byName(row.state)
+    );
+  }
+
+  Future<Outcome<DeletionTicket>> claimLocalDeletion(
+    String operationId,
+    DeleteTarget target,
+  ) =>
+      transaction(() async {
+        StorageCodec.validateLiteralId(operationId);
+        final binding = target.binding;
+        if (binding == null) {
+          return const Fail(
+            (code: ProblemCode.unresolved, message: 'No confirmed binding'),
+          );
+        }
+        final encoded = StorageCodec.encodeBinding(binding);
+        if (target.id != binding.key.dumpId) {
+          return const Fail(
+            (code: ProblemCode.invalid, message: 'Target identity differs'),
+          );
+        }
+        final prior = await _deletionFence(target.id);
+        if (prior != null) {
+          if (prior.bindingJson != encoded ||
+              (prior.operationId != operationId &&
+                  (target.retryTicketId != prior.ticketId ||
+                      prior.state == 'completed'))) {
+            return const Fail(
+              (
+                code: ProblemCode.conflict,
+                message: 'Different deletion already owns this identity'
+              ),
+            );
+          }
+          if (prior.state == 'completed') return Ok(_decodeTicket(prior));
+        }
+        if (prior == null && target.retryTicketId != null) {
+          return const Fail(
+            (code: ProblemCode.conflict, message: 'Retry ticket missing'),
+          );
+        }
+        final row = await getDump(target.id);
+        if (row == null) {
+          return const Fail(
+            (code: ProblemCode.absent, message: 'Recording missing'),
+          );
+        }
+        if (await boundRecording(target.id) != binding) {
+          return const Fail(
+            (
+              code: ProblemCode.wrongIncarnation,
+              message: 'Confirmed binding changed'
+            ),
+          );
+        }
+        if (!['not_transcribed', 'completed', 'failed']
+                .contains(row.transcriptionStatus) ||
+            row.syncStatus == 'syncing' ||
+            (row.transcriptionError?.startsWith('sidecar_sync_pending:') ??
+                false)) {
+          return const Fail(
+            (
+              code: ProblemCode.busy,
+              message: 'Recording has durable pending work'
+            ),
+          );
+        }
+        if (prior != null) return Ok(_decodeTicket(prior));
+        final id = const Uuid().v4();
+        await into(localDeletionTickets).insert(
+          LocalDeletionTicketsCompanion.insert(
+            dumpId: target.id,
+            incarnation: binding.key.incarnation,
+            ticketId: id,
+            operationId: operationId,
+            bindingJson: encoded,
+            audioState: 'pending',
+            metadataState: 'pending',
+            state: 'pending',
+          ),
+        );
+        return Ok(_decodeTicket((await _deletionFence(target.id))!));
+      });
+  Future<LocalDeletionTicketRow> _ticketById(String id) async {
+    final row = await (select(localDeletionTickets)
+          ..where((t) => t.ticketId.equals(id)))
+        .getSingleOrNull();
+    if (row == null) {
+      _storageFault(ProblemCode.invalid, 'Deletion ticket missing');
+    }
+    return row;
+  }
+
+  bool _gone(String state) => state == 'removed' || state == 'absent';
+  Future<void> recordDeletionComponent(
+    String ticketId,
+    RecordingComponent component,
+    ComponentResult result,
+  ) =>
+      transaction(() async {
+        final row = await _ticketById(ticketId);
+        if (row.state == 'completed') return;
+        final previous = component == RecordingComponent.audio
+            ? row.audioState
+            : row.metadataState;
+        if (_gone(previous)) return;
+        final problems = row.problemJson == null
+            ? <String, dynamic>{}
+            : jsonDecode(row.problemJson!) as Map<String, dynamic>;
+        if (result.problem == null) {
+          problems.remove(component.name);
+        } else {
+          problems[component.name] = {
+            'code': result.problem!.code.name,
+            'message': result.problem!.message,
+          };
+        }
+        final audio = component == RecordingComponent.audio
+            ? result.state.name
+            : row.audioState;
+        final metadata = component == RecordingComponent.metadata
+            ? result.state.name
+            : row.metadataState;
+        await (update(localDeletionTickets)
+              ..where((t) => t.ticketId.equals(ticketId)))
+            .write(
+          LocalDeletionTicketsCompanion(
+            audioState: Value(audio),
+            metadataState: Value(metadata),
+            state: Value(
+              [audio, metadata].any((s) => s == 'failed' || s == 'unknown')
+                  ? 'failed'
+                  : 'pending',
+            ),
+            problemJson: Value(problems.isEmpty ? null : jsonEncode(problems)),
+          ),
+        );
+      });
+  Future<void> finishLocalDeletion(String ticketId) => transaction(() async {
+        final ticket = await _ticketById(ticketId);
+        if (ticket.state == 'completed') return;
+        if (!_gone(ticket.audioState) || !_gone(ticket.metadataState)) {
+          _storageFault(
+            ProblemCode.busy,
+            'Both components must be proven gone',
+          );
+        }
+        final binding = StorageCodec.decodeBinding(ticket.bindingJson);
+        if (await boundRecording(ticket.dumpId) != binding) {
+          _storageFault(
+            ProblemCode.wrongIncarnation,
+            'Ticket no longer owns binding',
+          );
+        }
+        await (delete(syncQueue)..where((q) => q.dumpId.equals(ticket.dumpId)))
+            .go();
+        await (delete(recordingBindings)
+              ..where(
+                (b) =>
+                    b.dumpId.equals(ticket.dumpId) &
+                    b.incarnation.equals(ticket.incarnation),
+              ))
+            .go();
+        await (delete(dumps)..where((d) => d.id.equals(ticket.dumpId))).go();
+        await (update(localDeletionTickets)
+              ..where((t) => t.ticketId.equals(ticketId)))
+            .write(
+          const LocalDeletionTicketsCompanion(
+            state: Value('completed'),
+            problemJson: Value(null),
+          ),
+        );
+      });
+  Future<List<DeletionTicket>> pendingLocalDeletions() async =>
+      (await (select(localDeletionTickets)
+                ..where((t) => t.state.isNotValue('completed')))
+              .get())
+          .map(_decodeTicket)
+          .toList();
+
   /// Insert or replace a dump row.
-  Future<void> upsertDump(DumpRow row) =>
-      into(dumps).insertOnConflictUpdate(row);
+  Future<void> upsertDump(DumpRow row) => transaction(() async {
+        final fence = await (select(localDeletionTickets)
+              ..where((t) => t.dumpId.equals(row.id)))
+            .getSingleOrNull();
+        if (fence != null) {
+          throw StorageFault(
+            (
+              code: fence.state == 'completed'
+                  ? ProblemCode.retired
+                  : ProblemCode.fenced,
+              message: 'Recording identity is fenced'
+            ),
+          );
+        }
+        await into(dumps).insertOnConflictUpdate(row);
+      });
 
   /// Delete a dump row by id.
   Future<int> deleteDump(String id) =>
