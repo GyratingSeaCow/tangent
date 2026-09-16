@@ -154,6 +154,7 @@ void main() {
     final top = find.byIcon(Icons.delete_outline);
     final oldDelete = tester.widget<IconButton>(find.ancestor(of: top, matching: find.byType(IconButton))).onPressed!;
     await tester.tap(top); await tester.pumpAndSettle();
+    await pumpBoundUntil(tester, () => find.byType(AlertDialog).evaluate().isNotEmpty);
     await tester.tap(find.byKey(const ValueKey('local-delete-confirm')));
     await pumpBoundUntil(tester, () => find.textContaining('Delete failed:').evaluate().isNotEmpty);
     final original = (await f.db.pendingLocalDeletions()).single;
@@ -165,6 +166,7 @@ void main() {
     expect(find.byKey(const ValueKey('local-delete-retry')), findsOneWidget);
     // Same top action must now explicitly confirm retry, never ordinary delete.
     await tester.tap(top); await tester.pumpAndSettle();
+    await pumpBoundUntil(tester, () => find.byType(AlertDialog).evaluate().isNotEmpty);
     expect(find.text('Retry deletion of 1 local recordings?'), findsOneWidget);
     expect(find.text('Delete 1 local recordings?'), findsNothing);
     await tester.tap(find.byKey(const ValueKey('local-delete-cancel'))); await tester.pumpAndSettle();
@@ -176,6 +178,7 @@ void main() {
     expect(identical(tester.state(find.byType(DumpDetailScreen)), route), isTrue);
     // Also guard a previously captured ordinary callback; retry snapshots IDs.
     oldDelete(); oldDelete(); await tester.pumpAndSettle();
+    await pumpBoundUntil(tester, () => find.byType(AlertDialog).evaluate().isNotEmpty);
     expect(find.text('Retry deletion of 1 local recordings?'), findsOneWidget);
     backend.metadataDeleteFails = false;
     final confirm = tester.widget<FilledButton>(find.byKey(const ValueKey('local-delete-confirm'))).onPressed!;
@@ -213,6 +216,7 @@ void main() {
       unawaited(bound.access.openPlayback(a.key,otherPlayer).then((r)=>other=requireOk(r)));
       await pumpBoundUntil(tester,()=>other!=null);
       await tester.tap(find.byTooltip('Delete'));await tester.pumpAndSettle();
+      await pumpBoundUntil(tester, () => find.byType(AlertDialog).evaluate().isNotEmpty);
       await tester.tap(find.text('Delete').last);await tester.pumpAndSettle();
       await pumpBoundUntil(tester,()=>find.textContaining('Delete failed:').evaluate().isNotEmpty);
       expect(backend.componentCalls,0);expect(first.closes,1);
@@ -240,7 +244,9 @@ void main() {
     addTearDown(() async {await disposeBoundWidget(tester,bound);await tester.runAsync(f.close);});
     final a=(await tester.runAsync(()=>f.seed('fixture-partial-playback')))!;
     await mount(tester,f,bound,first,GlobalKey<NavigatorState>(),a,backend:backend,factory:(){creates++;return first;});
-    await tester.tap(find.byTooltip('Delete'));await tester.pumpAndSettle();await tester.tap(find.text('Delete').last);await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Delete'));await tester.pumpAndSettle();
+    await pumpBoundUntil(tester, () => find.byType(AlertDialog).evaluate().isNotEmpty);
+    await tester.tap(find.text('Delete').last);await tester.pumpAndSettle();
     await pumpBoundUntil(tester,()=>find.textContaining('Delete failed:').evaluate().isNotEmpty);
     expect(find.textContaining('Playback unavailable while local deletion is pending'),findsOneWidget);
     expect(find.text('Retry playback'),findsNothing);expect(find.byKey(const ValueKey('local-delete-retry')),findsOneWidget);
@@ -280,6 +286,7 @@ void main() {
       }
       await tester.tap(find.byTooltip('Delete'));
       await tester.pumpAndSettle();
+      await pumpBoundUntil(tester, () => find.byType(AlertDialog).evaluate().isNotEmpty);
       expect(backend.componentCalls, 0);
       expect(player.closes, 0);
       await tester

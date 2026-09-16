@@ -2,6 +2,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tangent/data/storage/storage_contract.dart';
 import 'package:tangent/screens/dump/local_deletion_presentation.dart';
+import '../../../support/dump_selection_fixture.dart' show targetFor;
 
 const denied = (code: ProblemCode.denied, message: 'synthetic denied');
 DeletionItemResult item(String id, String? ticket, {
@@ -16,6 +17,57 @@ DeletionItemResult item(String id, String? ticket, {
 BulkDeletionResult batch(List<DeletionItemResult> items, {bool replayed = false}) => (items: items, replayed: replayed);
 
 void main() {
+  DeleteTarget discoveredTarget(String id, String ticket) {
+    final target = targetFor(id);
+    return (id: id, title: id, binding: target.binding,
+        eligibility: Eligibility.retryOnly, retryTicketId: ticket);
+  }
+  test('I1-I1 discovery owns identity only, preserves totals and richer receipts', () {
+    final s = LocalDeletionRecoveryState();
+    final target = discoveredTarget('fixture-a', 'ta');
+    expect(s.discover(target), isTrue);
+    expect(s.discover(target), isTrue);
+    expect(s.latest, isNull); expect(s.pending, isEmpty);
+    expect(s.discovered, [target]); expect(s.ticketIds, ['ta']);
+    final captured = s.ticketIds;
+    expect(() => s.discovered.clear(), throwsUnsupportedError);
+    expect(() => captured.clear(), throwsUnsupportedError);
+    final receipt = item('fixture-a', 'ta', componentProblem: denied);
+    s.record(batch([receipt], replayed: true));
+    expect(s.discovered, isEmpty); expect(s.pending, [receipt]);
+    expect(s.discover(target), isTrue);
+    expect(s.pending, [receipt]); expect(s.latest!.replayed, isTrue);
+    s.record(batch([item('fixture-b', 'tb', state: DeleteState.deleted, metadata: ComponentState.absent)]));
+    expect(s.pending, [receipt]); expect(s.ticketIds, captured);
+    expect(s.latest!.items.single.id, 'fixture-b');
+    s.record(batch([item('fixture-a', 'ta', state: DeleteState.deleted, metadata: ComponentState.absent)]));
+    expect(s.hasPending, isFalse);
+    expect(s.discover(target), isFalse, reason: 'late snapshot cannot resurrect settled exact ticket');
+    s.record(batch([receipt], replayed: true));
+    expect(s.hasPending, isFalse);
+  });
+  test('I1-I1 discovery rejects invalid and conflicting identity without erasure', () {
+    final s = LocalDeletionRecoveryState();
+    final target = discoveredTarget('fixture-a', 'ta');
+    s.discover(target);
+    final invalid = <DeleteTarget>[
+      targetFor('fixture-a'),
+      (id: target.id, title: target.title, binding: null, eligibility: Eligibility.retryOnly, retryTicketId: 'ta'),
+      (id: target.id, title: target.title, binding: target.binding, eligibility: Eligibility.retryOnly, retryTicketId: null),
+      (id: 'wrong', title: target.title, binding: target.binding, eligibility: Eligibility.retryOnly, retryTicketId: 'ta'),
+      discoveredTarget('fixture-other', 'ta'),
+      (id: target.id, title: target.title, binding: (key: (dumpId: target.id, incarnation: 'changed'), location: target.binding!.location, audio: target.binding!.audio, metadataName: target.binding!.metadataName), eligibility: Eligibility.retryOnly, retryTicketId: 'ta'),
+    ];
+    for (final value in invalid) {
+      expect(s.discover(value), isFalse); expect(s.discovered, [target]);
+      expect(s.ticketIds, ['ta']); expect(s.latest, isNull);
+    }
+    s.record(batch([item('wrong', 'ta', state: DeleteState.deleted, metadata: ComponentState.absent)]));
+    expect(s.discovered, [target]);
+    s.record(batch([])); expect(s.discovered, [target]);
+    s.record(batch([item('fixture-a', null, state: DeleteState.skipped)]));
+    expect(s.discovered, [target]);
+  });
   test('recovery snapshots are immutable and independent of latest result', () {
     final s = LocalDeletionRecoveryState();
     final original = item('a', 'ta'); final input = [original];

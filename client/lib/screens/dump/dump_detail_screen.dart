@@ -54,6 +54,8 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
   bool _playbackOpening = true;
   bool _canRetryPlayback = false;
   bool _deleteBusy = false;
+  int _deletionPreviewGeneration = 0;
+  String? _deletionPreviewError;
   final _deletionRecovery = LocalDeletionRecoveryState();
   BulkDeletionResult? get _deletionResult => _deletionRecovery.latest;
   String? _playbackError;
@@ -73,6 +75,7 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
     _titleController = TextEditingController();
     _transcriptController = TextEditingController();
     _playbackInitialization = _initializePlayback();
+    unawaited(_discoverDeletion());
     final db = ref.read(localDbProvider);
     // Async-load the existing title.
     Future.microtask(() async {
@@ -470,25 +473,80 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
     }
   }
 
+  Future<DeleteTarget> _previewDeletionTarget(LocalDeletionService service) async {
+    final preview = switch (await service.preview({widget.dumpId})) {
+      Ok<DeletionPreview>(:final value) => value,
+      Fail<DeletionPreview>(:final problem) => throw StorageFault(problem),
+    };
+    if (preview.targets.length != 1 || preview.targets.single.id != widget.dumpId) {
+      throw StateError('Recording deletion identity is unavailable');
+    }
+    final target = preview.targets.single;
+    if (target.eligibility == Eligibility.retryOnly &&
+        (target.binding?.key.dumpId != widget.dumpId ||
+         target.retryTicketId == null || target.retryTicketId!.isEmpty)) {
+      throw StateError('Pending deletion identity is unavailable');
+    }
+    return target;
+  }
+
+  Future<void> _discoverDeletion() async {
+    if (!mounted || _deleteBusy) return;
+    final generation = ++_deletionPreviewGeneration;
+    final service = ref.read(localDeletionServiceProvider);
+    try {
+      final target = await _previewDeletionTarget(service);
+      if (!mounted || generation != _deletionPreviewGeneration) return;
+      setState(() {
+        if (target.eligibility == Eligibility.retryOnly) _deletionRecovery.discover(target);
+        _deletionPreviewError = null;
+      });
+    } catch (e) {
+      if (mounted && generation == _deletionPreviewGeneration) {
+        setState(() => _deletionPreviewError = 'Could not check pending local deletion. Check again before deleting: $e');
+      }
+    }
+  }
+
   Future<void> _delete() async {
     if(_deleteBusy || !mounted) return;
-    if (_deletionRecovery.hasPending) {
-      await _retryLocalDeletion();
-      return;
-    }
     setState(()=>_deleteBusy=true);
+    ++_deletionPreviewGeneration;
     final service=ref.read(localDeletionServiceProvider);
     try {
+      // Revalidate before choosing the confirmation, including callbacks captured
+      // before entry discovery completed. Never turn ordinary consent into retry.
+      final before = await _previewDeletionTarget(service);
+      if (!mounted) return;
+      setState(() {
+        _deletionPreviewError = null;
+        if (before.eligibility == Eligibility.retryOnly) {
+          if (!_deletionRecovery.discover(before)) throw StateError('Pending deletion identity changed');
+        }
+      });
+      if (_deletionRecovery.hasPending) {
+        await _confirmDeletionRetry(service);
+        return;
+      }
       if(!await confirmLocalDeletion(context,1) || !mounted) return;
       await _closePlayback();
-      final preview = switch (await service.preview({widget.dumpId})) {
-        Ok<DeletionPreview>(:final value) => value,
-        Fail<DeletionPreview>(:final problem) => throw StorageFault(problem),
-      };
+      // Already-confirmed work retains its owner through actual close/settlement,
+      // even if the route leaves. A new pending ticket requires separate consent.
+      final target = await _previewDeletionTarget(service);
+      if (target.eligibility == Eligibility.retryOnly) {
+        if (mounted) {
+          setState(() {
+          _deletionRecovery.discover(target);
+          _deletionPreviewError = 'A local deletion is pending. Choose Retry deletion to confirm it separately.';
+        });
+        }
+        return;
+      }
+      if (target.binding != before.binding) throw StateError('Recording identity changed. Check again before deleting.');
       final result = switch (await service.deleteConfirmed(
         (
           operationId: const Uuid().v4(),
-          targets: List<DeleteTarget>.unmodifiable(preview.targets),
+          targets: List<DeleteTarget>.unmodifiable([target]),
         ),
       )) {
         Ok<BulkDeletionResult>(:final value) => value,
@@ -507,7 +565,8 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
       }
       if (mounted) Navigator.of(context).pop();
     } catch (e) {
-      if (mounted) {
+      if (mounted) setState(() => _deletionPreviewError = 'Local deletion could not continue. Check again or retry the pending deletion: $e');
+      if (mounted && _closing) {
         await _playbackAfterFailedDelete(service);
       }
       if (mounted) {
@@ -519,23 +578,30 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
   }
 
   Future<void> _retryLocalDeletion() async {
-    if(_deleteBusy || _deletionResult==null || !mounted) return;
+    if(_deleteBusy || !mounted) return;
     final ids=_deletionRecovery.ticketIds;
     if(ids.isEmpty)return;
     setState(()=>_deleteBusy=true);
+    ++_deletionPreviewGeneration;
     final service=ref.read(localDeletionServiceProvider);
     try {
-      if(!await confirmLocalDeletion(context,ids.length,retry:true) || !mounted)return;
-      final result=switch(await service.retryConfirmed((operationId:const Uuid().v4(),ticketIds:ids))) {
-        Ok<BulkDeletionResult>(:final value)=>value,
-        Fail<BulkDeletionResult>(:final problem)=>throw StorageFault(problem),
-      };
-      if(mounted){
-        setState(()=>_deletionRecovery.record(result));
-        if(!_deletionRecovery.hasPending) Navigator.of(context).pop();
-      }
+      await _confirmDeletionRetry(service);
     } catch(e) {if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('Delete failed: $e')));}
     finally {if(mounted)setState(()=>_deleteBusy=false);}
+  }
+
+  Future<void> _confirmDeletionRetry(LocalDeletionService service) async {
+    final ids = _deletionRecovery.ticketIds;
+    if (ids.isEmpty || !await confirmLocalDeletion(context,ids.length,retry:true) || !mounted) return;
+    await _closePlayback();
+    final result = switch(await service.retryConfirmed((operationId: const Uuid().v4(), ticketIds: ids))) {
+      Ok<BulkDeletionResult>(:final value) => value,
+      Fail<BulkDeletionResult>(:final problem) => throw StorageFault(problem),
+    };
+    if (mounted) {
+      setState(() { _deletionRecovery.record(result); _deletionPreviewError = null; });
+      if (!_deletionRecovery.hasPending) Navigator.of(context).pop();
+    }
   }
 
   @override
@@ -602,7 +668,11 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
           ],
         ),
         const SizedBox(height: 16),
-        if(_deletionResult!=null) LocalDeletionResults(result:_deletionResult!,pending:_deletionRecovery.pending,onRetry:_retryLocalDeletion,busy:_deleteBusy),
+        if (_deletionPreviewError != null) ...[
+          Text(_deletionPreviewError!),
+          TextButton(onPressed: _deleteBusy ? null : _discoverDeletion, child: const Text('Check pending deletion again')),
+        ],
+        if(_deletionResult!=null || _deletionRecovery.hasPending) LocalDeletionResults(result:_deletionResult,pending:_deletionRecovery.pending,discovered:_deletionRecovery.discovered,onRetry:_retryLocalDeletion,busy:_deleteBusy),
         if(_canRetryPlayback || _playbackOpening && _closing) TextButton(key:const ValueKey('retry-playback'),onPressed:_playbackOpening || _deleteBusy ? null : _retryPlayback,child:const Text('Retry playback')),
         _RecordingPlaybackPanel(
           state: _playbackController?.state ??

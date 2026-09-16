@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tangent/data/storage/storage_contract.dart';
+import 'package:tangent/screens/dump/local_deletion_presentation.dart';
 import '../support/dump_selection_fixture.dart';
 
 Future<void> confirmBatch(WidgetTester t) async {
@@ -17,6 +18,26 @@ Future<void> confirmBatch(WidgetTester t) async {
 }
 
 void main() {
+  testWidgets('I1-I1 discovered-only progress is honest and retry reachable at280x640 and2x', (t) async {
+    t.view.physicalSize = const Size(280, 640); t.view.devicePixelRatio = 1;
+    addTearDown(t.view.resetPhysicalSize); addTearDown(t.view.resetDevicePixelRatio);
+    final target = targetFor('fixture-a');
+    final state = LocalDeletionRecoveryState();
+    state.discover((id: target.id, title: target.title, binding: target.binding,
+        eligibility: Eligibility.retryOnly, retryTicketId: 'ta'),);
+    var retries = 0;
+    await t.pumpWidget(MaterialApp(home: Scaffold(body: MediaQuery(
+      data: const MediaQueryData(textScaler: TextScaler.linear(2)),
+      child: LocalDeletionResults(result: state.latest, pending: state.pending,
+          discovered: state.discovered, onRetry: () => retries++,),
+    ),),),);
+    expect(find.byKey(const ValueKey('local-delete-totals')), findsNothing);
+    expect(find.textContaining('audio: unknown; metadata: unknown'), findsOneWidget);
+    final retry = find.byKey(const ValueKey('local-delete-retry'));
+    await t.ensureVisible(retry); await t.pumpAndSettle(); await t.tap(retry);
+    expect(retries, 1); expect(t.takeException(), isNull);
+    await t.pumpWidget(const SizedBox.shrink());
+  });
   testWidgets('T7-I1 partial retry preserves omitted tickets across failure Cancel and unmount', (t) async {
     final d = CountingDeletion()..result = (replayed: false, items: [
       itemFor('fixture-a', DeleteState.failed, ticket: 'ta'),

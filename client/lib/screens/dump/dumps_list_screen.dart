@@ -494,7 +494,7 @@ class _DumpList extends StatelessWidget {
         Eligibility.syncing => 'Sync in progress',
         Eligibility.publicationPending => 'Saving transcript or metadata',
         Eligibility.busy => 'Recording is in use',
-        Eligibility.retryOnly => 'Local deletion pending; retry from results',
+        Eligibility.retryOnly => 'Local deletion pending; open recording to retry',
         Eligibility.deleting => 'Local deletion in progress',
         Eligibility.denied => 'Storage permission denied',
         Eligibility.unresolved => 'Original storage is unresolved',
