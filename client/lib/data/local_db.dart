@@ -67,7 +67,7 @@ class SyncQueue extends Table {
     LocalDeletionTickets,
   ],
 )
-class LocalDb extends _$LocalDb {
+class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   LocalDb() : super(_openConnection());
 
   LocalDb.forTesting(super.executor);
@@ -207,6 +207,7 @@ class LocalDb extends _$LocalDb {
       });
 
   /// Resolve only persisted original ownership, never a current default.
+  @override
   Future<BoundRecording?> boundRecording(String id) => transaction(() async {
         final row = await (select(recordingBindings)
               ..where((b) => b.dumpId.equals(id)))
@@ -235,14 +236,17 @@ class LocalDb extends _$LocalDb {
   Future<LocalDeletionTicketRow?> _deletionFence(String id) =>
       (select(localDeletionTickets)..where((t) => t.dumpId.equals(id)))
           .getSingleOrNull();
+  @override
   Future<bool> isRetired(String id) async =>
       (await _deletionFence(id))?.state == 'completed';
+  @override
   Future<bool> mutationAllowed(RecordingKey key) => transaction(() async {
         StorageCodec.encodeKey(key);
         if (await _deletionFence(key.dumpId) != null) return false;
         return await getDump(key.dumpId) != null &&
             (await boundRecording(key.dumpId))?.key == key;
       });
+  @override
   Future<void> bindRecording(BoundRecording binding) => transaction(() async {
         StorageCodec.encodeBinding(binding);
         final id = binding.key.dumpId;
@@ -346,6 +350,7 @@ class LocalDb extends _$LocalDb {
           .getSingleOrNull() !=
       null;
 
+  @override
   Future<Outcome<DeletionTicket>> claimLocalDeletion(
     String operationId,
     DeleteTarget target,
@@ -445,6 +450,7 @@ class LocalDb extends _$LocalDb {
   }
 
   bool _gone(String state) => state == 'removed' || state == 'absent';
+  @override
   Future<void> recordDeletionComponent(
     String ticketId,
     RecordingComponent component,
@@ -489,6 +495,7 @@ class LocalDb extends _$LocalDb {
           ),
         );
       });
+  @override
   Future<void> finishLocalDeletion(String ticketId) => transaction(() async {
         final ticket = await _ticketById(ticketId);
         if (ticket.state == 'completed') return;
@@ -527,6 +534,7 @@ class LocalDb extends _$LocalDb {
           ),
         );
       });
+
   /// Read immutable deletion ownership, including completed replay receipts.
   Future<DeletionTicket?> deletionTicketById(String ticketId) async {
     final row = await (select(localDeletionTickets)
@@ -535,6 +543,7 @@ class LocalDb extends _$LocalDb {
     return row == null ? null : _decodeTicket(row);
   }
 
+  @override
   Future<List<DeletionTicket>> pendingLocalDeletions() async =>
       (await (select(localDeletionTickets)
                 ..where((t) => t.state.isNotValue('completed')))
@@ -542,27 +551,30 @@ class LocalDb extends _$LocalDb {
           .map(_decodeTicket)
           .toList();
 
-  /// Insert or replace a dump row.
-  Future<void> upsertDump(DumpRow row) => transaction(() async {
-        final fence = await (select(localDeletionTickets)
-              ..where((t) => t.dumpId.equals(row.id)))
-            .getSingleOrNull();
-        if (fence != null) {
-          throw StorageFault(
-            (
-              code: fence.state == 'completed'
-                  ? ProblemCode.retired
-                  : ProblemCode.fenced,
-              message: 'Recording identity is fenced'
-            ),
-          );
-        }
-        await into(dumps).insertOnConflictUpdate(row);
-      });
-
-  /// Delete a dump row by id.
-  Future<int> deleteDump(String id) =>
-      (delete(dumps)..where((d) => d.id.equals(id))).go();
+  /// Check storage identity inside the same transaction as each legacy CAS.
+  Future<void> _requireMutationKey(String id, RecordingKey storageKey) async {
+    StorageCodec.encodeKey(storageKey);
+    if (id != storageKey.dumpId) {
+      _storageFault(
+        ProblemCode.wrongIncarnation,
+        'Mutation ID differs from captured key',
+      );
+    }
+    final fence = await _deletionFence(id);
+    if (fence != null) {
+      _storageFault(
+        fence.state == 'completed' ? ProblemCode.retired : ProblemCode.fenced,
+        'Recording identity is fenced',
+      );
+    }
+    if ((await boundRecording(id))?.key != storageKey ||
+        await getDump(id) == null) {
+      _storageFault(
+        ProblemCode.wrongIncarnation,
+        'Captured recording identity is no longer current',
+      );
+    }
+  }
 
   /// Fetch dumps, newest first, with pagination.
   Future<List<DumpRow>> listDumps({int limit = 50, int offset = 0}) {
@@ -584,6 +596,7 @@ class LocalDb extends _$LocalDb {
       (select(dumps)..where((d) => d.id.equals(id))).watchSingleOrNull();
 
   /// Live ranked candidates. Presentation applies filters after this cap.
+  @override
   Stream<List<DumpRow>> watchSearchDumps(String query, {int limit = 100}) {
     final escaped = query.replaceAll('"', '""');
     return customSelect(
@@ -622,10 +635,12 @@ class LocalDb extends _$LocalDb {
   /// Updates only the editable title columns, preserving transcription state.
   Future<DumpRow> updateDumpTitle(
     String id, {
+    required RecordingKey storageKey,
     required String title,
     required DateTime now,
   }) {
     return transaction(() async {
+      await _requireMutationKey(id, storageKey);
       final count = await (update(dumps)..where((d) => d.id.equals(id))).write(
         DumpsCompanion(
           title: Value(title),
@@ -642,6 +657,7 @@ class LocalDb extends _$LocalDb {
   /// ownership column.
   Future<DumpRow> updateDumpMeetingNotes(
     String id, {
+    required RecordingKey storageKey,
     required String expectedTitle,
     required String expectedTranscript,
     required int expectedTranscriptionAttempt,
@@ -650,6 +666,7 @@ class LocalDb extends _$LocalDb {
     required DateTime now,
   }) {
     return transaction(() async {
+      await _requireMutationKey(id, storageKey);
       final count = await (update(dumps)
             ..where(
               (d) {
@@ -686,6 +703,7 @@ class LocalDb extends _$LocalDb {
   /// transcription revision the editor opened. A newer attempt or result wins.
   Future<DumpRow> updateDumpTranscript(
     String id, {
+    required RecordingKey storageKey,
     required String expectedTranscript,
     required int expectedTranscriptionAttempt,
     required String? expectedTranscriptionRequestId,
@@ -696,6 +714,7 @@ class LocalDb extends _$LocalDb {
       throw ArgumentError.value(transcript, 'transcript', 'must not be blank');
     }
     return transaction(() async {
+      await _requireMutationKey(id, storageKey);
       final current = await getDump(id);
       final priorError = errorAfterSidecarSync(current?.transcriptionError);
       final count = await (update(dumps)
@@ -751,10 +770,12 @@ class LocalDb extends _$LocalDb {
   /// Starts a new durable transcription attempt before any network I/O.
   Future<DumpRow> beginTranscriptionAttempt(
     String id, {
+    required RecordingKey storageKey,
     required String requestId,
     required DateTime now,
   }) {
     return transaction(() async {
+      await _requireMutationKey(id, storageKey);
       final current = await getDump(id);
       if (current == null) throw StateError('Dump not found: $id');
       final currentStatus =
@@ -787,59 +808,66 @@ class LocalDb extends _$LocalDb {
   /// Updates an attempt only if it is still the latest attempt for the dump.
   Future<bool> updateTranscriptionStatus(
     String id, {
+    required RecordingKey storageKey,
     required int attempt,
     required String requestId,
     required TranscriptionStatus status,
     required DateTime now,
     String? jobId,
     String? error,
-  }) async {
-    final timestamp = now.toUtc();
-    final allowedSourceStatuses = switch (status) {
-      TranscriptionStatus.notTranscribed => const <String>['__never__'],
-      TranscriptionStatus.uploading => <String>[
-          TranscriptionStatus.uploading.wireValue,
-        ],
-      TranscriptionStatus.queued => <String>[
-          TranscriptionStatus.uploading.wireValue,
-          TranscriptionStatus.queued.wireValue,
-        ],
-      TranscriptionStatus.running => <String>[
-          TranscriptionStatus.uploading.wireValue,
-          TranscriptionStatus.queued.wireValue,
-          TranscriptionStatus.running.wireValue,
-        ],
-      TranscriptionStatus.completed || TranscriptionStatus.failed => <String>[
-          TranscriptionStatus.uploading.wireValue,
-          TranscriptionStatus.queued.wireValue,
-          TranscriptionStatus.running.wireValue,
-        ],
-    };
-    final count = await (update(dumps)
-          ..where(
-            (d) =>
-                d.id.equals(id) &
-                d.transcriptionAttempt.equals(attempt) &
-                d.transcriptionRequestId.equals(requestId) &
-                d.transcriptionStatus.isIn(allowedSourceStatuses),
-          ))
-        .write(
-      DumpsCompanion(
-        updatedAt: Value(timestamp),
-        transcriptionStatus: Value(status.wireValue),
-        transcriptionJobId: jobId == null ? const Value.absent() : Value(jobId),
-        transcriptionUpdatedAt: Value(timestamp),
-        transcriptionCompletedAt:
-            status.isTerminal ? Value(timestamp) : const Value.absent(),
-        transcriptionError: Value(error),
-      ),
-    );
-    return count == 1;
-  }
+  }) =>
+      transaction(() async {
+        await _requireMutationKey(id, storageKey);
+        final timestamp = now.toUtc();
+        final allowedSourceStatuses = switch (status) {
+          TranscriptionStatus.notTranscribed => const <String>['__never__'],
+          TranscriptionStatus.uploading => <String>[
+              TranscriptionStatus.uploading.wireValue,
+            ],
+          TranscriptionStatus.queued => <String>[
+              TranscriptionStatus.uploading.wireValue,
+              TranscriptionStatus.queued.wireValue,
+            ],
+          TranscriptionStatus.running => <String>[
+              TranscriptionStatus.uploading.wireValue,
+              TranscriptionStatus.queued.wireValue,
+              TranscriptionStatus.running.wireValue,
+            ],
+          TranscriptionStatus.completed ||
+          TranscriptionStatus.failed =>
+            <String>[
+              TranscriptionStatus.uploading.wireValue,
+              TranscriptionStatus.queued.wireValue,
+              TranscriptionStatus.running.wireValue,
+            ],
+        };
+        final count = await (update(dumps)
+              ..where(
+                (d) =>
+                    d.id.equals(id) &
+                    d.transcriptionAttempt.equals(attempt) &
+                    d.transcriptionRequestId.equals(requestId) &
+                    d.transcriptionStatus.isIn(allowedSourceStatuses),
+              ))
+            .write(
+          DumpsCompanion(
+            updatedAt: Value(timestamp),
+            transcriptionStatus: Value(status.wireValue),
+            transcriptionJobId:
+                jobId == null ? const Value.absent() : Value(jobId),
+            transcriptionUpdatedAt: Value(timestamp),
+            transcriptionCompletedAt:
+                status.isTerminal ? Value(timestamp) : const Value.absent(),
+            transcriptionError: Value(error),
+          ),
+        );
+        return count == 1;
+      });
 
   /// Commits transcript output only for the current attempt.
   Future<bool> completeTranscriptionAttempt(
     String id, {
+    required RecordingKey storageKey,
     required int attempt,
     required String requestId,
     required String transcript,
@@ -850,6 +878,7 @@ class LocalDb extends _$LocalDb {
       transaction(() async {
         // Read and mutate under the same SQLite transaction. A replacement must
         // never write a snapshot of notes over an explicit regeneration.
+        await _requireMutationKey(id, storageKey);
         final current = await getDump(id);
         final preserveNotes = current?.transcript?.trim().isNotEmpty ?? false;
         final timestamp = now.toUtc();
@@ -887,39 +916,42 @@ class LocalDb extends _$LocalDb {
   /// Updates the sidecar repair marker only for the winning completed attempt.
   Future<bool> updateTranscriptionSidecarError(
     String id, {
+    required RecordingKey storageKey,
     required int attempt,
     required String? requestId,
     required String? error,
     required DateTime now,
     String? expectedTranscript,
     String? expectedError,
-  }) async {
-    final timestamp = now.toUtc();
-    final count = await (update(dumps)
-          ..where(
-            (d) =>
-                d.id.equals(id) &
-                d.transcriptionAttempt.equals(attempt) &
-                (requestId == null
-                    ? d.transcriptionRequestId.isNull()
-                    : d.transcriptionRequestId.equals(requestId)) &
-                d.transcriptionStatus.isIn(['completed', 'failed']) &
-                (expectedTranscript == null
-                    ? const Constant(true)
-                    : d.transcript.equals(expectedTranscript)) &
-                (expectedError == null
-                    ? const Constant(true)
-                    : d.transcriptionError.equals(expectedError)),
-          ))
-        .write(
-      DumpsCompanion(
-        updatedAt: Value(timestamp),
-        transcriptionUpdatedAt: Value(timestamp),
-        transcriptionError: Value(error),
-      ),
-    );
-    return count == 1;
-  }
+  }) =>
+      transaction(() async {
+        await _requireMutationKey(id, storageKey);
+        final timestamp = now.toUtc();
+        final count = await (update(dumps)
+              ..where(
+                (d) =>
+                    d.id.equals(id) &
+                    d.transcriptionAttempt.equals(attempt) &
+                    (requestId == null
+                        ? d.transcriptionRequestId.isNull()
+                        : d.transcriptionRequestId.equals(requestId)) &
+                    d.transcriptionStatus.isIn(['completed', 'failed']) &
+                    (expectedTranscript == null
+                        ? const Constant(true)
+                        : d.transcript.equals(expectedTranscript)) &
+                    (expectedError == null
+                        ? const Constant(true)
+                        : d.transcriptionError.equals(expectedError)),
+              ))
+            .write(
+          DumpsCompanion(
+            updatedAt: Value(timestamp),
+            transcriptionUpdatedAt: Value(timestamp),
+            transcriptionError: Value(error),
+          ),
+        );
+        return count == 1;
+      });
 
   /// Rows whose latest attempt needs network or sidecar reconciliation.
   Future<List<DumpRow>> dumpsNeedingTranscriptionRecovery() =>
@@ -948,19 +980,23 @@ class LocalDb extends _$LocalDb {
   Future<void> updateSyncStatus(
     String id,
     SyncStatus status, {
+    required RecordingKey storageKey,
     int? attempts,
     String? lastError,
-  }) async {
-    await (update(dumps)..where((d) => d.id.equals(id))).write(
-      DumpsCompanion(
-        syncStatus: Value(status.wireValue),
-        syncAttempts: attempts != null ? Value(attempts) : const Value.absent(),
-        lastSyncError:
-            lastError != null ? Value(lastError) : const Value.absent(),
-        updatedAt: Value(DateTime.now().toUtc()),
-      ),
-    );
-  }
+  }) =>
+      transaction(() async {
+        await _requireMutationKey(id, storageKey);
+        await (update(dumps)..where((d) => d.id.equals(id))).write(
+          DumpsCompanion(
+            syncStatus: Value(status.wireValue),
+            syncAttempts:
+                attempts != null ? Value(attempts) : const Value.absent(),
+            lastSyncError:
+                lastError != null ? Value(lastError) : const Value.absent(),
+            updatedAt: Value(DateTime.now().toUtc()),
+          ),
+        );
+      });
 
   /// Find all dumps that need uploading. Excludes synced rows, local-only
   /// rows, and meeting recordings, which are intentionally kept private.

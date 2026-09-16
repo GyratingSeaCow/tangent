@@ -3,6 +3,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
+import '../data/storage/storage_contract.dart';
 
 @immutable
 final class RecordingPlaybackState {
@@ -29,7 +30,7 @@ abstract interface class RecordingPlaybackEngine {
   Stream<bool> get playingStream;
   Stream<bool> get completedStream;
 
-  Future<Duration?> load(String source);
+  Future<Duration?> load(AudioLocator source);
   Future<void> play();
   Future<void> pause();
   Future<void> seek(Duration position);
@@ -59,12 +60,12 @@ final class JustAudioRecordingPlaybackEngine
       .distinct();
 
   @override
-  Future<Duration?> load(String source) {
-    final uri = Uri.tryParse(source);
-    if (uri != null && uri.hasScheme) {
-      return _player.setAudioSource(AudioSource.uri(uri));
-    }
-    return _player.setFilePath(source);
+  Future<Duration?> load(AudioLocator source) {
+    return switch (source.kind) {
+      'file' => _player.setFilePath(source.value),
+      'saf' => _player.setAudioSource(AudioSource.uri(Uri.parse(source.value))),
+      _ => throw ArgumentError.value(source.kind, 'source.kind'),
+    };
   }
 
   @override
@@ -98,7 +99,7 @@ final class RecordingPlaybackController extends ChangeNotifier {
 
   RecordingPlaybackState get state => _state;
 
-  Future<void> initialize(String source) async {
+  Future<void> initialize(AudioLocator source) async {
     _replace(loading: true, clearError: true);
     try {
       final duration = await _engine.load(source);
@@ -197,11 +198,16 @@ final class RecordingPlaybackController extends ChangeNotifier {
   @override
   void dispose() {
     if (_disposed) return;
-    _disposed = true;
-    for (final subscription in _subscriptions) {
-      unawaited(subscription.cancel());
-    }
-    unawaited(_engine.dispose());
+    unawaited(close());
     super.dispose();
+  }
+
+  Future<void> close() async {
+    if (_disposed) return;
+    _disposed = true;
+    await Future.wait(
+      _subscriptions.map((subscription) => subscription.cancel()),
+    );
+    await _engine.dispose();
   }
 }

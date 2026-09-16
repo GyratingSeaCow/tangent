@@ -8,11 +8,17 @@ import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:tangent/data/audio_storage.dart';
+import '../support/legacy_audio_storage_fixture.dart';
 import 'package:tangent/data/local_db.dart';
 import 'package:tangent/data/settings_store.dart';
 import 'package:tangent/data/storage/storage_providers.dart';
 import '../support/widget_recording_coordinator.dart';
+import '../support/bound_service_fixture.dart';
+import '../support/bound_widget_lifetime.dart';
+import 'package:tangent/data/storage/filesystem_storage_backend.dart';
+import 'package:tangent/data/storage/local_deletion_service.dart';
+import 'package:tangent/data/storage/recording_importer.dart';
+import 'package:tangent/data/storage/storage_catalog.dart';
 import 'package:tangent/main.dart';
 import 'package:tangent/screens/home/home_providers.dart';
 import 'package:tangent/screens/home/home_screen.dart';
@@ -48,7 +54,9 @@ class _StorageRecoveryClient extends TranscriptionClient {
   }
 
   void completeRecovery() {
-    _pendingGet!.complete(
+    final pending = _pendingGet;
+    if (pending == null || pending.isCompleted) return;
+    pending.complete(
       const TranscriptionJobSnapshot(
         id: 'job-import',
         requestId: 'request-import',
@@ -69,7 +77,8 @@ class _NoopScreenAwake implements ScreenAwake {
 class _CountingServerTranscriptionService extends ServerTranscriptionService {
   _CountingServerTranscriptionService({
     required super.db,
-    required super.audioStorage,
+    required super.recordingAccess,
+    required super.mutations,
   }) : super(
           client: _StubClient(),
         );
@@ -89,11 +98,13 @@ void main() {
       (tester) async {
     final temp = Directory.systemTemp.createTempSync('tangent-lifecycle-');
     final db = LocalDb.forTesting(NativeDatabase.memory());
+    final bound = await createBoundServiceFixture(db, registerDrain: false);
     // Open real SQLite outside the widget fake clock before its watch starts.
     await tester.runAsync(() => db.getDump('startup-empty'));
     final service = _CountingServerTranscriptionService(
       db: db,
-      audioStorage: AudioStorage.test(temp),
+      recordingAccess: bound.access,
+      mutations: bound.mutations,
     );
 
     await tester.pumpWidget(
@@ -101,6 +112,12 @@ void main() {
         overrides: [
           localDbProvider.overrideWithValue(db),
           serverTranscriptionServiceProvider.overrideWith((ref) => service),
+          recordingServiceProvider.overrideWithValue(StubRecordingService()),
+          recordingCoordinatorProvider.overrideWith((ref) =>
+              WidgetRecordingCoordinator(ref.watch(recordingServiceProvider)),),
+          settingsStoreProvider.overrideWithValue(SettingsStore()),
+          screenAwakeProvider.overrideWithValue(_NoopScreenAwake()),
+          storageBootstrapProvider.overrideWith((ref) async {}),
         ],
         child: const TangentApp(),
       ),
@@ -125,7 +142,11 @@ void main() {
 
     var closed = false;
     await tester.runAsync(() async {
-      unawaited(db.close().then((_) => closed = true));
+      unawaited(
+        bound.mutations.drain().then((_) => db.close()).then((_) {
+          closed = true;
+        }),
+      );
     });
     final closeDeadline = DateTime.now().add(const Duration(seconds: 3));
     while (!closed && DateTime.now().isBefore(closeDeadline)) {
@@ -147,11 +168,13 @@ void main() {
     final temp =
         Directory.systemTemp.createTempSync('tangent-lifecycle-error-');
     final db = LocalDb.forTesting(NativeDatabase.memory());
+    final bound = await createBoundServiceFixture(db, registerDrain: false);
     await db.close();
     final service = ServerTranscriptionService(
       client: _StubClient(),
       db: db,
-      audioStorage: AudioStorage.test(temp),
+      recordingAccess: bound.access,
+      mutations: bound.mutations,
     );
 
     await tester.pumpWidget(
@@ -159,6 +182,12 @@ void main() {
         overrides: [
           localDbProvider.overrideWithValue(db),
           serverTranscriptionServiceProvider.overrideWith((ref) => service),
+          recordingServiceProvider.overrideWithValue(StubRecordingService()),
+          recordingCoordinatorProvider.overrideWith((ref) =>
+              WidgetRecordingCoordinator(ref.watch(recordingServiceProvider)),),
+          settingsStoreProvider.overrideWithValue(SettingsStore()),
+          screenAwakeProvider.overrideWithValue(_NoopScreenAwake()),
+          storageBootstrapProvider.overrideWith((ref) async {}),
         ],
         child: const TangentApp(),
       ),
@@ -177,12 +206,40 @@ void main() {
   });
 
   testWidgets(
-      'storage access imports rows then starts recovery without blocking readiness',
+      'startup imports rows and starts recovery without blocking library',
       (tester) async {
     final temp = Directory.systemTemp.createTempSync('tangent-storage-ready-');
     final db = LocalDb.forTesting(NativeDatabase.memory());
     final storage = AudioStorage.test(temp);
+    final backend = FilesystemStorageBackend();
+    final bound = await createBoundServiceFixture(db,
+        backend: backend, registerDrain: false,);
+    final catalog = SqliteStorageCatalog(
+      db: db,
+      backend: backend,
+      mutations: bound.mutations,
+      stagingDirectory: storage.stagingDir.path,
+      idFactory: () => 'fixture-location',
+      now: () => DateTime.utc(2026, 9, 15),
+      canChooseDefault: false,
+    );
+    final importer = BoundRecordingImporter(
+      db: db,
+      backend: backend,
+      mutations: bound.mutations,
+    );
+    final deletion = DefaultLocalDeletionService(
+      db: db,
+      backend: backend,
+      mutations: bound.mutations,
+    );
     final client = _StorageRecoveryClient(db);
+    addTearDown(() async {
+      client.completeRecovery();
+      await disposeBoundWidget(tester, bound);
+      await tester.runAsync(db.close);
+      temp.deleteSync(recursive: true);
+    });
     storage.pathFor('import-recovery').writeAsBytesSync([1, 2, 3]);
     storage.metaPathFor('import-recovery').writeAsStringSync(
           jsonEncode({
@@ -204,52 +261,39 @@ void main() {
       ProviderScope(
         overrides: [
           localDbProvider.overrideWithValue(db),
-          audioStorageProvider.overrideWithValue(storage),
+          storageAudioStorageProvider.overrideWithValue(storage),
+          storageBackendProvider.overrideWithValue(backend),
+          recordingMutationsProvider.overrideWithValue(bound.mutations),
+          recordingAccessProvider.overrideWithValue(bound.access),
+          storageCatalogProvider.overrideWithValue(catalog),
+          recordingImporterProvider.overrideWithValue(importer),
+          localDeletionServiceProvider.overrideWithValue(deletion),
           transcriptionClientProvider.overrideWith((ref) => client),
-          storageReadyProvider.overrideWith((ref) => false),
+          settingsStoreProvider.overrideWithValue(SettingsStore()),
+          recordingServiceProvider.overrideWithValue(StubRecordingService()),
+          recordingCoordinatorProvider.overrideWith(
+            (ref) =>
+                WidgetRecordingCoordinator(ref.watch(recordingServiceProvider)),
+          ),
+          screenAwakeProvider.overrideWithValue(_NoopScreenAwake()),
         ],
-        child: const MaterialApp(home: StorageSetupScreen()),
+        child: const TangentApp(),
       ),
     );
-    final container = ProviderScope.containerOf(
-      tester.element(find.byType(StorageSetupScreen)),
-    );
-    final chooseButton = tester.widget<FilledButton>(
-      find.byWidgetPredicate((widget) => widget is FilledButton),
-    );
-
-    await tester.runAsync(() async {
-      chooseButton.onPressed!();
-      final deadline = DateTime.now().add(const Duration(seconds: 2));
-      while (client.getJobCalls == 0) {
-        if (DateTime.now().isAfter(deadline)) {
-          fail('storage readiness did not start transcription recovery');
-        }
-        await Future<void>.delayed(const Duration(milliseconds: 1));
-      }
-    });
     await tester.pump();
+    expect(find.text('Tangent'), findsOneWidget);
+    expect(find.byIcon(Icons.settings), findsOneWidget);
+
+    await pumpBoundUntil(tester, () => client.getJobCalls > 0);
 
     expect(client.rowWhenRecoveryStarted?.id, 'import-recovery');
     expect(client.rowWhenRecoveryStarted?.transcriptionStatus, 'running');
-    expect(container.read(storageReadyProvider), isTrue);
-    expect(find.text('Choose folder'), findsOneWidget);
-    expect(find.text('Opening…'), findsNothing);
 
-    await tester.runAsync(() async {
-      client.completeRecovery();
-      final deadline = DateTime.now().add(const Duration(seconds: 2));
-      while (true) {
-        final recovered = await db.getDump('import-recovery');
-        if (recovered?.transcriptionStatus == 'completed' &&
-            recovered?.transcriptionError == null) {
-          break;
-        }
-        if (DateTime.now().isAfter(deadline)) {
-          fail('imported durable row did not finish recovery');
-        }
-        await Future<void>.delayed(const Duration(milliseconds: 1));
-      }
+    client.completeRecovery();
+    await pumpBoundUntil(tester, () async {
+      final recovered = await db.getDump('import-recovery');
+      return recovered?.transcriptionStatus == 'completed' &&
+          recovered?.transcriptionError == null;
     });
 
     final recovered = (await db.getDump('import-recovery'))!;
@@ -258,9 +302,7 @@ void main() {
     expect(recovered.transcriptionJobId, 'job-import');
     expect(recovered.transcriptionAttempt, 1);
 
-    await tester.pumpWidget(const SizedBox.shrink());
-    await db.close();
-    temp.deleteSync(recursive: true);
+    await disposeBoundWidget(tester, bound);
   });
 
   testWidgets('Home screen renders title and record button', (tester) async {

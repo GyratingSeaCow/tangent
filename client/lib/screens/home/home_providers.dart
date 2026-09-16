@@ -3,8 +3,8 @@ import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../data/audio_storage.dart';
 import '../../data/local_db.dart';
+import '../../data/storage/storage_providers.dart';
 import '../../services/connectivity_service.dart';
 import '../../services/recording_playback.dart';
 import '../../services/server_transcription_service.dart';
@@ -14,10 +14,8 @@ import '../server/server_connection_screen.dart'
 import '../settings/settings_screen.dart' show settingsStoreProvider;
 import 'home_screen.dart' show localDbProvider;
 
-/// Provider for AudioStorage. Production wires this up in main().
-final audioStorageProvider = Provider<AudioStorage>((ref) {
-  throw UnimplementedError('Override in main()');
-});
+/// Compatibility façade; storage ownership providers are authoritative.
+final audioStorageProvider = storageAudioStorageProvider;
 
 final connectivityServiceProvider = Provider<ConnectivityService>((ref) {
   return ConnectivityService();
@@ -31,7 +29,8 @@ final serverTranscriptionServiceProvider =
   final service = ServerTranscriptionService(
     client: ref.watch(transcriptionClientProvider),
     db: ref.watch(localDbProvider),
-    audioStorage: ref.watch(audioStorageProvider),
+    recordingAccess: ref.watch(recordingAccessProvider),
+    mutations: ref.watch(recordingMutationsProvider),
   );
   unawaited(service.reconcilePending());
   return service;
@@ -124,11 +123,14 @@ final recordingPlaybackEngineFactoryProvider =
 
 /// Sync engine instance.
 final syncEngineProvider = Provider<SyncEngine>((ref) {
-  return SyncEngine(
+  final engine = SyncEngine(
     db: ref.watch(localDbProvider),
-    audioStorage: ref.watch(audioStorageProvider),
+    recordingAccess: ref.watch(recordingAccessProvider),
+    mutations: ref.watch(recordingMutationsProvider),
     client: ref.watch(transcriptionClientProvider),
     connectivity: ref.watch(connectivityServiceProvider),
     settings: ref.watch(settingsStoreProvider),
   );
+  ref.onDispose(engine.dispose);
+  return engine;
 });

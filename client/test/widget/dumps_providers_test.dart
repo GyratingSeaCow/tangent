@@ -2,6 +2,7 @@
 import 'package:drift/native.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import '../support/bound_row_fixture.dart';
 import 'package:tangent/data/local_db.dart';
 import 'package:tangent/models/sync_status.dart';
 import 'package:tangent/screens/dump/dumps_providers.dart';
@@ -40,8 +41,8 @@ void main() {
   group('dumpsProvider', () {
     test('emits dumps from local DB', () async {
       final db = LocalDb.forTesting(NativeDatabase.memory());
-      await db.upsertDump(_row('1', title: 'First'));
-      await db.upsertDump(_row('2', title: 'Second'));
+      await seedFileFixtureRow(db, _row('1', title: 'First'));
+      await seedFileFixtureRow(db, _row('2', title: 'Second'));
 
       final container = ProviderContainer(
         overrides: [
@@ -76,7 +77,7 @@ void main() {
       expect(dumps, isEmpty);
 
       // Insert and wait for stream to emit.
-      await db.upsertDump(_row('1', title: 'A new dump'));
+      await seedFileFixtureRow(db, _row('1', title: 'A new dump'));
       await Future<void>.delayed(const Duration(milliseconds: 100));
 
       dumps = await container.read(dumpsProvider.future);
@@ -88,7 +89,10 @@ void main() {
   group('searchResultsProvider', () {
     test('empty query returns empty list', () async {
       final db = LocalDb.forTesting(NativeDatabase.memory());
-      await db.upsertDump(_row('1', title: 'Hello', transcript: 'world'));
+      await seedFileFixtureRow(
+        db,
+        _row('1', title: 'Hello', transcript: 'world'),
+      );
 
       final container = ProviderContainer(
         overrides: [
@@ -107,11 +111,14 @@ void main() {
 
     test('searches title and transcript via FTS5', () async {
       final db = LocalDb.forTesting(NativeDatabase.memory());
-      await db.upsertDump(
+      await seedFileFixtureRow(
+        db,
         _row('1', title: 'Grocery list', transcript: 'milk eggs'),
       );
-      await db
-          .upsertDump(_row('2', title: 'Meeting notes', transcript: 'budget'));
+      await seedFileFixtureRow(
+        db,
+        _row('2', title: 'Meeting notes', transcript: 'budget'),
+      );
 
       final container = ProviderContainer(
         overrides: [
@@ -183,10 +190,12 @@ void main() {
 
     test('search results respect both selected filters', () async {
       final db = LocalDb.forTesting(NativeDatabase.memory());
-      await db.upsertDump(
+      await seedFileFixtureRow(
+        db,
         _row('1', title: 'Budget brain dump', transcript: 'budget'),
       );
-      await db.upsertDump(
+      await seedFileFixtureRow(
+        db,
         _row(
           '2',
           title: 'Budget meeting',
@@ -194,7 +203,8 @@ void main() {
           mode: 'meeting',
         ),
       );
-      await db.upsertDump(
+      await seedFileFixtureRow(
+        db,
         _row('3', title: 'Budget meeting awaiting', mode: 'meeting'),
       );
       final container = ProviderContainer(

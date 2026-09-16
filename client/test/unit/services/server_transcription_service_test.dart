@@ -12,7 +12,13 @@ import 'package:tangent/screens/home/home_providers.dart';
 import 'package:tangent/screens/home/home_screen.dart' show localDbProvider;
 import 'package:tangent/screens/server/server_connection_screen.dart'
     show transcriptionClientProvider;
-import 'package:tangent/data/audio_storage.dart';
+import '../../support/legacy_audio_storage_fixture.dart';
+import 'package:tangent/data/storage/storage_contract.dart';
+import 'package:tangent/data/storage/storage_providers.dart';
+import 'package:tangent/data/storage/recording_access.dart';
+import 'package:tangent/data/storage/recording_mutation_coordinator.dart';
+import 'package:tangent/data/storage/filesystem_storage_backend.dart';
+import '../../support/bound_row_fixture.dart';
 import 'package:tangent/data/local_db.dart';
 import 'package:tangent/data/recording_metadata.dart';
 import 'package:tangent/models/api_exception.dart';
@@ -169,19 +175,29 @@ class _FakeTranscriptionClient implements TranscriptionClient {
 }
 
 class _PausedOwnershipDb extends LocalDb {
-  _PausedOwnershipDb() : super.forTesting(NativeDatabase.memory());
+  _PausedOwnershipDb() : super.forTesting(NativeDatabase.memory()) {
+    addTearDown(() {
+      if (!release.isCompleted) release.complete();
+    });
+  }
   final entered = Completer<void>();
   final release = Completer<void>();
 
   @override
   Future<DumpRow> beginTranscriptionAttempt(
     String id, {
+    required RecordingKey storageKey,
     required String requestId,
     required DateTime now,
   }) async {
     entered.complete();
     await release.future;
-    return super.beginTranscriptionAttempt(id, requestId: requestId, now: now);
+    return super.beginTranscriptionAttempt(
+      id,
+      storageKey: storageKey,
+      requestId: requestId,
+      now: now,
+    );
   }
 }
 
@@ -231,8 +247,14 @@ Future<void> _eventually(
 }
 
 class _LateAcceptanceDb extends LocalDb {
-  _LateAcceptanceDb(this.pauseRead) : super.forTesting(NativeDatabase.memory());
+  _LateAcceptanceDb(this.pauseRead, {this.pauseAfterCommit = false})
+      : super.forTesting(NativeDatabase.memory()) {
+    addTearDown(() {
+      if (!release.isCompleted) release.complete();
+    });
+  }
   final bool pauseRead;
+  final bool pauseAfterCommit;
   bool armed = false;
   final entered = Completer<void>();
   final release = Completer<void>();
@@ -260,17 +282,35 @@ class _LateAcceptanceDb extends LocalDb {
   @override
   Future<DumpRow> beginTranscriptionAttempt(
     String id, {
+    required RecordingKey storageKey,
     required String requestId,
     required DateTime now,
   }) async {
     allocatedRequest = requestId;
     allocations++;
+    if (pauseAfterCommit && armed) {
+      armed = false;
+      final accepted = await super.beginTranscriptionAttempt(
+        id,
+        storageKey: storageKey,
+        requestId: requestId,
+        now: now,
+      );
+      entered.complete();
+      await release.future;
+      return accepted;
+    }
     if (!pauseRead && armed) {
       armed = false;
       entered.complete();
       await release.future;
     }
-    return super.beginTranscriptionAttempt(id, requestId: requestId, now: now);
+    return super.beginTranscriptionAttempt(
+      id,
+      storageKey: storageKey,
+      requestId: requestId,
+      now: now,
+    );
   }
 }
 
@@ -290,7 +330,11 @@ class _FlakyRecoveryQueryDb extends LocalDb {
 }
 
 class _PausedRecoveryQueryDb extends LocalDb {
-  _PausedRecoveryQueryDb() : super.forTesting(NativeDatabase.memory());
+  _PausedRecoveryQueryDb() : super.forTesting(NativeDatabase.memory()) {
+    addTearDown(() {
+      if (!releaseQuery.isCompleted) releaseQuery.complete();
+    });
+  }
 
   final queryStarted = Completer<void>();
   final releaseQuery = Completer<void>();
@@ -333,6 +377,7 @@ class _ThrowingRecoveryStatusDb extends LocalDb {
   @override
   Future<bool> updateTranscriptionStatus(
     String id, {
+    required RecordingKey storageKey,
     required int attempt,
     required String requestId,
     required TranscriptionStatus status,
@@ -346,6 +391,7 @@ class _ThrowingRecoveryStatusDb extends LocalDb {
     }
     return super.updateTranscriptionStatus(
       id,
+      storageKey: storageKey,
       attempt: attempt,
       requestId: requestId,
       status: status,
@@ -364,6 +410,7 @@ class _FailOnceRecoveryStatusDb extends LocalDb {
   @override
   Future<bool> updateTranscriptionStatus(
     String id, {
+    required RecordingKey storageKey,
     required int attempt,
     required String requestId,
     required TranscriptionStatus status,
@@ -377,6 +424,7 @@ class _FailOnceRecoveryStatusDb extends LocalDb {
     }
     return super.updateTranscriptionStatus(
       id,
+      storageKey: storageKey,
       attempt: attempt,
       requestId: requestId,
       status: status,
@@ -395,6 +443,7 @@ class _ThrowingCompletionDb extends LocalDb {
   @override
   Future<bool> completeTranscriptionAttempt(
     String id, {
+    required RecordingKey storageKey,
     required int attempt,
     required String requestId,
     required String transcript,
@@ -409,6 +458,7 @@ class _ThrowingCompletionDb extends LocalDb {
   @override
   Future<bool> updateTranscriptionStatus(
     String id, {
+    required RecordingKey storageKey,
     required int attempt,
     required String requestId,
     required TranscriptionStatus status,
@@ -421,6 +471,7 @@ class _ThrowingCompletionDb extends LocalDb {
     }
     return super.updateTranscriptionStatus(
       id,
+      storageKey: storageKey,
       attempt: attempt,
       requestId: requestId,
       status: status,
@@ -441,20 +492,47 @@ void main() {
   late Directory temp;
   late LocalDb db;
   late AudioStorage storage;
+  late RecordingAccess access;
+  late DefaultRecordingMutationCoordinator mutations;
+  LocalDb? ownerDb;
+  final owners = <DefaultRecordingMutationCoordinator>[];
+  final backends = <FilesystemStorageBackend>[];
+  Future<void> prepareStorage() async {
+    if (identical(ownerDb, db)) return;
+    ownerDb = db;
+    final backend = FilesystemStorageBackend();
+    backends.add(backend);
+    mutations = DefaultRecordingMutationCoordinator(db: db);
+    owners.add(mutations);
+    await mutations.restoreFences(unsettled: await backend.unsettledUses());
+    access =
+        BoundRecordingAccess(db: db, backend: backend, mutations: mutations);
+  }
 
   setUp(() async {
     temp = Directory.systemTemp.createTempSync('tangent-server-q-');
     db = LocalDb.forTesting(NativeDatabase.memory());
     storage = AudioStorage.test(temp);
+    await prepareStorage();
   });
 
   tearDown(() async {
+    for (final backend in backends) {
+      await backend.drain();
+    }
+    for (final owner in owners) {
+      await owner.drain();
+    }
+    backends.clear();
+    owners.clear();
+    ownerDb = null;
     await db.close();
     temp.deleteSync(recursive: true);
   });
 
   Future<void> seedRow(DumpRow row) async {
-    await db.upsertDump(row);
+    await prepareStorage();
+    await seedFileFixtureRow(db, row);
     storage.pathFor(row.id).writeAsBytesSync([1, 2, 3]);
   }
 
@@ -511,7 +589,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
       requestIdFactory: () => 'request-new',
       now: () => now,
     );
@@ -546,7 +625,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
       requestIdFactory: () => 'request-1',
       now: () => now,
     );
@@ -583,7 +663,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
       requestIdFactory: () => 'request-active',
     );
     var disposed = false;
@@ -633,7 +714,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
       requestIdFactory: () => 'request-pending-enqueue',
     );
     var disposed = false;
@@ -679,9 +761,11 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
       requestIdFactory: () => 'request-db-first',
-      metadataWriter: (id, metadata) async {
+      metadataWriter: (binding, metadata) async {
+        final id = binding.key.dumpId;
         rowSeenBySidecarWriter = (await db.getDump(id))!;
       },
     );
@@ -702,13 +786,16 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
       requestIdFactory: () => 'request-barrier',
-      metadataWriter: (id, metadata) async {
+      metadataWriter: (binding, metadata) async {
+        final id = binding.key.dumpId;
         writtenMetadata = metadata;
         try {
           await db.beginTranscriptionAttempt(
             id,
+            storageKey: fileFixtureKey(id),
             requestId: 'request-concurrent',
             now: DateTime.utc(2026, 9, 14, 15),
           );
@@ -738,9 +825,12 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
       requestIdFactory: () => 'request-sidecar-failure',
-      metadataWriter: (id, metadata) async {
+      metadataWriter: (binding, metadata) async {
+        final id = binding.key.dumpId;
+        expect(id, 'r1');
         throw const AudioStorageException('disk unavailable');
       },
     );
@@ -759,16 +849,21 @@ void main() {
     await seedRow(row(id: 'r2'));
     final writerStarted = Completer<void>();
     final releaseWriter = Completer<void>();
+    addTearDown(() {
+      if (!releaseWriter.isCompleted) releaseWriter.complete();
+    });
     final fake = _FakeTranscriptionClient(
       completedTranscript: 'durable transcript',
     );
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
       requestIdFactory: () => 'request-${fake.enqueueCalls + 1}',
       sidecarWaitTimeout: const Duration(milliseconds: 10),
-      metadataWriter: (id, metadata) async {
+      metadataWriter: (binding, metadata) async {
+        final id = binding.key.dumpId;
         if (id != 'r1') return;
         writerStarted.complete();
         await releaseWriter.future;
@@ -816,6 +911,7 @@ void main() {
         if (status == 'running') {
           await db.updateTranscriptionStatus(
             'r1',
+            storageKey: fileFixtureKey('r1'),
             attempt: 1,
             requestId: 'request-stale',
             status: TranscriptionStatus.failed,
@@ -824,11 +920,13 @@ void main() {
           );
           final newer = await db.beginTranscriptionAttempt(
             'r1',
+            storageKey: fileFixtureKey('r1'),
             requestId: 'request-newer',
             now: DateTime.utc(2026, 9, 14, 14),
           );
           await db.updateTranscriptionStatus(
             'r1',
+            storageKey: fileFixtureKey('r1'),
             attempt: newer.transcriptionAttempt,
             requestId: newer.transcriptionRequestId!,
             status: TranscriptionStatus.queued,
@@ -837,6 +935,7 @@ void main() {
           );
           await db.completeTranscriptionAttempt(
             'r1',
+            storageKey: fileFixtureKey('r1'),
             attempt: newer.transcriptionAttempt,
             requestId: newer.transcriptionRequestId!,
             transcript: 'newer transcript',
@@ -853,7 +952,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
       requestIdFactory: () => 'request-stale',
     );
     addTearDown(service.dispose);
@@ -888,7 +988,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
       requestIdFactory: () => 'request-duplicate',
     );
     addTearDown(service.dispose);
@@ -927,7 +1028,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
       requestIdFactory: () => 'request-${++generatedIds}',
     );
     addTearDown(service.dispose);
@@ -967,7 +1069,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
     );
     addTearDown(service.dispose);
 
@@ -1012,7 +1115,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
     );
     addTearDown(service.dispose);
 
@@ -1040,6 +1144,9 @@ void main() {
     );
     final getStarted = Completer<void>();
     final releaseGet = Completer<void>();
+    addTearDown(() {
+      if (!releaseGet.isCompleted) releaseGet.complete();
+    });
     final fake = _FakeTranscriptionClient(
       completedTranscript: 'unused',
       onGetJob: (jobId) async {
@@ -1058,7 +1165,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
     );
     addTearDown(service.dispose);
 
@@ -1112,7 +1220,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
     );
     addTearDown(service.dispose);
 
@@ -1193,7 +1302,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
       requestIdFactory: () => 'request-active',
     );
     addTearDown(service.dispose);
@@ -1264,7 +1374,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
       requestIdFactory: () => 'request-active',
     );
     addTearDown(service.dispose);
@@ -1325,6 +1436,9 @@ void main() {
     final blockerStarted = Completer<void>();
     final getStarted = Completer<void>();
     final releaseGet = Completer<void>();
+    addTearDown(() {
+      if (!releaseGet.isCompleted) releaseGet.complete();
+    });
     final fake = _FakeTranscriptionClient(
       completedTranscript: 'unused',
       onStreamStart: () {
@@ -1347,7 +1461,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
       requestIdFactory: () => 'request-blocker',
     );
     addTearDown(service.dispose);
@@ -1389,6 +1504,9 @@ void main() {
     final blockerStarted = Completer<void>();
     final targetGetStarted = Completer<void>();
     final releaseTargetGet = Completer<void>();
+    addTearDown(() {
+      if (!releaseTargetGet.isCompleted) releaseTargetGet.complete();
+    });
     final fake = _FakeTranscriptionClient(
       completedTranscript: 'fresh attempt must not run',
       onGetJob: (jobId) async {
@@ -1417,7 +1535,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
       requestIdFactory: () => 'request-${++generatedIds}',
     );
     addTearDown(service.dispose);
@@ -1478,6 +1597,9 @@ void main() {
     final blockerStarted = Completer<void>();
     final firstTargetGetStarted = Completer<void>();
     final releaseFirstTargetGet = Completer<void>();
+    addTearDown(() {
+      if (!releaseFirstTargetGet.isCompleted) releaseFirstTargetGet.complete();
+    });
     final secondTargetGetStarted = Completer<void>();
     var targetGetCalls = 0;
     final fake = _FakeTranscriptionClient(
@@ -1511,7 +1633,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
       requestIdFactory: () => 'request-${++generatedIds}',
     );
     addTearDown(service.dispose);
@@ -1523,6 +1646,7 @@ void main() {
     expect(
       await db.completeTranscriptionAttempt(
         'blocker',
+        storageKey: fileFixtureKey('blocker'),
         attempt: blockerRow.transcriptionAttempt,
         requestId: blockerRow.transcriptionRequestId!,
         transcript: 'terminalized test blocker',
@@ -1613,7 +1737,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
       requestIdFactory: () => 'request-blocker',
     );
     addTearDown(service.dispose);
@@ -1687,8 +1812,14 @@ void main() {
     final blockerStarted = Completer<void>();
     final targetGetStarted = Completer<void>();
     final releaseTargetGet = Completer<void>();
+    addTearDown(() {
+      if (!releaseTargetGet.isCompleted) releaseTargetGet.complete();
+    });
     final scanBlockerGetStarted = Completer<void>();
     final releaseScanBlockerGet = Completer<void>();
+    addTearDown(() {
+      if (!releaseScanBlockerGet.isCompleted) releaseScanBlockerGet.complete();
+    });
     final handoffGetStarted = Completer<void>();
     var targetGetCalls = 0;
     final fake = _FakeTranscriptionClient(
@@ -1734,7 +1865,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
       requestIdFactory: () => 'request-blocker',
     );
     addTearDown(service.dispose);
@@ -1803,7 +1935,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
     );
     addTearDown(service.dispose);
 
@@ -1834,7 +1967,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
     );
     addTearDown(service.dispose);
 
@@ -1876,6 +2010,9 @@ void main() {
     );
     final getStarted = Completer<void>();
     final releaseGet = Completer<void>();
+    addTearDown(() {
+      if (!releaseGet.isCompleted) releaseGet.complete();
+    });
     final fake = _FakeTranscriptionClient(
       completedTranscript: 'unused',
       onGetJob: (jobId) async {
@@ -1894,7 +2031,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
     );
     addTearDown(service.dispose);
 
@@ -1930,6 +2068,9 @@ void main() {
     );
     final enqueueStarted = Completer<void>();
     final releaseEnqueue = Completer<void>();
+    addTearDown(() {
+      if (!releaseEnqueue.isCompleted) releaseEnqueue.complete();
+    });
     final fake = _FakeTranscriptionClient(
       completedTranscript: 'unused',
       onEnqueue: (_, __, ___) async {
@@ -1945,7 +2086,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
     );
     addTearDown(service.dispose);
 
@@ -2000,7 +2142,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
     );
     addTearDown(service.dispose);
     final throwingDb = db as _ThrowingRecoveryStatusDb;
@@ -2073,7 +2216,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
     );
     addTearDown(service.dispose);
 
@@ -2114,8 +2258,11 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
-      metadataWriter: (id, metadata) async {
+      recordingAccess: access,
+      mutations: mutations,
+      metadataWriter: (binding, metadata) async {
+        final id = binding.key.dumpId;
+        expect(id, 'r1');
         writtenMetadata = metadata;
       },
     );
@@ -2158,7 +2305,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
     );
     addTearDown(service.dispose);
     addTearDown(stream.close);
@@ -2201,7 +2349,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
     );
     addTearDown(service.dispose);
     addTearDown(stream.close);
@@ -2240,7 +2389,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
     );
     addTearDown(service.dispose);
     addTearDown(stream.close);
@@ -2293,7 +2443,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
     );
     var disposed = false;
     addTearDown(() {
@@ -2354,7 +2505,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
     );
     addTearDown(service.dispose);
     addTearDown(stream.close);
@@ -2406,7 +2558,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
     );
     addTearDown(service.dispose);
 
@@ -2459,7 +2612,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
     );
     addTearDown(service.dispose);
 
@@ -2514,7 +2668,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
     );
     addTearDown(service.dispose);
 
@@ -2575,7 +2730,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
       recoveryRequestTimeout: const Duration(milliseconds: 10),
       recoveryRetryBaseDelay: const Duration(milliseconds: 5),
       recoveryRetryMaxDelay: const Duration(milliseconds: 5),
@@ -2672,7 +2828,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
       requestIdFactory: () => 'request-new',
       recoveryRetryBaseDelay: const Duration(seconds: 1),
       recoveryRetryMaxDelay: const Duration(seconds: 1),
@@ -2749,7 +2906,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
       recoveryRetryBaseDelay: const Duration(milliseconds: 100),
       recoveryRetryMaxDelay: const Duration(milliseconds: 100),
     );
@@ -2784,6 +2942,9 @@ void main() {
     final firstStreamStarted = Completer<void>();
     final handoffGetStarted = Completer<void>();
     final releaseHandoffGet = Completer<void>();
+    addTearDown(() {
+      if (!releaseHandoffGet.isCompleted) releaseHandoffGet.complete();
+    });
     var getCalls = 0;
     var streamCalls = 0;
     final fake = _FakeTranscriptionClient(
@@ -2816,7 +2977,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
     );
     addTearDown(service.dispose);
     addTearDown(firstStream.close);
@@ -2905,7 +3067,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
     );
     addTearDown(service.dispose);
     addTearDown(firstStream.close);
@@ -2943,6 +3106,9 @@ void main() {
     );
     final firstGetStarted = Completer<void>();
     final releaseFirstGet = Completer<void>();
+    addTearDown(() {
+      if (!releaseFirstGet.isCompleted) releaseFirstGet.complete();
+    });
     final fake = _FakeTranscriptionClient(
       completedTranscript: 'unused',
       onGetJob: (jobId) async {
@@ -2971,7 +3137,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
     );
     addTearDown(service.dispose);
 
@@ -3024,7 +3191,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
       recoveryRequestTimeout: const Duration(milliseconds: 20),
     );
     addTearDown(service.dispose);
@@ -3046,6 +3214,16 @@ void main() {
     expect(recovered.transcript, 'completed on fresh scan');
     expect(recovered.transcriptionRequestId, 'request-existing');
     expect(recovered.transcriptionJobId, 'job-existing');
+    stalledGet.complete(
+      const TranscriptionJobSnapshot(
+        id: 'job-existing',
+        requestId: 'request-existing',
+        dumpId: 'r1',
+        status: 'running',
+        model: 'large-v3',
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
   });
 
   test('timed-out enqueue stays recoverable with the same request identity',
@@ -3065,7 +3243,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
       recoveryRequestTimeout: const Duration(milliseconds: 20),
       recoveryRetryBaseDelay: const Duration(seconds: 5),
       recoveryRetryMaxDelay: const Duration(seconds: 5),
@@ -3130,7 +3309,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
       recoveryRequestTimeout: const Duration(milliseconds: 20),
     );
     addTearDown(service.dispose);
@@ -3176,7 +3356,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
       recoveryRequestTimeout: const Duration(milliseconds: 20),
     );
     addTearDown(service.dispose);
@@ -3230,7 +3411,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
       requestIdFactory: () => 'request-normal',
       recoveryRequestTimeout: const Duration(milliseconds: 1),
     );
@@ -3262,8 +3444,10 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
-      metadataWriter: (id, metadata) async {
+      recordingAccess: access,
+      mutations: mutations,
+      metadataWriter: (binding, metadata) async {
+        final id = binding.key.dumpId;
         expect(id, 'r1');
         writtenMetadata = metadata;
       },
@@ -3294,6 +3478,9 @@ void main() {
     );
     final writerStarted = Completer<void>();
     final releaseWriter = Completer<void>();
+    addTearDown(() {
+      if (!releaseWriter.isCompleted) releaseWriter.complete();
+    });
     final fake = _FakeTranscriptionClient(
       completedTranscript: 'unused',
       onGetJob: (jobId) => TranscriptionJobSnapshot(
@@ -3308,9 +3495,11 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
       sidecarWaitTimeout: const Duration(milliseconds: 10),
-      metadataWriter: (id, metadata) async {
+      metadataWriter: (binding, metadata) async {
+        final id = binding.key.dumpId;
         if (id != 'r1') return;
         writerStarted.complete();
         await releaseWriter.future;
@@ -3376,7 +3565,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
       requestIdFactory: () => 'request-${++generatedIds}',
     );
     addTearDown(service.dispose);
@@ -3418,7 +3608,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
     );
     addTearDown(service.dispose);
 
@@ -3478,7 +3669,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
       requestIdFactory: () => 'request-${++generatedIds}',
     );
     addTearDown(service.dispose);
@@ -3562,7 +3754,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
       requestIdFactory: () => 'request-${++generatedIds}',
     );
     addTearDown(service.dispose);
@@ -3604,7 +3797,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
     );
     addTearDown(service.dispose);
 
@@ -3661,7 +3855,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
       requestIdFactory: () => 'unexpected-${++generatedIds}',
     );
     addTearDown(service.dispose);
@@ -3722,7 +3917,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
     );
     addTearDown(service.dispose);
 
@@ -3785,7 +3981,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
     );
     addTearDown(service.dispose);
 
@@ -3813,7 +4010,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
       requestIdFactory: () => 'request-${++generatedIds}',
     );
     addTearDown(service.dispose);
@@ -3897,7 +4095,8 @@ void main() {
       final service = ServerTranscriptionService(
         client: fake,
         db: db,
-        audioStorage: storage,
+        recordingAccess: access,
+        mutations: mutations,
         requestIdFactory: () => 'request-${++generatedIds}',
       );
       addTearDown(service.dispose);
@@ -3941,7 +4140,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
       requestIdFactory: () => 'request-stream-timeout',
     );
     addTearDown(service.dispose);
@@ -3977,7 +4177,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
       requestIdFactory: () => 'request-auto-recovery',
     );
     addTearDown(service.dispose);
@@ -4044,7 +4245,8 @@ void main() {
       final service = ServerTranscriptionService(
         client: fake,
         db: db,
-        audioStorage: storage,
+        recordingAccess: access,
+        mutations: mutations,
         requestIdFactory: () => 'request-${++nextRequest}',
         operationRequestTimeout: const Duration(milliseconds: 10),
         recoveryRequestTimeout: const Duration(milliseconds: 10),
@@ -4055,6 +4257,10 @@ void main() {
       final second = service.transcribeDump('r2');
       await second.timeout(const Duration(milliseconds: 300));
       await first.timeout(const Duration(milliseconds: 300));
+
+      service.dispose();
+      never.complete();
+      await mutations.drain();
 
       final firstRow = (await db.getDump('r1'))!;
       final secondRow = (await db.getDump('r2'))!;
@@ -4082,7 +4288,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
       requestIdFactory: () => 'request-stream-socket',
     );
     addTearDown(service.dispose);
@@ -4127,7 +4334,8 @@ void main() {
       final service = ServerTranscriptionService(
         client: fake,
         db: db,
-        audioStorage: storage,
+        recordingAccess: access,
+        mutations: mutations,
         requestIdFactory: () => requestId,
       );
       addTearDown(service.dispose);
@@ -4162,7 +4370,8 @@ void main() {
       final service = ServerTranscriptionService(
         client: fake,
         db: db,
-        audioStorage: storage,
+        recordingAccess: access,
+        mutations: mutations,
         requestIdFactory: () => 'request-auth-$statusCode',
       );
       addTearDown(service.dispose);
@@ -4187,13 +4396,15 @@ void main() {
     final first = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
       requestIdFactory: () => 'request-${++nextId}',
     );
     final second = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
       requestIdFactory: () => 'request-${++nextId}',
     );
     addTearDown(first.dispose);
@@ -4219,7 +4430,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
       requestIdFactory: () => 'request-db-error',
     );
     addTearDown(service.dispose);
@@ -4249,7 +4461,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
       requestIdFactory: () => 'request-conflict',
     );
     addTearDown(service.dispose);
@@ -4277,7 +4490,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
       requestIdFactory: () => 'request-server-failed',
     );
     addTearDown(service.dispose);
@@ -4298,7 +4512,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
       requestIdFactory: () => 'request-empty',
     );
     addTearDown(service.dispose);
@@ -4321,7 +4536,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
     );
     addTearDown(service.dispose);
 
@@ -4346,7 +4562,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
     );
     addTearDown(service.dispose);
 
@@ -4369,7 +4586,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
     );
     addTearDown(service.dispose);
 
@@ -4392,7 +4610,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
     );
     addTearDown(service.dispose);
 
@@ -4424,6 +4643,7 @@ void main() {
         final current = (await db.getDump(original.id))!;
         await db.updateDumpMeetingNotes(
           original.id,
+          storageKey: fileFixtureKey(original.id),
           expectedTitle: current.title,
           expectedTranscript: current.transcript!,
           expectedTranscriptionAttempt: current.transcriptionAttempt,
@@ -4451,7 +4671,8 @@ void main() {
       final service = ServerTranscriptionService(
         client: fake,
         db: db,
-        audioStorage: storage,
+        recordingAccess: access,
+        mutations: mutations,
         requestIdFactory: () => 'request-notes-new',
       );
       addTearDown(service.dispose);
@@ -4478,6 +4699,9 @@ void main() {
     await seedRow(row(id: 'fifo-second'));
     final entered = Completer<void>();
     final release = Completer<void>();
+    addTearDown(() {
+      if (!release.isCompleted) release.complete();
+    });
     final firstClient = _FakeTranscriptionClient(
       completedTranscript: 'unused',
       onCreate: () async {
@@ -4489,6 +4713,8 @@ void main() {
       overrides: [
         localDbProvider.overrideWithValue(db),
         audioStorageProvider.overrideWithValue(storage),
+        recordingAccessProvider.overrideWithValue(access),
+        recordingMutationsProvider.overrideWithValue(mutations),
         transcriptionClientProvider.overrideWith((_) => firstClient),
       ],
     );
@@ -4553,7 +4779,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
       requestIdFactory: () => 'request-before-disposal',
     );
     addTearDown(() {
@@ -4608,6 +4835,8 @@ void main() {
       overrides: [
         localDbProvider.overrideWithValue(db),
         audioStorageProvider.overrideWithValue(storage),
+        recordingAccessProvider.overrideWithValue(access),
+        recordingMutationsProvider.overrideWithValue(mutations),
         transcriptionClientProvider.overrideWith((_) => failing),
       ],
     );
@@ -4627,6 +4856,7 @@ void main() {
     for (var i = 0; i < 20; i++) {
       await db.updateTranscriptionStatus(
         'r1',
+        storageKey: fileFixtureKey('r1'),
         attempt: 1,
         requestId: 'durable-request',
         status: TranscriptionStatus.uploading,
@@ -4648,6 +4878,7 @@ void main() {
     // A different row needs immediate sidecar repair while r1 is in backoff.
     await db.updateDumpTranscript(
       'r2',
+      storageKey: fileFixtureKey('r2'),
       expectedTranscript: 'Before',
       expectedTranscriptionAttempt: 0,
       expectedTranscriptionRequestId: null,
@@ -4706,6 +4937,7 @@ void main() {
     );
     await db.beginTranscriptionAttempt(
       'r1',
+      storageKey: fileFixtureKey('r1'),
       requestId: 'after-scope-shutdown',
       now: DateTime.now(),
     );
@@ -4718,13 +4950,16 @@ void main() {
     expect(await storage.readBytes('r2'), [1, 2, 3]);
   });
 
-  for (final pauseRead in [false, true]) {
+  for (final phase in ['begin attempt', 'row read', 'accepted DB return']) {
     for (final eagerRead in [true, false]) {
       test(
-          'round 2 late acceptance after replacement empty scan ${pauseRead ? "row read" : "begin attempt"} consumer-read=$eagerRead',
+          'round 2 late acceptance after replacement empty scan $phase consumer-read=$eagerRead',
           () async {
         await db.close();
-        final paused = _LateAcceptanceDb(pauseRead);
+        final paused = _LateAcceptanceDb(
+          phase == 'row read',
+          pauseAfterCommit: phase == 'accepted DB return',
+        );
         db = paused;
         await seedRow(row());
         final oldClient =
@@ -4744,6 +4979,8 @@ void main() {
           overrides: [
             localDbProvider.overrideWithValue(db),
             audioStorageProvider.overrideWithValue(storage),
+            recordingAccessProvider.overrideWithValue(access),
+            recordingMutationsProvider.overrideWithValue(mutations),
             transcriptionClientProvider.overrideWith((_) => oldClient),
           ],
         );
@@ -4756,23 +4993,41 @@ void main() {
         container.read(transcriptionRecoveryOwnerProvider);
         paused.armed = true;
         final work = oldService.transcribeDump('r1');
+        addTearDown(() async {
+          if (!paused.release.isCompleted) paused.release.complete();
+          await work.catchError((_) {});
+          await mutations.drain();
+        });
         await paused.entered.future;
+        if (phase == 'accepted DB return') {
+          final committed = (await db.getDump('r1'))!;
+          expect(committed.transcriptionRequestId, paused.allocatedRequest);
+          expect(committed.transcriptionAttempt, 1);
+          expect(committed.transcriptionStatus, 'uploading');
+        }
         final scansBeforeReplacement = paused.scans;
         container.read(transcriptionClientProvider.notifier).state = newClient;
+        Future<void>? replacementScan;
         if (eagerRead) {
           final replacement =
               container.read(serverTranscriptionServiceProvider);
           expect(identical(oldService, replacement), isFalse);
-          await replacement.reconcilePending();
+          replacementScan = replacement.reconcilePending();
         } else {
           await _eventually(
             () => paused.scans > scansBeforeReplacement,
             'app owner must resolve lazy replacement without a consumer read',
           );
         }
-        expect(await db.dumpsNeedingTranscriptionRecovery(), isEmpty);
-        paused.release.complete();
+        final blockedDeletion = await mutations.acquire(
+          'r1',
+          UseKind.deletion,
+          expectedIncarnation: fileFixtureKey('r1').incarnation,
+        );
+        expect(blockedDeletion, isA<Fail<UseLease>>());
+        if (!paused.release.isCompleted) paused.release.complete();
         await work;
+        await replacementScan;
         final deadline = DateTime.now().add(const Duration(seconds: 1));
         late DumpRow saved;
         do {
@@ -4821,7 +5076,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
       requestIdFactory: () => 'request-retry',
     );
     addTearDown(service.dispose);
@@ -4869,7 +5125,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
     );
     addTearDown(service.dispose);
 
@@ -4890,11 +5147,13 @@ void main() {
     await seedRow(row(id: 'duplicate-completion'));
     final attempt = await db.beginTranscriptionAttempt(
       'duplicate-completion',
+      storageKey: fileFixtureKey('duplicate-completion'),
       requestId: 'request-duplicate-completion',
       now: DateTime.utc(2026, 9, 14, 23),
     );
     await db.updateTranscriptionStatus(
       attempt.id,
+      storageKey: fileFixtureKey(attempt.id),
       attempt: attempt.transcriptionAttempt,
       requestId: attempt.transcriptionRequestId!,
       status: TranscriptionStatus.running,
@@ -4903,11 +5162,15 @@ void main() {
     );
     final writerStarted = Completer<void>();
     final releaseWriter = Completer<void>();
+    addTearDown(() {
+      if (!releaseWriter.isCompleted) releaseWriter.complete();
+    });
     var sidecarWrites = 0;
 
     Future<bool> complete(String transcript, {required bool delay}) async {
       final won = await db.completeTranscriptionAttempt(
         attempt.id,
+        storageKey: fileFixtureKey(attempt.id),
         attempt: attempt.transcriptionAttempt,
         requestId: attempt.transcriptionRequestId!,
         transcript: transcript,
@@ -4925,6 +5188,7 @@ void main() {
         await write(dumpMetadata(current));
         final cleared = await db.updateTranscriptionSidecarError(
           attempt.id,
+          storageKey: fileFixtureKey(attempt.id),
           attempt: attempt.transcriptionAttempt,
           requestId: attempt.transcriptionRequestId!,
           error: null,
@@ -4942,6 +5206,7 @@ void main() {
     await expectLater(
       db.beginTranscriptionAttempt(
         attempt.id,
+        storageKey: fileFixtureKey(attempt.id),
         requestId: 'request-too-early',
         now: DateTime.utc(2026, 9, 14, 23, 0, 4),
       ),
@@ -4952,6 +5217,7 @@ void main() {
     expect(await winner, isTrue);
     final next = await db.beginTranscriptionAttempt(
       attempt.id,
+      storageKey: fileFixtureKey(attempt.id),
       requestId: 'request-after-writer',
       now: DateTime.utc(2026, 9, 14, 23, 0, 5),
     );
@@ -4981,8 +5247,11 @@ void main() {
     );
     final blockerStarted = Completer<void>();
     final releaseBlocker = Completer<void>();
-    final blocker = storage.runSerializedMetadataWrite<void>(
-      'detail-race',
+    addTearDown(() {
+      if (!releaseBlocker.isCompleted) releaseBlocker.complete();
+    });
+    final blocker = access.runSerializedMetadataWrite<void>(
+      fileFixtureKey('detail-race'),
       (_) async {
         blockerStarted.complete();
         await releaseBlocker.future;
@@ -4991,17 +5260,18 @@ void main() {
     await blockerStarted.future;
 
     Future<void> writeLatestSidecar() {
-      return storage.runSerializedMetadataWrite<void>(
-        'detail-race',
-        (write) async {
+      return access.runSerializedMetadataWrite<void>(
+        fileFixtureKey('detail-race'),
+        (writer) async {
           final latest = (await db.getDump('detail-race'))!;
-          await write(dumpMetadata(latest));
+          await writer.write(dumpMetadata(latest));
         },
       );
     }
 
     await db.updateDumpTitle(
       'detail-race',
+      storageKey: fileFixtureKey('detail-race'),
       title: 'Edited during retry',
       now: DateTime.utc(2026, 9, 14, 23, 10),
     );
@@ -5013,7 +5283,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: access,
+      mutations: mutations,
       requestIdFactory: () => 'request-winning-retry',
       now: () => DateTime.utc(2026, 9, 14, 23, 11),
     );
@@ -5037,6 +5308,7 @@ void main() {
 
     await db.updateDumpMeetingNotes(
       'detail-race',
+      storageKey: fileFixtureKey('detail-race'),
       expectedTitle: completed.title,
       expectedTranscript: 'winning retry transcript',
       expectedTranscriptionAttempt: completed.transcriptionAttempt,

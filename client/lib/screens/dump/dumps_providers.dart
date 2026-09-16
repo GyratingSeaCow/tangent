@@ -75,12 +75,13 @@ final filteredDumpsProvider = Provider<AsyncValue<List<DumpRow>>>((ref) {
 /// Reactive search across title + transcript, constrained by both filters.
 final searchQueryProvider = StateProvider<String>((_) => '');
 
-final searchResultsProvider = FutureProvider<List<DumpRow>>((ref) async {
+final searchResultsProvider = StreamProvider<List<DumpRow>>((ref) {
   final query = ref.watch(searchQueryProvider);
   final modeFilter = ref.watch(dumpModeFilterProvider);
   final transcriptFilter = ref.watch(transcriptFilterProvider);
   final db = ref.watch(localDbProvider);
-  if (query.trim().isEmpty) return <DumpRow>[];
-  final rows = await db.searchDumps(query.trim(), limit: 100);
-  return filterDumps(rows, modeFilter, transcriptFilter);
+  if (query.trim().isEmpty) return Stream.value(const <DumpRow>[]);
+  return db.watchSearchDumps(query.trim(), limit: 100).map(
+        (rows) => filterDumps(rows, modeFilter, transcriptFilter),
+      );
 });

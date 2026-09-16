@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import 'audio_storage.dart';
+import 'storage/storage_contract.dart';
 import 'local_db.dart';
 import 'recording_metadata.dart';
 
@@ -11,17 +11,26 @@ import 'recording_metadata.dart';
 /// Returns false if this revision has been superseded.
 Future<bool> publishManualTranscriptSidecar({
   required LocalDb db,
-  required AudioStorage audio,
+  required RecordingAccess access,
+  required RecordingKey storageKey,
   required DumpRow revision,
   DateTime Function()? now,
   void Function()? checkActive,
-  Future<void> Function(String, Map<String, dynamic>)? metadataWriter,
+  Future<void> Function(BoundRecording, Map<String, dynamic>)? metadataWriter,
 }) {
+  if (revision.id != storageKey.dumpId) {
+    throw const StorageFault(
+      (
+        code: ProblemCode.wrongIncarnation,
+        message: 'Manual revision differs from captured recording key'
+      ),
+    );
+  }
   final marker = revision.transcriptionError;
   if (!(marker?.startsWith('sidecar_sync_pending: manual_edit:') ?? false)) {
     throw ArgumentError('A committed manual edit marker is required');
   }
-  return audio.runSerializedMetadataWrite<bool>(revision.id, (write) async {
+  return access.runSerializedMetadataWrite<bool>(storageKey, (writer) async {
     checkActive?.call();
     final current = await db.getDump(revision.id);
     checkActive?.call();
@@ -42,13 +51,14 @@ Future<bool> publishManualTranscriptSidecar({
     final metadata = dumpMetadata(current)
       ..['transcriptionError'] = restoredError;
     if (metadataWriter == null) {
-      await write(metadata);
+      await writer.write(metadata);
     } else {
-      await metadataWriter(current.id, metadata);
+      await metadataWriter(writer.binding, metadata);
     }
     checkActive?.call();
     final acknowledged = await db.updateTranscriptionSidecarError(
       current.id,
+      storageKey: storageKey,
       attempt: revision.transcriptionAttempt,
       requestId: revision.transcriptionRequestId,
       expectedTranscript: revision.transcript,

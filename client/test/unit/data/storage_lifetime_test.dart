@@ -38,7 +38,7 @@ class PendingPlayer implements RecordingPlaybackEngine {
   final loading = Completer<Duration?>();
   final disposing = Completer<void>();
   final disposeEntered = Completer<void>();
-  String? source;
+  AudioLocator? source;
   @override
   Stream<Duration> get positionStream => const Stream.empty();
   @override
@@ -48,7 +48,7 @@ class PendingPlayer implements RecordingPlaybackEngine {
   @override
   Stream<bool> get completedStream => const Stream.empty();
   @override
-  Future<Duration?> load(String source) {
+  Future<Duration?> load(AudioLocator source) {
     this.source = source;
     return loading.future;
   }
@@ -247,6 +247,7 @@ void main() {
       expect(deletion, isA<Fail<UseLease>>());
       await f.db.updateDumpTitle(
         a.key.dumpId,
+        storageKey: a.key,
         title: 'after-first',
         now: DateTime.utc(2031),
       );
@@ -278,7 +279,7 @@ void main() {
     await m.restoreFences();
     playback = requireOk(await access.openPlayback(a.key, raw));
     expect(playback!.source, a.audio);
-    final load = playback.engine.load(a.audio.value);
+    final load = playback.engine.load(a.audio);
     final closing = playback.close();
     await raw.disposeEntered.future;
     final busy = await m.acquire(a.key.dumpId, UseKind.deletion);

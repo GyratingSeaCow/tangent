@@ -17,6 +17,23 @@ DeleteTarget target(BoundRecording b) => (
 const removed = (state: ComponentState.removed, problem: null);
 const absent = (state: ComponentState.absent, problem: null);
 void main() {
+  test('public title mutation cannot cross a claimed deletion fence', () async {
+    final f = StorageFixture.create();
+    addTearDown(f.close);
+    final a = await f.seed('fixture-title-fenced', status: 'completed');
+    final original = (await f.db.getDump(a.key.dumpId))!;
+    requireOk(await f.db.claimLocalDeletion('fixture-title-claim', target(a)));
+    await expectLater(
+      f.db.updateDumpTitle(
+        a.key.dumpId,
+        storageKey: a.key,
+        title: 'forbidden late title',
+        now: DateTime.utc(2031),
+      ),
+      throwsA(isA<StorageFault>()),
+    );
+    expect(await f.db.getDump(a.key.dumpId), original);
+  });
   test('pending claim replay rereads durable status and exact current binding',
       () async {
     final f = StorageFixture.create();
@@ -161,7 +178,11 @@ void main() {
     expect(await f.db.searchDumps('retained'), isEmpty);
     expect(await f.db.pendingLocalDeletions(), isEmpty);
     await expectLater(f.db.bindRecording(a), throwsA(isA<StorageFault>()));
-    await expectLater(f.db.upsertDump(row), throwsA(isA<StorageFault>()));
+    await expectLater(
+      f.db.updateDumpTitle(row.id,
+          storageKey: a.key, title: row.title, now: row.updatedAt,),
+      throwsA(isA<StorageFault>()),
+    );
     final receipt = await f.db
         .customSelect('SELECT * FROM local_deletion_tickets')
         .getSingle();
@@ -180,30 +201,35 @@ void main() {
     final a = await f.seed('fixture-claim');
     final original = (await f.db.getDump(a.key.dumpId))!;
     for (final status in ['uploading', 'queued', 'running']) {
-      await f.db.upsertDump(original.copyWith(transcriptionStatus: status));
+      // Explicit fixture setup, not a general production mutation API.
+      await f.db.into(f.db.dumps).insertOnConflictUpdate(
+            original.copyWith(transcriptionStatus: status),
+          );
       expect(
         await f.db.claimLocalDeletion('fixture-$status', target(a)),
         isA<Fail<DeletionTicket>>(),
       );
     }
-    await f.db.upsertDump(original.copyWith(syncStatus: 'syncing'));
+    await f.db.into(f.db.dumps).insertOnConflictUpdate(
+          original.copyWith(syncStatus: 'syncing'),
+        );
     expect(
       await f.db.claimLocalDeletion('fixture-sync', target(a)),
       isA<Fail<DeletionTicket>>(),
     );
-    await f.db.upsertDump(
-      original.copyWith(
-        transcriptionStatus: 'failed',
-        transcriptionError: const Value('sidecar_sync_pending: fixture'),
-      ),
-    );
+    await f.db.into(f.db.dumps).insertOnConflictUpdate(
+          original.copyWith(
+            transcriptionStatus: 'failed',
+            transcriptionError: const Value('sidecar_sync_pending: fixture'),
+          ),
+        );
     expect(
       await f.db.claimLocalDeletion('fixture-marker', target(a)),
       isA<Fail<DeletionTicket>>(),
     );
     await (f.db.update(f.db.dumps)..where((d) => d.id.equals(a.key.dumpId)))
         .write(const DumpsCompanion(transcriptionError: Value(null)));
-    await f.db.upsertDump(original);
+    await f.db.into(f.db.dumps).insertOnConflictUpdate(original);
     final wrong = (
       key: (dumpId: a.key.dumpId, incarnation: 'wrong'),
       location: a.location,
@@ -245,7 +271,7 @@ void main() {
     await expectLater(f.db.bindRecording(other), throwsA(isA<StorageFault>()));
     expect(await f.db.boundRecording(a.key.dumpId), a);
   });
-  test('existing upsert cannot reinsert an already retired ID', () async {
+  test('guarded mutation cannot reinsert an already retired ID', () async {
     final f = StorageFixture.create();
     addTearDown(f.close);
     final a = await f.seed('fixture-retired-insert');
@@ -265,7 +291,11 @@ void main() {
         ]);
     await f.db.delete(f.db.recordingBindings).go();
     await f.db.delete(f.db.dumps).go();
-    await expectLater(f.db.upsertDump(row), throwsA(isA<StorageFault>()));
+    await expectLater(
+      f.db.updateDumpTitle(row.id,
+          storageKey: a.key, title: row.title, now: row.updatedAt,),
+      throwsA(isA<StorageFault>()),
+    );
     expect(await f.db.getDump(a.key.dumpId), isNull);
   });
 }

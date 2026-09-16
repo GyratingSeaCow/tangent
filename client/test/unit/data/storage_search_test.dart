@@ -12,6 +12,7 @@ void main() {
       final b = await f.seed('fixture-ranked-$i');
       await f.db.updateDumpTitle(
         b.key.dumpId,
+        storageKey: b.key,
         title: 'ranked "phrase"',
         now: DateTime.utc(2030),
       );
@@ -35,9 +36,9 @@ void main() {
     addTearDown(stream.cancel);
     expect(await stream.moveNext(), isTrue);
     expect(stream.current, isEmpty);
-    // Slice B must add required storageKey:a.key with the ABI conversion.
     await f.db.updateDumpTitle(
       a.key.dumpId,
+      storageKey: a.key,
       title: 'unique token',
       now: DateTime.utc(2030),
     );

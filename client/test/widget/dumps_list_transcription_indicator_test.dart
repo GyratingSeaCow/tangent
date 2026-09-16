@@ -7,7 +7,7 @@ import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:tangent/data/audio_storage.dart';
+import '../support/legacy_audio_storage_fixture.dart';
 import 'package:tangent/data/local_db.dart';
 import 'package:tangent/screens/dump/dumps_list_screen.dart';
 import 'package:tangent/screens/dump/dumps_providers.dart';

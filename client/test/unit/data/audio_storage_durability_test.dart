@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:tangent/data/audio_storage.dart';
+import '../../support/legacy_audio_storage_fixture.dart';
 
 void main() {
   group('durable AudioStorage filesystem contract', () {
@@ -43,14 +43,17 @@ void main() {
 
       expect(await staging.exists(), isFalse);
       expect(stored.sizeBytes, 7);
-      expect(await storage.readBytes('recording-1'),
-          [0x4f, 0x67, 0x67, 0x53, 1, 2, 3],);
+      expect(
+        await storage.readBytes('recording-1'),
+        [0x4f, 0x67, 0x67, 0x53, 1, 2, 3],
+      );
       final imported = await storage.listAll();
       expect(imported, hasLength(1));
       expect(imported.single.metadata, metadata);
       expect(
-          jsonDecode(await storage.metaPathFor('recording-1').readAsString()),
-          metadata,);
+        jsonDecode(await storage.metaPathFor('recording-1').readAsString()),
+        metadata,
+      );
     });
 
     test('rejects empty recording and keeps staging file for recovery',

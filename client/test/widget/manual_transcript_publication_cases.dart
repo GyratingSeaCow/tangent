@@ -9,9 +9,15 @@ import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:tangent/data/audio_storage.dart';
+import '../support/bound_row_fixture.dart';
+import '../support/bound_service_fixture.dart';
+import '../support/legacy_audio_storage_fixture.dart';
 import 'package:tangent/data/local_db.dart';
 import 'package:tangent/data/recording_metadata.dart';
+import 'package:tangent/data/storage/filesystem_storage_backend.dart';
+import 'package:tangent/data/storage/recording_access.dart';
+import 'package:tangent/data/storage/storage_contract.dart';
+import 'package:tangent/data/storage/storage_providers.dart';
 import 'package:tangent/screens/dump/dump_detail_screen.dart';
 import 'package:tangent/screens/home/home_providers.dart';
 import 'package:tangent/screens/home/home_screen.dart' show localDbProvider;
@@ -29,6 +35,7 @@ class PausedReturnDb extends LocalDb {
   @override
   Future<DumpRow> updateDumpTranscript(
     String id, {
+    required RecordingKey storageKey,
     required String expectedTranscript,
     required int expectedTranscriptionAttempt,
     required String? expectedTranscriptionRequestId,
@@ -37,6 +44,7 @@ class PausedReturnDb extends LocalDb {
   }) async {
     final saved = await super.updateDumpTranscript(
       id,
+      storageKey: storageKey,
       expectedTranscript: expectedTranscript,
       expectedTranscriptionAttempt: expectedTranscriptionAttempt,
       expectedTranscriptionRequestId: expectedTranscriptionRequestId,
@@ -54,16 +62,23 @@ class PausedReturnDb extends LocalDb {
   @override
   Future<DumpRow> beginTranscriptionAttempt(
     String id, {
+    required RecordingKey storageKey,
     required String requestId,
     required DateTime now,
   }) {
     begins++;
-    return super.beginTranscriptionAttempt(id, requestId: requestId, now: now);
+    return super.beginTranscriptionAttempt(
+      id,
+      storageKey: storageKey,
+      requestId: requestId,
+      now: now,
+    );
   }
 
   @override
   Future<bool> updateTranscriptionSidecarError(
     String id, {
+    required RecordingKey storageKey,
     required int attempt,
     required String? requestId,
     required String? error,
@@ -73,6 +88,7 @@ class PausedReturnDb extends LocalDb {
   }) async {
     final won = await super.updateTranscriptionSidecarError(
       id,
+      storageKey: storageKey,
       attempt: attempt,
       requestId: requestId,
       error: error,
@@ -103,6 +119,7 @@ class FinalizationSeam implements AudioStorage {
   int maxActive = 0;
   int finishedOperations = 0;
   int startedOperations = 0;
+  int currentOperation = 0;
   final writeOperations = <int>[];
   final pendingAtWrite = <bool>[];
   @override
@@ -165,6 +182,102 @@ class FinalizationSeam implements AudioStorage {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
+final class _BackendIo<T> implements IoOperation<T> {
+  _BackendIo(this.id, Future<T> Function() body) {
+    result = _run(body);
+  }
+
+  @override
+  final String id;
+  @override
+  late final Future<T> result;
+  final Completer<void> _done = Completer<void>();
+  @override
+  Future<void> get settled => _done.future;
+
+  Future<T> _run(Future<T> Function() body) async {
+    try {
+      return await body();
+    } finally {
+      _done.complete();
+    }
+  }
+}
+
+final class FinalizationBackend extends FilesystemStorageBackend {
+  FinalizationBackend(this.seam);
+
+  final FinalizationSeam seam;
+
+  @override
+  IoOperation<Outcome<void>> writeMetadata(
+    BoundRecording binding,
+    Map<String, dynamic> metadata,
+    String operationId,
+  ) {
+    return _BackendIo<Outcome<void>>(operationId, () async {
+      {
+        seam.writes++;
+        seam.writeOperations.add(seam.currentOperation);
+        final row = (await seam.db.getDump(binding.key.dumpId))!;
+        seam.pendingAtWrite.add(
+          row.transcriptionError?.startsWith('sidecar_sync_pending:') ?? false,
+        );
+        if (!seam.failNext) {
+          final io = super.writeMetadata(binding, metadata, operationId);
+          final result = await io.result;
+          await io.settled;
+          return result;
+        }
+        seam.failNext = false;
+        final target = seam.inner.metaPathFor(binding.key.dumpId);
+        final tmp = File('${target.path}.tmp');
+        expect(await target.exists(), isTrue);
+        await tmp.writeAsString(jsonEncode(metadata), flush: true);
+        if (await target.exists()) await target.delete();
+        seam.failures++;
+        if (seam.releaseFailure != null) await seam.releaseFailure!.future;
+        return const Fail<void>(
+          (
+            code: ProblemCode.io,
+            message: 'R2S1 injected rename/finalization failure',
+          ),
+        );
+      }
+    });
+  }
+}
+
+// Observe admissions and callback completion, including no-op publication.
+// Production bound FIFO and filesystem writer remain authoritative.
+final class ObservedPublicationAccess extends BoundRecordingAccess {
+  ObservedPublicationAccess({
+    required super.db,
+    required super.backend,
+    required super.mutations,
+    required this.seam,
+  });
+  final FinalizationSeam seam;
+  @override
+  Future<T> runSerializedMetadataWrite<T>(
+    RecordingKey key,
+    Future<T> Function(MetadataPublicationAccess) operation,
+  ) {
+    final operationId = ++seam.startedOperations;
+    return super.runSerializedMetadataWrite<T>(key, (writer) async {
+      seam.currentOperation = operationId;
+      seam.active++;
+      if (seam.active > seam.maxActive) seam.maxActive = seam.active;
+      try {
+        return await operation(writer);
+      } finally {
+        seam.active--;
+        seam.finishedOperations++;
+      }
+    });
+  }
+}
+
 class NoNetwork implements TranscriptionClient {
   final calls = <String>[];
   @override
@@ -186,7 +299,8 @@ class Playback implements RecordingPlaybackEngine {
   @override
   Stream<Duration> get positionStream => const Stream.empty();
   @override
-  Future<Duration?> load(String source) async => const Duration(seconds: 4);
+  Future<Duration?> load(AudioLocator source) async =>
+      const Duration(seconds: 4);
   @override
   Future<void> pause() async {}
   @override
@@ -305,11 +419,26 @@ Future<void> scenario(
   final temp = Directory.systemTemp.createTempSync('manual-publication-');
   final db = PausedReturnDb();
   final audio = FinalizationSeam(AudioStorage.test(temp), db);
+  final backend = FinalizationBackend(audio);
+  final bound = await createBoundServiceFixture(
+    db,
+    backend: backend,
+    registerDrain: false,
+  );
+  final access = ObservedPublicationAccess(
+    db: db,
+    backend: backend,
+    mutations: bound.mutations,
+    seam: audio,
+  );
   final client = NoNetwork();
   final container = ProviderContainer(
     overrides: [
       localDbProvider.overrideWithValue(db),
-      audioStorageProvider.overrideWithValue(audio),
+      audioStorageProvider.overrideWithValue(audio.inner),
+      storageBackendProvider.overrideWithValue(backend),
+      recordingMutationsProvider.overrideWithValue(bound.mutations),
+      recordingAccessProvider.overrideWithValue(access),
       transcriptionClientProvider.overrideWith((_) => client),
       recordingPlaybackEngineFactoryProvider.overrideWithValue(Playback.new),
     ],
@@ -319,8 +448,16 @@ Future<void> scenario(
     if (audio.releaseFailure != null && !audio.releaseFailure!.isCompleted) {
       audio.releaseFailure!.complete();
     }
+    await tester.pumpWidget(const SizedBox.shrink());
     container.dispose();
-    await db.close();
+    var drained = false;
+    await tester.runAsync(() async {
+      unawaited(bound.mutations.drain().then((_) => drained = true));
+    });
+    await until(tester, () => drained);
+
+    await tester.runAsync(db.close);
+
     temp.deleteSync(recursive: true);
   });
   const id = 'isolated-r2-s1';
@@ -347,7 +484,7 @@ Future<void> scenario(
     transcriptionError: originalError,
   );
   await tester.runAsync(() async {
-    await db.upsertDump(original);
+    await seedFileFixtureRow(db, original);
     await audio.pathFor(id).writeAsBytes([3, 1, 4, 1]);
     if (failOwner) {
       await audio.inner.writeMetadata(id, dumpMetadata(original));
@@ -378,10 +515,12 @@ Future<void> scenario(
       ),
     ),
   );
-  await tester.pumpAndSettle();
+  await tester.pump();
   await until(
     tester,
-    () => container.read(dumpByIdProvider(id)).valueOrNull != null,
+    () =>
+        container.read(dumpByIdProvider(id)).valueOrNull != null &&
+        find.byIcon(Icons.play_arrow).evaluate().isNotEmpty,
   );
   await tester.enterText(
     find.byKey(const ValueKey('transcript-editor-isolated-r2-s1')),
@@ -452,7 +591,8 @@ Future<void> scenario(
       if (!releaseSerializer.isCompleted) releaseSerializer.complete();
     });
     await tester.runAsync(() async {
-      held = audio.inner.runSerializedMetadataWrite<void>(id, (_) async {
+      held = access.runSerializedMetadataWrite<void>(fileFixtureKey(id),
+          (_) async {
         serializerEntered.complete();
         await releaseSerializer.future;
       });
@@ -469,6 +609,7 @@ Future<void> scenario(
     await tester.runAsync(() async {
       newer = await db.updateDumpTranscript(
         id,
+        storageKey: fileFixtureKey(id),
         expectedTranscript: committed.transcript!,
         expectedTranscriptionAttempt: 2,
         expectedTranscriptionRequestId: requestId,

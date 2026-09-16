@@ -165,9 +165,9 @@ class _ProtectedPlayer implements RecordingPlaybackEngine {
   @override
   Stream<bool> get completedStream => raw.completedStream;
   @override
-  Future<Duration?> load(String requested) async {
+  Future<Duration?> load(AudioLocator requested) async {
     _check();
-    if (requested != source.value) {
+    if (requested != source) {
       throw const StorageFault(
         (
           code: ProblemCode.invalid,
@@ -175,18 +175,11 @@ class _ProtectedPlayer implements RecordingPlaybackEngine {
         ),
       );
     }
-    // Existing engines take a string. Use the tag, not Uri.hasScheme on a path.
-    final value = source.kind == 'saf'
-        ? source.value
-        : Uri.file(
-            source.value,
-            windows: RegExp(r'^[A-Za-z]:[\\/]').hasMatch(source.value) ||
-                source.value.startsWith(r'\\'),
-          ).toString();
+
     final done = Completer<void>();
     _loads.add(done.future);
     try {
-      return await raw.load(value);
+      return await raw.load(source);
     } finally {
       _loads.remove(done.future);
       done.complete();

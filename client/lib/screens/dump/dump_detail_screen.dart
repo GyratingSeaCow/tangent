@@ -3,11 +3,13 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:uuid/uuid.dart';
 
-import '../../data/audio_storage.dart';
 import '../../data/local_db.dart';
 import '../../data/manual_transcript_publication.dart';
 import '../../data/recording_metadata.dart';
+import '../../data/storage/storage_contract.dart';
+import '../../data/storage/storage_providers.dart';
 import '../../models/dump_mode.dart';
 import '../../models/sync_status.dart';
 import '../../models/transcription_status.dart';
@@ -16,7 +18,6 @@ import '../../services/recording_playback.dart';
 import '../home/home_screen.dart' show localDbProvider;
 import '../home/home_providers.dart'
     show
-        audioStorageProvider,
         recordingPlaybackEngineFactoryProvider,
         serverTranscriptionServiceProvider;
 
@@ -46,7 +47,11 @@ class DumpDetailScreen extends ConsumerStatefulWidget {
 class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
   late final TextEditingController _titleController;
   late final TextEditingController _transcriptController;
-  late final RecordingPlaybackController _playbackController;
+  RecordingPlaybackController? _playbackController;
+  PlaybackLease? _playbackLease;
+  late final Future<void> _playbackInitialization;
+  String? _playbackError;
+  bool _closing = false;
   bool _saving = false;
   bool _savingTranscript = false;
   bool _transcriptDirty = false;
@@ -61,13 +66,10 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
     super.initState();
     _titleController = TextEditingController();
     _transcriptController = TextEditingController();
-    _playbackController = RecordingPlaybackController(
-      engine: ref.read(recordingPlaybackEngineFactoryProvider)(),
-    )..addListener(_onPlaybackChanged);
-    unawaited(_playbackController.initialize(widget.audioPath));
+    _playbackInitialization = _initializePlayback();
+    final db = ref.read(localDbProvider);
     // Async-load the existing title.
     Future.microtask(() async {
-      final db = ref.read(localDbProvider);
       final row = await db.getDump(widget.dumpId);
       if (row != null && mounted) {
         setState(() {
@@ -79,9 +81,14 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
 
   @override
   void dispose() {
-    _playbackController
-      ..removeListener(_onPlaybackChanged)
-      ..dispose();
+    _closing = true;
+    final playback = _playbackController;
+    if (playback != null) {
+      playback.removeListener(_onPlaybackChanged);
+      playback.dispose();
+    } else {
+      unawaited(_playbackLease?.close());
+    }
     _titleController.dispose();
     _transcriptController.dispose();
     super.dispose();
@@ -91,10 +98,70 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
     if (mounted) setState(() {});
   }
 
-  Future<void> _writeLatestMetadata(LocalDb db, AudioStorage audio) {
-    return audio.runSerializedMetadataWrite<void>(
-      widget.dumpId,
-      (write) async {
+  Future<void> _initializePlayback() async {
+    final raw = ref.read(recordingPlaybackEngineFactoryProvider)();
+    final access = ref.read(recordingAccessProvider);
+    try {
+      final binding =
+          await ref.read(localDbProvider).boundRecording(widget.dumpId);
+      if (binding == null) throw StateError('Recording storage is unresolved');
+      final opened = await access.openPlayback(binding.key, raw);
+      final lease = switch (opened) {
+        Ok<PlaybackLease>(:final value) => value,
+        Fail<PlaybackLease>(:final problem) => throw StorageFault(problem),
+      };
+      if (_closing || !mounted) {
+        await lease.close();
+        return;
+      }
+      final controller = RecordingPlaybackController(engine: lease.engine)
+        ..addListener(_onPlaybackChanged);
+      _playbackLease = lease;
+      _playbackController = controller;
+      setState(() {});
+      await controller.initialize(lease.source);
+    } catch (error) {
+      await raw.dispose();
+      if (mounted && !_closing) {
+        setState(() => _playbackError = 'Playback unavailable: $error');
+      }
+    }
+  }
+
+  Future<void> _closePlayback() async {
+    _closing = true;
+    await _playbackInitialization;
+    final controller = _playbackController;
+    final lease = _playbackLease;
+    _playbackController = null;
+    _playbackLease = null;
+    if (controller != null) {
+      controller.removeListener(_onPlaybackChanged);
+      await controller.close();
+    }
+    if (lease != null) await lease.close();
+  }
+
+  Future<T> _withEdit<T>(Future<T> Function(RecordingKey key) action) async {
+    final outcome = await ref
+        .read(recordingMutationsProvider)
+        .acquire(widget.dumpId, UseKind.edit);
+    final lease = switch (outcome) {
+      Ok<UseLease>(:final value) => value,
+      Fail<UseLease>(:final problem) => throw StorageFault(problem),
+    };
+    try {
+      return await action(lease.key);
+    } finally {
+      await lease.close();
+    }
+  }
+
+  Future<void> _writeLatestMetadata(
+      LocalDb db, RecordingKey key, RecordingAccess access,) {
+    return access.runSerializedMetadataWrite<void>(
+      key,
+      (writer) async {
         final latest = await db.getDump(widget.dumpId);
         if (latest == null) throw StateError('Dump not found');
         final pending =
@@ -104,10 +171,11 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
             LocalDb.errorAfterSidecarSync(latest.transcriptionError);
         final metadata = dumpMetadata(latest);
         if (pending) metadata['transcriptionError'] = restoredError;
-        await write(metadata);
+        await writer.write(metadata);
         if (pending) {
           await db.updateTranscriptionSidecarError(
             latest.id,
+            storageKey: writer.binding.key,
             attempt: latest.transcriptionAttempt,
             requestId: latest.transcriptionRequestId,
             error: restoredError,
@@ -159,44 +227,49 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
     });
     try {
       final db = ref.read(localDbProvider);
-      final audio = ref.read(audioStorageProvider);
-      final saved = await db.updateDumpTranscript(
-        widget.dumpId,
-        expectedTranscript: expectedTranscript,
-        expectedTranscriptionAttempt: expectedAttempt,
-        expectedTranscriptionRequestId: _editorBaseRequestId,
-        transcript: transcript,
-        now: DateTime.now().toUtc(),
-      );
-      // SQLite owns this revision even when the following sidecar write fails.
-      // A retry must compare against it, not against the old editor base.
-      if (mounted) {
-        setState(() {
-          _editorBaseTranscript = saved.transcript;
-          _editorBaseAttempt = saved.transcriptionAttempt;
-          _editorBaseRequestId = saved.transcriptionRequestId;
-          _transcriptDirty = _transcriptController.text != saved.transcript;
-          _manualSidecarPending = true;
-        });
-      }
-      final published = await publishManualTranscriptSidecar(
-        db: db,
-        audio: audio,
-        revision: saved,
-      );
-      if (!published) throw StateError('Manual edit was superseded');
-      if (mounted) {
-        setState(() {
-          _manualSidecarPending = false;
-          _editorBaseTranscript = saved.transcript;
-          _editorBaseAttempt = saved.transcriptionAttempt;
-          _editorBaseRequestId = saved.transcriptionRequestId;
-          _transcriptDirty = _transcriptController.text != saved.transcript;
-          _statusMessage = _transcriptDirty
-              ? 'Previous edit saved; newer changes are unsaved'
-              : 'Transcript saved';
-        });
-      }
+      // Captured before admission/DB awaits: publication can outlive the route.
+      final access = ref.read(recordingAccessProvider);
+      await _withEdit((key) async {
+        final saved = await db.updateDumpTranscript(
+          widget.dumpId,
+          storageKey: key,
+          expectedTranscript: expectedTranscript,
+          expectedTranscriptionAttempt: expectedAttempt,
+          expectedTranscriptionRequestId: _editorBaseRequestId,
+          transcript: transcript,
+          now: DateTime.now().toUtc(),
+        );
+        // SQLite owns this revision even when the following sidecar write fails.
+        // A retry must compare against it, not against the old editor base.
+        if (mounted) {
+          setState(() {
+            _editorBaseTranscript = saved.transcript;
+            _editorBaseAttempt = saved.transcriptionAttempt;
+            _editorBaseRequestId = saved.transcriptionRequestId;
+            _transcriptDirty = _transcriptController.text != saved.transcript;
+            _manualSidecarPending = true;
+          });
+        }
+        final published = await publishManualTranscriptSidecar(
+          db: db,
+          access: access,
+          storageKey: key,
+          revision: saved,
+        );
+        if (!published) throw StateError('Manual edit was superseded');
+        if (mounted) {
+          setState(() {
+            _manualSidecarPending = false;
+            _editorBaseTranscript = saved.transcript;
+            _editorBaseAttempt = saved.transcriptionAttempt;
+            _editorBaseRequestId = saved.transcriptionRequestId;
+            _transcriptDirty = _transcriptController.text != saved.transcript;
+            _statusMessage = _transcriptDirty
+                ? 'Previous edit saved; newer changes are unsaved'
+                : 'Transcript saved';
+          });
+        }
+      });
     } on StateError {
       if (mounted) {
         setState(() {
@@ -227,15 +300,18 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
     });
     try {
       final db = ref.read(localDbProvider);
-      final audio = ref.read(audioStorageProvider);
       final title = _titleController.text.trim();
+      final access = ref.read(recordingAccessProvider);
       if (title.isEmpty) throw StateError('Title cannot be empty');
-      await db.updateDumpTitle(
-        widget.dumpId,
-        title: title,
-        now: DateTime.now().toUtc(),
-      );
-      await _writeLatestMetadata(db, audio);
+      await _withEdit((key) async {
+        await db.updateDumpTitle(
+          widget.dumpId,
+          storageKey: key,
+          title: title,
+          now: DateTime.now().toUtc(),
+        );
+        await _writeLatestMetadata(db, key, access);
+      });
       if (mounted) {
         setState(() => _statusMessage = 'Saved');
       }
@@ -301,31 +377,33 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
   /// `meeting_notes` and the public sidecar.
   Future<void> _regenerateMeetingNotes(String transcript) async {
     final db = ref.read(localDbProvider);
-    final audio = ref.read(audioStorageProvider);
+    final access = ref.read(recordingAccessProvider);
+
     setState(() {
       _statusError = null;
       _statusMessage = 'Generating meeting notes…';
     });
     try {
-      final existing = await db.getDump(widget.dumpId);
-      if (existing == null) throw StateError('Dump not found');
-      const processor = MeetingNotesProcessor();
-      final notes = processor.process(
-        title: existing.title,
-        transcript: transcript,
-      );
-      await db.updateDumpMeetingNotes(
-        widget.dumpId,
-        expectedTitle: existing.title,
-        expectedTranscript: transcript,
-        expectedTranscriptionAttempt: existing.transcriptionAttempt,
-        expectedTranscriptionRequestId: existing.transcriptionRequestId,
-        meetingNotes: notes,
-        now: DateTime.now().toUtc(),
-      );
-      await _writeLatestMetadata(db, audio);
-      ref.invalidate(dumpByIdProvider(widget.dumpId));
+      await _withEdit((key) async {
+        final existing = await db.getDump(widget.dumpId);
+        if (existing == null) throw StateError('Dump not found');
+        const processor = MeetingNotesProcessor();
+        final notes =
+            processor.process(title: existing.title, transcript: transcript);
+        await db.updateDumpMeetingNotes(
+          widget.dumpId,
+          storageKey: key,
+          expectedTitle: existing.title,
+          expectedTranscript: transcript,
+          expectedTranscriptionAttempt: existing.transcriptionAttempt,
+          expectedTranscriptionRequestId: existing.transcriptionRequestId,
+          meetingNotes: notes,
+          now: DateTime.now().toUtc(),
+        );
+        await _writeLatestMetadata(db, key, access);
+      });
       if (mounted) {
+        ref.invalidate(dumpByIdProvider(widget.dumpId));
         setState(() => _statusMessage = 'Meeting notes updated');
       }
     } catch (e) {
@@ -356,13 +434,34 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
         ],
       ),
     );
-    if (confirmed != true) return;
+    if (confirmed != true || !mounted) return;
 
     try {
-      final db = ref.read(localDbProvider);
-      final audio = ref.read(audioStorageProvider);
-      await audio.deleteFile(widget.dumpId);
-      await db.deleteDump(widget.dumpId);
+      final service = ref.read(localDeletionServiceProvider);
+      await _closePlayback();
+      final preview = switch (await service.preview({widget.dumpId})) {
+        Ok<DeletionPreview>(:final value) => value,
+        Fail<DeletionPreview>(:final problem) => throw StorageFault(problem),
+      };
+      final result = switch (await service.deleteConfirmed(
+        (
+          operationId: const Uuid().v4(),
+          targets: preview.targets,
+        ),
+      )) {
+        Ok<BulkDeletionResult>(:final value) => value,
+        Fail<BulkDeletionResult>(:final problem) => throw StorageFault(problem),
+      };
+      final item = result.items.single;
+      if (item.state != DeleteState.deleted) {
+        throw StorageFault(
+          item.problem ??
+              const (
+                code: ProblemCode.busy,
+                message: 'Recording is still in use'
+              ),
+        );
+      }
       if (mounted) Navigator.of(context).pop();
     } catch (e) {
       if (mounted) {
@@ -438,10 +537,14 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
         ),
         const SizedBox(height: 16),
         _RecordingPlaybackPanel(
-          state: _playbackController.state,
+          state: _playbackController?.state ??
+              RecordingPlaybackState(
+                loading: _playbackError == null,
+                error: _playbackError,
+              ),
           expectedDuration: Duration(seconds: row.durationSeconds),
-          onToggle: _playbackController.togglePlayback,
-          onSeek: _playbackController.seek,
+          onToggle: _playbackController?.togglePlayback ?? () async {},
+          onSeek: _playbackController?.seek ?? (_) async {},
         ),
         const SizedBox(height: 16),
         if (mode == DumpMode.meeting &&

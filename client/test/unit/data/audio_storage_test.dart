@@ -4,7 +4,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:tangent/data/audio_storage.dart';
+import '../../support/legacy_audio_storage_fixture.dart';
 
 void main() {
   group('AudioStorage', () {

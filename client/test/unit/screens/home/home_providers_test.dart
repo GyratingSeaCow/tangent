@@ -5,7 +5,10 @@ import 'dart:io';
 import 'package:drift/native.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:tangent/data/audio_storage.dart';
+import '../../../support/bound_row_fixture.dart';
+import '../../../support/bound_service_fixture.dart';
+import 'package:tangent/data/storage/storage_providers.dart';
+import '../../../support/legacy_audio_storage_fixture.dart';
 import 'package:tangent/data/local_db.dart';
 import 'package:tangent/screens/home/home_providers.dart';
 import 'package:tangent/screens/home/home_screen.dart' show localDbProvider;
@@ -76,7 +79,8 @@ void main() {
       ),
       events: const Stream<JobEvent>.empty(),
     );
-    await db.upsertDump(
+    await seedFileFixtureRow(
+      db,
       DumpRow(
         id: 'provider-row',
         createdAt: DateTime.utc(2026, 9, 15),
@@ -95,10 +99,13 @@ void main() {
       ),
     );
     storage.pathFor('provider-row').writeAsBytesSync([1, 2, 3]);
+    final bound = await createBoundServiceFixture(db);
     final container = ProviderContainer(
       overrides: [
         localDbProvider.overrideWithValue(db),
         audioStorageProvider.overrideWithValue(storage),
+        recordingMutationsProvider.overrideWithValue(bound.mutations),
+        recordingAccessProvider.overrideWithValue(bound.access),
         transcriptionClientProvider.overrideWith((ref) => firstClient),
       ],
     );
@@ -111,6 +118,7 @@ void main() {
       subscription.close();
       container.dispose();
       await firstEvents.close();
+      await bound.mutations.drain();
       await db.close();
       temp.deleteSync(recursive: true);
     });

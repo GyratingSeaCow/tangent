@@ -5,7 +5,10 @@ import 'dart:typed_data';
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
-import 'package:tangent/data/audio_storage.dart';
+import 'package:tangent/data/storage/recording_access.dart';
+import 'package:tangent/data/storage/recording_mutation_coordinator.dart';
+import 'package:tangent/data/storage/filesystem_storage_backend.dart';
+import '../../support/bound_row_fixture.dart';
 import 'package:tangent/data/local_db.dart';
 import 'package:tangent/data/settings_store.dart';
 import 'package:tangent/models/sync_status.dart';
@@ -28,10 +31,16 @@ void main() {
     late _MockClient client;
     late _MockConnectivity conn;
     late SyncEngine engine;
+    late DefaultRecordingMutationCoordinator mutations;
+    late FilesystemStorageBackend backend;
 
     setUp(() async {
       tmp = await Directory.systemTemp.createTemp('tangent_sync_');
       db = LocalDb.forTesting(NativeDatabase.memory());
+      await Directory('${tmp.path}/Tangent').create();
+      backend = FilesystemStorageBackend();
+      mutations = DefaultRecordingMutationCoordinator(db: db);
+      await mutations.restoreFences(unsettled: await backend.unsettledUses());
       client = _MockClient();
       conn = _MockConnectivity();
       when(() => conn.currentStatus())
@@ -40,7 +49,12 @@ void main() {
       when(() => client.baseUrl).thenReturn('http://test');
       engine = SyncEngine(
         db: db,
-        audioStorage: AudioStorage.test(tmp),
+        recordingAccess: BoundRecordingAccess(
+          db: db,
+          backend: backend,
+          mutations: mutations,
+        ),
+        mutations: mutations,
         client: client,
         connectivity: conn,
         settings: SettingsStore(),
@@ -48,6 +62,9 @@ void main() {
     });
 
     tearDown(() async {
+      engine.dispose();
+      await backend.drain();
+      await mutations.drain();
       await db.close();
       await tmp.delete(recursive: true);
     });
@@ -82,7 +99,8 @@ void main() {
     });
 
     test('syncNow uploads pending dumps and marks synced', () async {
-      await db.upsertDump(
+      await seedFileFixtureRow(
+        db,
         DumpRow(
           id: 'test-dump',
           createdAt: DateTime.utc(2026, 1, 1),
@@ -129,7 +147,8 @@ void main() {
     });
 
     test('syncNow marks dump failed when audio file missing', () async {
-      await db.upsertDump(
+      await seedFileFixtureRow(
+        db,
         DumpRow(
           id: 'orphan-dump',
           createdAt: DateTime.utc(2026, 1, 1),
@@ -137,7 +156,7 @@ void main() {
           mode: 'brain_dump',
           durationSeconds: 5,
           title: 'No audio',
-          audioPath: '/nonexistent.opus',
+          audioPath: '${tmp.path}/Tangent/orphan-dump.opus',
           audioSizeBytes: 0,
           syncStatus: SyncStatus.pending.wireValue,
           syncAttempts: 0,
@@ -154,7 +173,8 @@ void main() {
     });
 
     test('meeting audio and transcript never leave the device', () async {
-      await db.upsertDump(
+      await seedFileFixtureRow(
+        db,
         DumpRow(
           id: 'private-meeting',
           createdAt: DateTime.utc(2026, 1, 1),

@@ -7,7 +7,8 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 
-import '../data/audio_storage.dart';
+import '../data/storage/storage_contract.dart';
+import 'retained_future_io.dart';
 import '../data/local_db.dart';
 import '../data/manual_transcript_publication.dart';
 import '../data/recording_metadata.dart';
@@ -28,6 +29,7 @@ final class _QueuedTranscription {
   bool recoveryOnly;
   late final Future<void> ready;
   DumpRow? ownedRow;
+  UseLease? use;
   Object? preparationError;
   final Completer<void> completer = Completer<void>();
 }
@@ -54,11 +56,12 @@ class ServerTranscriptionService extends ChangeNotifier {
   ServerTranscriptionService({
     required TranscriptionClient client,
     required LocalDb db,
-    required AudioStorage audioStorage,
+    required RecordingAccess recordingAccess,
+    required RecordingMutationCoordinator mutations,
     MeetingNotesProcessor meetingNotesProcessor = const MeetingNotesProcessor(),
     String Function()? requestIdFactory,
     DateTime Function()? now,
-    Future<void> Function(String, Map<String, dynamic>)? metadataWriter,
+    Future<void> Function(BoundRecording, Map<String, dynamic>)? metadataWriter,
     Duration recoveryRequestTimeout = const Duration(seconds: 30),
     Duration operationRequestTimeout = const Duration(seconds: 30),
     Duration sidecarWaitTimeout = const Duration(seconds: 30),
@@ -66,7 +69,8 @@ class ServerTranscriptionService extends ChangeNotifier {
     Duration recoveryRetryMaxDelay = const Duration(seconds: 30),
   })  : _client = client,
         _db = db,
-        _audioStorage = audioStorage,
+        _access = recordingAccess,
+        _mutations = mutations,
         _meetingNotesProcessor = meetingNotesProcessor,
         _requestIdFactory = requestIdFactory ?? const Uuid().v4,
         _now = now ?? (() => DateTime.now().toUtc()),
@@ -79,11 +83,13 @@ class ServerTranscriptionService extends ChangeNotifier {
 
   final TranscriptionClient _client;
   final LocalDb _db;
-  final AudioStorage _audioStorage;
+  final RecordingAccess _access;
+  final RecordingMutationCoordinator _mutations;
+  int _transportSequence = 0;
   final MeetingNotesProcessor _meetingNotesProcessor;
   final String Function() _requestIdFactory;
   final DateTime Function() _now;
-  final Future<void> Function(String, Map<String, dynamic>)?
+  final Future<void> Function(BoundRecording, Map<String, dynamic>)?
       _metadataWriterOverride;
   final Duration _recoveryRequestTimeout;
   final Duration _operationRequestTimeout;
@@ -242,8 +248,16 @@ class ServerTranscriptionService extends ChangeNotifier {
             return;
           }
           _resolvingRecoveryDumpIds.add(row.id);
+          UseLease? use;
+          var transferred = false;
           try {
-            final attachment = await _resolvePendingRow(row);
+            use = switch (await _mutations.acquire(row.id, UseKind.recovery)) {
+              Ok<UseLease>(:final value) => value,
+              Fail<UseLease>(:final problem) => throw StorageFault(problem),
+            };
+            final current = await _db.getDump(row.id);
+            if (current == null) return;
+            final attachment = await _resolvePendingRow(use, current);
             if (_disposed) return;
             if (attachment == null) {
               final current = _durableRows[row.id] ?? row;
@@ -259,8 +273,9 @@ class ServerTranscriptionService extends ChangeNotifier {
               return;
             }
             final (attachmentRow, jobId) = attachment;
-            _startReattachment(attachmentRow, jobId);
+            transferred = _startReattachment(use, attachmentRow, jobId);
           } finally {
+            if (!transferred && use != null) unawaited(use.close());
             _resolvingRecoveryDumpIds.remove(row.id);
           }
         } on _ServiceDisposed {
@@ -272,13 +287,16 @@ class ServerTranscriptionService extends ChangeNotifier {
     );
   }
 
-  Future<(DumpRow, String)?> _resolvePendingRow(DumpRow row) async {
+  Future<(DumpRow, String)?> _resolvePendingRow(
+    UseLease use,
+    DumpRow row,
+  ) async {
     try {
       _throwIfDisposed();
       if (TranscriptionStatus.fromWire(row.transcriptionStatus).isTerminal &&
           (row.transcriptionError?.startsWith('sidecar_sync_pending:') ??
               false)) {
-        await _repairCompletedSidecar(row);
+        await _repairCompletedSidecar(use, row);
         _throwIfDisposed();
         return null;
       }
@@ -293,7 +311,8 @@ class ServerTranscriptionService extends ChangeNotifier {
           _throwIfDisposed();
           try {
             snapshot = await _awaitRecoveryRequest(
-              _client.enqueueTranscription(
+              use,
+              () => _client.enqueueTranscription(
                 row.id,
                 requestId: requestId,
                 model: 'large-v3',
@@ -306,7 +325,8 @@ class ServerTranscriptionService extends ChangeNotifier {
             if (error.statusCode == 404 && !repairedMetadata) {
               repairedMetadata = true;
               await _awaitRecoveryRequest(
-                _client.createDump(
+                use,
+                () => _client.createDump(
                   id: row.id,
                   mode: row.mode,
                   durationSeconds: row.durationSeconds,
@@ -323,7 +343,7 @@ class ServerTranscriptionService extends ChangeNotifier {
               repairedAudio = true;
               late final List<int> audioBytes;
               try {
-                audioBytes = await _audioStorage.readBytes(row.id);
+                audioBytes = await _readAudio(use);
               } catch (error) {
                 _throwIfDisposed();
                 throw LocalTranscriptionServerError(
@@ -337,7 +357,8 @@ class ServerTranscriptionService extends ChangeNotifier {
                 );
               }
               await _awaitRecoveryRequest(
-                _client.uploadAudio(
+                use,
+                () => _client.uploadAudio(
                   dumpId: row.id,
                   audioBytes: audioBytes,
                 ),
@@ -350,6 +371,7 @@ class ServerTranscriptionService extends ChangeNotifier {
         }
         if (snapshot.status == 'completed') {
           final accepted = await _guardedStatus(
+            use,
             row,
             status: TranscriptionStatus.queued,
             jobId: snapshot.id,
@@ -359,6 +381,7 @@ class ServerTranscriptionService extends ChangeNotifier {
           final transcript = snapshot.transcript?.trim();
           if (transcript == null || transcript.isEmpty) {
             await _guardedStatus(
+              use,
               row,
               status: TranscriptionStatus.failed,
               jobId: snapshot.id,
@@ -366,7 +389,7 @@ class ServerTranscriptionService extends ChangeNotifier {
             );
             _throwIfDisposed();
           } else {
-            await _persistRecoveredCompletion(row, transcript);
+            await _persistRecoveredCompletion(use, row, transcript);
             _throwIfDisposed();
           }
           await _refreshDurableRow(row.id);
@@ -375,6 +398,7 @@ class ServerTranscriptionService extends ChangeNotifier {
         }
         if (snapshot.status == 'failed') {
           await _guardedStatus(
+            use,
             row,
             status: TranscriptionStatus.failed,
             jobId: snapshot.id,
@@ -393,16 +417,18 @@ class ServerTranscriptionService extends ChangeNotifier {
             ),
         };
         final accepted =
-            await _guardedStatus(row, status: status, jobId: snapshot.id);
+            await _guardedStatus(use, row, status: status, jobId: snapshot.id);
         _throwIfDisposed();
         await _refreshDurableRow(row.id);
         _throwIfDisposed();
         return accepted ? (row, snapshot.id) : null;
       }
-      final snapshot = await _awaitRecoveryRequest(_client.getJob(jobId));
+      final snapshot =
+          await _awaitRecoveryRequest(use, () => _client.getJob(jobId));
       _throwIfDisposed();
       if (snapshot.status == 'failed') {
         await _guardedStatus(
+          use,
           row,
           status: TranscriptionStatus.failed,
           jobId: jobId,
@@ -422,7 +448,7 @@ class ServerTranscriptionService extends ChangeNotifier {
             ),
         };
         final accepted =
-            await _guardedStatus(row, status: status, jobId: jobId);
+            await _guardedStatus(use, row, status: status, jobId: jobId);
         _throwIfDisposed();
         if (!accepted) return null;
         await _refreshDurableRow(row.id);
@@ -432,6 +458,7 @@ class ServerTranscriptionService extends ChangeNotifier {
       final transcript = snapshot.transcript?.trim();
       if (transcript == null || transcript.isEmpty) {
         await _guardedStatus(
+          use,
           row,
           status: TranscriptionStatus.failed,
           jobId: jobId,
@@ -442,7 +469,7 @@ class ServerTranscriptionService extends ChangeNotifier {
         _throwIfDisposed();
         return null;
       }
-      await _persistRecoveredCompletion(row, transcript);
+      await _persistRecoveredCompletion(use, row, transcript);
       _throwIfDisposed();
     } on _ServiceDisposed {
       return null;
@@ -451,6 +478,7 @@ class ServerTranscriptionService extends ChangeNotifier {
       if (!TranscriptionStatus.fromWire(row.transcriptionStatus).isTerminal) {
         if (_isDefinitiveFailure(error)) {
           await _guardedStatus(
+            use,
             row,
             status: TranscriptionStatus.failed,
             jobId: row.transcriptionJobId,
@@ -459,6 +487,7 @@ class ServerTranscriptionService extends ChangeNotifier {
           _throwIfDisposed();
         } else {
           await _persistRecoverable(
+            use,
             row,
             marker: 'reconciliation_pending: $error',
             jobId: row.transcriptionJobId,
@@ -472,38 +501,81 @@ class ServerTranscriptionService extends ChangeNotifier {
     return null;
   }
 
-  Future<T> _awaitRecoveryRequest<T>(Future<T> request) {
-    return request.timeout(_recoveryRequestTimeout);
+  Future<T> _transport<T>(
+    UseLease use,
+    Future<T> Function() start,
+    Duration timeout,
+  ) async {
+    _throwIfDisposed();
+    if (!await _db.mutationAllowed(use.key)) {
+      throw const StorageFault(
+        (
+          code: ProblemCode.wrongIncarnation,
+          message: 'Captured transcription recording is no longer available'
+        ),
+      );
+    }
+    _throwIfDisposed();
+    return _mutations
+        .runIo(
+          use,
+          () => RetainedFutureIo(
+            'transcription-${_transportSequence++}',
+            start,
+          ),
+        )
+        .timeout(timeout);
   }
 
-  Future<T> _awaitOperationRequest<T>(Future<T> request) {
-    return request.timeout(_operationRequestTimeout);
+  Future<T> _awaitRecoveryRequest<T>(
+    UseLease use,
+    Future<T> Function() start,
+  ) =>
+      _transport(use, start, _recoveryRequestTimeout);
+
+  Future<T> _awaitOperationRequest<T>(
+    UseLease use,
+    Future<T> Function() start,
+  ) =>
+      _transport(use, start, _operationRequestTimeout);
+
+  Future<List<int>> _readAudio(UseLease use) async {
+    final audio = switch (await _access.openAudio(use.key)) {
+      Ok<AudioReadLease>(:final value) => value,
+      Fail<AudioReadLease>(:final problem) => throw StorageFault(problem),
+    };
+    try {
+      return await audio.read();
+    } finally {
+      await audio.close();
+    }
   }
 
   Future<void> _awaitSidecarWrite(Future<void> write) {
     return write.timeout(_sidecarWaitTimeout, onTimeout: () {});
   }
 
-  void _startReattachment(DumpRow row, String jobId) {
-    if (_disposed) return;
+  bool _startReattachment(UseLease use, DumpRow row, String jobId) {
+    if (_disposed) return false;
     if (_isLocallyOwned(row.id)) {
       _markLocalRecoveryHandoff(row.id);
-      return;
+      return false;
     }
     if (_reattachments.containsKey(row.id)) {
       _pendingReattachmentHandoffs.add(row.id);
-      return;
+      return false;
     }
     final attachment = _OwnedJobEventStream(_client.streamJob(jobId));
     _reattachments[row.id] = attachment;
     final watcher =
-        _watchReattachedJob(row, jobId, attachment).whenComplete(() async {
+        _watchReattachedJob(use, row, jobId, attachment).whenComplete(() async {
       var releasedOwnership = false;
       if (identical(_reattachments[row.id], attachment)) {
         _reattachments.remove(row.id);
         releasedOwnership = true;
       }
       await attachment.cancel();
+      unawaited(use.close());
       _clearRecoveryRetryIfTerminal(row.id);
       if (releasedOwnership &&
           _pendingReattachmentHandoffs.remove(row.id) &&
@@ -512,9 +584,11 @@ class ServerTranscriptionService extends ChangeNotifier {
       }
     });
     unawaited(watcher);
+    return true;
   }
 
   Future<void> _watchReattachedJob(
+    UseLease use,
     DumpRow row,
     String jobId,
     _OwnedJobEventStream attachment,
@@ -528,6 +602,7 @@ class ServerTranscriptionService extends ChangeNotifier {
             break;
           case 'running':
             final runningWon = await _guardedStatus(
+              use,
               row,
               status: TranscriptionStatus.running,
               jobId: jobId,
@@ -540,6 +615,7 @@ class ServerTranscriptionService extends ChangeNotifier {
             final transcript = event.data['transcript']?.toString().trim();
             if (transcript == null || transcript.isEmpty) {
               await _guardedStatus(
+                use,
                 row,
                 status: TranscriptionStatus.failed,
                 jobId: jobId,
@@ -547,11 +623,12 @@ class ServerTranscriptionService extends ChangeNotifier {
               );
               await _refreshDurableRow(row.id);
             } else {
-              await _persistRecoveredCompletion(row, transcript);
+              await _persistRecoveredCompletion(use, row, transcript);
             }
             return;
           case 'failed':
             await _guardedStatus(
+              use,
               row,
               status: TranscriptionStatus.failed,
               jobId: jobId,
@@ -562,6 +639,7 @@ class ServerTranscriptionService extends ChangeNotifier {
           case 'error':
           case 'timeout':
             await _storeReattachmentError(
+              use,
               row,
               jobId,
               event.data['error']?.toString() ??
@@ -575,17 +653,19 @@ class ServerTranscriptionService extends ChangeNotifier {
       }
       if (_disposed) return;
       await _storeReattachmentError(
+        use,
         row,
         jobId,
         'Event stream ended before a terminal event',
       );
     } catch (error) {
       if (_disposed) return;
-      await _storeReattachmentError(row, jobId, error.toString());
+      await _storeReattachmentError(use, row, jobId, error.toString());
     }
   }
 
   Future<void> _storeReattachmentError(
+    UseLease use,
     DumpRow row,
     String jobId,
     String error,
@@ -593,6 +673,7 @@ class ServerTranscriptionService extends ChangeNotifier {
     try {
       if (_disposed) return;
       await _persistRecoverable(
+        use,
         row,
         marker: 'reconciliation_pending: $error',
         jobId: jobId,
@@ -604,6 +685,7 @@ class ServerTranscriptionService extends ChangeNotifier {
   }
 
   Future<void> _persistRecoveredCompletion(
+    UseLease use,
     DumpRow row,
     String transcript,
   ) async {
@@ -611,6 +693,7 @@ class ServerTranscriptionService extends ChangeNotifier {
     final meetingNotes = _meetingNotesForCompletion(row, transcript);
     final completed = await _db.completeTranscriptionAttempt(
       row.id,
+      storageKey: use.key,
       attempt: row.transcriptionAttempt,
       requestId: row.transcriptionRequestId!,
       transcript: transcript,
@@ -624,7 +707,7 @@ class ServerTranscriptionService extends ChangeNotifier {
     _throwIfDisposed();
     if (committed == null) return;
     _durableRows[row.id] = committed;
-    await _repairCompletedSidecar(committed);
+    await _repairCompletedSidecar(use, committed);
     _throwIfDisposed();
   }
 
@@ -638,7 +721,7 @@ class ServerTranscriptionService extends ChangeNotifier {
     );
   }
 
-  Future<void> _repairCompletedSidecar(DumpRow row) async {
+  Future<void> _repairCompletedSidecar(UseLease use, DumpRow row) async {
     _throwIfDisposed();
     if (row.transcriptionError
             ?.startsWith('sidecar_sync_pending: manual_edit:') ??
@@ -646,7 +729,8 @@ class ServerTranscriptionService extends ChangeNotifier {
       await _awaitSidecarWrite(
         publishManualTranscriptSidecar(
           db: _db,
-          audio: _audioStorage,
+          access: _access,
+          storageKey: use.key,
           revision: row,
           now: _now,
           checkActive: _throwIfDisposed,
@@ -659,9 +743,9 @@ class ServerTranscriptionService extends ChangeNotifier {
       return;
     }
     await _awaitSidecarWrite(
-      _audioStorage.runSerializedMetadataWrite<void>(
-        row.id,
-        (write) async {
+      _access.runSerializedMetadataWrite<void>(
+        use.key,
+        (writer) async {
           _throwIfDisposed();
           final current = await _db.getDump(row.id);
           _throwIfDisposed();
@@ -681,13 +765,14 @@ class ServerTranscriptionService extends ChangeNotifier {
             ..['transcriptionError'] = restoredError;
           final override = _metadataWriterOverride;
           if (override == null) {
-            await write(metadata);
+            await writer.write(metadata);
           } else {
-            await override(current.id, metadata);
+            await override(writer.binding, metadata);
           }
           _throwIfDisposed();
           await _db.updateTranscriptionSidecarError(
             current.id,
+            storageKey: writer.binding.key,
             attempt: current.transcriptionAttempt,
             requestId: current.transcriptionRequestId,
             error: restoredError,
@@ -745,6 +830,14 @@ class ServerTranscriptionService extends ChangeNotifier {
 
   Future<void> _prepareOwnership(_QueuedTranscription job) async {
     try {
+      if (job.recoveryOnly) return;
+      job.use =
+          switch (await _mutations.acquire(job.dumpId, UseKind.acceptance)) {
+        Ok<UseLease>(:final value) => value,
+        Fail<UseLease>(:final problem) when problem.code == ProblemCode.busy =>
+          throw const _ExistingDurableTranscription(),
+        Fail<UseLease>(:final problem) => throw StorageFault(problem),
+      };
       final existing = await _db.getDump(job.dumpId);
       if (existing == null) {
         throw const LocalTranscriptionServerError('Dump not found');
@@ -758,6 +851,7 @@ class ServerTranscriptionService extends ChangeNotifier {
       // transaction is pending must not silently discard the accepted action.
       job.ownedRow = await _db.beginTranscriptionAttempt(
         job.dumpId,
+        storageKey: job.use!.key,
         requestId: _requestIdFactory(),
         now: _now(),
       );
@@ -781,16 +875,18 @@ class ServerTranscriptionService extends ChangeNotifier {
     String? remoteJobId;
     var foundExistingAttempt = false;
     var recoverableExit = false;
+    late final UseLease use;
     try {
       await job.ready;
       _throwIfDisposed();
       if (job.preparationError != null) throw job.preparationError!;
       final row = job.ownedRow;
       if (row == null) return;
+      use = job.use!;
       _clearRecoveryRetry(dumpId);
       attemptRow = row;
       _durableRows[row.id] = row;
-      final audioBytes = await _audioStorage.readBytes(row.id);
+      final audioBytes = await _readAudio(use);
       _throwIfDisposed();
       if (audioBytes.isEmpty) {
         throw const LocalTranscriptionServerError('Audio file is empty');
@@ -800,7 +896,8 @@ class ServerTranscriptionService extends ChangeNotifier {
       // idempotent on `id`, so re-sending is safe even when a previous
       // sync already uploaded the audio but transcription failed.
       await _awaitOperationRequest(
-        _client.createDump(
+        use,
+        () => _client.createDump(
           id: row.id,
           mode: row.mode,
           durationSeconds: row.durationSeconds,
@@ -810,7 +907,8 @@ class ServerTranscriptionService extends ChangeNotifier {
       );
       _throwIfDisposed();
       await _awaitOperationRequest(
-        _client.uploadAudio(
+        use,
+        () => _client.uploadAudio(
           dumpId: row.id,
           audioBytes: audioBytes,
         ),
@@ -822,7 +920,8 @@ class ServerTranscriptionService extends ChangeNotifier {
       final TranscriptionJobSnapshot enqueuedJob;
       try {
         enqueuedJob = await _awaitOperationRequest(
-          _client.enqueueTranscription(
+          use,
+          () => _client.enqueueTranscription(
             row.id,
             requestId: row.transcriptionRequestId!,
           ),
@@ -833,6 +932,7 @@ class ServerTranscriptionService extends ChangeNotifier {
         if (_isDefinitiveEnqueueRejection(error)) rethrow;
         final marker = 'enqueue_pending: $error';
         await _guardedStatus(
+          use,
           row,
           status: TranscriptionStatus.uploading,
           error: marker,
@@ -841,6 +941,7 @@ class ServerTranscriptionService extends ChangeNotifier {
       }
       remoteJobId = enqueuedJob.id;
       final queuedWon = await _guardedStatus(
+        use,
         row,
         status: TranscriptionStatus.queued,
         jobId: enqueuedJob.id,
@@ -864,6 +965,7 @@ class ServerTranscriptionService extends ChangeNotifier {
               break;
             case 'running':
               final runningWon = await _guardedStatus(
+                use,
                 row,
                 status: TranscriptionStatus.running,
                 jobId: enqueuedJob.id,
@@ -917,6 +1019,7 @@ class ServerTranscriptionService extends ChangeNotifier {
       try {
         completionWon = await _db.completeTranscriptionAttempt(
           row.id,
+          storageKey: use.key,
           attempt: row.transcriptionAttempt,
           requestId: row.transcriptionRequestId!,
           transcript: transcript,
@@ -930,9 +1033,9 @@ class ServerTranscriptionService extends ChangeNotifier {
       _throwIfDisposed();
       if (!completionWon) throw const _StaleTranscriptionAttempt();
       await _awaitSidecarWrite(
-        _audioStorage.runSerializedMetadataWrite<void>(
-          row.id,
-          (write) async {
+        _access.runSerializedMetadataWrite<void>(
+          use.key,
+          (writer) async {
             final completed = await _readCurrentAttempt(row);
             if (completed.transcriptionAttempt != row.transcriptionAttempt ||
                 completed.transcriptionRequestId !=
@@ -950,14 +1053,15 @@ class ServerTranscriptionService extends ChangeNotifier {
             try {
               final override = _metadataWriterOverride;
               if (override == null) {
-                await write(sidecarMetadata);
+                await writer.write(sidecarMetadata);
               } else {
-                await override(completed.id, sidecarMetadata);
+                await override(writer.binding, sidecarMetadata);
               }
             } catch (error) {
               try {
                 await _db.updateTranscriptionSidecarError(
                   completed.id,
+                  storageKey: writer.binding.key,
                   attempt: completed.transcriptionAttempt,
                   requestId: completed.transcriptionRequestId!,
                   error: 'sidecar_sync_pending: $error',
@@ -973,6 +1077,7 @@ class ServerTranscriptionService extends ChangeNotifier {
             try {
               final cleared = await _db.updateTranscriptionSidecarError(
                 completed.id,
+                storageKey: writer.binding.key,
                 attempt: completed.transcriptionAttempt,
                 requestId: completed.transcriptionRequestId!,
                 error: null,
@@ -996,6 +1101,7 @@ class ServerTranscriptionService extends ChangeNotifier {
       recoverableExit = true;
       if (!_disposed && attemptRow != null) {
         await _persistRecoverable(
+          use,
           attemptRow,
           marker: recoverable.marker,
           jobId: remoteJobId,
@@ -1017,6 +1123,7 @@ class ServerTranscriptionService extends ChangeNotifier {
         if (postEnqueueUncertain || _isAmbiguousEnqueueFailure(error)) {
           recoverableExit = true;
           await _persistRecoverable(
+            use,
             attemptRow,
             marker: 'reconciliation_pending: $error',
             jobId: remoteJobId,
@@ -1024,6 +1131,7 @@ class ServerTranscriptionService extends ChangeNotifier {
         } else {
           try {
             await _guardedStatus(
+              use,
               attemptRow,
               status: TranscriptionStatus.failed,
               jobId: remoteJobId,
@@ -1048,6 +1156,8 @@ class ServerTranscriptionService extends ChangeNotifier {
       if (_activeJob == job) {
         _activeJob = null;
       }
+      final owner = job.use;
+      if (owner != null) unawaited(owner.close());
       if (!job.completer.isCompleted) job.completer.complete();
       _notify();
       _startNext();
@@ -1070,6 +1180,8 @@ class ServerTranscriptionService extends ChangeNotifier {
     final shouldReconcile = removed.recoveryOnly || hadPendingHandoff;
     unawaited(
       removed.ready.then((_) {
+        final owner = removed.use;
+        if (owner != null) unawaited(owner.close());
         if (!removed.completer.isCompleted) removed.completer.complete();
         if (!_disposed && (removed.ownedRow != null || shouldReconcile)) {
           _scheduleRecoveryRetry(target);
@@ -1083,6 +1195,7 @@ class ServerTranscriptionService extends ChangeNotifier {
   }
 
   Future<bool> _guardedStatus(
+    UseLease use,
     DumpRow attempt, {
     required TranscriptionStatus status,
     String? jobId,
@@ -1093,6 +1206,7 @@ class ServerTranscriptionService extends ChangeNotifier {
     try {
       updated = await _db.updateTranscriptionStatus(
         attempt.id,
+        storageKey: use.key,
         attempt: attempt.transcriptionAttempt,
         requestId: attempt.transcriptionRequestId!,
         status: status,
@@ -1121,6 +1235,7 @@ class ServerTranscriptionService extends ChangeNotifier {
   }
 
   Future<void> _persistRecoverable(
+    UseLease use,
     DumpRow attempt, {
     required String marker,
     String? jobId,
@@ -1138,6 +1253,7 @@ class ServerTranscriptionService extends ChangeNotifier {
     try {
       await _db.updateTranscriptionStatus(
         attempt.id,
+        storageKey: use.key,
         attempt: attempt.transcriptionAttempt,
         requestId: attempt.transcriptionRequestId!,
         status: status,
@@ -1258,6 +1374,8 @@ class ServerTranscriptionService extends ChangeNotifier {
     for (final job in _queue) {
       unawaited(
         job.ready.then((_) {
+          final owner = job.use;
+          if (owner != null) unawaited(owner.close());
           if (!job.completer.isCompleted) job.completer.complete();
         }),
       );

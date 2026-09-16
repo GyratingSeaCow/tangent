@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sqlite3/sqlite3.dart';
 import 'package:tangent/data/local_db.dart';
 import 'package:tangent/models/transcription_status.dart';
+import '../../support/bound_row_fixture.dart';
 
 void main() {
   group('TranscriptionStatus', () {
@@ -59,7 +60,7 @@ void main() {
         transcriptionStatus: 'not_transcribed',
         transcriptionAttempt: 0,
       );
-      await db.upsertDump(row);
+      await seedFileFixtureRow(db, row);
 
       final fetched = await db.getDump('test-1');
       expect(fetched, isNotNull);
@@ -71,7 +72,8 @@ void main() {
 
     test('lists dumps newest first', () async {
       for (var i = 0; i < 3; i++) {
-        await db.upsertDump(
+        await seedFileFixtureRow(
+          db,
           DumpRow(
             id: 'test-$i',
             createdAt: DateTime.utc(2026, 1, 1 + i),
@@ -95,7 +97,8 @@ void main() {
     });
 
     test('searches by title using FTS5', () async {
-      await db.upsertDump(
+      await seedFileFixtureRow(
+        db,
         DumpRow(
           id: 'test-1',
           createdAt: DateTime.utc(2026, 1, 1),
@@ -111,7 +114,8 @@ void main() {
           transcriptionAttempt: 0,
         ),
       );
-      await db.upsertDump(
+      await seedFileFixtureRow(
+        db,
         DumpRow(
           id: 'test-2',
           createdAt: DateTime.utc(2026, 1, 2),
@@ -349,7 +353,8 @@ void main() {
 
     test('guards latest-attempt status and completion writes', () async {
       final now = DateTime.utc(2026, 9, 14, 18);
-      await db.upsertDump(
+      await seedFileFixtureRow(
+        db,
         DumpRow(
           id: 'guarded',
           createdAt: now,
@@ -368,12 +373,14 @@ void main() {
 
       final first = await db.beginTranscriptionAttempt(
         'guarded',
+        storageKey: fileFixtureKey('guarded'),
         requestId: 'request-first',
         now: now,
       );
       await expectLater(
         db.beginTranscriptionAttempt(
           'guarded',
+          storageKey: fileFixtureKey('guarded'),
           requestId: 'request-racing',
           now: now.add(const Duration(milliseconds: 500)),
         ),
@@ -381,6 +388,7 @@ void main() {
       );
       final firstFailure = await db.updateTranscriptionStatus(
         'guarded',
+        storageKey: fileFixtureKey('guarded'),
         attempt: first.transcriptionAttempt,
         requestId: 'request-first',
         status: TranscriptionStatus.failed,
@@ -389,11 +397,13 @@ void main() {
       );
       final second = await db.beginTranscriptionAttempt(
         'guarded',
+        storageKey: fileFixtureKey('guarded'),
         requestId: 'request-second',
         now: now.add(const Duration(seconds: 2)),
       );
       final staleStatus = await db.updateTranscriptionStatus(
         'guarded',
+        storageKey: fileFixtureKey('guarded'),
         attempt: first.transcriptionAttempt,
         requestId: 'request-first',
         status: TranscriptionStatus.failed,
@@ -402,6 +412,7 @@ void main() {
       );
       final staleCompletion = await db.completeTranscriptionAttempt(
         'guarded',
+        storageKey: fileFixtureKey('guarded'),
         attempt: first.transcriptionAttempt,
         requestId: 'request-first',
         transcript: 'stale transcript',
@@ -409,6 +420,7 @@ void main() {
       );
       final currentStatus = await db.updateTranscriptionStatus(
         'guarded',
+        storageKey: fileFixtureKey('guarded'),
         attempt: second.transcriptionAttempt,
         requestId: 'request-second',
         status: TranscriptionStatus.running,
@@ -417,6 +429,7 @@ void main() {
       );
       final currentCompletion = await db.completeTranscriptionAttempt(
         'guarded',
+        storageKey: fileFixtureKey('guarded'),
         attempt: second.transcriptionAttempt,
         requestId: 'request-second',
         transcript: 'winning transcript',
@@ -452,7 +465,8 @@ void main() {
         TranscriptionStatus status, {
         String? error,
       }) {
-        return db.upsertDump(
+        return seedFileFixtureRow(
+          db,
           DumpRow(
             id: id,
             createdAt: now,
@@ -499,7 +513,8 @@ void main() {
     test('sidecar completion barrier blocks a newer attempt until cleared',
         () async {
       final now = DateTime.utc(2026, 9, 14, 20);
-      await db.upsertDump(
+      await seedFileFixtureRow(
+        db,
         DumpRow(
           id: 'sidecar-barrier',
           createdAt: now,
@@ -517,12 +532,14 @@ void main() {
       );
       final attempt = await db.beginTranscriptionAttempt(
         'sidecar-barrier',
+        storageKey: fileFixtureKey('sidecar-barrier'),
         requestId: 'request-sidecar',
         now: now,
       );
 
       final completed = await db.completeTranscriptionAttempt(
         'sidecar-barrier',
+        storageKey: fileFixtureKey('sidecar-barrier'),
         attempt: attempt.transcriptionAttempt,
         requestId: 'request-sidecar',
         transcript: 'done',
@@ -531,6 +548,7 @@ void main() {
       );
       final lateRunning = await db.updateTranscriptionStatus(
         'sidecar-barrier',
+        storageKey: fileFixtureKey('sidecar-barrier'),
         attempt: attempt.transcriptionAttempt,
         requestId: 'request-sidecar',
         status: TranscriptionStatus.running,
@@ -541,6 +559,7 @@ void main() {
       await expectLater(
         db.beginTranscriptionAttempt(
           'sidecar-barrier',
+          storageKey: fileFixtureKey('sidecar-barrier'),
           requestId: 'request-too-early',
           now: now.add(const Duration(seconds: 2)),
         ),
@@ -548,6 +567,7 @@ void main() {
       );
       final cleared = await db.updateTranscriptionSidecarError(
         'sidecar-barrier',
+        storageKey: fileFixtureKey('sidecar-barrier'),
         attempt: attempt.transcriptionAttempt,
         requestId: 'request-sidecar',
         error: null,
@@ -555,6 +575,7 @@ void main() {
       );
       final next = await db.beginTranscriptionAttempt(
         'sidecar-barrier',
+        storageKey: fileFixtureKey('sidecar-barrier'),
         requestId: 'request-next',
         now: now.add(const Duration(seconds: 4)),
       );
@@ -573,7 +594,8 @@ void main() {
     test('completion ownership can be acquired only once per attempt',
         () async {
       final now = DateTime.utc(2026, 9, 14, 21);
-      await db.upsertDump(
+      await seedFileFixtureRow(
+        db,
         DumpRow(
           id: 'single-completion-owner',
           createdAt: now,
@@ -591,12 +613,14 @@ void main() {
       );
       final attempt = await db.beginTranscriptionAttempt(
         'single-completion-owner',
+        storageKey: fileFixtureKey('single-completion-owner'),
         requestId: 'request-single-owner',
         now: now,
       );
 
       final first = await db.completeTranscriptionAttempt(
         attempt.id,
+        storageKey: fileFixtureKey(attempt.id),
         attempt: attempt.transcriptionAttempt,
         requestId: attempt.transcriptionRequestId!,
         transcript: 'winning transcript',
@@ -605,6 +629,7 @@ void main() {
       );
       final duplicate = await db.completeTranscriptionAttempt(
         attempt.id,
+        storageKey: fileFixtureKey(attempt.id),
         attempt: attempt.transcriptionAttempt,
         requestId: attempt.transcriptionRequestId!,
         transcript: 'duplicate transcript',
@@ -622,7 +647,8 @@ void main() {
     test('partial detail edits preserve durable transcription ownership',
         () async {
       final now = DateTime.utc(2026, 9, 14, 22);
-      await db.upsertDump(
+      await seedFileFixtureRow(
+        db,
         DumpRow(
           id: 'partial-detail-edit',
           createdAt: now,
@@ -640,11 +666,13 @@ void main() {
       );
       final attempt = await db.beginTranscriptionAttempt(
         'partial-detail-edit',
+        storageKey: fileFixtureKey('partial-detail-edit'),
         requestId: 'request-partial-edit',
         now: now,
       );
       await db.updateTranscriptionStatus(
         attempt.id,
+        storageKey: fileFixtureKey(attempt.id),
         attempt: attempt.transcriptionAttempt,
         requestId: attempt.transcriptionRequestId!,
         status: TranscriptionStatus.running,
@@ -654,6 +682,7 @@ void main() {
 
       await db.updateDumpTitle(
         attempt.id,
+        storageKey: fileFixtureKey(attempt.id),
         title: 'Edited title',
         now: now.add(const Duration(seconds: 2)),
       );
@@ -666,6 +695,7 @@ void main() {
 
       await db.completeTranscriptionAttempt(
         attempt.id,
+        storageKey: fileFixtureKey(attempt.id),
         attempt: attempt.transcriptionAttempt,
         requestId: attempt.transcriptionRequestId!,
         transcript: 'Current transcript',
@@ -675,6 +705,7 @@ void main() {
       );
       await db.updateDumpMeetingNotes(
         attempt.id,
+        storageKey: fileFixtureKey(attempt.id),
         expectedTitle: 'Edited title',
         expectedTranscript: 'Current transcript',
         expectedTranscriptionAttempt: attempt.transcriptionAttempt,
@@ -719,10 +750,11 @@ void main() {
         transcriptionUpdatedAt: now,
         transcriptionCompletedAt: now,
       );
-      await db.upsertDump(original);
+      await seedFileFixtureRow(db, original);
 
       final saved = await db.updateDumpTranscript(
         original.id,
+        storageKey: fileFixtureKey(original.id),
         expectedTranscript: original.transcript!,
         expectedTranscriptionAttempt: original.transcriptionAttempt,
         expectedTranscriptionRequestId: original.transcriptionRequestId,
@@ -769,10 +801,11 @@ void main() {
         transcriptionAttempt: 0,
         transcriptionError: 'server rejection',
       );
-      await db.upsertDump(original);
+      await seedFileFixtureRow(db, original);
       Future<DumpRow> edit(String expected, String value) =>
           db.updateDumpTranscript(
             original.id,
+            storageKey: fileFixtureKey(original.id),
             expectedTranscript: expected,
             expectedTranscriptionAttempt: 0,
             expectedTranscriptionRequestId: null,
@@ -784,6 +817,7 @@ void main() {
       expect(
         await db.updateTranscriptionSidecarError(
           original.id,
+          storageKey: fileFixtureKey(original.id),
           attempt: 0,
           requestId: null,
           error: 'server rejection',
@@ -800,6 +834,7 @@ void main() {
       await expectLater(
         db.beginTranscriptionAttempt(
           original.id,
+          storageKey: fileFixtureKey(original.id),
           requestId: 'request-new',
           now: now,
         ),
@@ -812,6 +847,7 @@ void main() {
       expect(
         await db.updateTranscriptionSidecarError(
           original.id,
+          storageKey: fileFixtureKey(original.id),
           attempt: 0,
           requestId: null,
           error: 'server rejection',
@@ -850,11 +886,12 @@ void main() {
         transcriptionUpdatedAt: now,
         transcriptionCompletedAt: now,
       );
-      await db.upsertDump(original);
+      await seedFileFixtureRow(db, original);
 
       expect(
         () => db.updateDumpTranscript(
           original.id,
+          storageKey: fileFixtureKey(original.id),
           expectedTranscript: original.transcript!,
           expectedTranscriptionAttempt: 1,
           expectedTranscriptionRequestId: 'request-one',
@@ -866,12 +903,14 @@ void main() {
 
       await db.beginTranscriptionAttempt(
         original.id,
+        storageKey: fileFixtureKey(original.id),
         requestId: 'request-two',
         now: now.add(const Duration(seconds: 2)),
       );
       await expectLater(
         db.updateDumpTranscript(
           original.id,
+          storageKey: fileFixtureKey(original.id),
           expectedTranscript: original.transcript!,
           expectedTranscriptionAttempt: 1,
           expectedTranscriptionRequestId: 'request-one',
@@ -885,7 +924,8 @@ void main() {
 
     test('late nonterminal updates cannot regress a running phase', () async {
       final now = DateTime.utc(2026, 9, 14, 23, 30);
-      await db.upsertDump(
+      await seedFileFixtureRow(
+        db,
         DumpRow(
           id: 'monotonic-phase',
           createdAt: now,
@@ -903,11 +943,13 @@ void main() {
       );
       final attempt = await db.beginTranscriptionAttempt(
         'monotonic-phase',
+        storageKey: fileFixtureKey('monotonic-phase'),
         requestId: 'request-monotonic',
         now: now,
       );
       final running = await db.updateTranscriptionStatus(
         attempt.id,
+        storageKey: fileFixtureKey(attempt.id),
         attempt: attempt.transcriptionAttempt,
         requestId: attempt.transcriptionRequestId!,
         status: TranscriptionStatus.running,
@@ -916,6 +958,7 @@ void main() {
       );
       final lateQueued = await db.updateTranscriptionStatus(
         attempt.id,
+        storageKey: fileFixtureKey(attempt.id),
         attempt: attempt.transcriptionAttempt,
         requestId: attempt.transcriptionRequestId!,
         status: TranscriptionStatus.queued,
@@ -925,6 +968,7 @@ void main() {
       );
       final lateUploading = await db.updateTranscriptionStatus(
         attempt.id,
+        storageKey: fileFixtureKey(attempt.id),
         attempt: attempt.transcriptionAttempt,
         requestId: attempt.transcriptionRequestId!,
         status: TranscriptionStatus.uploading,

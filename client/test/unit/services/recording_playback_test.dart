@@ -2,6 +2,7 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:tangent/data/storage/storage_contract.dart';
 import 'package:tangent/services/recording_playback.dart';
 
 void main() {
@@ -10,8 +11,13 @@ void main() {
     final controller = RecordingPlaybackController(engine: engine);
     addTearDown(controller.dispose);
 
-    await controller.initialize('content://tangent/recording.opus');
-    expect(engine.loadedSource, 'content://tangent/recording.opus');
+    await controller.initialize(
+      (kind: 'saf', value: 'content://tangent/recording.opus'),
+    );
+    expect(
+      engine.loadedSource,
+      (kind: 'saf', value: 'content://tangent/recording.opus'),
+    );
     expect(controller.state.duration, const Duration(seconds: 20));
 
     await controller.togglePlayback();
@@ -43,7 +49,7 @@ void main() {
     final controller = RecordingPlaybackController(engine: engine);
     addTearDown(controller.dispose);
 
-    await controller.initialize('recording.opus');
+    await controller.initialize((kind: 'file', value: 'recording.opus'));
     engine.emitPosition(const Duration(seconds: 20));
     engine.emitCompleted(true);
     await Future<void>.delayed(Duration.zero);
@@ -62,7 +68,7 @@ void main() {
     final controller = RecordingPlaybackController(engine: engine);
     addTearDown(controller.dispose);
 
-    await controller.initialize('recording.opus');
+    await controller.initialize((kind: 'file', value: 'recording.opus'));
     await controller.seek(const Duration(seconds: 90));
 
     expect(engine.lastSeek, const Duration(seconds: 20));
@@ -75,7 +81,7 @@ final class _FakePlaybackEngine implements RecordingPlaybackEngine {
   final _playing = StreamController<bool>.broadcast();
   final _completed = StreamController<bool>.broadcast();
 
-  String? loadedSource;
+  AudioLocator? loadedSource;
   Duration? lastSeek;
   int playCount = 0;
   int pauseCount = 0;
@@ -93,7 +99,7 @@ final class _FakePlaybackEngine implements RecordingPlaybackEngine {
   Stream<Duration> get positionStream => _positions.stream;
 
   @override
-  Future<Duration?> load(String source) async {
+  Future<Duration?> load(AudioLocator source) async {
     loadedSource = source;
     return const Duration(seconds: 20);
   }

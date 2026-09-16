@@ -4,6 +4,7 @@ import 'dart:async';
 import 'package:drift/native.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import '../../../support/bound_row_fixture.dart';
 import 'package:tangent/data/local_db.dart';
 import 'package:tangent/models/transcription_status.dart';
 import 'package:tangent/screens/dump/dump_detail_screen.dart';
@@ -13,7 +14,8 @@ void main() {
   test('dump detail provider emits external durable status changes', () async {
     final db = LocalDb.forTesting(NativeDatabase.memory());
     final now = DateTime.utc(2026, 9, 14);
-    await db.upsertDump(
+    final binding = await seedFileFixtureRow(
+      db,
       DumpRow(
         id: 'watched-provider',
         createdAt: now,
@@ -50,11 +52,13 @@ void main() {
 
       final attempt = await db.beginTranscriptionAttempt(
         'watched-provider',
+        storageKey: binding.key,
         requestId: 'request-watched-provider',
         now: now.add(const Duration(seconds: 1)),
       );
       final updated = await db.updateTranscriptionStatus(
         'watched-provider',
+        storageKey: binding.key,
         attempt: attempt.transcriptionAttempt,
         requestId: 'request-watched-provider',
         status: TranscriptionStatus.running,

@@ -8,9 +8,14 @@ import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:tangent/data/audio_storage.dart';
+import '../support/bound_row_fixture.dart';
+import '../support/bound_service_fixture.dart';
+import '../support/bound_widget_lifetime.dart';
+import '../support/legacy_audio_storage_fixture.dart';
 import 'package:tangent/data/local_db.dart';
 import 'package:tangent/data/recording_metadata.dart';
+import 'package:tangent/data/storage/storage_contract.dart';
+import 'package:tangent/data/storage/storage_providers.dart';
 
 import 'package:tangent/models/server_info.dart';
 
@@ -127,6 +132,7 @@ final class _PausedTranscriptReturnDb extends LocalDb {
   @override
   Future<DumpRow> updateDumpTranscript(
     String id, {
+    required RecordingKey storageKey,
     required String expectedTranscript,
     required int expectedTranscriptionAttempt,
     required String? expectedTranscriptionRequestId,
@@ -135,6 +141,7 @@ final class _PausedTranscriptReturnDb extends LocalDb {
   }) async {
     final saved = await super.updateDumpTranscript(
       id,
+      storageKey: storageKey,
       expectedTranscript: expectedTranscript,
       expectedTranscriptionAttempt: expectedTranscriptionAttempt,
       expectedTranscriptionRequestId: expectedTranscriptionRequestId,
@@ -172,6 +179,7 @@ final class _PausingMeetingNotesDb extends LocalDb {
   @override
   Future<DumpRow> updateDumpMeetingNotes(
     String id, {
+    required RecordingKey storageKey,
     required String expectedTitle,
     required String expectedTranscript,
     required int expectedTranscriptionAttempt,
@@ -187,6 +195,7 @@ final class _PausingMeetingNotesDb extends LocalDb {
     try {
       return await super.updateDumpMeetingNotes(
         id,
+        storageKey: storageKey,
         expectedTitle: expectedTitle,
         expectedTranscript: expectedTranscript,
         expectedTranscriptionAttempt: expectedTranscriptionAttempt,
@@ -209,13 +218,16 @@ void main() {
     final temp = Directory.systemTemp.createTempSync('tangent-detail-');
     final db = LocalDb.forTesting(NativeDatabase.memory());
     final storage = AudioStorage.test(temp);
+    final bound = await createBoundServiceFixture(db, registerDrain: false);
     final fake = _FakeTranscriptionClient(completedTranscript: 'server side');
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: bound.access,
+      mutations: bound.mutations,
     );
     addTearDown(() async {
+      await disposeBoundWidget(tester, bound);
       await db.close();
       temp.deleteSync(recursive: true);
     });
@@ -233,12 +245,14 @@ void main() {
       transcriptionStatus: 'not_transcribed',
       transcriptionAttempt: 0,
     );
-    await db.upsertDump(row);
+    await seedFileFixtureRow(db, row);
     storage.pathFor(row.id).writeAsBytesSync([1, 2, 3]);
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
           localDbProvider.overrideWithValue(db),
+          recordingMutationsProvider.overrideWithValue(bound.mutations),
+          recordingAccessProvider.overrideWithValue(bound.access),
           audioStorageProvider.overrideWithValue(storage),
           transcriptionClientProvider.overrideWith((ref) => fake),
           serverTranscriptionServiceProvider.overrideWith(
@@ -259,6 +273,10 @@ void main() {
           ),
         ),
       ),
+    );
+    await pumpBoundUntil(
+      tester,
+      () => find.byIcon(Icons.play_arrow).evaluate().isNotEmpty,
     );
     await tester.pumpAndSettle();
     final transcribeButton = tester.widget<FilledButton>(
@@ -298,15 +316,18 @@ void main() {
         Directory.systemTemp.createTempSync('tangent-detail-reactive-');
     final db = LocalDb.forTesting(NativeDatabase.memory());
     final storage = AudioStorage.test(temp);
+    final bound = await createBoundServiceFixture(db, registerDrain: false);
     final fake = _FakeTranscriptionClient(completedTranscript: 'unused');
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: bound.access,
+      mutations: bound.mutations,
     );
     final rows = StreamController<DumpRow?>.broadcast(sync: true);
     addTearDown(() async {
       await rows.close();
+      await disposeBoundWidget(tester, bound);
       await db.close();
       temp.deleteSync(recursive: true);
     });
@@ -325,12 +346,14 @@ void main() {
       transcriptionStatus: 'not_transcribed',
       transcriptionAttempt: 0,
     );
-    await db.upsertDump(row);
+    await seedFileFixtureRow(db, row);
 
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
           localDbProvider.overrideWithValue(db),
+          recordingMutationsProvider.overrideWithValue(bound.mutations),
+          recordingAccessProvider.overrideWithValue(bound.access),
           audioStorageProvider.overrideWithValue(storage),
           transcriptionClientProvider.overrideWith((ref) => fake),
           serverTranscriptionServiceProvider.overrideWith((ref) => service),
@@ -359,6 +382,8 @@ void main() {
     }
 
     await emitRow(row);
+    await pumpBoundUntil(
+        tester, () => find.byIcon(Icons.play_arrow).evaluate().isNotEmpty,);
     expect(find.text('Transcribe'), findsOneWidget);
 
     await emitRow(
@@ -405,6 +430,7 @@ void main() {
     final temp = Directory.systemTemp.createTempSync('tangent-overwrite-ok-');
     final db = LocalDb.forTesting(NativeDatabase.memory());
     final storage = AudioStorage.test(temp);
+    final bound = await createBoundServiceFixture(db, registerDrain: false);
     final fake = _FakeTranscriptionClient(
       completedTranscript: 'Replacement transcript',
       pauseBeforeTerminal: true,
@@ -413,7 +439,8 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: bound.access,
+      mutations: bound.mutations,
       requestIdFactory: () {
         requestAllocations++;
         return 'request-replacement';
@@ -422,24 +449,26 @@ void main() {
     addTearDown(() async {
       fake.releaseTerminal();
       service.dispose();
+      await disposeBoundWidget(tester, bound);
       await db.close();
       if (temp.existsSync()) temp.deleteSync(recursive: true);
     });
     final row = _completedRow(
+      storage,
       id: 'overwrite-ok',
       transcript: 'Original transcript',
       attempt: 4,
       requestId: 'request-original',
       jobId: 'job-original',
     );
-    await db.upsertDump(row);
+    await seedFileFixtureRow(db, row);
     final rawAudio = <int>[8, 6, 7, 5, 3, 0, 9];
     storage.pathFor(row.id).writeAsBytesSync(rawAudio);
     storage
         .metaPathFor(row.id)
         .writeAsStringSync(jsonEncode(dumpMetadata(row)));
 
-    await _mountDetail(tester, db, storage, fake, service, row);
+    await _mountDetail(tester, db, storage, fake, service, bound, row);
     expect(_editorText(tester, row.id), 'Original transcript');
 
     await tester.tap(find.byKey(ValueKey('transcribe-${row.id}')));
@@ -506,7 +535,7 @@ void main() {
     expect(storage.pathFor(row.id).readAsBytesSync(), rawAudio);
 
     await _disposeDetail(tester);
-    await _mountDetail(tester, db, storage, fake, service, completed);
+    await _mountDetail(tester, db, storage, fake, service, bound, completed);
     expect(_editorText(tester, row.id), 'Replacement transcript');
     await _disposeDetail(tester);
   });
@@ -519,6 +548,7 @@ void main() {
     final temp = Directory.systemTemp.createTempSync('tangent-overwrite-fail-');
     final db = LocalDb.forTesting(NativeDatabase.memory());
     final storage = AudioStorage.test(temp);
+    final bound = await createBoundServiceFixture(db, registerDrain: false);
     final fake = _FakeTranscriptionClient(
       completedTranscript: 'unused',
       failure: 'replacement failed',
@@ -526,29 +556,32 @@ void main() {
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: bound.access,
+      mutations: bound.mutations,
       requestIdFactory: () => 'request-failure',
     );
     addTearDown(() async {
       service.dispose();
+      await disposeBoundWidget(tester, bound);
       await db.close();
       if (temp.existsSync()) temp.deleteSync(recursive: true);
     });
     final row = _completedRow(
+      storage,
       id: 'overwrite-fail',
       transcript: 'Transcript that must survive',
       attempt: 2,
       requestId: 'request-before-failure',
       jobId: 'job-before-failure',
     );
-    await db.upsertDump(row);
+    await seedFileFixtureRow(db, row);
     final rawAudio = <int>[1, 4, 1, 4, 2, 1];
     storage.pathFor(row.id).writeAsBytesSync(rawAudio);
     storage
         .metaPathFor(row.id)
         .writeAsStringSync(jsonEncode(dumpMetadata(row)));
 
-    await _mountDetail(tester, db, storage, fake, service, row);
+    await _mountDetail(tester, db, storage, fake, service, bound, row);
     await tester.tap(find.byKey(ValueKey('transcribe-${row.id}')));
     await tester.pumpAndSettle();
     final overwriteButton = tester.widget<FilledButton>(
@@ -583,18 +616,22 @@ void main() {
     final temp = Directory.systemTemp.createTempSync('tangent-edit-save-');
     final db = LocalDb.forTesting(NativeDatabase.memory());
     final storage = AudioStorage.test(temp);
+    final bound = await createBoundServiceFixture(db, registerDrain: false);
     final fake = _FakeTranscriptionClient(completedTranscript: 'unused');
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: bound.access,
+      mutations: bound.mutations,
     );
     addTearDown(() async {
       service.dispose();
+      await disposeBoundWidget(tester, bound);
       await db.close();
       if (temp.existsSync()) temp.deleteSync(recursive: true);
     });
     final row = _completedRow(
+      storage,
       id: 'edit-save',
       mode: 'meeting',
       transcript: 'Original meeting transcript',
@@ -603,14 +640,14 @@ void main() {
       requestId: 'request-edit-save',
       jobId: 'job-edit-save',
     );
-    await db.upsertDump(row);
+    await seedFileFixtureRow(db, row);
     final rawAudio = <int>[2, 7, 1, 8, 2, 8];
     storage.pathFor(row.id).writeAsBytesSync(rawAudio);
     storage
         .metaPathFor(row.id)
         .writeAsStringSync(jsonEncode(dumpMetadata(row)));
 
-    await _mountDetail(tester, db, storage, fake, service, row);
+    await _mountDetail(tester, db, storage, fake, service, bound, row);
     final editorFinder = find.byKey(ValueKey('transcript-editor-${row.id}'));
     final editor = tester.widget<TextField>(editorFinder);
     expect(editor.maxLines, isNull);
@@ -663,7 +700,7 @@ void main() {
     expect(find.text('Transcript saved'), findsOneWidget);
 
     await _disposeDetail(tester);
-    await _mountDetail(tester, db, storage, fake, service, saved);
+    await _mountDetail(tester, db, storage, fake, service, bound, saved);
     expect(_editorText(tester, row.id), corrected);
     expect(
       tester.widget<FilledButton>(saveFinder).onPressed,
@@ -682,35 +719,52 @@ void main() {
     final temp = Directory.systemTemp.createTempSync('fifo-ui-');
     final db = LocalDb.forTesting(NativeDatabase.memory());
     final storage = AudioStorage.test(temp);
+    final bound = await createBoundServiceFixture(db, registerDrain: false);
     final fake = _FakeTranscriptionClient(
       completedTranscript: 'Result',
       pauseBeforeTerminal: true,
     );
-    final service =
-        ServerTranscriptionService(client: fake, db: db, audioStorage: storage);
+    final service = ServerTranscriptionService(
+      client: fake,
+      db: db,
+      recordingAccess: bound.access,
+      mutations: bound.mutations,
+    );
     addTearDown(() async {
       service.dispose();
       fake.releaseTerminal();
+      await disposeBoundWidget(tester, bound);
       await db.close();
       temp.deleteSync(recursive: true);
     });
     final second = _completedRow(
+      storage,
       id: 'fifo-ui-second',
       transcript: 'Retained transcript',
       attempt: 1,
       requestId: 'old-request',
       jobId: 'old-job',
     );
-    final first = second.copyWith(id: 'fifo-ui-first');
+    final first = second.copyWith(
+        id: 'fifo-ui-first', audioPath: storage.pathFor('fifo-ui-first').path,);
     await tester.runAsync(() async {
       for (final row in [first, second]) {
-        await db.upsertDump(row);
+        await seedFileFixtureRow(db, row);
         await storage.pathFor(row.id).writeAsBytes([1, 2, 3]);
       }
       unawaited(service.transcribeDump(first.id));
     });
     await _pumpRealUntil(tester, () => fake.isWaitingBeforeTerminal);
-    await _mountDetail(tester, db, storage, fake, service, second, live: true);
+    await _mountDetail(
+      tester,
+      db,
+      storage,
+      fake,
+      service,
+      bound,
+      second,
+      live: true,
+    );
     await tester.runAsync(() async {
       unawaited(service.transcribeDump(second.id));
     });
@@ -742,15 +796,22 @@ void main() {
     final temp = Directory.systemTemp.createTempSync('failed-edit-');
     final db = LocalDb.forTesting(NativeDatabase.memory());
     final storage = AudioStorage.test(temp);
+    final bound = await createBoundServiceFixture(db, registerDrain: false);
     final fake = _FakeTranscriptionClient(completedTranscript: 'unused');
-    final service =
-        ServerTranscriptionService(client: fake, db: db, audioStorage: storage);
+    final service = ServerTranscriptionService(
+      client: fake,
+      db: db,
+      recordingAccess: bound.access,
+      mutations: bound.mutations,
+    );
     addTearDown(() async {
       service.dispose();
+      await disposeBoundWidget(tester, bound);
       await db.close();
       temp.deleteSync(recursive: true);
     });
     final original = _completedRow(
+      storage,
       id: 'failed-edit',
       transcript: 'Retained transcript',
       attempt: 2,
@@ -759,7 +820,7 @@ void main() {
       meetingNotes: 'Keep notes',
     );
     await tester.runAsync(() async {
-      await db.upsertDump(original);
+      await seedFileFixtureRow(db, original);
       await storage.pathFor(original.id).writeAsBytes([1, 2, 3]);
     });
     await _mountDetail(
@@ -768,11 +829,13 @@ void main() {
       storage,
       fake,
       service,
+      bound,
       original,
       live: true,
     );
     await tester.runAsync(() async {
-      await db.upsertDump(
+      await seedFileFixtureRow(
+        db,
         original.copyWith(
           transcriptionStatus: 'failed',
           transcriptionError: const Value('replacement rejected'),
@@ -818,17 +881,24 @@ void main() {
     final temp = Directory.systemTemp.createTempSync('typing-save-');
     final db = LocalDb.forTesting(NativeDatabase.memory());
     final storage = AudioStorage.test(temp);
+    final bound = await createBoundServiceFixture(db, registerDrain: false);
     final fake = _FakeTranscriptionClient(completedTranscript: 'unused');
-    final service =
-        ServerTranscriptionService(client: fake, db: db, audioStorage: storage);
+    final service = ServerTranscriptionService(
+      client: fake,
+      db: db,
+      recordingAccess: bound.access,
+      mutations: bound.mutations,
+    );
     final release = Completer<void>();
     addTearDown(() async {
       if (!release.isCompleted) release.complete();
       service.dispose();
+      await disposeBoundWidget(tester, bound);
       await db.close();
       temp.deleteSync(recursive: true);
     });
     final original = _completedRow(
+      storage,
       id: 'typing-save',
       transcript: 'Original',
       attempt: 2,
@@ -836,7 +906,7 @@ void main() {
       jobId: 'job-typing',
     );
     await tester.runAsync(() async {
-      await db.upsertDump(original);
+      await seedFileFixtureRow(db, original);
     });
 
     await _mountDetail(
@@ -845,14 +915,15 @@ void main() {
       storage,
       fake,
       service,
+      bound,
       original,
       live: true,
     );
 
     late Future<void> lock;
     await tester.runAsync(() async {
-      lock = storage.runSerializedMetadataWrite<void>(
-        original.id,
+      lock = bound.access.runSerializedMetadataWrite<void>(
+        fileFixtureKey(original.id),
         (_) => release.future,
       );
     });
@@ -894,12 +965,19 @@ void main() {
     await tester.runAsync(() async {
       tester.widget<FilledButton>(save).onPressed!();
     });
+    // Absent before this submission (above); the first save left a newer dirty
+    // draft. This success message therefore belongs to the second save, and
+    // _saveTranscript sets it only after awaited bound sidecar publication.
     await _pumpRealUntil(
       tester,
-      () async =>
-          (jsonDecode(await storage.metaPathFor(original.id).readAsString())
-              as Map)['transcript'] ==
-          'Newer unsaved draft',
+      () => find.text('Transcript saved').evaluate().isNotEmpty,
+    );
+    final metadata = await tester.runAsync(
+      () => storage.metaPathFor(original.id).readAsString(),
+    );
+    expect(
+      (jsonDecode(metadata!) as Map)['transcript'],
+      'Newer unsaved draft',
     );
     await _disposeDetail(tester);
   });
@@ -914,12 +992,15 @@ void main() {
       final temp = Directory.systemTemp.createTempSync('manual-sidecar-');
       final db = LocalDb.forTesting(NativeDatabase.memory());
       final storage = AudioStorage.test(temp);
+      final bound = await createBoundServiceFixture(db, registerDrain: false);
       final fake = _FakeTranscriptionClient(completedTranscript: 'unused');
       addTearDown(() async {
+        await disposeBoundWidget(tester, bound);
         await db.close();
         temp.deleteSync(recursive: true);
       });
       final original = _completedRow(
+        storage,
         id: 'manual-sidecar',
         transcript: 'Original',
         attempt: 0,
@@ -932,10 +1013,9 @@ void main() {
         transcriptionJobId: const Value(null),
         transcriptionError: Value(failed ? 'replacement rejected' : null),
       );
-      final obstacle =
-          Directory('${storage.metaPathFor(original.id).path}.tmp');
+      final obstacle = Directory(storage.metaPathFor(original.id).path);
       await tester.runAsync(() async {
-        await db.upsertDump(original);
+        await seedFileFixtureRow(db, original);
         await storage.pathFor(original.id).writeAsBytes([1, 2, 3]);
         await obstacle
             .create(); // Real filesystem write failure, not a mocked DB.
@@ -946,6 +1026,7 @@ void main() {
         storage,
         fake,
         null, // Exercise the production app-scoped recovery owner.
+        bound,
         original,
         live: true,
       );
@@ -975,8 +1056,10 @@ void main() {
             .evaluate()
             .isEmpty,
       );
+      late DumpRow repairRevision;
       await tester.runAsync(() async {
         final committed = (await db.getDump(original.id))!;
+        repairRevision = committed;
         expect(
           committed.transcriptionError,
           startsWith('sidecar_sync_pending:'),
@@ -988,24 +1071,57 @@ void main() {
         await obstacle.delete();
         // The save failure schedules recovery; no explicit scan is requested.
       });
-      await _pumpRealUntil(tester, () async {
-        final file = storage.metaPathFor(original.id);
-        return await file.exists() &&
-            (jsonDecode(await file.readAsString()) as Map)['transcript'] ==
-                'First correction';
+      // Observe this pending revision's automatic acknowledgement, not an
+      // initial idle row. Keep live Drift callbacks in the pumping test zone.
+      await _pumpRealUntil(tester, () {
+        final repaired = ProviderScope.containerOf(
+          tester.element(find.byType(DumpDetailScreen)),
+        ).read(dumpByIdProvider(original.id)).valueOrNull;
+        return repaired != null &&
+            repaired.transcript == repairRevision.transcript &&
+            repaired.transcriptionAttempt ==
+                repairRevision.transcriptionAttempt &&
+            repaired.transcriptionRequestId ==
+                repairRevision.transcriptionRequestId &&
+            repaired.transcriptionStatus == repairRevision.transcriptionStatus &&
+            repaired.transcriptionError ==
+                LocalDb.errorAfterSidecarSync(repairRevision.transcriptionError);
       });
+      // The observed acknowledgement happens within the repair's bound FIFO.
+      // Join behind it to observe actual lease settlement. This no-op neither
+      // writes metadata nor starts/scans recovery; pump both async zones.
+      await pumpBoundUntil(tester, () async {
+        await bound.access.runSerializedMetadataWrite<void>(
+          fileFixtureKey(original.id),
+          (_) async {},
+        );
+        return true;
+      });
+      final repairedMetadata = await tester.runAsync(
+        () => storage.metaPathFor(original.id).readAsString(),
+      );
+      expect(
+        (jsonDecode(repairedMetadata!) as Map)['transcript'],
+        'First correction',
+      );
       await tester.enterText(editor, 'Second correction');
       await tester.pump();
       expect(tester.widget<FilledButton>(save).onPressed, isNotNull);
+      expect(find.text('Transcript saved'), findsNothing);
       await tester.runAsync(() async {
         tester.widget<FilledButton>(save).onPressed!();
       });
       await _pumpRealUntil(
         tester,
-        () async =>
-            (jsonDecode(await storage.metaPathFor(original.id).readAsString())
-                as Map)['transcript'] ==
-            'Second correction',
+        // Newly emitted for this submission only, after awaited publication.
+        () => find.text('Transcript saved').evaluate().isNotEmpty,
+      );
+      final savedMetadata = await tester.runAsync(
+        () => storage.metaPathFor(original.id).readAsString(),
+      );
+      expect(
+        (jsonDecode(savedMetadata!) as Map)['transcript'],
+        'Second correction',
       );
       await tester.runAsync(() async {
         final saved = (await db.getDump(original.id))!;
@@ -1033,6 +1149,8 @@ void main() {
           final temp = Directory.systemTemp.createTempSync('unmounted-repair-');
           final db = _PausedTranscriptReturnDb()..pauseReturn = pauseReturn;
           final storage = AudioStorage.test(temp);
+          final bound =
+              await createBoundServiceFixture(db, registerDrain: false);
           final oldClient =
               _FakeTranscriptionClient(completedTranscript: 'no network');
           final newClient =
@@ -1040,6 +1158,8 @@ void main() {
           final container = ProviderContainer(
             overrides: [
               localDbProvider.overrideWithValue(db),
+              recordingMutationsProvider.overrideWithValue(bound.mutations),
+              recordingAccessProvider.overrideWithValue(bound.access),
               audioStorageProvider.overrideWithValue(storage),
               transcriptionClientProvider.overrideWith((_) => oldClient),
               recordingPlaybackEngineFactoryProvider
@@ -1053,10 +1173,12 @@ void main() {
             if (!db.release.isCompleted) db.release.complete();
             subscription.close();
             container.dispose();
+            await disposeBoundWidget(tester, bound);
             await db.close();
             temp.deleteSync(recursive: true);
           });
           final original = _completedRow(
+            storage,
             id: 'unmounted-repair',
             transcript: 'Original',
             attempt: 2,
@@ -1069,11 +1191,10 @@ void main() {
                 Value(pauseReturn ? null : 'retained-request'),
             transcriptionError: Value(failed ? 'original failure' : null),
           );
-          final obstacle =
-              Directory('${storage.metaPathFor(original.id).path}.tmp');
+          final obstacle = Directory(storage.metaPathFor(original.id).path);
           late Future<void> heldWrite;
           await tester.runAsync(() async {
-            await db.upsertDump(original);
+            await seedFileFixtureRow(db, original);
             await storage.pathFor(original.id).writeAsBytes([3, 1, 4]);
             container.read(transcriptionRecoveryOwnerProvider);
             subscription = container.listen(
@@ -1084,8 +1205,8 @@ void main() {
                 .read(serverTranscriptionServiceProvider)
                 .reconcilePending();
             await obstacle.create();
-            heldWrite = storage.runSerializedMetadataWrite<void>(
-              original.id,
+            heldWrite = bound.access.runSerializedMetadataWrite<void>(
+              fileFixtureKey(original.id),
               (_) => releaseWrite.future,
             );
           });
@@ -1109,6 +1230,11 @@ void main() {
                 ),
               ),
             ),
+          );
+          await tester.pump();
+          await pumpBoundUntil(
+            tester,
+            () => find.byIcon(Icons.play_arrow).evaluate().isNotEmpty,
           );
           await tester.pumpAndSettle();
           await _pumpRealUntil(
@@ -1146,7 +1272,8 @@ void main() {
           var drained = false;
           await tester.runAsync(() async {
             unawaited(
-              storage.runSerializedMetadataWrite<void>(original.id, (_) async {
+              bound.access.runSerializedMetadataWrite<void>(
+                  fileFixtureKey(original.id), (_) async {
                 drained = true;
               }),
             );
@@ -1212,19 +1339,23 @@ void main() {
     final temp = Directory.systemTemp.createTempSync('tangent-edit-stale-');
     final db = LocalDb.forTesting(NativeDatabase.memory());
     final storage = AudioStorage.test(temp);
+    final bound = await createBoundServiceFixture(db, registerDrain: false);
     final fake = _FakeTranscriptionClient(completedTranscript: 'unused');
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: bound.access,
+      mutations: bound.mutations,
     );
     addTearDown(() async {
       service.dispose();
+      await disposeBoundWidget(tester, bound);
       await db.close();
       if (temp.existsSync()) temp.deleteSync(recursive: true);
     });
     final now = DateTime.utc(2026, 9, 15, 10);
     final row = _completedRow(
+      storage,
       id: 'edit-stale',
       mode: 'meeting',
       transcript: 'Original result',
@@ -1234,14 +1365,14 @@ void main() {
       jobId: 'job-one',
       now: now,
     );
-    await db.upsertDump(row);
+    await seedFileFixtureRow(db, row);
     final rawAudio = <int>[1, 6, 1, 8, 0, 3];
     storage.pathFor(row.id).writeAsBytesSync(rawAudio);
     storage
         .metaPathFor(row.id)
         .writeAsStringSync(jsonEncode(dumpMetadata(row)));
 
-    await _mountDetail(tester, db, storage, fake, service, row);
+    await _mountDetail(tester, db, storage, fake, service, bound, row);
     final editorFinder = find.byKey(ValueKey('transcript-editor-${row.id}'));
     await tester.enterText(editorFinder, 'Unsaved stale draft');
     await tester.pump();
@@ -1250,11 +1381,13 @@ void main() {
     await tester.runAsync(() async {
       final nextAttempt = await db.beginTranscriptionAttempt(
         row.id,
+        storageKey: fileFixtureKey(row.id),
         requestId: 'request-two',
         now: now.add(const Duration(minutes: 1)),
       );
       await db.completeTranscriptionAttempt(
         row.id,
+        storageKey: fileFixtureKey(row.id),
         attempt: nextAttempt.transcriptionAttempt,
         requestId: nextAttempt.transcriptionRequestId!,
         transcript: 'Newer server result',
@@ -1266,6 +1399,7 @@ void main() {
       // may install this newer fixture revision.
       newer = await db.updateDumpMeetingNotes(
         row.id,
+        storageKey: fileFixtureKey(row.id),
         expectedTitle: newer.title,
         expectedTranscript: newer.transcript!,
         expectedTranscriptionAttempt: newer.transcriptionAttempt,
@@ -1314,14 +1448,17 @@ void main() {
     final temp = Directory.systemTemp.createTempSync('tangent-detail-meeting-');
     final db = LocalDb.forTesting(NativeDatabase.memory());
     final storage = AudioStorage.test(temp);
+    final bound = await createBoundServiceFixture(db, registerDrain: false);
     final fake = _FakeTranscriptionClient(completedTranscript: 'unused');
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: bound.access,
+      mutations: bound.mutations,
     );
     addTearDown(() async {
       service.dispose();
+      await disposeBoundWidget(tester, bound);
       await db.close();
       temp.deleteSync(recursive: true);
     });
@@ -1346,13 +1483,15 @@ void main() {
       transcriptionUpdatedAt: DateTime.utc(2026, 9, 14, 0, 0, 2),
       transcriptionCompletedAt: DateTime.utc(2026, 9, 14, 0, 0, 2),
     );
-    await db.upsertDump(row);
+    await seedFileFixtureRow(db, row);
     storage.pathFor('meeting-detail').writeAsBytesSync([1, 2, 3]);
 
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
           localDbProvider.overrideWithValue(db),
+          recordingMutationsProvider.overrideWithValue(bound.mutations),
+          recordingAccessProvider.overrideWithValue(bound.access),
           audioStorageProvider.overrideWithValue(storage),
           transcriptionClientProvider.overrideWith((ref) => fake),
           serverTranscriptionServiceProvider.overrideWith(
@@ -1373,6 +1512,10 @@ void main() {
           ),
         ),
       ),
+    );
+    await pumpBoundUntil(
+      tester,
+      () => find.byIcon(Icons.play_arrow).evaluate().isNotEmpty,
     );
     await tester.pumpAndSettle();
 
@@ -1395,49 +1538,52 @@ void main() {
         matching: find.byWidgetPredicate((widget) => widget is OutlinedButton),
       ),
     );
+    expect(find.text('Saved'), findsNothing);
+    final titleDeadline = DateTime.now().add(const Duration(seconds: 2));
     await tester.runAsync(() async {
       saveButton.onPressed!();
-      final deadline = DateTime.now().add(const Duration(seconds: 2));
-      while (true) {
-        final sidecar = storage.metaPathFor('meeting-detail');
-        if (await sidecar.exists()) {
-          final metadata =
-              jsonDecode(await sidecar.readAsString()) as Map<String, dynamic>;
-          if (metadata['title'] == 'Renamed launch meeting') break;
-        }
-        if (DateTime.now().isAfter(deadline)) {
-          fail('title sidecar did not finish');
-        }
-        await Future<void>.delayed(const Duration(milliseconds: 1));
-      }
-      await Future<void>.delayed(Duration.zero);
     });
+    await _pumpRealUntil(tester, () {
+      // Keep the original two-second bound, not the helper's longer default.
+      if (DateTime.now().isAfter(titleDeadline)) {
+        fail('title sidecar did not finish');
+      }
+      // _save emits this only after bound publication and edit lease close.
+      return find.text('Saved').evaluate().isNotEmpty;
+    });
+    final titleMetadata = await tester.runAsync(
+      () => storage.metaPathFor('meeting-detail').readAsString(),
+    );
+    expect(
+      (jsonDecode(titleMetadata!) as Map<String, dynamic>)['title'],
+      'Renamed launch meeting',
+    );
     await tester.pump();
     expect(find.text('Saved'), findsOneWidget);
 
     final notesButton = tester.widget<OutlinedButton>(
       find.byKey(const ValueKey('regenerate-notes-meeting-detail')),
     );
+    expect(find.text('Meeting notes updated'), findsNothing);
+    final notesDeadline = DateTime.now().add(const Duration(seconds: 2));
     await tester.runAsync(() async {
       notesButton.onPressed!();
-      final deadline = DateTime.now().add(const Duration(seconds: 2));
-      while (true) {
-        final sidecar = storage.metaPathFor('meeting-detail');
-        if (await sidecar.exists()) {
-          final metadata =
-              jsonDecode(await sidecar.readAsString()) as Map<String, dynamic>;
-          if (metadata['meetingNotes'] !=
-              '# Launch\n\n## Summary\n\nQuoted summary.') {
-            break;
-          }
-        }
-        if (DateTime.now().isAfter(deadline)) {
-          fail('meeting-notes sidecar did not finish');
-        }
-        await Future<void>.delayed(const Duration(milliseconds: 1));
-      }
-      await Future<void>.delayed(const Duration(milliseconds: 1));
     });
+    await _pumpRealUntil(tester, () {
+      if (DateTime.now().isAfter(notesDeadline)) {
+        fail('meeting-notes sidecar did not finish');
+      }
+      // A new, distinct success emitted after awaited publication/settlement.
+      return find.text('Meeting notes updated').evaluate().isNotEmpty;
+    });
+    final notesMetadata = await tester.runAsync(
+      () => storage.metaPathFor('meeting-detail').readAsString(),
+    );
+    final metadata = jsonDecode(notesMetadata!) as Map<String, dynamic>;
+    expect(
+      metadata['meetingNotes'],
+      isNot('# Launch\n\n## Summary\n\nQuoted summary.'),
+    );
     await tester.pump();
     expect(find.text('Meeting notes updated'), findsOneWidget);
 
@@ -1448,9 +1594,6 @@ void main() {
     expect(saved.transcriptionRequestId, 'request-meeting-detail');
     expect(saved.transcriptionJobId, 'job-meeting-detail');
     expect(saved.transcriptionAttempt, 2);
-    final metadata = jsonDecode(
-      storage.metaPathFor('meeting-detail').readAsStringSync(),
-    ) as Map<String, dynamic>;
     expect(metadata['title'], 'Renamed launch meeting');
     expect(metadata['transcript'], 'Exact raw transcript words.');
     expect(metadata['transcriptionStatus'], 'completed');
@@ -1471,13 +1614,16 @@ void main() {
     final temp = Directory.systemTemp.createTempSync('tangent-notes-aba-race-');
     final db = _PausingMeetingNotesDb();
     final storage = AudioStorage.test(temp);
+    final bound = await createBoundServiceFixture(db, registerDrain: false);
     final fake = _FakeTranscriptionClient(completedTranscript: 'unused');
     final service = ServerTranscriptionService(
       client: fake,
       db: db,
-      audioStorage: storage,
+      recordingAccess: bound.access,
+      mutations: bound.mutations,
     );
     addTearDown(() async {
+      await disposeBoundWidget(tester, bound);
       await db.close();
       temp.deleteSync(recursive: true);
     });
@@ -1503,7 +1649,7 @@ void main() {
       transcriptionUpdatedAt: now,
       transcriptionCompletedAt: now,
     );
-    await db.upsertDump(original);
+    await seedFileFixtureRow(db, original);
     storage.pathFor(original.id).writeAsBytesSync([1, 2, 3]);
     storage
         .metaPathFor(original.id)
@@ -1513,6 +1659,8 @@ void main() {
       ProviderScope(
         overrides: [
           localDbProvider.overrideWithValue(db),
+          recordingMutationsProvider.overrideWithValue(bound.mutations),
+          recordingAccessProvider.overrideWithValue(bound.access),
           audioStorageProvider.overrideWithValue(storage),
           transcriptionClientProvider.overrideWith((ref) => fake),
           serverTranscriptionServiceProvider.overrideWith((ref) => service),
@@ -1548,11 +1696,13 @@ void main() {
 
       final newerAttempt = await db.beginTranscriptionAttempt(
         original.id,
+        storageKey: fileFixtureKey(original.id),
         requestId: 'request-attempt-2',
         now: now.add(const Duration(minutes: 1)),
       );
       final completed = await db.completeTranscriptionAttempt(
         original.id,
+        storageKey: fileFixtureKey(original.id),
         attempt: newerAttempt.transcriptionAttempt,
         requestId: newerAttempt.transcriptionRequestId!,
         transcript: original.transcript!,
@@ -1607,7 +1757,8 @@ void main() {
   });
 }
 
-DumpRow _completedRow({
+DumpRow _completedRow(
+  AudioStorage storage, {
   required String id,
   required String transcript,
   required int attempt,
@@ -1627,7 +1778,7 @@ DumpRow _completedRow({
     title: 'Recording $id',
     transcript: transcript,
     meetingNotes: meetingNotes,
-    audioPath: '/ignored/$id.opus',
+    audioPath: storage.pathFor(id).path,
     audioSizeBytes: 7,
     syncStatus: 'pending',
     syncAttempts: 0,
@@ -1647,6 +1798,7 @@ Future<void> _mountDetail(
   AudioStorage storage,
   TranscriptionClient client,
   ServerTranscriptionService? service,
+  BoundServiceFixture bound,
   DumpRow row, {
   bool live = false,
 }) async {
@@ -1654,6 +1806,8 @@ Future<void> _mountDetail(
     ProviderScope(
       overrides: [
         localDbProvider.overrideWithValue(db),
+        recordingMutationsProvider.overrideWithValue(bound.mutations),
+        recordingAccessProvider.overrideWithValue(bound.access),
         audioStorageProvider.overrideWithValue(storage),
         transcriptionClientProvider.overrideWith((_) => client),
         if (service != null)
@@ -1690,6 +1844,10 @@ Future<void> _mountDetail(
   }
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 100));
+  await pumpBoundUntil(
+    tester,
+    () => find.byIcon(Icons.play_arrow).evaluate().isNotEmpty,
+  );
 }
 
 Future<void> _pumpRealUntil(
@@ -1790,7 +1948,8 @@ final class _TestPlaybackEngine implements RecordingPlaybackEngine {
   @override
   Stream<Duration> get positionStream => const Stream.empty();
   @override
-  Future<Duration?> load(String source) async => const Duration(seconds: 4);
+  Future<Duration?> load(AudioLocator source) async =>
+      const Duration(seconds: 4);
   @override
   Future<void> pause() async {}
   @override
