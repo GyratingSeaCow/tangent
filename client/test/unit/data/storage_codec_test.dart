@@ -42,6 +42,104 @@ Map<String, Object?> directoryWire(DirectoryRef value) => {
     };
 
 void main() {
+  test('legacy anchor envelopes retain literal historical sources only', () {
+    for (final raw in <String?>[
+      null,
+      '',
+      'not a URI',
+      'content://MiXeD.例/tree/é%2F录音%25',
+      'content://fixture/tree/%00',
+    ]) {
+      final encoded = StorageCodec.encodeLegacySafAnchor(raw);
+      final decoded = StorageCodec.decodeLegacyAnchor(
+        ' \n$encoded\t',
+        expectedKind: 'legacy-saf-selection',
+      );
+      expect(decoded, {
+        'version': 1,
+        'kind': 'legacy-saf-selection',
+        'policy': 'tree-root-documents-or-tangent-v1',
+        'selectedTreeUri': raw,
+      });
+    }
+    for (final raw in [
+      '',
+      'relative',
+      r'C:\Recordings\Tangent',
+      r'\\server\share\Tangent',
+      '/not-present/录音',
+    ]) {
+      final decoded = StorageCodec.decodeLegacyAnchor(
+        StorageCodec.encodeLegacyFileAnchor(raw),
+        expectedKind: 'legacy-file-root',
+      );
+      expect(decoded, {
+        'version': 1,
+        'kind': 'legacy-file-root',
+        'policy': 'direct-root-v1',
+        'path': raw,
+      });
+    }
+  });
+  test('legacy envelope validation rejects mixed missing and wrong fields', () {
+    final good = jsonDecode(StorageCodec.encodeLegacySafAnchor(''))
+        as Map<String, dynamic>;
+    for (final raw in <Object?>[
+      null,
+      [],
+      {},
+      {...good, 'version': 1.0},
+      {...good, 'version': 2},
+      {...good, 'policy': 'other'},
+      {...good, 'kind': 'legacy-file-root'},
+      {...good, 'selectedTreeUri': 42},
+      {...good, 'path': 'foreign'},
+      {...good}..remove('selectedTreeUri'),
+    ]) {
+      expect(
+        () => StorageCodec.decodeLegacyAnchor(
+          jsonEncode(raw),
+          expectedKind: 'legacy-saf-selection',
+        ),
+        invalidStorage,
+      );
+    }
+    for (final raw in [
+      '',
+      '{',
+      '{"version":1,}',
+      StorageCodec.encodeLegacyFileAnchor('/A'),
+    ]) {
+      expect(
+        () => StorageCodec.decodeLegacyAnchor(
+          raw,
+          expectedKind: 'legacy-saf-selection',
+        ),
+        invalidStorage,
+      );
+    }
+    expect(
+      () => StorageCodec.decodeLegacyAnchor(
+        jsonEncode(good),
+        expectedKind: 'legacy-file-root',
+      ),
+      invalidStorage,
+    );
+    expect(
+      () => StorageCodec.decodeLegacyAnchor(
+        jsonEncode(good),
+        expectedKind: 'unknown',
+      ),
+      invalidStorage,
+    );
+    expect(
+      () => StorageCodec.decodeLegacyAnchor(
+        '{"version":1,"kind":"legacy-file-root","policy":"direct-root-v1","path":null}',
+        expectedKind: 'legacy-file-root',
+      ),
+      invalidStorage,
+    );
+  });
   for (final decode in [false, true]) {
     final boundary = decode ? 'decode' : 'encode';
     Object? audioBoundary(String uri) {

@@ -182,25 +182,45 @@ class FilesystemStorageBackend implements StorageBackend {
   @override
   Future<Outcome<LegacyStorage?>> inspectLegacyStorage({
     required String filesystemLegacyDirectory,
+    String? frozenAnchorJson,
   }) =>
-      _outcome(() async {
-        final location = (
-          id: 'legacy-filesystem',
-          label: filesystemLegacyDirectory,
-          directory: (
-            kind: 'file',
-            path: filesystemLegacyDirectory,
-            treeUri: '',
-            authority: '',
-            documentId: ''
-          )
-        );
-        await _root(location);
-        return (
-          location: location,
-          anchorJson: StorageCodec.encodeDirectory(location.directory)
-        );
-      });
+      _run(
+        () => _outcome<LegacyStorage?>(() async {
+          if (frozenAnchorJson == null) {
+            return (
+              location: null,
+              anchorJson:
+                  StorageCodec.encodeLegacyFileAnchor(filesystemLegacyDirectory)
+            );
+          }
+          final envelope = StorageCodec.decodeLegacyAnchor(
+            frozenAnchorJson,
+            expectedKind: 'legacy-file-root',
+          );
+          final path = envelope['path'] as String;
+          final location = (
+            id: 'legacy-filesystem',
+            label: path,
+            directory: (
+              kind: 'file',
+              path: path,
+              treeUri: '',
+              authority: '',
+              documentId: ''
+            )
+          );
+          try {
+            await Directory(await _root(location))
+                .list(followLinks: false)
+                .toList();
+            return (location: location, anchorJson: frozenAnchorJson);
+          } on StorageFault {
+            return (location: null, anchorJson: frozenAnchorJson);
+          } on FileSystemException {
+            return (location: null, anchorJson: frozenAnchorJson);
+          }
+        }),
+      ).result;
   @override
   IoOperation<Outcome<void>> inspectLocation(StorageLocation location) => _run(
         () => _outcome(() async {

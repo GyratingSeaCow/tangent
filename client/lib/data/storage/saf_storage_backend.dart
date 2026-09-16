@@ -163,15 +163,65 @@ class SafStorageBackend implements StorageBackend {
   @override
   Future<Outcome<LegacyStorage?>> inspectLegacyStorage({
     required String filesystemLegacyDirectory,
-  }) async =>
-      _start<LegacyStorage?>('inspectLegacyStorage', {}, (value) {
-        if (value == null) return null;
-        final map = value as Map;
-        return (
-          location: StorageCodec.decodeLocation(jsonEncode(map['location'])),
-          anchorJson: map['anchorJson'] as String
+    String? frozenAnchorJson,
+  }) async {
+    try {
+      if (frozenAnchorJson != null) {
+        StorageCodec.decodeLegacyAnchor(
+          frozenAnchorJson,
+          expectedKind: 'legacy-saf-selection',
         );
+      }
+      return await _start<LegacyStorage?>('inspectLegacyStorage', {
+        if (frozenAnchorJson != null) 'frozenAnchorJson': frozenAnchorJson,
+      }, (value) {
+        Never invalid() => throw const StorageFault(
+              (
+                code: ProblemCode.invalid,
+                message: 'Invalid legacy inspection protocol'
+              ),
+            );
+        if (value == null) {
+          if (frozenAnchorJson != null) invalid();
+          return null;
+        }
+        if (value is! Map ||
+            !value.containsKey('location') ||
+            value['anchorJson'] is! String) {
+          invalid();
+        }
+        final anchor = value['anchorJson'] as String;
+        final envelope = StorageCodec.decodeLegacyAnchor(
+          anchor,
+          expectedKind: 'legacy-saf-selection',
+        );
+        if (frozenAnchorJson != null && anchor != frozenAnchorJson) invalid();
+        final rawLocation = value['location'];
+        if (rawLocation != null && rawLocation is! Map) invalid();
+        StorageLocation? location;
+        try {
+          location = rawLocation == null
+              ? null
+              : StorageCodec.decodeLocation(jsonEncode(rawLocation));
+        } on JsonUnsupportedObjectError {
+          invalid();
+        }
+        if (frozenAnchorJson == null &&
+            (location != null || envelope['selectedTreeUri'] == null)) {
+          invalid();
+        }
+        if (location != null &&
+            (location.directory.kind != 'saf' ||
+                location.directory.treeUri != envelope['selectedTreeUri'])) {
+          invalid();
+        }
+        return (location: location, anchorJson: anchor);
       }).result;
+    } on StorageFault catch (e) {
+      return Fail(e.problem);
+    }
+  }
+
   @override
   Future<Outcome<StorageLocation?>> pickDirectory() async {
     try {

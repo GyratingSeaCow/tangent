@@ -264,6 +264,7 @@ abstract interface class StorageBackend {
   Future<List<RestoredUse>> unsettledUses();
   Future<Outcome<LegacyStorage?>> inspectLegacyStorage({
     required String filesystemLegacyDirectory,
+    String? frozenAnchorJson,
   });
   Future<Outcome<StorageLocation?>> pickDirectory();
   IoOperation<Outcome<ProbeReceipt>> validateCandidate(

@@ -1,14 +1,348 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import 'dart:io';
+import 'dart:convert';
 import 'dart:async';
 import 'package:flutter/services.dart';
 import 'package:tangent/data/storage/saf_storage_backend.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tangent/data/storage/storage_contract.dart';
+import 'package:tangent/data/storage/storage_codec.dart';
 import '../../support/storage_fixture.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  test('legacy file invalid source stays anchored and links are not resolved',
+      () async {
+    final f = StorageFixture.create();
+    addTearDown(f.close);
+    final link = Link(f.directory('alias'));
+    await link.create(f.directory('A'));
+    for (final raw in ['', 'relative', f.directory('alias')]) {
+      final captured = requireOk(
+        await f.backend.inspectLegacyStorage(filesystemLegacyDirectory: raw),
+      )!;
+      expect(captured.location, isNull);
+      final resolved = requireOk(
+        await f.backend.inspectLegacyStorage(
+          filesystemLegacyDirectory: f.directory('B'),
+          frozenAnchorJson: captured.anchorJson,
+        ),
+      )!;
+      expect(resolved.location, isNull);
+      expect(resolved.anchorJson, captured.anchorJson);
+    }
+    for (final anchor in ['', '{', StorageCodec.encodeLegacySafAnchor(null)]) {
+      expect(
+        await f.backend.inspectLegacyStorage(
+          filesystemLegacyDirectory: f.directory('B'),
+          frozenAnchorJson: anchor,
+        ),
+        isA<Fail<LegacyStorage?>>(),
+      );
+    }
+    expect(Directory(f.directory('A')).listSync(), isEmpty);
+    expect(Directory(f.directory('B')).listSync(), isEmpty);
+  });
+  test(
+      'SAF legacy protocol rejects missing null mismatched and foreign responses',
+      () async {
+    const channel = MethodChannel('fixture/legacy-protocol');
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    final anchor =
+        StorageCodec.encodeLegacySafAnchor('content://Fixture.Provider/tree/A');
+    Object? response;
+    Map<String, Object?>? problem;
+    var starts = 0;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'inspectLegacyStorage') {
+        starts++;
+        return null;
+      }
+      if (call.method == 'operationState') {
+        return {'state': 'settled', 'result': response, 'problem': problem};
+      }
+      return null;
+    });
+    final backend = SafStorageBackend(channel: channel);
+    addTearDown(() async {
+      await backend.drain();
+      messenger.setMockMethodCallHandler(channel, null);
+    });
+    final goodDirectory = {
+      'version': 1,
+      'kind': 'saf',
+      'path': '',
+      'authority': 'Fixture.Provider',
+      'treeUri': 'content://Fixture.Provider/tree/A',
+      'documentId': 'opaque-child',
+    };
+    final goodLocation = {
+      'version': 1,
+      'id': 'fixture-root',
+      'label': 'Tangent',
+      'directory': goodDirectory,
+    };
+    for (final bad in <Object?>[
+      null,
+      {},
+      {'location': null},
+      {'location': null, 'anchorJson': 1},
+      {'location': null, 'anchorJson': '$anchor '},
+      {
+        'location': null,
+        'anchorJson': StorageCodec.encodeLegacyFileAnchor('/A'),
+      },
+      {'location': <String, Object?>{}, 'anchorJson': anchor},
+      {'location': 42, 'anchorJson': anchor},
+      {
+        'location': {1: 2},
+        'anchorJson': anchor,
+      },
+      {
+        'location': jsonDecode(
+          StorageCodec.encodeLocation(fileLocation('fixture-file', '/A')),
+        ),
+        'anchorJson': anchor,
+      },
+      {
+        'location': {
+          ...goodLocation,
+          'directory': {
+            ...goodDirectory,
+            'treeUri': 'content://Fixture.Provider/tree/B',
+          },
+        },
+        'anchorJson': anchor,
+      },
+    ]) {
+      response = bad;
+      final result = await backend.inspectLegacyStorage(
+        filesystemLegacyDirectory: 'ignored',
+        frozenAnchorJson: anchor,
+      );
+      expect(
+        result,
+        isA<Fail<LegacyStorage?>>()
+            .having((e) => e.problem.code, 'code', ProblemCode.invalid),
+      );
+    }
+    response = {'location': goodLocation, 'anchorJson': anchor};
+    expect(
+      requireOk(
+        await backend.inspectLegacyStorage(
+          filesystemLegacyDirectory: 'ignored',
+          frozenAnchorJson: anchor,
+        ),
+      )!
+          .location!
+          .directory
+          .documentId,
+      'opaque-child',
+    );
+    expect(
+      await backend.inspectLegacyStorage(
+        filesystemLegacyDirectory: 'ignored',
+      ),
+      isA<Fail<LegacyStorage?>>(),
+    ); // capture cannot resolve
+    final before = starts;
+    for (final raw in ['', '{', StorageCodec.encodeLegacyFileAnchor('/A')]) {
+      expect(
+        await backend.inspectLegacyStorage(
+          filesystemLegacyDirectory: 'ignored',
+          frozenAnchorJson: raw,
+        ),
+        isA<Fail<LegacyStorage?>>(),
+      );
+    }
+    expect(starts, before);
+    response = null;
+    expect(
+      requireOk(
+        await backend.inspectLegacyStorage(
+          filesystemLegacyDirectory: 'ignored',
+        ),
+      ),
+      isNull,
+    );
+    for (final code in ['invalid', 'denied', 'io', 'unavailable']) {
+      problem = {'code': code, 'message': 'synthetic'};
+      expect(
+        await backend.inspectLegacyStorage(
+          filesystemLegacyDirectory: 'ignored',
+        ),
+        isA<Fail<LegacyStorage?>>()
+            .having((e) => e.problem.code.name, 'code', code),
+      );
+    }
+  });
+  test(
+      'SAF legacy failed observation cannot settle native work or lose anchor on reattach',
+      () async {
+    const channel = MethodChannel('fixture/legacy-lifetime');
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    final anchor =
+        StorageCodec.encodeLegacySafAnchor('content://fixture/tree/A');
+    var finished = false;
+    String? id;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'inspectLegacyStorage') {
+        id = (call.arguments as Map)['operationId'] as String;
+        throw PlatformException(code: 'unavailable');
+      }
+      if (call.method == 'operationState') {
+        return finished
+            ? {
+                'state': 'settled',
+                'result': {'location': null, 'anchorJson': anchor},
+              }
+            : {'state': 'pending'};
+      }
+      if (call.method == 'activeOperations') {
+        return [
+          {
+            'operationId': id,
+            'key': {'dumpId': 'fixture-native', 'incarnation': 'fixture-epoch'},
+            'kind': 'read',
+          }
+        ];
+      }
+      return null;
+    });
+    final old = SafStorageBackend(channel: channel);
+    final next = SafStorageBackend(channel: channel);
+    addTearDown(() async {
+      finished = true;
+      await old.drain();
+      await next.drain();
+      messenger.setMockMethodCallHandler(channel, null);
+    });
+    expect(
+      await old.inspectLegacyStorage(
+        filesystemLegacyDirectory: 'ignored',
+        frozenAnchorJson: anchor,
+      ),
+      isA<Fail<LegacyStorage?>>(),
+    );
+    var drained = false;
+    final drain = old.drain().then((_) {
+      drained = true;
+    });
+    final inventory = await next.unsettledUses();
+    var settledUse = false;
+    final observation = inventory.single.settled.then((_) {
+      settledUse = true;
+    });
+    await Future<void>.delayed(const Duration(milliseconds: 80));
+    expect(drained, isFalse);
+    expect(settledUse, isFalse);
+    finished = true;
+    await drain;
+    await observation;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      throw PlatformException(code: 'unavailable');
+    });
+    await expectLater(next.unsettledUses(), throwsA(isA<StorageFault>()));
+  });
+  test('legacy file capture is snapshot-only and resolve ignores later B',
+      () async {
+    final f = StorageFixture.create();
+    addTearDown(f.close);
+    final missing = f.directory('missing-A');
+    final capture = requireOk(
+      await f.backend.inspectLegacyStorage(filesystemLegacyDirectory: missing),
+    )!;
+    expect(capture.location, isNull);
+    final snapshot = jsonDecode(capture.anchorJson) as Map;
+    expect(snapshot, {
+      'version': 1,
+      'kind': 'legacy-file-root',
+      'policy': 'direct-root-v1',
+      'path': missing,
+    });
+    expect(Directory(missing).existsSync(), isFalse);
+    final unavailable = requireOk(
+      await f.backend.inspectLegacyStorage(
+        filesystemLegacyDirectory: f.directory('B'),
+        frozenAnchorJson: capture.anchorJson,
+      ),
+    )!;
+    expect(unavailable.location, isNull);
+    Directory(missing).createSync();
+    final frozen = '  ${capture.anchorJson}\n';
+    final resolved = requireOk(
+      await f.backend.inspectLegacyStorage(
+        filesystemLegacyDirectory: f.directory('B'),
+        frozenAnchorJson: frozen,
+      ),
+    )!;
+    expect(resolved.location!.directory.path, missing);
+    expect(resolved.anchorJson, frozen);
+    expect(Directory(missing).listSync(), isEmpty);
+  });
+  test('legacy file supplied anchor resolves A not mutable B', () async {
+    final f = StorageFixture.create();
+    addTearDown(f.close);
+    final anchor = jsonEncode({
+      'version': 1,
+      'kind': 'legacy-file-root',
+      'policy': 'direct-root-v1',
+      'path': f.directory('A'),
+    });
+    final result = requireOk(
+      await f.backend.inspectLegacyStorage(
+        filesystemLegacyDirectory: f.directory('B'),
+        frozenAnchorJson: anchor,
+      ),
+    )!;
+    expect(result.location!.directory.path, f.directory('A'));
+    expect(result.anchorJson, anchor);
+  });
+  test('SAF legacy null location is intentional and frozen argument is exact',
+      () async {
+    const channel = MethodChannel('fixture/legacy');
+    const anchor =
+        ' { "version":1, "kind":"legacy-saf-selection", "policy":"tree-root-documents-or-tangent-v1", "selectedTreeUri":"content://Fixture.Provider/tree/A%2fopaque" } ';
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    final calls = <Map<Object?, Object?>>[];
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'inspectLegacyStorage') {
+        calls.add(call.arguments as Map<Object?, Object?>);
+        return null;
+      }
+      if (call.method == 'operationState') {
+        return {
+          'state': 'settled',
+          'result': {'location': null, 'anchorJson': anchor},
+        };
+      }
+      return null;
+    });
+    final backend = SafStorageBackend(channel: channel);
+    addTearDown(() async {
+      await backend.drain();
+      messenger.setMockMethodCallHandler(channel, null);
+    });
+    final result = requireOk(
+      await backend.inspectLegacyStorage(
+        filesystemLegacyDirectory: 'ignored-B',
+        frozenAnchorJson: anchor,
+      ),
+    )!;
+    expect(result.location, isNull);
+    expect(result.anchorJson, anchor);
+    expect(calls.single['frozenAnchorJson'], anchor);
+    final captured = requireOk(
+      await backend.inspectLegacyStorage(
+        filesystemLegacyDirectory: 'ignored-B',
+      ),
+    )!;
+    expect(captured.location, isNull);
+    expect(calls.last.containsKey('frozenAnchorJson'), isFalse);
+  });
   for (final cleanup in ['false', 'throwing']) {
     test('SAF probe preserves exact renamed receipts after $cleanup cleanup',
         () async {

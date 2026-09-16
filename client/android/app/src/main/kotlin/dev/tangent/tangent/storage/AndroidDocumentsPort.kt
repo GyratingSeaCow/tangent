@@ -140,12 +140,11 @@ class AndroidDocumentsPort(context: Context) : DocumentsIoPort {
     }
     fun execute(method:String,args:Map<String,Any?>):Any? {
         if (method == "inspectLegacyStorage") {
-            val saved = app.getSharedPreferences("tangent_storage",Context.MODE_PRIVATE).getString("recordings_tree_uri",null) ?: return null
-            val tree = Uri.parse(saved)
-            val selected = NativeDirectory(tree.encodedAuthority ?: fault("invalid","Missing authority"),saved,DC.getTreeDocumentId(tree))
-            val effective = policy.effectiveDirectory(selected,true)
-            val loc = location(effective,"legacy-saf",name(effective))
-            return mapOf("location" to loc,"anchorJson" to JSONObject(loc["directory"] as Map<*,*>).toString())
+            return LegacyStorageInspection(
+                { app.getSharedPreferences("tangent_storage",Context.MODE_PRIVATE).getString("recordings_tree_uri",null) },
+                { d -> query(document(d)) },
+                { d -> children(d) }
+            ).inspect(args["frozenAnchorJson"])
         }
         val binding = args["binding"]?.let(::map)
         val reservation = args["reservation"]?.let(::map)

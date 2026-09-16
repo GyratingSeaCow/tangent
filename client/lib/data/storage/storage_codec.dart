@@ -6,6 +6,42 @@ import 'storage_contract.dart';
 /// containment, ownership or grants: those require the bound storage backend.
 /// No decoder normalizes an ID, path, URI or opaque document identity.
 abstract final class StorageCodec {
+  static String encodeLegacySafAnchor(String? selectedTreeUri) => jsonEncode({
+        'version': 1,
+        'kind': 'legacy-saf-selection',
+        'policy': 'tree-root-documents-or-tangent-v1',
+        'selectedTreeUri': selectedTreeUri,
+      });
+  static String encodeLegacyFileAnchor(String path) => jsonEncode({
+        'version': 1,
+        'kind': 'legacy-file-root',
+        'policy': 'direct-root-v1',
+        'path': path,
+      });
+
+  /// An immutable historical snapshot, not an access/availability claim.
+  static Map<String, dynamic> decodeLegacyAnchor(
+    String json, {
+    required String expectedKind,
+  }) {
+    final value = _parse(json);
+    final saf = expectedKind == 'legacy-saf-selection';
+    if (!saf && expectedKind != 'legacy-file-root') {
+      _invalid('Unknown legacy anchor kind');
+    }
+    final field = saf ? 'selectedTreeUri' : 'path';
+    final fields = {'version', 'kind', 'policy', field};
+    if (value.length != fields.length ||
+        !fields.every(value.containsKey) ||
+        value['kind'] != expectedKind ||
+        value['policy'] !=
+            (saf ? 'tree-root-documents-or-tangent-v1' : 'direct-root-v1') ||
+        (value[field] is! String && !(saf && value[field] == null))) {
+      _invalid('Invalid legacy anchor envelope');
+    }
+    return value;
+  }
+
   static String encodeDirectory(DirectoryRef value) {
     _validateDirectory(value);
     return jsonEncode(_directoryMap(value));
