@@ -7,6 +7,8 @@ import 'storage_fixture.dart';
 import 'package:tangent/data/storage/filesystem_storage_backend.dart';
 
 final class CatalogHarness {
+  static int _nextFixture = 0;
+  final int fixtureId = _nextFixture++;
   CatalogHarness() {
     resetOwners();
   }
@@ -22,7 +24,7 @@ final class CatalogHarness {
       backend: backend,
       mutations: mutations,
       stagingDirectory: f.directory('stage'),
-      idFactory: () => 'fixture-key-${counter++}',
+      idFactory: () => 'fixture-key-$fixtureId-${counter++}',
       now: () => DateTime.utc(2030),
       canChooseDefault: canChooseDefault,
     );
@@ -87,17 +89,17 @@ class ScriptedStorageBackend extends FilesystemStorageBackend {
   final publishedReservations = <CaptureReservation>[];
   IoOperation<Outcome<PublishedCapture>> Function(
     CaptureReservation,
-    Map<String, dynamic>,
+    PreparedCapture,
   )? publication;
   @override
-  IoOperation<Outcome<PublishedCapture>> publishCapture(
+  IoOperation<Outcome<PublishedCapture>> publishPreparedCapture(
     CaptureReservation r,
-    Map<String, dynamic> metadata,
+    PreparedCapture preparation,
   ) {
     publishedReservations.add(r);
     return publication == null
-        ? super.publishCapture(r, metadata)
-        : publication!(r, metadata);
+        ? super.publishPreparedCapture(r, preparation)
+        : publication!(r, preparation);
   }
 
   Future<Outcome<StorageLocation?>> Function()? picker;

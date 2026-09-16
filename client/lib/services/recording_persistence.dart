@@ -8,6 +8,8 @@ import '../data/local_db.dart';
 import '../data/recording_metadata.dart';
 import '../data/storage/storage_codec.dart';
 import '../data/storage/storage_contract.dart';
+import 'package:crypto/crypto.dart';
+import '../data/storage/capture_publication_codec.dart';
 import 'recording_service.dart';
 
 /// Reservation-owned publication journal. Never uses current default storage.
@@ -103,6 +105,397 @@ class RecordingPersistence {
     }
   }
 
+  Map<String, dynamic> _object(Object? value, Set<String> keys) {
+    if (value is! Map<String, dynamic> ||
+        value.length != keys.length ||
+        !keys.every(value.containsKey)) {
+      _fault(ProblemCode.invalid, 'Malformed capture handoff object');
+    }
+    return value;
+  }
+
+  bool _sameJson(Object? a, Object? b) {
+    if (a is Map && b is Map) {
+      return a.length == b.length &&
+          a.keys.every((k) => b.containsKey(k) && _sameJson(a[k], b[k]));
+    }
+    if (a is List && b is List) {
+      return a.length == b.length &&
+          List.generate(a.length, (i) => i).every((i) => _sameJson(a[i], b[i]));
+    }
+    return a == b;
+  }
+
+  Map<String, dynamic> _journal(CaptureReservation r, String raw) {
+    final value = jsonDecode(raw);
+    if (value is! Map<String, dynamic> || value['version'] is! int) {
+      _fault(ProblemCode.invalid, 'Malformed owned capture journal');
+    }
+    if (value['version'] != 1 && value['version'] != 2) {
+      _fault(ProblemCode.unsupported, 'Unknown owned capture journal version');
+    }
+    if (value['stopped'] is! Map<String, dynamic> ||
+        value['metadata'] is! Map<String, dynamic>) {
+      _fault(ProblemCode.invalid, 'Malformed stopped capture');
+    }
+    final stopped = value['stopped'] as Map<String, dynamic>;
+    final metadata = value['metadata'] as Map<String, dynamic>;
+    if (stopped['path'] != r.stagingPath ||
+        stopped['durationSeconds'] is! int ||
+        (stopped['durationSeconds'] as int) < 0 ||
+        stopped['sizeBytes'] is! int ||
+        (stopped['sizeBytes'] as int) <= 0) {
+      _fault(ProblemCode.invalid, 'No coherent stopped capture result');
+    }
+    validateImportedMetadata(r.key.dumpId, metadata);
+    if (metadata['mode'] != r.mode ||
+        metadata['durationSeconds'] != stopped['durationSeconds'] ||
+        metadata['audioSizeBytes'] != stopped['sizeBytes']) {
+      _fault(ProblemCode.invalid, 'Stopped journal metadata is incoherent');
+    }
+    if (value['version'] == 2) {
+      _object(
+        value,
+        {'version', 'stopped', 'metadata', 'handoff', 'published'},
+      );
+      _object(stopped, {'path', 'durationSeconds', 'sizeBytes'});
+      final h = _object(value['handoff'], {
+        'version',
+        'publicationId',
+        'reservationId',
+        'key',
+        'location',
+        'stagingPath',
+        'mode',
+        'startedAtMs',
+        'audioSha256',
+        'metadataJson',
+        'prepareOperationId',
+        'stage',
+        'preparation',
+        'prepareResult',
+      });
+      if (h['version'] is! int || h['version'] != 1) {
+        _fault(ProblemCode.unsupported, 'Unknown capture handoff version');
+      }
+      if (h['publicationId'] != r.id ||
+          h['reservationId'] != r.id ||
+          StorageCodec.decodeKey(jsonEncode(h['key'])) != r.key ||
+          StorageCodec.decodeLocation(jsonEncode(h['location'])) !=
+              r.location ||
+          h['stagingPath'] != r.stagingPath ||
+          h['mode'] != r.mode ||
+          h['startedAtMs'] is! int ||
+          h['startedAtMs'] != r.startedAt.millisecondsSinceEpoch ||
+          r.startedAt.millisecondsSinceEpoch <= 0 ||
+          h['audioSha256'] is! String ||
+          h['metadataJson'] is! String ||
+          h['prepareOperationId'] is! String) {
+        _fault(ProblemCode.invalid, 'Frozen capture ownership differs');
+      }
+      CapturePublicationCodec.digest(h['audioSha256'] as String);
+      CapturePublicationCodec.operationId(r, h['prepareOperationId'] as String);
+      if (!_sameJson(
+        CapturePublicationCodec.metadata(
+          h['metadataJson'] as String,
+          r.key.dumpId,
+        ),
+        metadata,
+      )) {
+        _fault(ProblemCode.invalid, 'Frozen capture metadata differs');
+      }
+      final stage = h['stage'];
+      if (!const ['intent', 'preparing', 'prepared', 'initializing', 'complete']
+          .contains(stage)) {
+        _fault(ProblemCode.invalid, 'Unknown capture handoff stage');
+      }
+      final result = h['prepareResult'] == null
+          ? null
+          : CapturePublicationCodec.decodeResult(
+              jsonEncode(h['prepareResult']),
+            );
+      final preparation = h['preparation'] == null
+          ? null
+          : CapturePublicationCodec.decodePreparation(
+              jsonEncode(h['preparation']),
+            );
+      if (preparation != null) {
+        CapturePublicationCodec.validateReservation(r, preparation);
+        if (preparation.audioSizeBytes != stopped['sizeBytes'] ||
+            preparation.audioSha256 != h['audioSha256'] ||
+            preparation.metadataJson != h['metadataJson']) {
+          _fault(
+            ProblemCode.invalid,
+            'Prepared payload differs from frozen intent',
+          );
+        }
+      }
+      if (!_sameJson(
+        h['preparation'],
+        result?.preparation == null
+            ? null
+            : jsonDecode(
+                CapturePublicationCodec.encodePreparation(
+                  result!.preparation!,
+                ),
+              ),
+      )) {
+        _fault(ProblemCode.invalid, 'Preparation and result disagree');
+      }
+      final ready =
+          const ['prepared', 'initializing', 'complete'].contains(stage);
+      if ((stage == 'intent' && result != null) ||
+          (stage == 'preparing' &&
+              result?.state == CapturePreparationState.prepared) ||
+          (ready && result?.state != CapturePreparationState.prepared) ||
+          (ready &&
+              (preparation?.audio == null || preparation?.metadata == null)) ||
+          ((stage == 'complete') != (value['published'] != null))) {
+        _fault(ProblemCode.invalid, 'Incoherent capture checkpoint');
+      }
+    }
+    final receipt = value['published'];
+    if (receipt != null) {
+      final receiptMap = _object(receipt, {'binding', 'sizeBytes'});
+      if (receiptMap['binding'] is! String ||
+          receiptMap['sizeBytes'] is! int ||
+          receiptMap['sizeBytes'] != stopped['sizeBytes']) {
+        _fault(ProblemCode.invalid, 'Malformed capture receipt');
+      }
+      final binding =
+          StorageCodec.decodeBinding(receiptMap['binding'] as String);
+      if (binding.key != r.key ||
+          binding.location != r.location ||
+          binding.metadataName != '${r.key.dumpId}.meta.json') {
+        _fault(ProblemCode.invalid, 'Receipt ownership differs');
+      }
+      if (value['version'] == 2) {
+        final prepared = CapturePublicationCodec.decodePreparation(
+          jsonEncode((value['handoff'] as Map)['preparation']),
+        );
+        if (binding.audio != prepared.audio!.locator) {
+          _fault(ProblemCode.invalid, 'Receipt is not the prepared object');
+        }
+      }
+    }
+    return value;
+  }
+
+  Future<CaptureReservationRow> _current(
+    CaptureReservation r,
+    String raw,
+  ) async {
+    final row = await _owned(r);
+    if (row.publicationJson != raw ||
+        !const ['stopped', 'publishing', 'failed', 'interrupted']
+            .contains(row.state)) {
+      _fault(ProblemCode.conflict, 'Capture checkpoint ownership changed');
+    }
+    return row;
+  }
+
+  Future<String> _checkpoint(
+    CaptureReservation r,
+    CaptureReservationRow prior,
+    Map<String, dynamic> journal,
+    CapturePhase phase,
+  ) async {
+    final next = jsonEncode(journal);
+    _journal(r, next);
+    try {
+      await _db.transaction(() async {
+        final owner = await _owned(r);
+        if (owner.publicationJson != prior.publicationJson ||
+            owner.state != prior.state ||
+            owner.processEpoch != prior.processEpoch ||
+            owner.state == 'committed') {
+          _fault(ProblemCode.conflict, 'Capture checkpoint was superseded');
+        }
+        await (_db.update(_db.captureReservations)
+              ..where((s) => s.reservationId.equals(r.id)))
+            .write(
+          CaptureReservationsCompanion(
+            state: Value(phase.name),
+            publicationJson: Value(next),
+          ),
+        );
+      });
+    } on SqliteException {
+      // An uncertain acknowledgement is not permission to issue more I/O.
+      final readback = await _owned(r);
+      if (readback.publicationJson != next || readback.state != phase.name) {
+        rethrow;
+      }
+    }
+    final readback = await _owned(r);
+    if (readback.publicationJson != next || readback.state != phase.name) {
+      _fault(ProblemCode.conflict, 'Capture checkpoint readback differs');
+    }
+    _journal(r, readback.publicationJson!);
+    return readback.publicationJson!;
+  }
+
+  Future<String> _completeCapture(
+    CaptureReservation r,
+    String raw,
+    UseLease lease,
+  ) async {
+    var journal = _journal(r, raw);
+    if (journal['version'] == 1 && journal['published'] == null) {
+      _fault(ProblemCode.unresolved, 'Legacy capture has no ownership receipt');
+    }
+    final prior = await _current(r, raw);
+    if (prior.state != 'publishing') {
+      raw = await _checkpoint(r, prior, journal, CapturePhase.publishing);
+      journal = _journal(r, raw);
+    }
+    if (journal['version'] == 1) {
+      return raw;
+    }
+    var h = journal['handoff'] as Map<String, dynamic>;
+    var dispatch = false;
+    if (h['stage'] == 'intent') {
+      final prior = await _current(r, raw);
+      h['stage'] = 'preparing';
+      raw = await _checkpoint(r, prior, journal, CapturePhase.publishing);
+      journal = _journal(r, raw);
+      h = journal['handoff'] as Map<String, dynamic>;
+      dispatch = true;
+    }
+    if (h['stage'] == 'preparing') {
+      if (h['prepareResult'] == null) {
+        await _current(r, raw);
+        final result = await _runSettled(
+          lease,
+          () => _backend.prepareCapture(
+            r,
+            h['metadataJson'] as String,
+            h['audioSha256'] as String,
+            h['prepareOperationId'] as String,
+            observeOnly: !dispatch,
+          ),
+        );
+        // Strict validation precedes persistence and any acknowledgement.
+        final encoded = CapturePublicationCodec.encodeResult(result);
+        final prior = await _current(r, raw);
+        h['prepareResult'] = jsonDecode(encoded);
+        h['preparation'] = result.preparation == null
+            ? null
+            : jsonDecode(
+                CapturePublicationCodec.encodePreparation(result.preparation!),
+              );
+        if (result.state == CapturePreparationState.prepared) {
+          h['stage'] = 'prepared';
+        }
+        raw = await _checkpoint(r, prior, journal, CapturePhase.publishing);
+        journal = _journal(r, raw);
+        h = journal['handoff'] as Map<String, dynamic>;
+      }
+    }
+    // Only the owner which reread the exact result may release retention. A lost
+    // acknowledgement is not a failed publication; durable claims are authority.
+    if (h['prepareResult'] != null) {
+      await _current(r, raw);
+      try {
+        await _backend
+            .acknowledgeCapturePreparation(h['prepareOperationId'] as String);
+      } catch (_) {/* durable evidence retained */}
+    }
+    if (h['stage'] == 'preparing') {
+      final result =
+          CapturePublicationCodec.decodeResult(jsonEncode(h['prepareResult']));
+      throw StorageFault(
+        result.problem ??
+            (
+              code: ProblemCode.unresolved,
+              message: 'Preparation is unresolved'
+            ),
+      );
+    }
+    if (h['stage'] == 'prepared') {
+      final prior = await _current(r, raw);
+      h['stage'] = 'initializing';
+      raw = await _checkpoint(r, prior, journal, CapturePhase.publishing);
+      journal = _journal(r, raw);
+      h = journal['handoff'] as Map<String, dynamic>;
+    }
+    final preparation =
+        CapturePublicationCodec.decodePreparation(jsonEncode(h['preparation']));
+    Future<CaptureInspection> inspect() async {
+      await _current(r, raw);
+      return _value(
+        await _runSettled(
+          lease,
+          () => _backend.inspectPreparedCapture(r, preparation),
+        ),
+      );
+    }
+
+    bool complete(CaptureInspection value) =>
+        value.audio.state == CaptureContentState.complete &&
+        value.metadata.state == CaptureContentState.complete;
+    final observation = await inspect();
+    if (!complete(observation)) {
+      if (h['stage'] == 'complete' ||
+          ![observation.audio, observation.metadata].every(
+            (c) =>
+                c.state == CaptureContentState.empty ||
+                c.state == CaptureContentState.complete,
+          )) {
+        for (final component in [observation.audio, observation.metadata]) {
+          final problem = component.problem;
+          // A missing claim remains unresolved; never recreate it. Preserve
+          // stronger conflict/permission/provider diagnostics rather than
+          // flattening all observations into a generic partial-content fault.
+          if (problem != null && problem.code != ProblemCode.absent) {
+            throw StorageFault(problem);
+          }
+        }
+        _fault(
+          ProblemCode.unresolved,
+          'Prepared components are partial, foreign or unavailable',
+        );
+      }
+      await _current(r, raw);
+      final published = _value(
+        await _runSettled(
+          lease,
+          () => _backend.publishPreparedCapture(r, preparation),
+        ),
+      );
+      if (published.binding !=
+              (
+                key: r.key,
+                location: r.location,
+                audio: preparation.audio!.locator,
+                metadataName: preparation.metadata!.name
+              ) ||
+          published.sizeBytes != preparation.audioSizeBytes) {
+        _fault(ProblemCode.invalid, 'Prepared publication receipt differs');
+      }
+      if (!complete(await inspect())) {
+        _fault(ProblemCode.unresolved, 'Publication readback is incomplete');
+      }
+    }
+    if (h['stage'] != 'complete') {
+      final prior = await _current(r, raw);
+      h['stage'] = 'complete';
+      journal['published'] = {
+        'binding': StorageCodec.encodeBinding(
+          (
+            key: r.key,
+            location: r.location,
+            audio: preparation.audio!.locator,
+            metadataName: preparation.metadata!.name
+          ),
+        ),
+        'sizeBytes': preparation.audioSizeBytes,
+      };
+      raw = await _checkpoint(r, prior, journal, CapturePhase.publishing);
+    }
+    return raw;
+  }
+
   Future<DumpRow> save(
     CaptureReservation r,
     RecordingResult result, {
@@ -113,6 +506,11 @@ class RecordingPersistence {
         result.durationSeconds < 0 ||
         result.sizeBytes <= 0) {
       _fault(ProblemCode.invalid, 'Recorder result does not match reservation');
+    }
+    final prior = await _owned(r);
+    if (prior.publicationJson != null ||
+        !const ['reserved', 'recording'].contains(prior.state)) {
+      _fault(ProblemCode.conflict, 'Capture already has a stopped handoff');
     }
     await _staging(r, result.sizeBytes);
     final staged = DumpRow(
@@ -129,48 +527,48 @@ class RecordingPersistence {
       transcriptionStatus: 'not_transcribed',
       transcriptionAttempt: 0,
     );
+    final metadata = dumpMetadata(staged);
+    final digest =
+        (await sha256.bind(File(r.stagingPath).openRead()).first).toString();
     final journal = <String, dynamic>{
-      'version': 1,
+      'version': 2,
       'stopped': {
         'path': result.path,
         'durationSeconds': result.durationSeconds,
         'sizeBytes': result.sizeBytes,
       },
-      'metadata': dumpMetadata(staged),
+      'metadata': metadata,
+      'handoff': {
+        'version': 1,
+        'publicationId': r.id,
+        'reservationId': r.id,
+        'key': jsonDecode(StorageCodec.encodeKey(r.key)),
+        'location': jsonDecode(StorageCodec.encodeLocation(r.location)),
+        'stagingPath': r.stagingPath,
+        'mode': r.mode,
+        'startedAtMs': r.startedAt.millisecondsSinceEpoch,
+        'audioSha256': digest,
+        'metadataJson': jsonEncode(metadata),
+        'prepareOperationId': 'capture-${r.id}-prepare',
+        'stage': 'intent',
+        'preparation': null,
+        'prepareResult': null,
+      },
       'published': null,
     };
-    await markState(r, CapturePhase.stopped, journal: journal);
-    return _publishAndCommit(r, journal, lease);
+    final raw = await _checkpoint(r, prior, journal, CapturePhase.stopped);
+    return _publishAndCommit(r, raw, lease);
   }
 
   Future<DumpRow> _publishAndCommit(
     CaptureReservation r,
-    Map<String, dynamic> journal,
+    String raw,
     UseLease lease,
   ) async {
+    raw = await _completeCapture(r, raw, lease);
+    final journal = _journal(r, raw);
     final metadata = Map<String, dynamic>.from(journal['metadata'] as Map);
     validateImportedMetadata(r.key.dumpId, metadata);
-    if (journal['published'] == null) {
-      await markState(r, CapturePhase.publishing, journal: journal);
-      final published = _value(
-        await _runSettled(lease, () => _backend.publishCapture(r, metadata)),
-      );
-      StorageCodec.encodeBinding(published.binding);
-      if (published.binding.key != r.key ||
-          published.binding.location != r.location ||
-          published.binding.metadataName != '${r.key.dumpId}.meta.json' ||
-          published.sizeBytes != (journal['stopped'] as Map)['sizeBytes']) {
-        _fault(
-          ProblemCode.invalid,
-          'Publication receipt does not match reserved ownership',
-        );
-      }
-      journal['published'] = {
-        'binding': StorageCodec.encodeBinding(published.binding),
-        'sizeBytes': published.sizeBytes,
-      };
-      await markState(r, CapturePhase.publishing, journal: journal);
-    }
     final receipt = journal['published'];
     if (receipt is! Map || receipt['binding'] is! String) {
       _fault(ProblemCode.invalid, 'Malformed owned publication receipt');
@@ -213,6 +611,16 @@ class RecordingPersistence {
     try {
       saved = await _db.commitOwnedCapture(() async {
         final owner = await _owned(r);
+        if (owner.publicationJson != raw ||
+            !const [
+              'stopped',
+              'publishing',
+              'failed',
+              'interrupted',
+              'committed',
+            ].contains(owner.state)) {
+          _fault(ProblemCode.conflict, 'Capture changed before row commit');
+        }
         final ticket = await (_db.select(_db.localDeletionTickets)
               ..where((t) => t.dumpId.equals(r.key.dumpId)))
             .getSingleOrNull();
@@ -302,7 +710,6 @@ class RecordingPersistence {
         }
         final decoded = jsonDecode(snapshot.publicationJson!);
         if (decoded is! Map<String, dynamic> ||
-            decoded['version'] != 1 ||
             decoded['stopped'] is! Map ||
             decoded['metadata'] is! Map) {
           _fault(ProblemCode.invalid, 'Malformed owned capture journal');
@@ -337,6 +744,7 @@ class RecordingPersistence {
           ),
           phase: CapturePhase.values.byName(snapshot.state)
         );
+        _journal(r, snapshot.publicationJson!);
         validateImportedMetadata(
           r.key.dumpId,
           Map<String, dynamic>.from(decoded['metadata'] as Map),
@@ -393,7 +801,7 @@ class RecordingPersistence {
               if (decoded['published'] == null) {
                 await _staging(r, stopped['sizeBytes'] as int);
               }
-              await _publishAndCommit(r, decoded, lease!);
+              await _publishAndCommit(r, snapshot.publicationJson!, lease!);
             }
           } catch (_) {
             // _runSettled has joined every issued I/O operation. Keep the live

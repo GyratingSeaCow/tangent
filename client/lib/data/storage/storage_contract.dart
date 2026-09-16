@@ -341,10 +341,7 @@ abstract interface class StorageBackend {
   IoOperation<Outcome<void>> inspectLocation(StorageLocation location);
   IoOperation<Outcome<Uint8List>> readAudio(BoundRecording binding);
   IoOperation<Outcome<AudioLocator>> playbackSource(BoundRecording binding);
-  IoOperation<Outcome<PublishedCapture>> publishCapture(
-    CaptureReservation reservation,
-    Map<String, dynamic> metadata,
-  );
+
   IoOperation<Outcome<void>> writeMetadata(
     BoundRecording binding,
     Map<String, dynamic> metadata,

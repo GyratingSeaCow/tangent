@@ -590,29 +590,6 @@ class SafStorageBackend implements StorageBackend {
   }
 
   @override
-  IoOperation<Outcome<PublishedCapture>> publishCapture(
-    CaptureReservation r,
-    Map<String, dynamic> metadata,
-  ) =>
-      _start('publishCaptureAt', {
-        'reservation': {
-          'id': r.id,
-          'key': _wire(StorageCodec.encodeKey(r.key)),
-          'location': _wire(StorageCodec.encodeLocation(r.location)),
-          'stagingPath': r.stagingPath,
-          'mode': r.mode,
-          'startedAt': r.startedAt.toIso8601String(),
-          'phase': r.phase.name,
-        },
-        'metadataJson': jsonEncode(metadata),
-      }, (value) {
-        final map = value as Map;
-        return (
-          binding: StorageCodec.decodeBinding(jsonEncode(map['binding'])),
-          sizeBytes: (map['sizeBytes'] as num).toInt()
-        );
-      });
-  @override
   IoOperation<ComponentResult> deleteComponent(
     BoundRecording binding,
     RecordingComponent component,

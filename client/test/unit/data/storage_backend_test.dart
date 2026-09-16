@@ -2,6 +2,8 @@
 import 'dart:io';
 import 'dart:convert';
 import 'dart:async';
+import 'package:crypto/crypto.dart';
+import 'package:tangent/data/storage/filesystem_capture_io.dart';
 import 'package:flutter/services.dart';
 import 'package:tangent/data/storage/saf_storage_backend.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -556,7 +558,7 @@ void main() {
       () async {
     final f = StorageFixture.create();
     addTearDown(f.close);
-    final staging = File('${f.directory('stage')}/fixture-new.opus');
+    final staging = File('${f.directory('stage')}/fixture-reservation.opus');
     await staging.writeAsBytes([4, 5, 6]);
     final reservation = (
       id: 'fixture-reservation',
@@ -571,16 +573,32 @@ void main() {
       'schemaVersion': 2,
       'id': 'fixture-new',
       'title': 'new',
+      'mode': 'brain_dump',
     };
+    final digest = sha256.convert([4, 5, 6]).toString();
+    final prepared = await settled(
+      f.backend.prepareCapture(
+        reservation,
+        jsonEncode(metadata),
+        digest,
+        'capture-${reservation.id}-prepare',
+        observeOnly: false,
+      ),
+    );
+    expect(prepared.state, CapturePreparationState.prepared);
     final published = requireOk(
-      await settled(f.backend.publishCapture(reservation, metadata)),
+      await settled(
+        f.backend.publishPreparedCapture(reservation, prepared.preparation!),
+      ),
     );
     expect(published.sizeBytes, 3);
     expect(await staging.readAsBytes(), [4, 5, 6]);
     expect(await f.audio('A', 'fixture-new').readAsBytes(), [4, 5, 6]);
     expect(
-      await settled(f.backend.publishCapture(reservation, metadata)),
-      isA<Fail<PublishedCapture>>(),
+      FilesystemCaptureIo.prepare(reservation, jsonEncode(metadata), digest)
+          .problem!
+          .code,
+      ProblemCode.conflict,
     );
     expect(await f.audio('A', 'fixture-new').readAsBytes(), [4, 5, 6]);
   });

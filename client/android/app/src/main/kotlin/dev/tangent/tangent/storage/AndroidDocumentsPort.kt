@@ -261,16 +261,7 @@ class AndroidDocumentsPort(context: Context) : DocumentsIoPort, CaptureDocuments
                 mapOf("id" to id,"audio" to mapOf("version" to 1,"kind" to "saf","value" to uri(d,node)),"sizeBytes" to size,"modifiedAt" to modified,"metadataJson" to meta,"problem" to problem)
             }
         }
-        if (reservation != null && method == "publishCaptureAt") {
-            val key = map(reservation["key"]); val id = literal(key["dumpId"]); literal(key["incarnation"])
-            val source = File(text(reservation["stagingPath"]))
-            if (!source.isFile || source.length() <= 0 || source.canonicalFile != source.absoluteFile) fault("invalid","Staging audio unavailable")
-            policy.requireAvailableNames(d, setOf("$id.opus", "$id.meta.json"))
-            val bytes = source.readBytes(); val meta = metadata(args,id)
-            val audio = publish(d,"$id.opus","audio/ogg",bytes,false)
-            publish(d,"$id.meta.json","application/json",meta,false)
-            return mapOf("binding" to mapOf("version" to 1,"key" to key,"location" to loc,"audio" to mapOf("version" to 1,"kind" to "saf","value" to uri(d,audio)),"metadataName" to "$id.meta.json"),"sizeBytes" to bytes.size)
-        }
+
         val b = binding ?: fault("invalid","Missing binding")
         val key = map(b["key"]); val id = literal(key["dumpId"]); literal(key["incarnation"])
         if (b["metadataName"] != "$id.meta.json") fault("invalid","Wrong metadata component")

@@ -64,7 +64,7 @@ class StorageChannel(private val supervisor: NativeIoSupervisor,
                 val incarnation = key["incarnation"] as? String ?: throw NativeStorageException("invalid","Missing incarnation")
                 val kind = when(method) {
                     "writeMetadataAt" -> "publication"; "deleteComponentAt" -> "deletion"
-                    "publishCaptureAt", "prepareCaptureAt", "inspectPreparedCaptureAt", "publishPreparedCaptureAt" -> "capture"
+                    "prepareCaptureAt", "inspectPreparedCaptureAt", "publishPreparedCaptureAt" -> "capture"
                     "playbackSourceAt" -> "playback"; else -> "read"
                 }
                 val descriptor = mapOf("key" to key,"kind" to kind,"method" to method,"args" to args)
@@ -75,6 +75,6 @@ class StorageChannel(private val supervisor: NativeIoSupervisor,
     }
     companion object {
         val captureMethods = setOf("prepareCaptureAt","inspectPreparedCaptureAt","publishPreparedCaptureAt")
-        val methods = setOf("inspectLegacyStorage","validateCandidate","readAudioAt","playbackSourceAt","publishCaptureAt","writeMetadataAt","deleteComponentAt","listRecordingsAt") + captureMethods
+        val methods = setOf("inspectLegacyStorage","validateCandidate","readAudioAt","playbackSourceAt","writeMetadataAt","deleteComponentAt","listRecordingsAt") + captureMethods
     }
 }

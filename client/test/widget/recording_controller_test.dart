@@ -87,8 +87,8 @@ void main() {
       await h.close();
     });
     h.backend.publication = (r, metadata) {
-      final result =
-          settled(h.f.backend.publishCapture(r, metadata)).then((value) {
+      final result = settled(h.f.backend.publishPreparedCapture(r, metadata))
+          .then((value) {
         observed.complete();
         return value;
       });
