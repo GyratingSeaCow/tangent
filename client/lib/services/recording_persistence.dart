@@ -257,6 +257,28 @@ class RecordingPersistence {
     return saved;
   }
 
+  Future<void> _recordRecoveryFailure(CaptureReservation r) async {
+    try {
+      await _db.transaction(() async {
+        final owner = await _owned(r);
+        // Only this recovery's active phases may become failed. Never demote a
+        // committed journal, a recorder restart, or another process's owner.
+        if (owner.state != 'stopped' && owner.state != 'publishing') return;
+        await (_db.update(_db.captureReservations)
+              ..where((s) => s.reservationId.equals(r.id)))
+            .write(const CaptureReservationsCompanion(state: Value('failed')));
+      });
+    } on SqliteException {
+      // Retain the original diagnostic and durable journal if this write fails.
+    } on StorageFault {
+      // Ownership was replaced; the obsolete recovery cannot change it.
+    } on FormatException {
+      // A changed destination cannot authorize a failure-state write.
+    } on StateError {
+      // A removed destination likewise leaves no authority to update the owner.
+    }
+  }
+
   Future<OwnedCaptureRecoveryResult> recoverOwnedCaptures() async {
     final recovered = <String>[];
     final problems = <StorageProblem>[];
@@ -326,13 +348,15 @@ class RecordingPersistence {
           _fault(ProblemCode.invalid, 'Stopped journal metadata is incoherent');
         }
         lease = _value(
-          await _mutations.catalogAdmission(() => _mutations.acquire(
-                r.key.dumpId,
-                snapshot.state == 'committed'
-                    ? UseKind.recovery
-                    : UseKind.capture,
-                expectedIncarnation: r.key.incarnation,
-              ),),
+          await _mutations.catalogAdmission(
+            () => _mutations.acquire(
+              r.key.dumpId,
+              snapshot.state == 'committed'
+                  ? UseKind.recovery
+                  : UseKind.capture,
+              expectedIncarnation: r.key.incarnation,
+            ),
+          ),
         );
         await _mutations.serialize(r.key, () async {
           await _db.transaction(() async {
@@ -350,25 +374,32 @@ class RecordingPersistence {
               ),
             );
           });
-          if (snapshot.state == 'committed') {
-            final receipt = decoded['published'];
-            if (receipt is! Map || receipt['binding'] is! String) {
-              _fault(ProblemCode.invalid, 'Committed capture has no receipt');
+          try {
+            if (snapshot.state == 'committed') {
+              final receipt = decoded['published'];
+              if (receipt is! Map || receipt['binding'] is! String) {
+                _fault(ProblemCode.invalid, 'Committed capture has no receipt');
+              }
+              final binding =
+                  StorageCodec.decodeBinding(receipt['binding'] as String);
+              if (binding.key != r.key || binding.location != r.location) {
+                _fault(
+                  ProblemCode.invalid,
+                  'Committed receipt ownership mismatch',
+                );
+              }
+              await cleanupCommitted(r, binding);
+            } else {
+              if (decoded['published'] == null) {
+                await _staging(r, stopped['sizeBytes'] as int);
+              }
+              await _publishAndCommit(r, decoded, lease!);
             }
-            final binding =
-                StorageCodec.decodeBinding(receipt['binding'] as String);
-            if (binding.key != r.key || binding.location != r.location) {
-              _fault(
-                ProblemCode.invalid,
-                'Committed receipt ownership mismatch',
-              );
-            }
-            await cleanupCommitted(r, binding);
-          } else {
-            if (decoded['published'] == null) {
-              await _staging(r, stopped['sizeBytes'] as int);
-            }
-            await _publishAndCommit(r, decoded, lease!);
+          } catch (_) {
+            // _runSettled has joined every issued I/O operation. Keep the live
+            // lease and per-key serializer until the guarded failure is durable.
+            await _recordRecoveryFailure(r);
+            rethrow;
           }
         });
         recovered.add(r.key.dumpId);

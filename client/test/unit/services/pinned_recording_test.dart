@@ -87,6 +87,254 @@ DefaultRecordingCoordinator capture(
     );
 
 void main() {
+  test('T5-I1 failed recovery releases admission only after settlement',
+      () async {
+    final h = CatalogHarness();
+    final recorder = FileRecorder();
+    final entered = Completer<void>();
+    final result = Completer<Outcome<PublishedCapture>>();
+    final finished = Completer<void>();
+    Future<Outcome<OwnedCaptureRecoveryResult>>? recovery;
+    addTearDown(() async {
+      if (!result.isCompleted) {
+        result.complete(const Fail((code: ProblemCode.io, message: 'fixture')));
+      }
+      if (!finished.isCompleted) finished.complete();
+      await recovery;
+      await recorder.dispose();
+      await h.close();
+    });
+    await h.bootstrap();
+    final c = capture(h, recorder);
+    final r = requireOk(await c.start(mode: 'meeting'));
+    h.backend.publication = (_, __) => ImmediateIo('fixture-initial-failure',
+        const Fail((code: ProblemCode.denied, message: 'fixture denied')),);
+    expect(await c.stopAndPersist(), isA<Fail<DumpRow?>>());
+    final before = await h.f.db.select(h.f.db.captureReservations).getSingle();
+    expect(before.state, 'failed');
+    expect(jsonDecode(before.publicationJson!)['published'], isNull);
+    final bytes = await File(r.stagingPath).readAsBytes();
+    h.backend.publication = (_, __) {
+      entered.complete();
+      return GatedIo('fixture-recovery', result.future, finished.future);
+    };
+    final importer = BoundRecordingImporter(
+        db: h.f.db, backend: h.backend, mutations: h.mutations,);
+    var returned = false;
+    recovery = importer.recoverOwnedCaptures().then((value) {
+      returned = true;
+      return value;
+    });
+    await entered.future;
+    result.complete(
+        const Fail((code: ProblemCode.denied, message: 'fixture denied')),);
+    final candidate = await h.choose('B');
+    final blockedDefault =
+        await h.catalog.commitDefault(candidate, expectedRevision: 1);
+    expect((blockedDefault as Fail<DefaultFolderState>).problem.code,
+        ProblemCode.busy,);
+    final blockedCapture = await h.catalog.reserveCapture(mode: 'meeting');
+    expect((blockedCapture as Fail<CaptureReservation>).problem.code,
+        ProblemCode.busy,);
+    expect(returned, isFalse);
+    expect(h.mutations.hasActiveCapture, isTrue);
+    expect((await h.f.db.select(h.f.db.captureReservations).getSingle()).state,
+        'publishing',);
+    finished.complete();
+    final failed = requireOk(await recovery);
+    expect(failed.problems.single.code, ProblemCode.denied);
+    expect(failed.recoveredIds, isEmpty);
+    expect(failed.retainedReservationIds, [r.id]);
+    final retained =
+        await h.f.db.select(h.f.db.captureReservations).getSingle();
+    expect(retained.state, 'failed');
+    expect(retained.publicationJson, before.publicationJson);
+    expect(retained.processEpoch, before.processEpoch);
+    expect(retained.startedAt, before.startedAt);
+    expect(await File(r.stagingPath).readAsBytes(), bytes);
+    expect(h.mutations.hasActiveCapture, isFalse);
+    requireOk(await h.catalog
+        .commitDefault(await h.choose('B'), expectedRevision: 1),);
+    final next = requireOk(await c.start(mode: 'meeting'));
+    expect(next.location.directory.path, h.f.directory('B'));
+    h.backend.publication = null;
+    requireOk(await c.stopAndPersist());
+    final retried = requireOk(await importer.recoverOwnedCaptures());
+    expect(retried.problems, isEmpty);
+    expect(retried.recoveredIds, [r.key.dumpId]);
+    expect(retried.retainedReservationIds, isEmpty);
+    expect((await h.f.db.boundRecording(r.key.dumpId))!.location, r.location);
+    expect(await h.f.audio('A', r.key.dumpId).readAsBytes(), bytes);
+    expect(await h.f.audio('B', r.key.dumpId).exists(), isFalse);
+    expect(await File(r.stagingPath).exists(), isFalse);
+  });
+  test('T5-I1 recovery DB commit failure retains receipt and permits retry',
+      () async {
+    final h = CatalogHarness();
+    final recorder = FileRecorder();
+    final entered = Completer<void>();
+    final result = Completer<Outcome<List<ImportedEntry>>>();
+    final finished = Completer<void>();
+    Future<Outcome<OwnedCaptureRecoveryResult>>? recovery;
+    addTearDown(() async {
+      if (!result.isCompleted) result.complete(const Ok([]));
+      if (!finished.isCompleted) finished.complete();
+      await recovery;
+      await recorder.dispose();
+      await h.close();
+    });
+    await h.bootstrap();
+    final c = capture(h, recorder);
+    final r = requireOk(await c.start(mode: 'meeting'));
+    h.backend.publication = (_, __) => ImmediateIo('fixture-initial-failure',
+        const Fail((code: ProblemCode.io, message: 'fixture unavailable')),);
+    expect(await c.stopAndPersist(), isA<Fail<DumpRow?>>());
+    final original =
+        await h.f.db.select(h.f.db.captureReservations).getSingle();
+    h.backend.publication = null;
+    h.backend.listing = (_) {
+      entered.complete();
+      return GatedIo(
+          'fixture-verify-publication', result.future, finished.future,);
+    };
+    await h.f.db.customStatement(
+        "CREATE TRIGGER fixture_fail_commit BEFORE INSERT ON dumps BEGIN SELECT RAISE(ABORT, 'fixture DB commit failure'); END",);
+    final importer = BoundRecordingImporter(
+        db: h.f.db, backend: h.backend, mutations: h.mutations,);
+    var returned = false;
+    recovery = importer.recoverOwnedCaptures().then((value) {
+      returned = true;
+      return value;
+    });
+    await entered.future;
+    // Production filesystem publication and receipt journaling have succeeded.
+    final published =
+        await h.f.db.select(h.f.db.captureReservations).getSingle();
+    expect(published.state, 'publishing');
+    expect(jsonDecode(published.publicationJson!)['published'], isNotNull);
+    final finalAudio = await h.f.audio('A', r.key.dumpId).readAsBytes();
+    final finalMetadata = await h.f.metadata('A', r.key.dumpId).readAsBytes();
+    result.complete(await settled(h.f.backend.listRecordingsAt(r.location)));
+    final blockedDefault =
+        await h.catalog.commitDefault(await h.choose('B'), expectedRevision: 1);
+    expect((blockedDefault as Fail<DefaultFolderState>).problem.code,
+        ProblemCode.busy,);
+    expect(
+        (await h.catalog.reserveCapture(mode: 'meeting')
+                as Fail<CaptureReservation>)
+            .problem
+            .code,
+        ProblemCode.busy,);
+    expect(returned, isFalse);
+    expect(h.mutations.hasActiveCapture, isTrue);
+    expect(await h.f.db.getDump(r.key.dumpId), isNull);
+    finished.complete();
+    final failed = requireOk(await recovery);
+    expect(failed.problems.single.code, ProblemCode.persistence);
+    expect(failed.retainedReservationIds, [r.id]);
+    final retained =
+        await h.f.db.select(h.f.db.captureReservations).getSingle();
+    expect(retained.state, 'failed');
+    expect(retained.publicationJson, published.publicationJson);
+    expect(retained.startedAt, original.startedAt);
+    expect(retained.processEpoch, original.processEpoch);
+    expect(await File(r.stagingPath).readAsBytes(), finalAudio);
+    expect(await h.f.db.getDump(r.key.dumpId), isNull);
+    expect(await h.f.db.boundRecording(r.key.dumpId), isNull);
+    expect(h.mutations.hasActiveCapture, isFalse);
+    await h.f.db.customStatement('DROP TRIGGER fixture_fail_commit');
+    h.backend.listing = null;
+    requireOk(await h.catalog
+        .commitDefault(await h.choose('B'), expectedRevision: 1),);
+    final next = requireOk(await c.start(mode: 'meeting'));
+    expect(next.location.directory.path, h.f.directory('B'));
+    requireOk(await c.stopAndPersist());
+    final calls = h.backend.publishedReservations.length;
+    final retried = requireOk(await importer.recoverOwnedCaptures());
+    expect(retried.problems, isEmpty);
+    expect(retried.recoveredIds, [r.key.dumpId]);
+    expect(retried.retainedReservationIds, isEmpty);
+    expect(h.backend.publishedReservations.length, calls);
+    expect((await h.f.db.boundRecording(r.key.dumpId))!.location, r.location);
+    expect(await h.f.audio('A', r.key.dumpId).readAsBytes(), finalAudio);
+    expect(await h.f.metadata('A', r.key.dumpId).readAsBytes(), finalMetadata);
+    expect(await File(r.stagingPath).exists(), isFalse);
+  });
+
+  for (final changed in ['epoch', 'reserved', 'recording', 'failure-write']) {
+    test('T5-I1 recovery contains failure without changing $changed owner',
+        () async {
+      final h = CatalogHarness();
+      final recorder = FileRecorder();
+      final entered = Completer<void>();
+      final result = Completer<Outcome<PublishedCapture>>();
+      final finished = Completer<void>();
+      Future<Outcome<OwnedCaptureRecoveryResult>>? recovery;
+      addTearDown(() async {
+        if (!result.isCompleted) {
+          result
+              .complete(const Fail((code: ProblemCode.io, message: 'fixture')));
+        }
+        if (!finished.isCompleted) finished.complete();
+        await recovery;
+        await recorder.dispose();
+        await h.close();
+      });
+      await h.bootstrap();
+      final c = capture(h, recorder);
+      final r = requireOk(await c.start(mode: 'meeting'));
+      h.backend.publication = (_, __) => ImmediateIo('fixture-first-failure',
+          const Fail((code: ProblemCode.io, message: 'fixture')),);
+      expect(await c.stopAndPersist(), isA<Fail<DumpRow?>>());
+      h.backend.publication = (_, __) {
+        entered.complete();
+        return GatedIo(
+            'fixture-recovery-owner', result.future, finished.future,);
+      };
+      final importer = BoundRecordingImporter(
+          db: h.f.db, backend: h.backend, mutations: h.mutations,);
+      recovery = importer.recoverOwnedCaptures();
+      await entered.future;
+      if (changed == 'epoch') {
+        await h.f.db.customStatement(
+            'UPDATE capture_reservations SET process_epoch=? WHERE reservation_id=?',
+            ['fixture-replacement', r.id],);
+      } else if (changed == 'failure-write') {
+        await h.f.db.customStatement(
+            "CREATE TRIGGER fixture_fail_failure BEFORE UPDATE OF state ON capture_reservations WHEN NEW.state='failed' BEGIN SELECT RAISE(ABORT, 'fixture secondary failure'); END",);
+      } else {
+        await h.f.db.customStatement(
+            'UPDATE capture_reservations SET state=? WHERE reservation_id=?',
+            [changed, r.id],);
+      }
+      final before = (await h.f.db
+              .customSelect('SELECT * FROM capture_reservations')
+              .getSingle())
+          .data;
+      result.complete(const Fail(
+          (code: ProblemCode.denied, message: 'fixture primary denial'),),);
+      finished.complete();
+      final failed = requireOk(await recovery);
+      expect(failed.problems.single,
+          (code: ProblemCode.denied, message: 'fixture primary denial'),);
+      expect(failed.retainedReservationIds, [r.id]);
+      expect(
+          (await h.f.db
+                  .customSelect('SELECT * FROM capture_reservations')
+                  .getSingle())
+              .data,
+          before,);
+      expect(await File(r.stagingPath).readAsBytes(), [1, 2, 3]);
+      expect(h.mutations.hasActiveCapture, isFalse);
+      if (changed == 'failure-write') {
+        await h.f.db.customStatement('DROP TRIGGER fixture_fail_failure');
+        h.backend.publication = null;
+        expect(requireOk(await importer.recoverOwnedCaptures()).recoveredIds,
+            [r.key.dumpId],);
+      }
+    });
+  }
+
   test('owned recovery waits for catalog admission before provider work',
       () async {
     final h = CatalogHarness();
@@ -106,8 +354,10 @@ void main() {
     await h.bootstrap();
     final c = capture(h, recorder);
     requireOk(await c.start(mode: 'meeting'));
-    h.backend.publication = (_, __) => ImmediateIo('fixture-first-failure',
-        const Fail((code: ProblemCode.io, message: 'synthetic')),);
+    h.backend.publication = (_, __) => ImmediateIo(
+          'fixture-first-failure',
+          const Fail((code: ProblemCode.io, message: 'synthetic')),
+        );
     expect(await c.stopAndPersist(), isA<Fail<DumpRow?>>());
     h.backend.publication = (r, metadata) {
       published.complete();
@@ -119,8 +369,10 @@ void main() {
     });
     await entered.future;
     recovery = BoundRecordingImporter(
-            db: h.f.db, backend: h.backend, mutations: h.mutations,)
-        .recoverOwnedCaptures();
+      db: h.f.db,
+      backend: h.backend,
+      mutations: h.mutations,
+    ).recoverOwnedCaptures();
     final started = await Future.any([
       published.future.then((_) => true),
       Future<bool>.delayed(const Duration(milliseconds: 80), () => false),
@@ -492,6 +744,30 @@ void main() {
     final before =
         (await h.f.db.customSelect('SELECT * FROM dumps').getSingle()).data;
     final sidecar = await h.f.metadata('A', r.key.dumpId).readAsBytes();
+    final committedJournal = (await h.f.db
+            .customSelect('SELECT * FROM capture_reservations')
+            .getSingle())
+        .data;
+    final failedCleanup = requireOk(await BoundRecordingImporter(
+      db: h.f.db,
+      backend: h.backend,
+      mutations: h.mutations,
+    ).recoverOwnedCaptures(),);
+    expect(failedCleanup.recoveredIds, isEmpty);
+    expect(failedCleanup.problems.single.code, ProblemCode.invalid);
+    expect(failedCleanup.retainedReservationIds, [r.id]);
+    expect(
+        (await h.f.db
+                .customSelect('SELECT * FROM capture_reservations')
+                .getSingle())
+            .data,
+        committedJournal,);
+    expect((await h.f.db.customSelect('SELECT * FROM dumps').getSingle()).data,
+        before,);
+    expect(await h.f.db.boundRecording(r.key.dumpId), binding);
+    expect(await h.f.metadata('A', r.key.dumpId).readAsBytes(), sidecar);
+    expect(await Directory(r.stagingPath).exists(), isTrue);
+    expect(h.mutations.hasActiveCapture, isFalse);
     await Directory(r.stagingPath).delete();
     h.backend.publication = null;
     await h.reopen();
