@@ -17,6 +17,59 @@ Future<void> selectDelete(WidgetTester t) async {
 }
 
 void main() {
+  testWidgets('T7-I1 later successful list batch retains the original ticket', (t) async {
+    final d = CountingDeletion()..result = (
+      items: [itemFor('fixture-a', DeleteState.failed, ticket: 'ticket-a')],
+      replayed: false,
+    );
+    final c = await mountSelection(t, d);
+    final route = t.state(find.byType(DumpsListScreen));
+    await selectDelete(t);
+    await t.tap(find.byKey(const ValueKey('local-delete-confirm')));
+    await pumpSelection(t);
+    c.read(eligibilityFixture.notifier).state = {
+      'fixture-a': Eligibility.retryOnly, 'fixture-b': Eligibility.eligible,
+    };
+    d.result = (items: [itemFor('fixture-b', DeleteState.deleted)], replayed: false);
+    await pumpSelection(t);
+    await t.longPress(find.byKey(const ValueKey('dump-row-fixture-b')));
+    await pumpSelection(t);
+    await t.tap(find.byKey(const ValueKey('selection-delete')));
+    await pumpSelection(t);
+    await t.tap(find.byKey(const ValueKey('local-delete-confirm')));
+    await pumpSelection(t);
+    expect(d.deletes, hasLength(2));
+    expect(d.deletes.last.targets.map((x) => x.id), ['fixture-b']);
+    expect(find.text('1 deleted, 0 failed, 0 skipped'), findsOneWidget);
+    expect(find.textContaining('fixture-a: failed'), findsOneWidget,
+      reason: 'an unrelated success must not hide unresolved component progress',);
+    expect(find.textContaining('audio: removed; metadata: failed'), findsOneWidget);
+    final retry = find.byKey(const ValueKey('local-delete-retry'));
+    await t.ensureVisible(retry);
+    await t.tap(retry);
+    await pumpSelection(t);
+    expect(find.text('Retry deletion of 1 local recordings?'), findsOneWidget);
+    await t.tap(find.byKey(const ValueKey('local-delete-cancel')));
+    await pumpSelection(t);
+    expect(d.retries, isEmpty);
+    expect(find.textContaining('fixture-a: failed'), findsOneWidget);
+    d.retryGate = Completer<Outcome<BulkDeletionResult>>();
+    await t.tap(retry);
+    await pumpSelection(t);
+    final confirm = t.widget<FilledButton>(find.byKey(const ValueKey('local-delete-confirm'))).onPressed!;
+    confirm(); confirm();
+    await pumpSelection(t);
+    expect(d.retries, hasLength(1));
+    expect(d.retries.single.ticketIds, ['ticket-a']);
+    expect(() => d.retries.single.ticketIds.add('wrong'), throwsUnsupportedError);
+    expect(d.deletes.map((r) => r.operationId), isNot(contains(d.retries.single.operationId)));
+    d.retryGate!.complete(Ok((items: [itemFor('fixture-a', DeleteState.deleted, ticket: 'ticket-a')], replayed: false)));
+    await pumpSelection(t);
+    expect(retry, findsNothing);
+    expect(find.textContaining('fixture-a: failed'), findsNothing);
+    expect(identical(t.state(find.byType(DumpsListScreen)), route), isTrue);
+    expect(t.takeException(), isNull);
+  });
   testWidgets(
       'Cancel has no deletion; captured double Confirm is one exact immutable batch',
       (t) async {

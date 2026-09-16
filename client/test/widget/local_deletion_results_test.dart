@@ -17,6 +17,52 @@ Future<void> confirmBatch(WidgetTester t) async {
 }
 
 void main() {
+  testWidgets('T7-I1 partial retry preserves omitted tickets across failure Cancel and unmount', (t) async {
+    final d = CountingDeletion()..result = (replayed: false, items: [
+      itemFor('fixture-a', DeleteState.failed, ticket: 'ta'),
+      itemFor('fixture-b', DeleteState.failed, ticket: 'tb'),
+    ]);
+    await mountSelection(t, d);
+    await confirmBatch(t);
+    final retry = find.byKey(const ValueKey('local-delete-retry'));
+    Future<void> openRetry() async {
+      await t.ensureVisible(retry); await pumpSelection(t);
+      await t.tap(retry); await pumpSelection(t);
+    }
+    Future<void> submitRetry() async {
+      await openRetry();
+      await t.tap(find.byKey(const ValueKey('local-delete-confirm')));
+      await pumpSelection(t);
+    }
+    d.retryGate = Completer<Outcome<BulkDeletionResult>>();
+    await submitRetry();
+    expect(d.retries.single.ticketIds, ['ta','tb']);
+    d.retryGate!.complete(Ok((items: [itemFor('fixture-a', DeleteState.deleted, ticket: 'ta')], replayed: true)));
+    await pumpSelection(t);
+    expect(find.text('Previously recorded result: 1 deleted, 0 failed, 0 skipped'), findsOneWidget);
+    expect(find.textContaining('fixture-a: failed'), findsNothing);
+    expect(find.textContaining('fixture-b: failed'), findsOneWidget);
+    expect(find.text('Pending local deletions (1)'), findsOneWidget);
+    d.retryGate = Completer<Outcome<BulkDeletionResult>>();
+    await submitRetry(); expect(d.retries.last.ticketIds, ['tb']);
+    d.retryGate!.complete(const Fail((code: ProblemCode.denied, message: 'synthetic retry failure')));
+    await pumpSelection(t);
+    expect(find.textContaining('Local deletion retry failed:'), findsOneWidget);
+    await openRetry();
+    expect(find.text('Retry deletion of 1 local recordings?'), findsOneWidget);
+    await t.tap(find.byKey(const ValueKey('local-delete-cancel'))); await pumpSelection(t);
+    expect(d.retries, hasLength(2));
+    expect(find.textContaining('fixture-b: failed'), findsOneWidget);
+    d.retryGate = Completer<Outcome<BulkDeletionResult>>();
+    await submitRetry();
+    expect(d.retries.last.ticketIds, ['tb']);
+    expect(d.retries.map((r) => r.operationId).toSet(), hasLength(3));
+    await t.pumpWidget(const SizedBox.shrink());
+    d.retryGate!.complete(Ok((items: [itemFor('fixture-b', DeleteState.deleted, ticket: 'tb')], replayed: false)));
+    await pumpSelection(t);
+    expect(t.takeException(), isNull);
+    expect(d.deletes, hasLength(1)); expect(d.retries, hasLength(3));
+  });
   testWidgets(
       'mixed totals and component permission failure remain readable at280x640 and2x',
       (t) async {

@@ -91,6 +91,21 @@ final class GateEditDb extends LocalDb {
           now: now,),);
 }
 
+final class ObservedDeletionService extends DefaultLocalDeletionService {
+  ObservedDeletionService({required super.db, required super.backend, required super.mutations});
+  final deletes = <ConfirmedDeletion>[], retries = <ConfirmedDeletionRetry>[];
+  @override
+  Future<Outcome<BulkDeletionResult>> deleteConfirmed(ConfirmedDeletion request) {
+    deletes.add(request);
+    return super.deleteConfirmed(request);
+  }
+  @override
+  Future<Outcome<BulkDeletionResult>> retryConfirmed(ConfirmedDeletionRetry request) {
+    retries.add(request);
+    return super.retryConfirmed(request);
+  }
+}
+
 Future<void> mount(
     WidgetTester tester,
     StorageFixture f,
@@ -98,7 +113,7 @@ Future<void> mount(
     GatePlayer player,
     GlobalKey<NavigatorState> navigator,
     BoundRecording a,
-    {StorageBackend? backend, RecordingPlaybackEngine Function()? factory,}) async {
+    {StorageBackend? backend, RecordingPlaybackEngine Function()? factory, LocalDeletionService? deletion,}) async {
   await tester.pumpWidget(
     ProviderScope(
       overrides: [
@@ -106,7 +121,7 @@ Future<void> mount(
         recordingAccessProvider.overrideWithValue(bound.access),
         recordingMutationsProvider.overrideWithValue(bound.mutations),
         localDeletionServiceProvider.overrideWithValue(
-            DefaultLocalDeletionService(
+            deletion ?? DefaultLocalDeletionService(
                 db: f.db,
                 backend: backend ?? f.backend,
                 mutations: bound.mutations,),),
@@ -126,6 +141,57 @@ Future<void> mount(
 }
 
 void main() {
+  testWidgets('T7-I1 real partial detail routes another top Delete to exact ticket retry', (tester) async {
+    final f = StorageFixture.create();
+    final backend = ScriptedStorageBackend()..metadataDeleteFails = true;
+    final bound = await createBoundServiceFixture(f.db, backend: backend, registerDrain: false);
+    final player = GatePlayer()..release.complete();
+    final deletion = ObservedDeletionService(db: f.db, backend: backend, mutations: bound.mutations);
+    addTearDown(() async { await disposeBoundWidget(tester, bound); await tester.runAsync(f.close); });
+    final a = (await tester.runAsync(() => f.seed('fixture-ticket-recovery')))!;
+    await mount(tester, f, bound, player, GlobalKey<NavigatorState>(), a, backend: backend, deletion: deletion);
+    final route = tester.state(find.byType(DumpDetailScreen));
+    final top = find.byIcon(Icons.delete_outline);
+    final oldDelete = tester.widget<IconButton>(find.ancestor(of: top, matching: find.byType(IconButton))).onPressed!;
+    await tester.tap(top); await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('local-delete-confirm')));
+    await pumpBoundUntil(tester, () => find.textContaining('Delete failed:').evaluate().isNotEmpty);
+    final original = (await f.db.pendingLocalDeletions()).single;
+    expect(original.binding, a);
+    expect(original.audio.state, ComponentState.removed);
+    expect(original.metadata.state, ComponentState.failed);
+    expect(deletion.deletes, hasLength(1));
+    expect(backend.componentCalls, 2);
+    expect(find.byKey(const ValueKey('local-delete-retry')), findsOneWidget);
+    // Same top action must now explicitly confirm retry, never ordinary delete.
+    await tester.tap(top); await tester.pumpAndSettle();
+    expect(find.text('Retry deletion of 1 local recordings?'), findsOneWidget);
+    expect(find.text('Delete 1 local recordings?'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('local-delete-cancel'))); await tester.pumpAndSettle();
+    expect(deletion.deletes, hasLength(1)); expect(deletion.retries, isEmpty);
+    expect(backend.componentCalls, 2);
+    expect((await f.db.pendingLocalDeletions()).single, original);
+    expect(find.byTooltip('Retry deletion'), findsOneWidget);
+    expect(find.textContaining('audio: removed; metadata: failed'), findsOneWidget);
+    expect(identical(tester.state(find.byType(DumpDetailScreen)), route), isTrue);
+    // Also guard a previously captured ordinary callback; retry snapshots IDs.
+    oldDelete(); oldDelete(); await tester.pumpAndSettle();
+    expect(find.text('Retry deletion of 1 local recordings?'), findsOneWidget);
+    backend.metadataDeleteFails = false;
+    final confirm = tester.widget<FilledButton>(find.byKey(const ValueKey('local-delete-confirm'))).onPressed!;
+    confirm(); confirm();
+    await pumpBoundUntil(tester, () => find.byType(DumpDetailScreen).evaluate().isEmpty);
+    expect(deletion.deletes, hasLength(1)); expect(deletion.retries, hasLength(1));
+    expect(deletion.retries.single.ticketIds, [original.id]);
+    expect(deletion.retries.single.operationId, isNot(deletion.deletes.single.operationId));
+    expect(() => deletion.retries.single.ticketIds.add('wrong'), throwsUnsupportedError);
+    expect(backend.componentCalls, 3, reason: 'retry only deletes remaining metadata');
+    expect((await f.db.deletionTicketById(original.id))!.state, TicketState.completed);
+    expect(await f.db.pendingLocalDeletions(), isEmpty);
+    expect(await f.db.getDump(a.key.dumpId), isNull);
+    await disposeBoundWidget(tester, bound);
+    expect(tester.takeException(), isNull);
+  });
   for (final unmount in [false,true]) {
     testWidgets('B1-M1 same route fresh playback retry; unmount=$unmount', (tester) async {
       final f=StorageFixture.create();final backend=ScriptedStorageBackend();

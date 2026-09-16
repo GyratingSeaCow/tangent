@@ -54,7 +54,8 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
   bool _playbackOpening = true;
   bool _canRetryPlayback = false;
   bool _deleteBusy = false;
-  BulkDeletionResult? _deletionResult;
+  final _deletionRecovery = LocalDeletionRecoveryState();
+  BulkDeletionResult? get _deletionResult => _deletionRecovery.latest;
   String? _playbackError;
   bool _closing = false;
   bool _saving = false;
@@ -471,6 +472,10 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
 
   Future<void> _delete() async {
     if(_deleteBusy || !mounted) return;
+    if (_deletionRecovery.hasPending) {
+      await _retryLocalDeletion();
+      return;
+    }
     setState(()=>_deleteBusy=true);
     final service=ref.read(localDeletionServiceProvider);
     try {
@@ -490,7 +495,7 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
         Fail<BulkDeletionResult>(:final problem) => throw StorageFault(problem),
       };
       final item = result.items.single;
-      if(mounted) setState(()=>_deletionResult=result);
+      if(mounted) setState(()=>_deletionRecovery.record(result));
       if (item.state != DeleteState.deleted) {
         throw StorageFault(
           item.problem ??
@@ -515,7 +520,7 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
 
   Future<void> _retryLocalDeletion() async {
     if(_deleteBusy || _deletionResult==null || !mounted) return;
-    final ids=failedDeletionTickets(_deletionResult!);
+    final ids=_deletionRecovery.ticketIds;
     if(ids.isEmpty)return;
     setState(()=>_deleteBusy=true);
     final service=ref.read(localDeletionServiceProvider);
@@ -526,8 +531,8 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
         Fail<BulkDeletionResult>(:final problem)=>throw StorageFault(problem),
       };
       if(mounted){
-        setState(()=>_deletionResult=result);
-        if(result.items.every((i)=>i.state==DeleteState.deleted)) Navigator.of(context).pop();
+        setState(()=>_deletionRecovery.record(result));
+        if(!_deletionRecovery.hasPending) Navigator.of(context).pop();
       }
     } catch(e) {if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('Delete failed: $e')));}
     finally {if(mounted)setState(()=>_deleteBusy=false);}
@@ -543,7 +548,7 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
         actions: [
           IconButton(
             icon: const Icon(Icons.delete_outline),
-            tooltip: 'Delete',
+            tooltip: _deletionRecovery.hasPending ? 'Retry deletion' : 'Delete',
             onPressed: _deleteBusy || (_playbackOpening && _canRetryPlayback) ? null : _delete,
           ),
         ],
@@ -597,7 +602,7 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
           ],
         ),
         const SizedBox(height: 16),
-        if(_deletionResult!=null) LocalDeletionResults(result:_deletionResult!,onRetry:_retryLocalDeletion,busy:_deleteBusy),
+        if(_deletionResult!=null) LocalDeletionResults(result:_deletionResult!,pending:_deletionRecovery.pending,onRetry:_retryLocalDeletion,busy:_deleteBusy),
         if(_canRetryPlayback || _playbackOpening && _closing) TextButton(key:const ValueKey('retry-playback'),onPressed:_playbackOpening || _deleteBusy ? null : _retryPlayback,child:const Text('Retry playback')),
         _RecordingPlaybackPanel(
           state: _playbackController?.state ??

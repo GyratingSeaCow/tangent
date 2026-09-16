@@ -26,7 +26,8 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
   bool _searching = false;
   final _selection = DumpSelectionController();
   bool _batchBusy = false;
-  BulkDeletionResult? _deleteResult;
+  final _deletionRecovery = LocalDeletionRecoveryState();
+  BulkDeletionResult? get _deleteResult => _deletionRecovery.latest;
   String? _deleteError;
   Object _scope() {
     final r = ref.read(presentedDumpsProvider).valueOrNull;
@@ -75,7 +76,7 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
       };
       if (mounted) {
         setState(() {
-          _deleteResult = result;
+          _deletionRecovery.record(result);
           _deleteError = null;
           if (_scope() == scope) _selection.cancel();
         });
@@ -89,7 +90,7 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
 
   Future<void> _retryDeletion() async {
     if (!mounted || _batchBusy || _deleteResult == null) return;
-    final ids = failedDeletionTickets(_deleteResult!);
+    final ids = _deletionRecovery.ticketIds;
     if (ids.isEmpty) return;
     final service = ref.read(localDeletionServiceProvider);
     setState(() => _batchBusy = true);
@@ -105,7 +106,7 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
       };
       if (mounted) {
         setState(() {
-          _deleteResult = result;
+          _deletionRecovery.record(result);
           _deleteError = null;
         });
       }
@@ -287,6 +288,7 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
             if (_deleteResult != null)
               LocalDeletionResults(
                   result: _deleteResult!,
+                  pending: _deletionRecovery.pending,
                   onRetry: _retryDeletion,
                   busy: _batchBusy,),
             Expanded(
