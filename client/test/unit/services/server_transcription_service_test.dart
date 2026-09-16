@@ -246,15 +246,62 @@ Future<void> _eventually(
   }
 }
 
+// Passive observation does not resolve a lazy provider. The production provider
+// queues its startup scan in a microtask, after this creation/update callback.
+class _LateAcceptanceObserver extends ProviderObserver {
+  _LateAcceptanceObserver(this.db);
+  final _LateAcceptanceDb db;
+
+  void _observe(ProviderBase<Object?> provider, Object? value) {
+    if (provider == serverTranscriptionServiceProvider &&
+        value is ServerTranscriptionService) {
+      db.firstService ??= value;
+      db.currentService = value;
+    }
+  }
+
+  @override
+  void didAddProvider(
+    ProviderBase<Object?> provider,
+    Object? value,
+    ProviderContainer container,
+  ) =>
+      _observe(provider, value);
+
+  @override
+  void didUpdateProvider(
+    ProviderBase<Object?> provider,
+    Object? previousValue,
+    Object? newValue,
+    ProviderContainer container,
+  ) =>
+      _observe(provider, newValue);
+}
+
 class _LateAcceptanceDb extends LocalDb {
-  _LateAcceptanceDb(this.pauseRead, {this.pauseAfterCommit = false})
-      : super.forTesting(NativeDatabase.memory()) {
+  _LateAcceptanceDb(
+    this.pauseRead, {
+    this.pauseAfterCommit = false,
+    this.holdReplacementQuery = false,
+  }) : super.forTesting(NativeDatabase.memory()) {
     addTearDown(() {
+      if (!releaseReplacementQuery.isCompleted) {
+        releaseReplacementQuery.complete();
+      }
       if (!release.isCompleted) release.complete();
     });
   }
   final bool pauseRead;
   final bool pauseAfterCommit;
+  final bool holdReplacementQuery;
+  final _transactionZoneKey = Object();
+  bool admissionReadObserved = false;
+  ServerTranscriptionService? firstService;
+  ServerTranscriptionService? currentService;
+  ServerTranscriptionService? queryService;
+  final replacementQueryEntered = Completer<void>();
+  final releaseReplacementQuery = Completer<void>();
+  final replacementQueryCompleted = Completer<List<DumpRow>>();
   bool armed = false;
   final entered = Completer<void>();
   final release = Completer<void>();
@@ -262,16 +309,57 @@ class _LateAcceptanceDb extends LocalDb {
   int scans = 0;
   int allocations = 0;
 
+  // The admission guard also reads the row, inside a SQLite transaction.
+  // Pausing that read would lock out the very empty query under test. Preserve
+  // the real transaction, and target the service's subsequent outside read.
+  @override
+  Future<T> transaction<T>(
+    Future<T> Function() action, {
+    bool requireNew = false,
+  }) =>
+      super.transaction(
+        () => runZoned(action, zoneValues: {_transactionZoneKey: true}),
+        requireNew: requireNew,
+      );
+
   @override
   Future<List<DumpRow>> dumpsNeedingTranscriptionRecovery() {
     scans++;
-    return super.dumpsNeedingTranscriptionRecovery();
+    // Capture identity at ENTRY: an old in-flight query completing after a
+    // replacement cannot satisfy this generation's completion observation.
+    final serviceAtEntry = currentService;
+    final observe = serviceAtEntry != null &&
+        !identical(serviceAtEntry, firstService) &&
+        !replacementQueryEntered.isCompleted;
+    if (observe) {
+      queryService = serviceAtEntry;
+      replacementQueryEntered.complete();
+    }
+    final query = () async {
+      if (observe && holdReplacementQuery) {
+        await releaseReplacementQuery.future;
+      }
+      return super.dumpsNeedingTranscriptionRecovery();
+    }();
+    if (observe) {
+      // Observe the SAME future returned to production, not query entry or an
+      // early flag. Completion carries the actual SQLite snapshot unchanged.
+      unawaited(
+        query.then<void>(
+          replacementQueryCompleted.complete,
+          onError: replacementQueryCompleted.completeError,
+        ),
+      );
+    }
+    return query;
   }
 
   @override
   Future<DumpRow?> getDump(String id) async {
     final row = await super.getDump(id);
-    if (pauseRead && armed) {
+    final inTransaction = Zone.current[_transactionZoneKey] == true;
+    if (pauseRead && armed && inTransaction) admissionReadObserved = true;
+    if (pauseRead && armed && !inTransaction) {
       armed = false;
       entered.complete();
       await release.future;
@@ -4959,6 +5047,7 @@ void main() {
         final paused = _LateAcceptanceDb(
           phase == 'row read',
           pauseAfterCommit: phase == 'accepted DB return',
+          holdReplacementQuery: phase != 'accepted DB return',
         );
         db = paused;
         await seedRow(row());
@@ -4983,9 +5072,13 @@ void main() {
             recordingMutationsProvider.overrideWithValue(mutations),
             transcriptionClientProvider.overrideWith((_) => oldClient),
           ],
+          observers: [_LateAcceptanceObserver(paused)],
         );
         addTearDown(() {
           container.dispose();
+          if (!paused.releaseReplacementQuery.isCompleted) {
+            paused.releaseReplacementQuery.complete();
+          }
           if (!paused.release.isCompleted) paused.release.complete();
         });
         final oldService = container.read(serverTranscriptionServiceProvider);
@@ -4994,11 +5087,18 @@ void main() {
         paused.armed = true;
         final work = oldService.transcribeDump('r1');
         addTearDown(() async {
+          if (!paused.releaseReplacementQuery.isCompleted) {
+            paused.releaseReplacementQuery.complete();
+          }
           if (!paused.release.isCompleted) paused.release.complete();
           await work.catchError((_) {});
           await mutations.drain();
         });
         await paused.entered.future;
+        if (phase == 'row read') {
+          expect(paused.admissionReadObserved, isTrue);
+          expect(paused.allocations, 0);
+        }
         if (phase == 'accepted DB return') {
           final committed = (await db.getDump('r1'))!;
           expect(committed.transcriptionRequestId, paused.allocatedRequest);
@@ -5006,6 +5106,8 @@ void main() {
           expect(committed.transcriptionStatus, 'uploading');
         }
         final scansBeforeReplacement = paused.scans;
+        final replacementDeadline =
+            DateTime.now().add(const Duration(seconds: 3));
         container.read(transcriptionClientProvider.notifier).state = newClient;
         Future<void>? replacementScan;
         if (eagerRead) {
@@ -5013,12 +5115,40 @@ void main() {
               container.read(serverTranscriptionServiceProvider);
           expect(identical(oldService, replacement), isFalse);
           replacementScan = replacement.reconcilePending();
-        } else {
+        } else if (phase == 'accepted DB return') {
           await _eventually(
             () => paused.scans > scansBeforeReplacement,
             'app owner must resolve lazy replacement without a consumer read',
           );
         }
+        if (phase != 'accepted DB return') {
+          await paused.replacementQueryEntered.future.timeout(
+            replacementDeadline.difference(DateTime.now()),
+          );
+          expect(paused.firstService, same(oldService));
+          expect(paused.queryService, same(paused.currentService));
+          expect(paused.queryService, isNot(same(oldService)));
+          expect(paused.release.isCompleted, isFalse);
+          expect(
+            paused.replacementQueryCompleted.isCompleted,
+            isFalse,
+            reason: 'entered but held real query cannot satisfy completion',
+          );
+          paused.releaseReplacementQuery.complete();
+          final replacementRows =
+              await paused.replacementQueryCompleted.future.timeout(
+            replacementDeadline.difference(DateTime.now()),
+          );
+          expect(replacementRows, isEmpty);
+          if (replacementScan != null) {
+            await replacementScan.timeout(
+              replacementDeadline.difference(DateTime.now()),
+            );
+          }
+          expect(paused.release.isCompleted, isFalse);
+        }
+        // The accepted-return phase already committed uploading; it retains
+        // admission/held-return evidence, not an impossible empty-scan demand.
         final blockedDeletion = await mutations.acquire(
           'r1',
           UseKind.deletion,
