@@ -54,33 +54,30 @@ class AndroidDocumentsPort(context: Context) : DocumentsIoPort, CaptureDocuments
         }
         override fun close() { if(!closed) { closed=true; release() } }
     }
-    private fun sourceHandle(path:String):FileDescriptor = captureIo {
-        if(!path.startsWith('/') || path.contains('\u0000') || path.split('/').any { it == "." || it == ".." }) fault("invalid","Invalid capture source path")
-        val parts=path.split('/').filter { it.isNotEmpty() }
-        if(parts.isEmpty()) fault("invalid","Missing capture source name")
-        var parent=Os.open("/",OsConstants.O_RDONLY or OsConstants.O_NONBLOCK or OsConstants.O_NOFOLLOW or OsConstants.O_CLOEXEC,0)
-        try {
-            for(part in parts.dropLast(1)) {
-                val next=sourceRelative(parent,part,OsConstants.O_RDONLY or OsConstants.O_NONBLOCK or OsConstants.O_NOFOLLOW or OsConstants.O_CLOEXEC)
-                Os.close(parent); parent=next
+    private fun sourceNode(s:android.system.StructStat) = AndroidCaptureSource.Node(
+        s.st_dev,s.st_ino,OsConstants.S_ISDIR(s.st_mode),OsConstants.S_ISREG(s.st_mode),
+        OsConstants.S_ISLNK(s.st_mode),s.st_uid)
+    private fun sourceOpen(path:String):FileDescriptor =
+        // Use only public API21 flags: O_CLOEXEC is public from API27 and
+        // fcntlInt from API30. These read-only, short-lived handles never leave
+        // this operation; no subprocess is launched by source acquisition.
+        Os.open(path,OsConstants.O_RDONLY or OsConstants.O_NONBLOCK or OsConstants.O_NOFOLLOW,0)
+    private val sourceIo = object:AndroidCaptureSource.Io<FileDescriptor> {
+        override fun canonicalRoot(path:String) = File(path).canonicalPath
+        override fun lstat(path:String) = sourceNode(Os.lstat(path))
+        override fun open(path:String) = sourceOpen(path)
+        override fun openAt(parent:FileDescriptor,name:String):FileDescriptor =
+            android.os.ParcelFileDescriptor.dup(parent).use { anchor ->
+                if(!OsConstants.S_ISDIR(Os.fstat(anchor.fileDescriptor).st_mode)) fault("invalid","Capture source parent is not a directory")
+                sourceOpen("/proc/self/fd/${anchor.fd}/$name")
             }
-            sourceRelative(parent,parts.last(),OsConstants.O_RDONLY or OsConstants.O_NONBLOCK or OsConstants.O_NOFOLLOW or OsConstants.O_CLOEXEC)
-        } finally { Os.close(parent) }
+        override fun stat(handle:FileDescriptor) = sourceNode(Os.fstat(handle))
+        override fun identity(handle:FileDescriptor) = statIdentity(handle)
+        override fun read(handle:FileDescriptor) = CaptureFd(handle,false) {}.use { it.read() }
+        override fun close(handle:FileDescriptor) = Os.close(handle)
     }
-    private fun sourceRelative(parent:FileDescriptor,name:String,flags:Int):FileDescriptor =
-        android.os.ParcelFileDescriptor.dup(parent).use { anchor ->
-            if(!OsConstants.S_ISDIR(Os.fstat(anchor.fileDescriptor).st_mode)) fault("invalid","Capture source parent is not a directory")
-            Os.open("/proc/self/fd/${anchor.fd}/$name",flags,0)
-        }
-    override fun captureSource(path:String):CaptureSource {
-        val fd=sourceHandle(path)
-        val descriptor=try { CaptureFd(fd,false) { Os.close(fd) } } catch(e:Exception) { Os.close(fd); throw e }
-        descriptor.use {
-            val identity=statIdentity(fd); val bytes=it.read()
-            val reopened=sourceHandle(path)
-            try { if(statIdentity(reopened) != identity) fault("conflict","Staging path was replaced") } finally { Os.close(reopened) }
-            return CaptureSource(identity,bytes)
-        }
+    override fun captureSource(path:String):CaptureSource = captureIo {
+        AndroidCaptureSource(app.cacheDir.path,sourceIo).read(path)
     }
     override fun captureRoot(directory:NativeDirectory):Map<String,Any?> {
         val row=query(document(directory)).singleOrNull() ?: fault("unavailable","Capture root unobservable")

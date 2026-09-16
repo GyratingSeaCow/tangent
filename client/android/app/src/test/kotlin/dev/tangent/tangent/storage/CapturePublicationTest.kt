@@ -7,6 +7,126 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 class CapturePublicationTest {
+    @Test fun androidSourceSearchOnlyAncestryPreparesBeforeAnyContentWrite() {
+        CaptureSourceFixture().use { source ->
+            val fixture = CapturePublicationFixture()
+            fixture.sourceReader = { source.read(it) }
+            val reservation = fixture.reservation + ("stagingPath" to source.path)
+            val args = fixture.args() + ("reservation" to reservation)
+            NativeIoSupervisor(Executors.newSingleThreadExecutor()).use { supervisor ->
+                val channel = StorageChannel(supervisor, CapturePublication(fixture)::execute)
+                val result = call(supervisor, channel, "prepareCaptureAt", args)
+                assertEquals("prepared", result["state"])
+                assertEquals(source.path, (result["preparation"] as Map<*, *>)["stagingPath"])
+                assertEquals(2, fixture.creates); assertEquals(0, fixture.writes)
+            }
+        }
+    }
+
+    @Test fun androidSourceAllowsOnlyTrustedRootAliasesWithoutRewritingOriginalPath() {
+        CaptureSourceFixture(alias = true).use { f ->
+            assertArrayEquals(byteArrayOf(1, 2, 3), f.read().bytes)
+            assertArrayEquals(byteArrayOf(1, 2, 3), f.read("${f.canonical}/TangentStaging/fixture-reservation.opus").bytes)
+            assertTrue(f.canonicalCalls.isNotEmpty())
+            assertTrue(f.canonicalCalls.all { it == f.root })
+            assertTrue(f.opens.all { it == f.root || it == f.canonical })
+        }
+    }
+    @Test fun androidSourceRejectsForeignPrefixAndTraversalBeforeOpeningSource() {
+        CaptureSourceFixture(readableAncestors = true).use { f ->
+            val foreign = f.root.substringBefore("/data/") + "/foreign/fixture-reservation.opus"
+            for (path in listOf(foreign, f.root + "-sibling/TangentStaging/fixture-reservation.opus",
+                f.root + "/../cache/TangentStaging/fixture-reservation.opus", f.root + "/./TangentStaging/fixture-reservation.opus",
+                f.path + "/", f.path + '\u0000', "relative.opus", f.root)) {
+                assertThrows(NativeStorageException::class.java) { f.read(path) }
+            }
+            assertTrue("Invalid containment must fail before source open", f.opens.isEmpty())
+        }
+    }
+    @Test fun androidSourceRejectsSuffixFinalCacheAndApplicationLinks() {
+        for (kind in listOf("finalLink", "suffixLink", "rootLink", "appLink", "directoryFile")) {
+            CaptureSourceFixture(readableAncestors = true).use { f ->
+                f.change(kind)
+                assertThrows(NativeStorageException::class.java) { f.read() }
+            }
+        }
+    }
+    @Test fun androidSourceRejectsReplacementAndRootSwapEvenWithSameFinalInode() {
+        for (kind in listOf("replaceFile", "rootSwap", "suffixSwap")) {
+            CaptureSourceFixture(readableAncestors = true).use { f ->
+                var reached = false
+                f.afterRead = { f.change(kind); reached = true }
+                assertThrows(NativeStorageException::class.java) { f.read() }
+                assertTrue("Mutation barrier must actually execute: $kind", reached)
+            }
+        }
+    }
+
+    @Test fun androidSourceAliasProofSurvivesPreparePublishAndColdInspect() {
+        CaptureSourceFixture(alias = true).use { f ->
+            val fixture = CapturePublicationFixture()
+            fixture.sourceReader = { f.read(it) }
+            val reservation = fixture.reservation + ("stagingPath" to f.path)
+            val policy = CapturePublication(fixture)
+            val prepared = policy.prepare(fixture.args() + ("reservation" to reservation))
+            assertEquals("prepared", prepared["state"])
+            val proof = prepared["preparation"] as Map<*, *>
+            assertEquals(f.path, proof["stagingPath"])
+            val args = fixture.preparedArgs(proof) + ("reservation" to reservation)
+            policy.publish(args)
+            val cold = CapturePublication(fixture)
+            assertEquals("complete", (cold.inspect(args)["audio"] as Map<*, *>)["state"])
+            assertEquals(2, fixture.writes)
+            f.change("replaceFile") // identical bytes, different opened-file identity
+            assertThrows(NativeStorageException::class.java) { cold.publish(args) }
+            assertEquals(2, fixture.writes); assertEquals(2, fixture.creates)
+        }
+    }
+    @Test fun androidSourceDetectsLinksIntroducedDuringRead() {
+        for (kind in listOf("finalLink", "suffixLink", "rootLink", "appLink")) {
+            CaptureSourceFixture(alias = true).use { f ->
+                var reached = false
+                f.afterRead = { f.change(kind); reached = true }
+                assertThrows(NativeStorageException::class.java) { f.read() }
+                assertTrue(reached)
+            }
+        }
+    }
+    @Test fun androidSourceRejectsNonPlatformAliasOwnershipAtDecisionSeam() {
+        CaptureSourceFixture(alias = true).use { f ->
+            // Inject only ownership metadata; real-host gate still performs actual
+            // lstat. Never chown a fixture or system path to fake another UID.
+            val io = object : AndroidCaptureSource.Io<Int> by f.io {
+                override fun lstat(path: String): AndroidCaptureSource.Node {
+                    val node = f.io.lstat(path)
+                    return if (node.link) node.copy(uid = 12345) else node
+                }
+            }
+            assertThrows(NativeStorageException::class.java) { AndroidCaptureSource(f.root, io).read(f.path) }
+            assertTrue(f.opens.isEmpty())
+        }
+    }
+    @Test fun androidSourceRejectsRootSwapBetweenValidationAndPinAndClosesFailedStat() {
+        for (statFailure in listOf(false, true)) {
+            CaptureSourceFixture().use { f ->
+                var reached = false
+                val io = object : AndroidCaptureSource.Io<Int> by f.io {
+                    override fun open(path: String): Int {
+                        reached = true
+                        if (!statFailure) f.change("rootSwap")
+                        return f.io.open(path)
+                    }
+                    override fun stat(handle: Int): AndroidCaptureSource.Node {
+                        if (statFailure) throw NativeStorageException("io", "Injected fstat failure after open")
+                        return f.io.stat(handle)
+                    }
+                }
+                assertThrows(NativeStorageException::class.java) { AndroidCaptureSource(f.root, io).read(f.path) }
+                assertTrue(reached)
+            } // teardown asserts zero outstanding descriptors on every failure
+        }
+    }
+
     @Test fun captureUriMatchesLiteralC1AuthorityAndOpaqueEncoding() {
         val authority="MiXeD.例"
         val uri="content://$authority/tree/root%2Fopaque/document/id%2fCAFÉ+%E4%BE%8B"
