@@ -11,12 +11,13 @@ from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response, status
+from pydantic import ValidationError
 from sse_starlette.sse import EventSourceResponse
 
 from app.auth import require_auth
 from app.db import get_db
 from app.logging_config import get_logger
-from app.models import JobCreate, JobResponse
+from app.models import JobCreate, JobResponse, TranscriptSegment
 from app.services.job_queue import RequestIdConflict, enqueue_job, run_job_inline
 
 router = APIRouter()
@@ -26,6 +27,38 @@ log = get_logger(__name__)
 
 def _to_iso(ts: int | None) -> datetime | None:
     return datetime.fromtimestamp(ts, tz=UTC) if ts else None
+
+
+def _column(row: sqlite3.Row, name: str) -> object | None:
+    """Read a column that may be absent (older row shapes, partial SELECTs)."""
+    try:
+        return row[name]
+    except (IndexError, KeyError):
+        return None
+
+
+def _decode_segments(raw: object | None) -> list[TranscriptSegment] | None:
+    """Decode stored segment JSON.
+
+    Returns None when nothing was stored (queued/failed/pre-feature jobs) or
+    when the stored value is unreadable — we report the absence rather than
+    inventing timings.
+    """
+    if raw is None:
+        return None
+    try:
+        decoded = json.loads(raw)
+    except (TypeError, ValueError):
+        log.warning("job.segments_unreadable")
+        return None
+    if not isinstance(decoded, list):
+        log.warning("job.segments_not_a_list", type=type(decoded).__name__)
+        return None
+    try:
+        return [TranscriptSegment(**segment) for segment in decoded]
+    except (TypeError, ValidationError) as exc:
+        log.warning("job.segments_invalid", error=str(exc))
+        return None
 
 
 def _row_to_job(row: sqlite3.Row) -> JobResponse:
@@ -38,6 +71,7 @@ def _row_to_job(row: sqlite3.Row) -> JobResponse:
         started_at=_to_iso(row["started_at"]),
         completed_at=_to_iso(row["completed_at"]),
         result_transcript=row["result_transcript"],
+        segments=_decode_segments(_column(row, "result_segments")),
         error=row["error"],
     )
 
@@ -140,7 +174,8 @@ async def stream_job(
         # Poll for up to 30 minutes
         for _ in range(1800):
             row = db.execute(
-                "SELECT status, request_id, result_transcript, error FROM jobs WHERE id = ?",
+                "SELECT status, request_id, result_transcript, result_segments, error "
+                "FROM jobs WHERE id = ?",
                 (job_id,),
             ).fetchone()
             if row is None:
@@ -164,6 +199,13 @@ async def stream_job(
                 }
                 if current_status == "completed":
                     payload["transcript"] = row["result_transcript"]
+                    segments = _decode_segments(_column(row, "result_segments"))
+                    if segments is not None:
+                        # Key omitted entirely for jobs with no recorded
+                        # segments, so older clients see the original payload.
+                        payload["segments"] = [
+                            segment.model_dump() for segment in segments
+                        ]
                 elif current_status == "failed":
                     payload["error"] = row["error"]
                 yield {"event": current_status, "data": json.dumps(payload)}

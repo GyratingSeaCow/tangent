@@ -97,6 +97,63 @@ def test_fresh_jobs_schema_requires_request_id(temp_data_dir: Path) -> None:
     conn.close()
 
 
+def test_fresh_jobs_schema_has_nullable_result_segments(temp_data_dir: Path) -> None:
+    init_db(str(temp_data_dir))
+    conn = sqlite3.connect(temp_data_dir / "tangent.db")
+    try:
+        columns = {row[1]: row for row in conn.execute("PRAGMA table_info(jobs)")}
+    finally:
+        conn.close()
+
+    assert "result_segments" in columns
+    # notnull flag must be 0 — segments are absent for queued/failed/legacy jobs.
+    assert columns["result_segments"][3] == 0
+
+
+def test_init_db_migrates_legacy_jobs_table_to_have_result_segments(
+    temp_data_dir: Path,
+) -> None:
+    """A DB created before segments existed gains a nullable column, keeping its rows."""
+    db_path = temp_data_dir / "tangent.db"
+    conn = sqlite3.connect(db_path)
+    conn.executescript(SCHEMA.replace("    result_segments TEXT,\n", ""))
+    conn.execute(
+        "INSERT INTO jobs (id, request_id, dump_id, status, model, result_transcript) "
+        "VALUES ('job-old', 'request-old', 'dump-old', 'completed', 'large-v3', 'old text')"
+    )
+    conn.commit()
+    pre_columns = {row[1] for row in conn.execute("PRAGMA table_info(jobs)")}
+    conn.close()
+    assert "result_segments" not in pre_columns, "fixture must start without the column"
+
+    init_db(str(temp_data_dir))
+
+    conn = sqlite3.connect(db_path)
+    try:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(jobs)")}
+        row = conn.execute(
+            "SELECT result_transcript, result_segments FROM jobs WHERE id = 'job-old'"
+        ).fetchone()
+    finally:
+        conn.close()
+
+    assert "result_segments" in columns
+    assert row == ("old text", None)
+
+
+def test_init_db_segments_migration_is_idempotent(temp_data_dir: Path) -> None:
+    init_db(str(temp_data_dir))
+    init_db(str(temp_data_dir))  # must not raise "duplicate column name"
+
+    conn = sqlite3.connect(temp_data_dir / "tangent.db")
+    try:
+        columns = [row[1] for row in conn.execute("PRAGMA table_info(jobs)")]
+    finally:
+        conn.close()
+
+    assert columns.count("result_segments") == 1
+
+
 def test_dumps_table_has_expected_columns(temp_data_dir: Path) -> None:
     init_db(str(temp_data_dir))
     conn = sqlite3.connect(temp_data_dir / "tangent.db")

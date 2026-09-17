@@ -67,6 +67,19 @@ class DumpListResponse(BaseModel):
     offset: int
 
 
+class TranscriptSegment(BaseModel):
+    """One timed chunk of a transcript.
+
+    start/end are elapsed seconds from the start of the audio (not wall-clock).
+    speaker is null unless speaker diarization actually ran.
+    """
+
+    start: float
+    end: float
+    speaker: str | None = None
+    text: str
+
+
 class JobCreate(BaseModel):
     """Request to enqueue a transcription job."""
 
@@ -83,6 +96,7 @@ class JobResponse(BaseModel):
     started_at: datetime | None
     completed_at: datetime | None
     result_transcript: str | None
+    segments: list[TranscriptSegment] | None = None
     error: str | None
 
 

@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     started_at INTEGER,
     completed_at INTEGER,
     result_transcript TEXT,
+    result_segments TEXT,
     error TEXT,
     FOREIGN KEY (dump_id) REFERENCES dumps(id) ON DELETE CASCADE
 );
@@ -84,6 +85,18 @@ def _migrate_jobs_request_id(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_jobs_result_segments(conn: sqlite3.Connection) -> None:
+    """Add the nullable result_segments column to pre-segments databases.
+
+    Stores the JSON-encoded segment list. NULL means "no segments recorded"
+    (queued, failed, or a job completed before this column existed) — which is
+    deliberately distinct from '[]' meaning "transcribed, no speech found".
+    """
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(jobs)")}
+    if "result_segments" not in columns:
+        conn.execute("ALTER TABLE jobs ADD COLUMN result_segments TEXT")
+
+
 def init_db(data_dir: str) -> None:
     """Create the SQLite DB and apply schema. Idempotent."""
     Path(data_dir).mkdir(parents=True, exist_ok=True)
@@ -94,6 +107,7 @@ def init_db(data_dir: str) -> None:
     try:
         conn.executescript(SCHEMA)
         _migrate_jobs_request_id(conn)
+        _migrate_jobs_result_segments(conn)
         conn.commit()
     finally:
         conn.close()

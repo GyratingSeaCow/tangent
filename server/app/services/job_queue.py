@@ -10,6 +10,7 @@ startup. Good enough for one user on one server.
 from __future__ import annotations
 
 import contextlib
+import json
 import sqlite3
 import time
 import uuid
@@ -119,7 +120,11 @@ def run_job_inline(job_id: str, audio_path: str) -> None:
                 raise FileNotFoundError(f"Audio file not found at {audio_path}")
 
             service = get_transcription_service()
-            transcript = service.transcribe(audio_path)
+            result = service.transcribe(audio_path)
+            transcript = result.text
+            # Segment timings describe the raw audio, so they are stored as
+            # transcribed and are NOT rewritten by mode-specific formatting.
+            segments_json = json.dumps(result.segments)
 
             # For 'meeting' mode, extract action items and format as a summary.
             dump_row = db.execute(
@@ -143,10 +148,10 @@ def run_job_inline(job_id: str, audio_path: str) -> None:
             db.execute(
                 """
                 UPDATE jobs SET status = 'completed', completed_at = ?,
-                                result_transcript = ?
+                                result_transcript = ?, result_segments = ?
                 WHERE id = ?
                 """,
-                (_now_ts(), transcript, job_id),
+                (_now_ts(), transcript, segments_json, job_id),
             )
             # Also update the dump's transcript if not already set or if server transcript is better
             db.execute(
@@ -154,7 +159,12 @@ def run_job_inline(job_id: str, audio_path: str) -> None:
                 "WHERE id = (SELECT dump_id FROM jobs WHERE id = ?)",
                 (transcript, _now_ts(), job_id),
             )
-            log.info("job.completed", job_id=job_id, length=len(transcript))
+            log.info(
+                "job.completed",
+                job_id=job_id,
+                length=len(transcript),
+                segments=len(result.segments),
+            )
 
         except Exception as exc:
             log.exception("job.failed", job_id=job_id)
