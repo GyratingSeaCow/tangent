@@ -820,7 +820,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
         await _requireMutationKey(id, storageKey);
         final timestamp = now.toUtc();
         final allowedSourceStatuses = switch (status) {
-          TranscriptionStatus.notTranscribed => const <String>['__never__'],
+          TranscriptionStatus.notTranscribed ||
+          TranscriptionStatus.notApplicable =>
+            const <String>['__never__'],
           TranscriptionStatus.uploading => <String>[
               TranscriptionStatus.uploading.wireValue,
             ],

@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS dumps (
     client_id TEXT NOT NULL,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
-    mode TEXT NOT NULL CHECK (mode IN ('brain_dump', 'meeting')),
+    mode TEXT NOT NULL CHECK (mode IN ('brain_dump', 'meeting', 'text_note')),
     duration_seconds INTEGER NOT NULL,
     title TEXT NOT NULL,
     transcript TEXT,
@@ -84,6 +84,43 @@ def _migrate_jobs_request_id(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_dumps_mode_check(conn: sqlite3.Connection) -> None:
+    """Rebuild dumps if its mode CHECK predates text_note. Idempotent."""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'dumps'"
+    ).fetchone()
+    if row is None or "text_note" in row[0]:
+        return
+    conn.executescript(
+        """
+        PRAGMA foreign_keys = OFF;
+        CREATE TABLE dumps_new (
+            id TEXT PRIMARY KEY,
+            client_id TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            mode TEXT NOT NULL
+                CHECK (mode IN ('brain_dump', 'meeting', 'text_note')),
+            duration_seconds INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            transcript TEXT,
+            audio_kept INTEGER NOT NULL DEFAULT 0,
+            deleted_at INTEGER
+        );
+        INSERT INTO dumps_new
+            SELECT id, client_id, created_at, updated_at, mode,
+                   duration_seconds, title, transcript, audio_kept, deleted_at
+            FROM dumps;
+        DROP TABLE dumps;
+        ALTER TABLE dumps_new RENAME TO dumps;
+        CREATE INDEX IF NOT EXISTS idx_dumps_client_id ON dumps(client_id);
+        CREATE INDEX IF NOT EXISTS idx_dumps_created_at
+            ON dumps(created_at DESC);
+        PRAGMA foreign_keys = ON;
+        """
+    )
+
+
 def init_db(data_dir: str) -> None:
     """Create the SQLite DB and apply schema. Idempotent."""
     Path(data_dir).mkdir(parents=True, exist_ok=True)
@@ -94,6 +131,7 @@ def init_db(data_dir: str) -> None:
     try:
         conn.executescript(SCHEMA)
         _migrate_jobs_request_id(conn)
+        _migrate_dumps_mode_check(conn)
         conn.commit()
     finally:
         conn.close()

@@ -62,6 +62,16 @@ def test_create_dump(authed_client):
     assert body["title"] == "Test dump 1"
 
 
+def test_create_text_note_dump(authed_client):
+    client, token = authed_client
+    payload = _make_dump_payload(30)
+    payload["mode"] = "text_note"
+    payload["duration_seconds"] = 0
+    resp = client.post("/v1/dumps", json=payload, headers=_auth(token))
+    assert resp.status_code == 201
+    assert resp.json()["mode"] == "text_note"
+
+
 def test_create_dump_requires_auth(authed_client):
     client, _ = authed_client
     resp = client.post("/v1/dumps", json=_make_dump_payload(1))

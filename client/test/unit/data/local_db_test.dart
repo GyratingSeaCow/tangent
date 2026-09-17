@@ -18,6 +18,10 @@ void main() {
       expect(TranscriptionStatus.running.isInProgress, isTrue);
       expect(TranscriptionStatus.completed.isTerminal, isTrue);
       expect(TranscriptionStatus.failed.isTerminal, isTrue);
+      // not_applicable is the terminal state for text notes, which are
+      // never transcribed (spec: 2026-09-17-text-note-design data model).
+      expect(TranscriptionStatus.notApplicable.isTerminal, isTrue);
+      expect(TranscriptionStatus.notApplicable.isInProgress, isFalse);
       expect(
         TranscriptionStatus.values.map((status) => status.wireValue),
         [
@@ -27,6 +31,7 @@ void main() {
           'running',
           'completed',
           'failed',
+          'not_applicable',
         ],
       );
     });

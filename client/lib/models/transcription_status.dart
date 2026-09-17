@@ -7,7 +7,10 @@ enum TranscriptionStatus {
   queued('queued'),
   running('running'),
   completed('completed'),
-  failed('failed');
+  failed('failed'),
+
+  /// Terminal state for dumps that are never transcribed (text notes).
+  notApplicable('not_applicable');
 
   const TranscriptionStatus(this.wireValue);
 
@@ -16,7 +19,8 @@ enum TranscriptionStatus {
   bool get isInProgress =>
       this == uploading || this == queued || this == running;
 
-  bool get isTerminal => this == completed || this == failed;
+  bool get isTerminal =>
+      this == completed || this == failed || this == notApplicable;
 
   static TranscriptionStatus fromWire(String value) =>
       values.firstWhere((status) => status.wireValue == value);

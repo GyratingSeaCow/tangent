@@ -110,3 +110,52 @@ def test_dumps_table_has_expected_columns(temp_data_dir: Path) -> None:
         "duration_seconds", "title", "transcript", "audio_kept",
     }
     assert expected.issubset(cols)
+
+
+def test_init_db_migrates_dumps_mode_check_for_text_note(
+    temp_data_dir: Path,
+) -> None:
+    """A legacy DB whose mode CHECK lacks text_note is rebuilt in place."""
+    db_path = temp_data_dir / "tangent.db"
+    legacy_schema = SCHEMA.replace("'meeting', 'text_note'", "'meeting'")
+    assert "text_note" not in legacy_schema
+    conn = sqlite3.connect(db_path)
+    conn.executescript(legacy_schema)
+    conn.execute(
+        "INSERT INTO dumps (id, client_id, created_at, updated_at, mode, "
+        "duration_seconds, title, transcript, audio_kept) "
+        "VALUES ('dump-legacy', 'client-a', 1, 1, 'brain_dump', 60, "
+        "'Legacy', NULL, 0)"
+    )
+    conn.commit()
+    conn.close()
+
+    init_db(str(temp_data_dir))
+    init_db(str(temp_data_dir))  # migration must be idempotent
+
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            "INSERT INTO dumps (id, client_id, created_at, updated_at, mode, "
+            "duration_seconds, title, transcript, audio_kept) "
+            "VALUES ('dump-note', 'client-a', 2, 2, 'text_note', 0, "
+            "'Note', 'body', 0)"
+        )
+        rows = conn.execute(
+            "SELECT id, mode FROM dumps ORDER BY created_at"
+        ).fetchall()
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT INTO dumps (id, client_id, created_at, updated_at, "
+                "mode, duration_seconds, title, transcript, audio_kept) "
+                "VALUES ('dump-bad', 'client-a', 3, 3, 'bogus', 0, 'X', "
+                "NULL, 0)"
+            )
+        index_names = {
+            row[1] for row in conn.execute("PRAGMA index_list('dumps')")
+        }
+    finally:
+        conn.close()
+
+    assert rows == [("dump-legacy", "brain_dump"), ("dump-note", "text_note")]
+    assert {"idx_dumps_client_id", "idx_dumps_created_at"}.issubset(index_names)

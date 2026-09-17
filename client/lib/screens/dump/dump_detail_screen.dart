@@ -829,6 +829,7 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
                     TranscriptionStatus.completed => 'Transcribe again',
                     TranscriptionStatus.failed => 'Retry',
                     TranscriptionStatus.notTranscribed => 'Transcribe',
+                    TranscriptionStatus.notApplicable => 'Not applicable',
                   },
                 ),
                 onPressed:
@@ -1012,6 +1013,7 @@ class _ServerTranscriptionProgressPanelState
       TranscriptionStatus.failed => 'Server transcription failed',
       TranscriptionStatus.completed => 'Transcription complete',
       TranscriptionStatus.notTranscribed => 'Not transcribed',
+      TranscriptionStatus.notApplicable => 'Transcription not applicable',
     };
     final startedAt = widget.row.transcriptionStartedAt;
     final rawElapsed = startedAt == null
@@ -1064,6 +1066,7 @@ class _ServerTranscriptionProgressPanelState
         'The previous transcript and raw recording are preserved on this device.',
       TranscriptionStatus.completed => 'Saved locally',
       TranscriptionStatus.notTranscribed => 'No transcription attempt yet',
+      TranscriptionStatus.notApplicable => 'Text notes are not transcribed',
     };
   }
 

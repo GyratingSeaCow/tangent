@@ -568,6 +568,13 @@ class _TranscriptionStatusPill extends StatelessWidget {
           colors.errorContainer,
           colors.error,
         ),
+      TranscriptionStatus.notApplicable => (
+          'Note',
+          Icons.edit_note,
+          colors.onSurfaceVariant,
+          colors.surfaceContainerHighest,
+          colors.outline,
+        ),
     };
     return Container(
       key: ValueKey('transcription-pill-$dumpId-$slug'),

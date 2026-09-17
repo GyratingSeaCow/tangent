@@ -216,6 +216,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           'Quick voice memo — gets transcribed and searchable.',
         DumpMode.meeting =>
           'Secretary mode — meeting notes with action items extracted.',
+        DumpMode.textNote =>
+          'Type a quick note — searchable with your dumps.',
       };
 }
 
