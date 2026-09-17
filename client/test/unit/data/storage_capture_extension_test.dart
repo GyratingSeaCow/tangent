@@ -84,10 +84,14 @@ void main() {
     expect(p.basename(binding.audio.value), '${r.key.dumpId}.md');
     expect(binding.metadataName, '${r.key.dumpId}.meta.json');
     expect(published.sizeBytes, noteBytes.length);
-    final noteFile = File(p.join(h.f.directory('A'), '${r.key.dumpId}.md'));
+    // T1: text notes publish into the 'Tangent Text Notes' child of the
+    // chosen folder, never at the root.
+    final noteDirectory =
+        p.join(h.f.directory('A'), textNoteSubdirectoryName);
+    expect(p.dirname(binding.audio.value), noteDirectory);
+    final noteFile = File(p.join(noteDirectory, '${r.key.dumpId}.md'));
     expect(await noteFile.readAsBytes(), noteBytes);
-    final sidecar =
-        File(p.join(h.f.directory('A'), '${r.key.dumpId}.meta.json'));
+    final sidecar = File(p.join(noteDirectory, '${r.key.dumpId}.meta.json'));
     expect(await sidecar.readAsBytes(), utf8.encode(metadata));
     // The backends' component resolution accepts the published .md audio
     // slot for read and deletion (note deletion capability, Task 10 proof).

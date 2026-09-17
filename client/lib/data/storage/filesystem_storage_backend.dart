@@ -214,17 +214,26 @@ class FilesystemStorageBackend implements StorageBackend {
       for (final mode in const ['brain_dump', 'meeting', 'text_note'])
         '$id.${contentExtensionForMode(mode)}',
     };
+    // The binding locator is authoritative for the parent: audio modes (and
+    // legacy notes) live at the root, published text notes live inside the
+    // owned 'Tangent Text Notes' child. Only the note content name may bind
+    // through the subdirectory.
+    final parent = p.dirname(binding.audio.value);
+    final basename = p.basename(binding.audio.value);
+    final rootParent = p.equals(parent, root);
+    final noteParent =
+        p.equals(parent, p.join(root, textNoteSubdirectoryName)) &&
+            basename == '$id.${contentExtensionForMode('text_note')}';
     if (binding.metadataName != '$id.meta.json' ||
         binding.audio.kind != 'file' ||
-        !p.equals(p.dirname(binding.audio.value), root) ||
-        !contentNames.contains(p.basename(binding.audio.value))) {
+        (!rootParent && !noteParent) ||
+        !contentNames.contains(basename)) {
       _invalid('Binding does not identify exact owned components');
     }
+    // The sidecar always lives beside its content component.
     return p.join(
-      root,
-      component == RecordingComponent.audio
-          ? p.basename(binding.audio.value)
-          : binding.metadataName,
+      parent,
+      component == RecordingComponent.audio ? basename : binding.metadataName,
     );
   }
 
@@ -474,58 +483,70 @@ class FilesystemStorageBackend implements StorageBackend {
         () => _outcome(() async {
           final root = await _root(location);
           final result = <ImportedEntry>[];
-          final entries =
-              await Directory(root).list(followLinks: false).toList();
           // Owned primary-content names derive from the ONE shared mode
           // helper (see _component): audio modes publish .opus, text notes
-          // publish .md. Both are enumerable durable-pair content.
+          // publish .md. Both are enumerable durable-pair content. Text
+          // notes publish inside the 'Tangent Text Notes' child; legacy
+          // root-level .md pairs still import (tolerance, no migration).
           final contentSuffixes = {
             for (final mode in const ['brain_dump', 'meeting', 'text_note'])
               '.${contentExtensionForMode(mode)}',
           };
-          for (final entry in entries) {
-            if (!contentSuffixes.any(entry.path.endsWith)) continue;
-            final id = p.basenameWithoutExtension(entry.path);
-            Map<String, dynamic>? metadata;
-            StorageProblem? problem;
-            var size = 0;
-            var modified = DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
-            try {
-              StorageCodec.validateLiteralId(id);
-              await _regular(entry.path);
-              final stat = await entry.stat();
-              size = stat.size;
-              modified = stat.modified;
-              final meta = File(p.join(root, '$id.meta.json'));
-              if (entries.any((e) => p.equals(e.path, meta.path))) {
-                await _regular(meta.path);
-                final decoded = jsonDecode(await meta.readAsString());
-                if (decoded is! Map<String, dynamic> ||
-                    decoded['id'] != id ||
-                    !const [1, 2].contains(decoded['schemaVersion'])) {
-                  _invalid('Metadata identity/schema mismatch');
+          Future<void> scan(String directory) async {
+            final entries =
+                await Directory(directory).list(followLinks: false).toList();
+            for (final entry in entries) {
+              if (!contentSuffixes.any(entry.path.endsWith)) continue;
+              final id = p.basenameWithoutExtension(entry.path);
+              Map<String, dynamic>? metadata;
+              StorageProblem? problem;
+              var size = 0;
+              var modified =
+                  DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
+              try {
+                StorageCodec.validateLiteralId(id);
+                await _regular(entry.path);
+                final stat = await entry.stat();
+                size = stat.size;
+                modified = stat.modified;
+                final meta = File(p.join(directory, '$id.meta.json'));
+                if (entries.any((e) => p.equals(e.path, meta.path))) {
+                  await _regular(meta.path);
+                  final decoded = jsonDecode(await meta.readAsString());
+                  if (decoded is! Map<String, dynamic> ||
+                      decoded['id'] != id ||
+                      !const [1, 2].contains(decoded['schemaVersion'])) {
+                    _invalid('Metadata identity/schema mismatch');
+                  }
+                  metadata = decoded;
                 }
-                metadata = decoded;
+              } on StorageFault catch (e) {
+                problem = e.problem;
+              } on FileSystemException catch (e) {
+                problem = (code: ProblemCode.io, message: e.message);
+              } on FormatException {
+                problem =
+                    (code: ProblemCode.invalid, message: 'Malformed metadata');
               }
-            } on StorageFault catch (e) {
-              problem = e.problem;
-            } on FileSystemException catch (e) {
-              problem = (code: ProblemCode.io, message: e.message);
-            } on FormatException {
-              problem =
-                  (code: ProblemCode.invalid, message: 'Malformed metadata');
+              result.add(
+                (
+                  id: id,
+                  source: location,
+                  audio: (kind: 'file', value: entry.path),
+                  sizeBytes: size,
+                  modifiedAt: modified,
+                  metadata: metadata,
+                  problem: problem
+                ),
+              );
             }
-            result.add(
-              (
-                id: id,
-                source: location,
-                audio: (kind: 'file', value: entry.path),
-                sizeBytes: size,
-                modifiedAt: modified,
-                metadata: metadata,
-                problem: problem
-              ),
-            );
+          }
+
+          await scan(root);
+          final noteDirectory = p.join(root, textNoteSubdirectoryName);
+          if (await FileSystemEntity.type(noteDirectory, followLinks: false) ==
+              FileSystemEntityType.directory) {
+            await scan(noteDirectory);
           }
           return result;
         }),

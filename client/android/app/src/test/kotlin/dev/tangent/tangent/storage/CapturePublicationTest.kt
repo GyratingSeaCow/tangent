@@ -193,6 +193,56 @@ class CapturePublicationTest {
         CaptureWire.metadata(fixture.metadata, fixture.reservation)
     }
 
+    private fun noteArgs(f:CapturePublicationFixture):Map<String,Any?> {
+        val reservation=f.reservation + mapOf("mode" to "text_note","stagingPath" to "/fixture/fixture-reservation.md")
+        val metadata="{ \"schemaVersion\": 2, \"id\": \"fixture-dump\", \"mode\": \"text_note\", \"title\": \"café 🧪\", \"transcript\": \"body\" }"
+        return mapOf("operationId" to "capture-fixture-reservation-prepare","reservation" to reservation,"metadataJson" to metadata,"audioSha256" to CaptureWire.sha(f.source))
+    }
+    @Test fun textNotePairPublishesInsideCreatedTangentTextNotesDirectory() {
+        val f=CapturePublicationFixture(); val p=CapturePublication(f)
+        val args=noteArgs(f)
+        val prepared=p.prepare(args)
+        assertEquals("prepared",prepared["state"])
+        val directories=f.documents.values.filter { it.node.directory }
+        assertEquals(1,directories.size)
+        assertEquals(CaptureWire.TEXT_NOTE_DIRECTORY,directories.single().node.name)
+        assertTrue(f.documents.values.any { it.node.name == "fixture-dump.md" && !it.node.directory })
+        assertTrue(f.documents.values.any { it.node.name == "fixture-dump.meta.json" && !it.node.directory })
+        val publishArgs=args + mapOf("operationId" to "fixture-note-publish","preparation" to prepared["preparation"])
+        p.publish(publishArgs)
+        assertEquals(2,f.writes)
+        val cold=CapturePublication(f)
+        assertEquals("complete",(cold.inspect(publishArgs)["audio"] as Map<*,*>)["state"])
+        assertEquals("complete",(cold.inspect(publishArgs)["metadata"] as Map<*,*>)["state"])
+    }
+    @Test fun textNoteReusesExistingDirectoryAndRejectsNonDirectoryHomonym() {
+        val existing=CapturePublicationFixture()
+        val node=NativeNode("existing:notes/dir",CaptureWire.TEXT_NOTE_DIRECTORY,true)
+        existing.documents[node.id]=CapturePublicationFixture.Document(node)
+        val prepared=CapturePublication(existing).prepare(noteArgs(existing))
+        assertEquals("prepared",prepared["state"])
+        // Reuse: exactly the two content creates; no second directory create.
+        assertEquals(2,existing.creates)
+        assertEquals(1,existing.documents.values.count { it.node.directory })
+        val foreign=CapturePublicationFixture()
+        val file=NativeNode("foreign:notes/file",CaptureWire.TEXT_NOTE_DIRECTORY,false)
+        foreign.documents[file.id]=CapturePublicationFixture.Document(file,byteArrayOf(7))
+        val conflicted=CapturePublication(foreign).prepare(noteArgs(foreign))
+        assertEquals("notStarted",conflicted["state"])
+        assertEquals("conflict",(conflicted["problem"] as Map<*,*>)["code"])
+        assertEquals(0,foreign.creates)
+        assertArrayEquals(byteArrayOf(7),foreign.documents.getValue(file.id).bytes)
+    }
+    @Test fun audioModesNeverCreateTheTextNoteDirectory() {
+        val f=CapturePublicationFixture(); val p=CapturePublication(f)
+        val prepared=p.prepare(f.args())
+        assertEquals("prepared",prepared["state"])
+        assertEquals(2,f.creates)
+        assertTrue(f.documents.values.none { it.node.directory })
+        p.publish(f.preparedArgs(prepared["preparation"]))
+        assertTrue(f.documents.values.none { it.node.name == CaptureWire.TEXT_NOTE_DIRECTORY })
+    }
+
     private fun call(supervisor:NativeIoSupervisor,channel:StorageChannel,method:String,args:Map<String,Any?>):Map<*,*> {
         val submitted=channel.handle(method,args) as Map<*,*>
         supervisor.operation(submitted["operationId"] as String)!!.settled.get(5,TimeUnit.SECONDS)

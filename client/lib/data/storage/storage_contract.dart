@@ -50,6 +50,12 @@ final class StorageFault implements Exception {
 String contentExtensionForMode(String mode) =>
     mode == 'text_note' ? 'md' : 'opus';
 
+/// Child directory of the user-chosen storage folder that owns published
+/// text notes (`<id>.md` + `<id>.meta.json`). Audio modes keep publishing at
+/// the folder root. The Kotlin SAF port mirrors this exact literal
+/// (CaptureWire.TEXT_NOTE_DIRECTORY).
+const String textNoteSubdirectoryName = 'Tangent Text Notes';
+
 typedef RecordingKey = ({String dumpId, String incarnation});
 typedef DirectoryRef = ({
   String kind,

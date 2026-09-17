@@ -55,7 +55,11 @@ void main() {
     expect(row.durationSeconds, 0);
     expect(row.audioSizeBytes, bytes.length);
     expect(p.basename(row.audioPath), '${row.id}.md');
-    expect(p.dirname(row.audioPath), h.f.directory('A'));
+    expect(
+      p.dirname(row.audioPath),
+      p.join(h.f.directory('A'), textNoteSubdirectoryName),
+      reason: 'notes publish into the Tangent Text Notes subdirectory',
+    );
     expect(row.syncStatus, 'pending');
     final persisted = await h.f.db.getDump(row.id);
     expect(persisted, isNotNull);
@@ -64,13 +68,15 @@ void main() {
     expect(persisted.title, generatedNoteTitle(now));
     expect(persisted.audioPath, row.audioPath);
     expect(persisted.audioSizeBytes, bytes.length);
-    final published = File(p.join(h.f.directory('A'), '${row.id}.md'));
+    final noteDirectory =
+        p.join(h.f.directory('A'), textNoteSubdirectoryName);
+    final published = File(p.join(noteDirectory, '${row.id}.md'));
     expect(
       await published.readAsBytes(),
       bytes,
       reason: 'the published .md must hold the exact typed bytes',
     );
-    final sidecar = File(p.join(h.f.directory('A'), '${row.id}.meta.json'));
+    final sidecar = File(p.join(noteDirectory, '${row.id}.meta.json'));
     final metadata =
         jsonDecode(await sidecar.readAsString()) as Map<String, dynamic>;
     expect(metadata['mode'], 'text_note');
@@ -166,7 +172,9 @@ void main() {
     expect(row.audioSizeBytes, bytes.length);
     expect(p.basename(row.audioPath), '$dumpId.md');
     expect(
-      await File(p.join(h.f.directory('A'), '$dumpId.md')).readAsBytes(),
+      await File(
+        p.join(h.f.directory('A'), textNoteSubdirectoryName, '$dumpId.md'),
+      ).readAsBytes(),
       bytes,
     );
     expect(await reservationCount(h), 0);

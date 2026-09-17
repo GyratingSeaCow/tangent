@@ -240,7 +240,15 @@ void main() {
     await tester.runAsync(() async {
       saveButton.onPressed!();
     });
-    final sidecarFile = File(p.join(h.f.directory('A'), '${row.id}.meta.json'));
+    // Notes publish inside the Tangent Text Notes child (T1); the sidecar
+    // republishes beside the .md there, not at the folder root.
+    final sidecarFile = File(
+      p.join(
+        h.f.directory('A'),
+        textNoteSubdirectoryName,
+        '${row.id}.meta.json',
+      ),
+    );
     await pumpBoundUntil(tester, () async {
       final saved = await h.f.db.getDump(row.id);
       if (saved == null ||

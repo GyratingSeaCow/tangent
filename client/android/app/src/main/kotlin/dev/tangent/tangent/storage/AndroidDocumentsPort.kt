@@ -235,6 +235,15 @@ class AndroidDocumentsPort(context: Context) : DocumentsIoPort, CaptureDocuments
             throw e
         }
     }
+    /** The 'Tangent Text Notes' child of the owned root, if present as a real
+     * directory. Text notes publish there (see CapturePublication); bound
+     * note operations must follow. Never created on this read path. */
+    private fun noteDirectory(d:NativeDirectory):NativeDirectory? {
+        val matches = children(d).filter { it.name == CaptureWire.TEXT_NOTE_DIRECTORY }
+        val node = matches.singleOrNull() ?: return null
+        if (!node.directory || node.virtual) return null
+        return NativeDirectory(d.authority,d.treeUri,node.id)
+    }
     fun execute(method:String,args:Map<String,Any?>):Any? {
         if(method in setOf("prepareCaptureAt","inspectPreparedCaptureAt","publishPreparedCaptureAt")) return capture.execute(method,args)
         if (method == "inspectLegacyStorage") {
@@ -252,26 +261,33 @@ class AndroidDocumentsPort(context: Context) : DocumentsIoPort, CaptureDocuments
             return probeReceipts.capture { policy.probe(d,literal(args["token"])) }
         }
         if (method == "listRecordingsAt") {
-            val nodes = children(d)
             // Durable-pair primary content mirrors the shared Dart mode helper
             // (contentExtensionForMode): audio modes publish .opus, text notes
-            // publish .md. Both enumerate as importable pairs.
+            // publish .md. Both enumerate as importable pairs. Text notes
+            // publish inside the 'Tangent Text Notes' child; legacy root-level
+            // .md pairs still enumerate (tolerance, no migration).
             val contentSuffixes = listOf(".opus", ".md")
-            return nodes.mapNotNull { node ->
-                val suffix = contentSuffixes.firstOrNull { node.name.endsWith(it) } ?: return@mapNotNull null
-                val id = node.name.removeSuffix(suffix)
-                var problem:Map<String,Any?>? = null; var meta:String? = null; var size = 0L; var modified = 0L
-                try {
-                    literal(id); val owned = policy.ownedNode(d,node.name,node.id) ?: fault("absent","Audio disappeared")
-                    resolver.query(checked(d,owned),arrayOf(DC.Document.COLUMN_SIZE,DC.Document.COLUMN_LAST_MODIFIED),null,null,null)?.use {
-                        if (!it.moveToFirst() || it.isNull(0) || it.isNull(1)) fault("unavailable","Provider size/time unavailable")
-                        size = it.getLong(0); modified = it.getLong(1)
-                    } ?: fault("unavailable","Provider stat unavailable")
-                    val sidecar = policy.ownedNode(d,"$id.meta.json",null)
-                    if (sidecar != null) meta = read(d,sidecar).toString(Charsets.UTF_8)
-                } catch(e: Exception) { problem = mapOf("code" to (if(e is NativeStorageException) e.code else "io"),"message" to "Could not inspect recording") }
-                mapOf("id" to id,"audio" to mapOf("version" to 1,"kind" to "saf","value" to uri(d,node)),"sizeBytes" to size,"modifiedAt" to modified,"metadataJson" to meta,"problem" to problem)
+            fun scan(dir:NativeDirectory):List<Map<String,Any?>> {
+                val nodes = children(dir)
+                return nodes.mapNotNull { node ->
+                    val suffix = contentSuffixes.firstOrNull { node.name.endsWith(it) } ?: return@mapNotNull null
+                    val id = node.name.removeSuffix(suffix)
+                    var problem:Map<String,Any?>? = null; var meta:String? = null; var size = 0L; var modified = 0L
+                    try {
+                        literal(id); val owned = policy.ownedNode(dir,node.name,node.id) ?: fault("absent","Audio disappeared")
+                        resolver.query(checked(dir,owned),arrayOf(DC.Document.COLUMN_SIZE,DC.Document.COLUMN_LAST_MODIFIED),null,null,null)?.use {
+                            if (!it.moveToFirst() || it.isNull(0) || it.isNull(1)) fault("unavailable","Provider size/time unavailable")
+                            size = it.getLong(0); modified = it.getLong(1)
+                        } ?: fault("unavailable","Provider stat unavailable")
+                        val sidecar = policy.ownedNode(dir,"$id.meta.json",null)
+                        if (sidecar != null) meta = read(dir,sidecar).toString(Charsets.UTF_8)
+                    } catch(e: Exception) { problem = mapOf("code" to (if(e is NativeStorageException) e.code else "io"),"message" to "Could not inspect recording") }
+                    mapOf("id" to id,"audio" to mapOf("version" to 1,"kind" to "saf","value" to uri(dir,node)),"sizeBytes" to size,"modifiedAt" to modified,"metadataJson" to meta,"problem" to problem)
+                }
             }
+            val results = scan(d).toMutableList()
+            noteDirectory(d)?.let { results += scan(it) }
+            return results
         }
 
         val b = binding ?: fault("invalid","Missing binding")
@@ -283,24 +299,48 @@ class AndroidDocumentsPort(context: Context) : DocumentsIoPort, CaptureDocuments
         // SAF document IDs are provider-opaque, so NEVER parse them for a
         // filename — resolve by constant-name lookup exactly as before, with
         // the .md fallback. ownedNode validates name+docId together, so a
-        // foreign same-name document still faults.
-        fun ownedContent() = policy.ownedNode(d,"$id.opus",expected) ?: policy.ownedNode(d,"$id.md",expected)
+        // foreign same-name document still faults. Text notes publish inside
+        // the 'Tangent Text Notes' child, so name resolution checks the root
+        // first (audio modes, legacy root notes) and then that child; the
+        // binding-derived docId keeps the lookup anchored to the exact
+        // published document either way.
+        val note = noteDirectory(d)
+        fun ownedContent():Pair<NativeDirectory,NativeNode>? {
+            policy.ownedNode(d,"$id.opus",expected)?.let { return d to it }
+            policy.ownedNode(d,"$id.md",expected)?.let { return d to it }
+            note?.let { n -> policy.ownedNode(n,"$id.md",expected)?.let { return n to it } }
+            return null
+        }
         // If content is present, even metadata-only work must reject a same-name
         // foreign document. Absence remains valid for explicit deletion retry.
         val present = ownedContent()
         return when(method) {
             "readAudioAt", "playbackSourceAt" -> {
-                val node = present ?: fault("absent","Audio absent")
-                if (method == "readAudioAt") read(d,node) else b["audio"]
+                val (dir,node) = present ?: fault("absent","Audio absent")
+                if (method == "readAudioAt") read(dir,node) else b["audio"]
             }
             "deleteComponentAt" -> {
                 val component = text(args["component"])
                 if (component != "audio" && component != "metadata") fault("invalid","Unknown component")
-                val contentName = present?.name ?: "$id.opus"
-                val result = policy.deleteComponent(d,if(component == "audio") contentName else "$id.meta.json",if(component == "audio") expected else null)
+                // Components live beside the resolved content. A metadata-only
+                // retry with no surviving content also checks the note child so
+                // subdir sidecars stay deletable after their .md is gone.
+                val dir = present?.first ?: d
+                val contentName = present?.second?.name ?: "$id.opus"
+                var result = policy.deleteComponent(dir,if(component == "audio") contentName else "$id.meta.json",if(component == "audio") expected else null)
+                if (component == "metadata" && result.state == "absent" && present == null && note != null) {
+                    result = policy.deleteComponent(note,"$id.meta.json",null)
+                }
                 mapOf("state" to result.state,"problem" to result.problem?.let { mapOf("code" to it.code,"message" to it.message) })
             }
-            "writeMetadataAt" -> { publish(d,"$id.meta.json","application/json",metadata(args,id),true); null }
+            "writeMetadataAt" -> {
+                // The sidecar publishes beside its content; with no surviving
+                // content, prefer wherever an owned sidecar already exists.
+                val target = present?.first
+                    ?: note?.takeIf { policy.ownedNode(it,"$id.meta.json",null) != null }
+                    ?: d
+                publish(target,"$id.meta.json","application/json",metadata(args,id),true); null
+            }
             else -> fault("unsupported","Unsupported native storage method")
         }
     }

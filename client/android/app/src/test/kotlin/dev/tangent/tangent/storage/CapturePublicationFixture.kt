@@ -45,7 +45,7 @@ class CapturePublicationFixture : CaptureDocumentsPort {
     override fun captureCreate(directory:NativeDirectory,name:String,mime:String,returned:(String)->Unit):String {
         access(); creates++
         val id=returnedExisting ?: "primary:opaque/path-${sequence++}"
-        if(returnedExisting == null) documents[id]=Document(NativeNode(id,if(renamed) "$name (1)" else name,false))
+        if(returnedExisting == null) documents[id]=Document(NativeNode(id,if(renamed) "$name (1)" else name,mime == CaptureWire.DIRECTORY_MIME))
         val uri=uri(id); returned(uri); onReturn?.invoke(uri)
         if(failAfterReturn) throw NativeStorageException("unavailable","Fixture query after successful create failed")
         return uri
