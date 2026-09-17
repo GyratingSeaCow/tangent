@@ -271,18 +271,24 @@ class AndroidDocumentsPort(context: Context) : DocumentsIoPort, CaptureDocuments
         val key = map(b["key"]); val id = literal(key["dumpId"]); literal(key["incarnation"])
         if (b["metadataName"] != "$id.meta.json") fault("invalid","Wrong metadata component")
         val expected = audioId(b,d)
-        // If audio is present, even metadata-only work must reject a same-name
+        // Durable-pair primary content mirrors the shared Dart mode helper
+        // (contentExtensionForMode): the binding carries no mode, so exactly
+        // the mode-derived names are acceptable — matching the Dart backend's
+        // _component check. All bound operations use the binding's own name.
+        val contentName = expected.substringAfterLast('/').substringAfterLast(':')
+        if (contentName != "$id.opus" && contentName != "$id.md") fault("invalid","Binding does not identify exact owned components")
+        // If content is present, even metadata-only work must reject a same-name
         // foreign document. Absence remains valid for explicit deletion retry.
-        policy.ownedNode(d,"$id.opus",expected)
+        policy.ownedNode(d,contentName,expected)
         return when(method) {
             "readAudioAt", "playbackSourceAt" -> {
-                val node = policy.ownedNode(d,"$id.opus",expected) ?: fault("absent","Audio absent")
+                val node = policy.ownedNode(d,contentName,expected) ?: fault("absent","Audio absent")
                 if (method == "readAudioAt") read(d,node) else b["audio"]
             }
             "deleteComponentAt" -> {
                 val component = text(args["component"])
                 if (component != "audio" && component != "metadata") fault("invalid","Unknown component")
-                val result = policy.deleteComponent(d,if(component == "audio") "$id.opus" else "$id.meta.json",if(component == "audio") expected else null)
+                val result = policy.deleteComponent(d,if(component == "audio") contentName else "$id.meta.json",if(component == "audio") expected else null)
                 mapOf("state" to result.state,"problem" to result.problem?.let { mapOf("code" to it.code,"message" to it.message) })
             }
             "writeMetadataAt" -> { publish(d,"$id.meta.json","application/json",metadata(args,id),true); null }
