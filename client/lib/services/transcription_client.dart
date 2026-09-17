@@ -7,6 +7,7 @@ import 'package:dio/dio.dart';
 
 import '../models/api_exception.dart';
 import '../models/server_info.dart';
+import 'meeting_transcript_formatter.dart';
 
 HttpClient _newHttpClient() => HttpClient();
 DateTime _utcNow() => DateTime.now().toUtc();
@@ -39,6 +40,7 @@ final class TranscriptionJobSnapshot {
     this.startedAt,
     this.completedAt,
     this.transcript,
+    this.segments = const [],
     this.error,
   });
 
@@ -50,6 +52,9 @@ final class TranscriptionJobSnapshot {
   final DateTime? startedAt;
   final DateTime? completedAt;
   final String? transcript;
+
+  /// Diarised slices when the server produced them; empty otherwise.
+  final List<TranscriptSegment> segments;
   final String? error;
 }
 
@@ -174,6 +179,7 @@ class TranscriptionClient {
       startedAt: timestamp('started_at'),
       completedAt: timestamp('completed_at'),
       transcript: json['result_transcript'] as String?,
+      segments: parseTranscriptSegments(json['result_segments']),
       error: json['error'] as String?,
     );
   }
@@ -334,6 +340,7 @@ class TranscriptionClient {
           'status': snapshot.status,
           'request_id': snapshot.requestId,
           'transcript': snapshot.transcript,
+          'segments': snapshot.segments,
           'error': snapshot.error,
         };
         yield JobEvent(snapshot.status, data);

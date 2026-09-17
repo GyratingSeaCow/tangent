@@ -24,6 +24,7 @@ import 'package:tangent/data/recording_metadata.dart';
 import 'package:tangent/models/api_exception.dart';
 import 'package:tangent/models/server_info.dart';
 import 'package:tangent/models/transcription_status.dart';
+import 'package:tangent/services/meeting_transcript_formatter.dart';
 import 'package:tangent/services/server_transcription_service.dart';
 import 'package:tangent/services/transcription_client.dart';
 
@@ -5479,4 +5480,222 @@ void main() {
     expect(metadata['transcriptionJobId'], 'job-detail-race');
     expect(metadata['transcriptionError'], isNull);
   });
+
+  test('meeting completions store the formatted timestamp transcript',
+      () async {
+    await seedRow(row(id: 'meet-segments', mode: 'meeting'));
+    final fake = _FakeTranscriptionClient(
+      completedTranscript: 'unused',
+      streamEvents: [
+        const JobEvent('queued', {}),
+        const JobEvent('running', {}),
+        JobEvent('completed', {
+          'transcript': 'Hello there. Still me. Follow up later.',
+          'segments': [
+            {
+              'start': 0.0,
+              'end': 4.2,
+              'speaker': 'Speaker 1',
+              'text': 'Hello there.',
+            },
+            {
+              'start': 4.2,
+              'end': 9.0,
+              'speaker': 'Speaker 1',
+              'text': 'Still me.',
+            },
+            {
+              'start': 247.5,
+              'end': 251.0,
+              'speaker': 'Speaker 2',
+              'text': 'Follow up later.',
+            },
+          ],
+        }),
+      ],
+    );
+    final service = ServerTranscriptionService(
+      client: fake,
+      db: db,
+      recordingAccess: access,
+      mutations: mutations,
+    );
+    addTearDown(service.dispose);
+
+    await service.transcribeDump('meet-segments');
+
+    final saved = (await db.getDump('meet-segments'))!;
+    expect(
+      saved.transcript,
+      '00:00:00 Speaker 1\n'
+      'Hello there. Still me.\n'
+      '\n'
+      '00:04:07 Speaker 2\n'
+      'Follow up later.',
+    );
+    expect(saved.transcriptionStatus, 'completed');
+    expect(saved.meetingNotes, isNotNull);
+    final metadata = jsonDecode(
+      await storage.metaPathFor('meet-segments').readAsString(),
+    ) as Map<String, dynamic>;
+    expect(metadata['transcript'], saved.transcript);
+  });
+
+  test('meeting completions with null speakers use timestamp-only headings',
+      () async {
+    await seedRow(row(id: 'meet-anon', mode: 'meeting'));
+    final fake = _FakeTranscriptionClient(
+      completedTranscript: 'unused',
+      streamEvents: [
+        JobEvent('completed', {
+          'transcript': 'First part. Second part.',
+          'segments': [
+            {'start': 0.0, 'end': 3.0, 'speaker': null, 'text': 'First part.'},
+            {'start': 61.0, 'end': 64.0, 'text': 'Second part.'},
+          ],
+        }),
+      ],
+    );
+    final service = ServerTranscriptionService(
+      client: fake,
+      db: db,
+      recordingAccess: access,
+      mutations: mutations,
+    );
+    addTearDown(service.dispose);
+
+    await service.transcribeDump('meet-anon');
+
+    final saved = (await db.getDump('meet-anon'))!;
+    expect(
+      saved.transcript,
+      '00:00:00\n'
+      'First part.\n'
+      '\n'
+      '00:01:01\n'
+      'Second part.',
+    );
+    expect(saved.transcript, isNot(contains('Speaker')));
+  });
+
+  test('brain dump completions ignore segments and keep the plain transcript',
+      () async {
+    await seedRow(row(id: 'dump-segments'));
+    final fake = _FakeTranscriptionClient(
+      completedTranscript: 'unused',
+      streamEvents: [
+        JobEvent('completed', {
+          'transcript': 'Hello there. Follow up later.',
+          'segments': [
+            {
+              'start': 0.0,
+              'end': 4.2,
+              'speaker': 'Speaker 1',
+              'text': 'Hello there.',
+            },
+            {
+              'start': 247.5,
+              'end': 251.0,
+              'speaker': 'Speaker 2',
+              'text': 'Follow up later.',
+            },
+          ],
+        }),
+      ],
+    );
+    final service = ServerTranscriptionService(
+      client: fake,
+      db: db,
+      recordingAccess: access,
+      mutations: mutations,
+    );
+    addTearDown(service.dispose);
+
+    await service.transcribeDump('dump-segments');
+
+    final saved = (await db.getDump('dump-segments'))!;
+    expect(saved.transcript, 'Hello there. Follow up later.');
+    expect(saved.meetingNotes, isNull);
+  });
+
+  test('meeting completions without segments keep the plain transcript',
+      () async {
+    await seedRow(row(id: 'meet-plain', mode: 'meeting'));
+    final fake = _FakeTranscriptionClient(
+      completedTranscript: 'unused',
+      streamEvents: [
+        const JobEvent('completed', {
+          'transcript': 'Alice will send the notes by Friday.',
+        }),
+      ],
+    );
+    final service = ServerTranscriptionService(
+      client: fake,
+      db: db,
+      recordingAccess: access,
+      mutations: mutations,
+    );
+    addTearDown(service.dispose);
+
+    await service.transcribeDump('meet-plain');
+
+    final saved = (await db.getDump('meet-plain'))!;
+    expect(saved.transcript, 'Alice will send the notes by Friday.');
+  });
+
+  test('recovered meeting completions store the formatted transcript',
+      () async {
+    final pending = row(
+      id: 'meet-recovered-segments',
+      mode: 'meeting',
+      transcriptionStatus: 'running',
+      transcriptionRequestId: 'request-recovered-segments',
+      transcriptionJobId: 'job-recovered-segments',
+      transcriptionAttempt: 2,
+    );
+    await seedRow(pending);
+    final fake = _FakeTranscriptionClient(
+      completedTranscript: 'unused',
+      onGetJob: (_) => const TranscriptionJobSnapshot(
+        id: 'job-recovered-segments',
+        requestId: 'request-recovered-segments',
+        dumpId: 'meet-recovered-segments',
+        status: 'completed',
+        model: 'large-v3',
+        transcript: 'Recovered one. Recovered two.',
+        segments: [
+          TranscriptSegment(
+            start: 12,
+            speaker: 'Speaker 1',
+            text: 'Recovered one.',
+          ),
+          TranscriptSegment(
+            start: 3661,
+            speaker: 'Speaker 2',
+            text: 'Recovered two.',
+          ),
+        ],
+      ),
+    );
+    final service = ServerTranscriptionService(
+      client: fake,
+      db: db,
+      recordingAccess: access,
+      mutations: mutations,
+    );
+    addTearDown(service.dispose);
+
+    await service.reconcilePending();
+
+    final saved = (await db.getDump('meet-recovered-segments'))!;
+    expect(
+      saved.transcript,
+      '00:00:12 Speaker 1\n'
+      'Recovered one.\n'
+      '\n'
+      '01:01:01 Speaker 2\n'
+      'Recovered two.',
+    );
+  });
+
 }
