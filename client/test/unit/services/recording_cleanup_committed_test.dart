@@ -6,6 +6,8 @@ import 'package:path/path.dart' as p;
 import 'package:tangent/data/local_db.dart';
 import 'package:tangent/data/storage/storage_contract.dart';
 import 'package:tangent/services/recording_persistence.dart';
+import 'package:tangent/services/recording_service.dart';
+import '../../support/scripted_storage_backend.dart';
 import '../../support/storage_fixture.dart';
 import 'recording_staging_validation_test.dart' show SymlinkedStagingHarness;
 
@@ -187,4 +189,92 @@ void main() {
       reason: 'the rejected symlink entry is left for diagnosis',
     );
   });
+
+  test(
+      'save returns the committed row even when post-commit cleanup faults',
+      () async {
+    // A cleanup fault after the commit must never surface as a save failure:
+    // the UI caller reports any save() exception as 'Recording failed' even
+    // though the recording is durably saved; recoverOwnedCaptures() cleans
+    // the leftover on next launch. Inject the fault at the exact seam: an
+    // override of cleanupCommitted that throws the on-device StorageFault.
+    // Pre-guard, this propagated out of save(); the guard must swallow it,
+    // return the committed row, and leave reservation + staging for recovery.
+    final h = CatalogHarness();
+    addTearDown(h.close);
+    await h.bootstrap();
+    final r = requireOk(await h.catalog.reserveCapture(mode: 'brain_dump'));
+    final audio = [0x4f, 0x67, 0x67, 0x53, 7, 7];
+    await File(r.stagingPath).writeAsBytes(audio, flush: true);
+    final lease = requireOk(
+      await h.mutations.acquire(
+        r.key.dumpId,
+        UseKind.capture,
+        expectedIncarnation: r.key.incarnation,
+      ),
+    );
+    late DumpRow row;
+    try {
+      row = await h.mutations.serialize(
+        r.key,
+        () => _CleanupFaultingPersistence(
+          db: h.f.db,
+          backend: h.backend,
+          mutations: h.mutations,
+        ).save(
+          r,
+          RecordingResult(
+            path: r.stagingPath,
+            durationSeconds: 3,
+            sizeBytes: audio.length,
+          ),
+          now: DateTime.utc(2030, 1, 2, 3, 4, 5),
+          lease: lease,
+        ),
+      );
+    } finally {
+      await lease.close();
+    }
+    expect(
+      await h.f.db.getDump(row.id),
+      isNotNull,
+      reason: 'the committed row is authoritative and must survive',
+    );
+    expect(
+      await File(r.stagingPath).exists(),
+      isTrue,
+      reason: 'the faulted cleanup leaves staging in place for recovery',
+    );
+    final retained = await h.f.db.customSelect(
+      'SELECT state FROM capture_reservations WHERE reservation_id = ?',
+      variables: [Variable(r.id)],
+    ).get();
+    expect(
+      retained.single.read<String>('state'),
+      'committed',
+      reason: 'the committed reservation is retained for startup recovery',
+    );
+  });
+}
+
+/// Throws the exact on-device F2 fault from the post-commit cleanup seam.
+final class _CleanupFaultingPersistence extends RecordingPersistence {
+  _CleanupFaultingPersistence({
+    required super.db,
+    required super.backend,
+    required super.mutations,
+  });
+
+  @override
+  Future<void> cleanupCommitted(
+    CaptureReservation r,
+    BoundRecording binding,
+  ) async {
+    throw const StorageFault(
+      (
+        code: ProblemCode.invalid,
+        message: 'Staging cleanup source is not owned'
+      ),
+    );
+  }
 }

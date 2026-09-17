@@ -865,7 +865,14 @@ void main() {
       await File(r.stagingPath).delete();
       await Directory(r.stagingPath).create();
     };
-    expect(await c.stopAndPersist(), isA<Fail<DumpRow?>>());
+    // The capture is durably committed before cleanup runs, so a cleanup
+    // fault (staging replaced by a directory) must NOT surface as a save
+    // failure — pre-F2R this returned Fail and the UI showed 'Recording
+    // failed' for a saved recording. The committed row is returned; the
+    // reservation stays behind for recovery, asserted below.
+    final stopped = await c.stopAndPersist();
+    expect(stopped, isA<Ok<DumpRow?>>());
+    expect((stopped as Ok<DumpRow?>).value?.id, r.key.dumpId);
     expect(
       (await h.f.db.select(h.f.db.captureReservations).getSingle()).state,
       'committed',

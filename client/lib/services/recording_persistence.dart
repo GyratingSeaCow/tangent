@@ -99,16 +99,10 @@ class RecordingPersistence {
         size > 0;
     var length = 0;
     if (valid) {
-      // Canonicalize BOTH sides. Android may hand out the staging directory
-      // through a symlinked alias (/data/user/0 vs /data/data), so comparing
-      // the file's resolved path against the literal reservation path rejects
-      // valid owned staging. Resolving the owned parent directory keeps the
-      // same-file identity check while accepting an aliased directory prefix.
+      valid = await _resolvesUnderOwnedParent(r.stagingPath);
+    }
+    if (valid) {
       try {
-        final resolved = await file.resolveSymbolicLinks();
-        final parent =
-            await Directory(p.dirname(r.stagingPath)).resolveSymbolicLinks();
-        valid = p.equals(resolved, p.join(parent, p.basename(r.stagingPath)));
         length = await file.length();
       } on FileSystemException {
         valid = false;
@@ -119,6 +113,29 @@ class RecordingPersistence {
     // when it has not shrunk below the recorder-reported size.
     if (!valid || length < size) {
       _fault(ProblemCode.invalid, 'Invalid owned staging source');
+    }
+  }
+
+  /// Same-file identity check tolerant of a symlink-aliased ancestor.
+  ///
+  /// Canonicalize BOTH sides: Android may hand out the staging directory
+  /// through a symlinked alias (/data/user/0 vs /data/data), so comparing
+  /// the file's resolved path against the literal reservation path rejects
+  /// valid owned staging. Resolving the owned parent directory keeps the
+  /// same-file identity check while accepting an aliased directory prefix.
+  /// An entry that is itself a symlink resolves outside the owned parent
+  /// and stays rejected (callers also require the literal entry to be a
+  /// regular file with followLinks:false before consulting this check).
+  /// Shared by _staging() and cleanupCommitted() so the two ownership
+  /// predicates cannot drift apart again.
+  Future<bool> _resolvesUnderOwnedParent(String stagingPath) async {
+    try {
+      final resolved = await File(stagingPath).resolveSymbolicLinks();
+      final parent =
+          await Directory(p.dirname(stagingPath)).resolveSymbolicLinks();
+      return p.equals(resolved, p.join(parent, p.basename(stagingPath)));
+    } on FileSystemException {
+      return false;
     }
   }
 
@@ -695,7 +712,20 @@ class RecordingPersistence {
       }
       saved = committed;
     }
-    await cleanupCommitted(r, binding);
+    // The capture is durably committed at this point; recoverOwnedCaptures()
+    // reconciles any leftover committed reservation + staged file on the next
+    // launch. A cleanup fault therefore must not surface as a save failure —
+    // the recording IS saved, and the UI caller reports any exception from
+    // this path as "Recording failed". Swallow only cleanup-scoped faults;
+    // real corruption (ownership/binding mismatch) was already verified by
+    // cleanupCommitted's own pre-delete transaction before this can throw.
+    try {
+      await cleanupCommitted(r, binding);
+    } on StorageFault {
+      // Deferred to recoverOwnedCaptures(); the committed row is authoritative.
+    } on FileSystemException {
+      // Same: staging deletion is retried by recovery, never blocks the save.
+    }
     return saved;
   }
 
@@ -902,26 +932,12 @@ class RecordingPersistence {
     await _db.transaction(verify);
     final type = await FileSystemEntity.type(r.stagingPath, followLinks: false);
     if (type != FileSystemEntityType.notFound) {
-      // Canonicalize BOTH sides, exactly like _staging(): Android hands the
-      // staging directory out through a symlinked alias (/data/user/0 vs
-      // /data/data), so comparing the file's resolved path against the
-      // literal reservation path faulted every successful save at cleanup.
-      // Resolving the owned parent keeps the same-file identity check while
-      // accepting an aliased directory prefix; an entry that is itself a
-      // symlink still resolves outside the owned parent and stays rejected.
-      var owned = type == FileSystemEntityType.file &&
-          p.basename(r.stagingPath) == '${r.id}.opus';
-      if (owned) {
-        try {
-          final resolved = await File(r.stagingPath).resolveSymbolicLinks();
-          final parent =
-              await Directory(p.dirname(r.stagingPath)).resolveSymbolicLinks();
-          owned =
-              p.equals(resolved, p.join(parent, p.basename(r.stagingPath)));
-        } on FileSystemException {
-          owned = false;
-        }
-      }
+      // Same aliased-ancestor tolerance as _staging(); see
+      // _resolvesUnderOwnedParent. A symlink entry has type link (not file)
+      // under followLinks:false and is rejected before resolution runs.
+      final owned = type == FileSystemEntityType.file &&
+          p.basename(r.stagingPath) == '${r.id}.opus' &&
+          await _resolvesUnderOwnedParent(r.stagingPath);
       if (!owned) {
         _fault(ProblemCode.invalid, 'Staging cleanup source is not owned');
       }
