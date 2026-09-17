@@ -102,13 +102,21 @@ final storageBootstrapProvider = FutureProvider<void>((ref) async {
   }
   final recovery =
       await ref.read(recordingImporterProvider).recoverOwnedCaptures();
-  if (recovery case Fail(:final problem)) throw StorageFault(problem);
   // Re-adopt durable notebook files. Recordings alone are not the whole
   // folder: a reinstall that restored dumps but skipped this left every
   // <id>.notebook.json stranded on disk with no way back into the app.
-  // Import problems are reported by the result, not thrown: a single
-  // unreadable notebook file must not abort storage bootstrap.
-  await ref.read(notebookPersistenceProvider).importNotebooks();
+  //
+  // This runs BEFORE the recovery fault is rethrown and in its own guard:
+  // capture recovery and notebook adoption are independent, and a failure
+  // in either must not strand the other. Problems are reported in the
+  // result, so one unreadable file cannot abort bootstrap.
+  try {
+    await ref.read(notebookPersistenceProvider).importNotebooks();
+  } catch (_) {
+    // Notebook adoption is best-effort: recordings and capture recovery must
+    // not be held hostage by an unreadable notebook file.
+  }
+  if (recovery case Fail(:final problem)) throw StorageFault(problem);
 });
 final recordingCoordinatorProvider = Provider<RecordingCoordinator>(
   (ref) => DefaultRecordingCoordinator(

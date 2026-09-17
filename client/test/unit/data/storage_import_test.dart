@@ -765,4 +765,48 @@ void main() {
     expect(row.title, 'Retained note');
     expect(row.audioSizeBytes, bytes.length);
   });
+
+  test('adoptConfirmed enumerates the source once, not once per entry',
+      () async {
+    // Device regression: adoptConfirmed called preview() INSIDE its per-entry
+    // loop, so adopting N recordings triggered N full directory
+    // enumerations. On the real phone (39 entries in a 65-file SAF folder)
+    // startup took ~2.5 minutes of native I/O, and because legacy_restore is
+    // never cleared it re-ran on EVERY launch — starving everything sequenced
+    // after it, including durable notebook import.
+    final h = CatalogHarness();
+    addTearDown(h.close);
+    await h.bootstrap();
+    for (var i = 0; i < 6; i++) {
+      await h.f.audio('A', 'fixture-bulk-$i').writeAsBytes([1, 2, 3]);
+    }
+    final importer = BoundRecordingImporter(
+      db: h.f.db,
+      backend: h.backend,
+      mutations: h.mutations,
+    );
+    final preview = requireOk(
+      await importer.preview(fileLocation('A', h.f.directory('A'))),
+    );
+    expect(preview.entries.length, greaterThanOrEqualTo(6));
+
+    h.backend.listed.clear();
+    final result = requireOk(
+      await importer.adoptConfirmed(
+        (operationId: 'fixture-bulk-adopt', entries: preview.entries),
+      ),
+    );
+    expect(
+      result.items.where((i) => i.state == ImportState.adopted).length,
+      preview.entries.length,
+      reason: 'Every confirmed entry should still adopt.',
+    );
+    expect(
+      h.backend.listed.length,
+      1,
+      reason: 'The freshness re-read must happen once per source, not once '
+          'per entry: ${preview.entries.length} entries caused '
+          '${h.backend.listed.length} enumerations.',
+    );
+  });
 }
