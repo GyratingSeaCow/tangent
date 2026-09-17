@@ -38,7 +38,8 @@ Future<bool> publishManualTranscriptSidecar({
         current.transcriptionAttempt != revision.transcriptionAttempt ||
         current.transcriptionRequestId != revision.transcriptionRequestId ||
         current.transcriptionStatus != revision.transcriptionStatus ||
-        !['completed', 'failed'].contains(current.transcriptionStatus) ||
+        !['completed', 'failed', 'not_applicable']
+            .contains(current.transcriptionStatus) ||
         current.transcript != revision.transcript) {
       return false;
     }

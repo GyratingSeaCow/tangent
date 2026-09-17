@@ -940,7 +940,8 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
                     (requestId == null
                         ? d.transcriptionRequestId.isNull()
                         : d.transcriptionRequestId.equals(requestId)) &
-                    d.transcriptionStatus.isIn(['completed', 'failed']) &
+                    d.transcriptionStatus
+                        .isIn(['completed', 'failed', 'not_applicable']) &
                     (expectedTranscript == null
                         ? const Constant(true)
                         : d.transcript.equals(expectedTranscript)) &
@@ -975,7 +976,8 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
               TranscriptionStatus.queued.wireValue,
               TranscriptionStatus.running.wireValue,
             ]) |
-            (d.transcriptionStatus.isIn(['completed', 'failed']) &
+            (d.transcriptionStatus
+                    .isIn(['completed', 'failed', 'not_applicable']) &
                 d.transcriptionError.like('sidecar_sync_pending:%')),
       )
       ..orderBy([(d) => OrderingTerm.asc(d.transcriptionStartedAt)]));
