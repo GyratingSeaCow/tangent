@@ -15,7 +15,14 @@ WORKDIR /app
 
 # Install deps first (cache layer)
 COPY pyproject.toml ./
-RUN uv pip install --system --no-cache .
+# TANGENT_WITH_DIARIZATION=1 pulls in the optional pyannote.audio stack
+# (large: torch + models). Left off by default to keep the image lean.
+ARG TANGENT_WITH_DIARIZATION=0
+RUN if [ "$TANGENT_WITH_DIARIZATION" = "1" ]; then \
+        uv pip install --system --no-cache ".[diarization]"; \
+    else \
+        uv pip install --system --no-cache .; \
+    fi
 
 # Copy app code
 COPY app ./app

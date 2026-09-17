@@ -13,6 +13,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        # 1 = install the optional pyannote.audio stack for speaker diarization.
+        TANGENT_WITH_DIARIZATION: "${TANGENT_WITH_DIARIZATION:-0}"
     image: tangent-server:1.0.0
     container_name: tangent-server
     restart: unless-stopped
@@ -33,6 +36,10 @@ services:
       # Valid options: tiny, base, small, medium, large-v3.
       # CPU large-v3 is slow per audio-second; switch to small if speed matters.
       TANGENT_WHISPER_MODEL: large-v3
+      # Speaker diarization (optional, off unless both are set).
+      # Set these in server/.env — never commit a real token.
+      TANGENT_DIARIZATION: "${TANGENT_DIARIZATION:-}"
+      HF_TOKEN: "${HF_TOKEN:-}"
     volumes:
       # Persist the SQLite DB, audio files, and the faster-whisper model
       # cache across image rebuilds. ./data is created automatically.

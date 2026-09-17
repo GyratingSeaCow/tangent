@@ -89,7 +89,23 @@ def reset_pipeline() -> None:
 
 
 def _extract_turns(annotation: Any) -> list[Turn]:
-    """Flatten a pyannote Annotation into (start, end, label) tuples."""
+    """Flatten a pyannote diarization result into (start, end, label) tuples.
+
+    Accepts either a bare ``Annotation`` (pyannote 3.x pipelines) or the
+    ``DiarizeOutput`` wrapper returned by pyannote 4.x, which carries the
+    annotation on ``.speaker_diarization`` and has no ``itertracks`` itself.
+    """
+    if not hasattr(annotation, "itertracks"):
+        for attr in ("speaker_diarization", "exclusive_speaker_diarization"):
+            candidate = getattr(annotation, attr, None)
+            if candidate is not None and hasattr(candidate, "itertracks"):
+                annotation = candidate
+                break
+        else:
+            raise AttributeError(
+                "diarization result exposes no annotation with itertracks "
+                f"(got {type(annotation).__name__})"
+            )
     turns: list[Turn] = []
     for segment, _track, label in annotation.itertracks(yield_label=True):
         turns.append((float(segment.start), float(segment.end), str(label)))

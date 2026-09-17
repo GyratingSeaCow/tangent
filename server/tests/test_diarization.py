@@ -247,6 +247,32 @@ def test_extract_turns_reads_a_real_pyannote_annotation() -> None:
     ]
 
 
+def test_extract_turns_unwraps_pyannote_4x_diarize_output() -> None:
+    """pyannote 4.x pipelines return a DiarizeOutput wrapper, not an Annotation.
+
+    Observed live in the container against speaker-diarization-3.1: the result
+    object exposes .speaker_diarization (an Annotation) and has no itertracks
+    of its own, so calling itertracks on it raises AttributeError.
+    """
+
+    class _DiarizeOutput:
+        """Mirrors the real wrapper: no itertracks, annotation on an attribute."""
+
+        def __init__(self, annotation: object) -> None:
+            self.speaker_diarization = annotation
+            self.exclusive_speaker_diarization = annotation
+            self.speaker_embeddings = [[0.0]]
+
+    wrapped = _DiarizeOutput(
+        _FakeAnnotation([(0.03, 3.15, "SPEAKER_00"), (3.37, 6.51, "SPEAKER_01")])
+    )
+
+    assert diarization._extract_turns(wrapped) == [
+        (0.03, 3.15, "SPEAKER_00"),
+        (3.37, 6.51, "SPEAKER_01"),
+    ]
+
+
 # --------------------------------------------------------------------------
 # Pipeline loading (model id + cross-version auth kwarg)
 # --------------------------------------------------------------------------
