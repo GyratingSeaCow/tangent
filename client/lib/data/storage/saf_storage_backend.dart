@@ -348,20 +348,29 @@ class SafStorageBackend implements StorageBackend {
             op.complete(failure(_problem(null)));
           }
         } on PlatformException catch (e) {
-          if (typedDecode &&
-              (e.code == 'unknown' ||
-                  (stateArgs != null && e.code == 'conflict'))) {
-            // Positive current-process lookup classification, not a transport timeout.
+          if (e.code == 'unknown' ||
+              (typedDecode && stateArgs != null && e.code == 'conflict')) {
+            // Positive current-process lookup classification, not a transport
+            // timeout. 'unknown' means the native supervisor does not retain
+            // this operation (e.g. the process that issued it was killed), so
+            // it can never settle: deliver the failure AND settle the
+            // operation, releasing any restored fence pinned on op.settled.
+            // Before this exit existed the untyped path fell through to the
+            // 50ms retry sleep forever — a hot loop that pinned the capture
+            // fence (freezing every later save/record) until Android killed
+            // the process for excessive CPU.
             op.complete(
               failure(
-                (
-                  code: e.code == 'unknown'
-                      ? ProblemCode.unresolved
-                      : ProblemCode.conflict,
-                  message: e.code == 'unknown'
-                      ? 'Preparation/worker is not retained'
-                      : 'Preparation payload differs'
-                ),
+                typedDecode
+                    ? (
+                        code: e.code == 'unknown'
+                            ? ProblemCode.unresolved
+                            : ProblemCode.conflict,
+                        message: e.code == 'unknown'
+                            ? 'Preparation/worker is not retained'
+                            : 'Preparation payload differs'
+                      )
+                    : _problem(null),
               ),
             );
             op.settlement.complete();
