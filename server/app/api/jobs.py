@@ -57,12 +57,17 @@ def enqueue_transcription(
 ) -> JobResponse:
     """Create or replay an idempotent transcription job."""
     dump_row = db.execute(
-        "SELECT id FROM dumps WHERE id = ? AND deleted_at IS NULL", (dump_id,)
+        "SELECT id, mode FROM dumps WHERE id = ? AND deleted_at IS NULL", (dump_id,)
     ).fetchone()
     if dump_row is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Dump {dump_id!r} not found",
+        )
+    if dump_row["mode"] == "text_note":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Text notes cannot be transcribed",
         )
 
     request_id = payload.request_id or f"legacy:{uuid.uuid4()}"
