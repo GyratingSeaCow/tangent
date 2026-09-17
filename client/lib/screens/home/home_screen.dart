@@ -84,6 +84,30 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     );
   }
 
+  /// Pushes the dumps list and honors the [DumpsCreateAction] it pops with
+  /// (its `+` FAB): switch [_mode] to match, then reuse the existing entry
+  /// points — compose for text notes, `_toggleRecording` for voice modes.
+  Future<void> _openDumpsList() async {
+    final action = await Navigator.of(context).push<DumpsCreateAction?>(
+      MaterialPageRoute<DumpsCreateAction?>(
+        builder: (_) => const DumpsListScreen(),
+      ),
+    );
+    if (action == null || !mounted) return;
+    setState(() {
+      _mode = switch (action) {
+        DumpsCreateAction.textNote => DumpMode.textNote,
+        DumpsCreateAction.brainDump => DumpMode.brainDump,
+        DumpsCreateAction.meeting => DumpMode.meeting,
+      };
+    });
+    if (action == DumpsCreateAction.textNote) {
+      await _openNoteCompose();
+    } else {
+      await _toggleRecording();
+    }
+  }
+
   Future<void> _syncNow() async {
     setState(() => _syncing = true);
     try {
@@ -138,11 +162,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           IconButton(
             icon: const Icon(Icons.list),
             tooltip: 'View dumps',
-            onPressed: () => Navigator.of(context).push<void>(
-              MaterialPageRoute<void>(
-                builder: (_) => const DumpsListScreen(),
-              ),
-            ),
+            onPressed: _openDumpsList,
           ),
           IconButton(
             icon: const Icon(Icons.settings),

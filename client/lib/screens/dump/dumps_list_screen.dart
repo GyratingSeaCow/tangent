@@ -13,6 +13,11 @@ import '../../models/transcription_status.dart';
 import 'dump_detail_screen.dart';
 import 'dumps_providers.dart';
 
+/// What the `+` FAB on the dumps list asks the home screen to create.
+/// The list pops itself with one of these; home switches mode and either
+/// opens note compose or starts recording immediately.
+enum DumpsCreateAction { textNote, brainDump, meeting }
+
 class DumpsListScreen extends ConsumerStatefulWidget {
   const DumpsListScreen({super.key, this.onOpenDump});
   final void Function(BuildContext, DumpRow)? onOpenDump;
@@ -121,6 +126,52 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
 
   void _change(VoidCallback action) => setState(action);
 
+  /// Blue `+` FAB: an active mode chip picks the creation directly; under
+  /// the All filter a bottom sheet asks which kind to create. Either way
+  /// the screen pops with the [DumpsCreateAction] for home to act on.
+  Future<void> _onCreatePressed() async {
+    final direct = switch (ref.read(dumpModeFilterProvider)) {
+      DumpModeFilter.textNote => DumpsCreateAction.textNote,
+      DumpModeFilter.brainDump => DumpsCreateAction.brainDump,
+      DumpModeFilter.meeting => DumpsCreateAction.meeting,
+      DumpModeFilter.all => null,
+    };
+    final action = direct ??
+        await showModalBottomSheet<DumpsCreateAction>(
+          context: context,
+          builder: (sheetContext) => SafeArea(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ListTile(
+                  key: const ValueKey('create-option-textNote'),
+                  leading: const Icon(Icons.sticky_note_2),
+                  title: const Text('Text Note'),
+                  onTap: () => Navigator.of(sheetContext)
+                      .pop(DumpsCreateAction.textNote),
+                ),
+                ListTile(
+                  key: const ValueKey('create-option-brainDump'),
+                  leading: const Icon(Icons.psychology),
+                  title: const Text('Brain Dump'),
+                  onTap: () => Navigator.of(sheetContext)
+                      .pop(DumpsCreateAction.brainDump),
+                ),
+                ListTile(
+                  key: const ValueKey('create-option-meeting'),
+                  leading: const Icon(Icons.groups),
+                  title: const Text('Meeting'),
+                  onTap: () => Navigator.of(sheetContext)
+                      .pop(DumpsCreateAction.meeting),
+                ),
+              ],
+            ),
+          ),
+        );
+    if (action == null || !mounted) return;
+    Navigator.of(context).pop(action);
+  }
+
   @override
   void dispose() {
     _searchController.dispose();
@@ -180,6 +231,13 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
         if (!didPop && selection.active) _change(_selection.cancel);
       },
       child: Scaffold(
+        floatingActionButton: FloatingActionButton(
+          tooltip: 'Add',
+          backgroundColor: Theme.of(context).colorScheme.primary,
+          foregroundColor: Theme.of(context).colorScheme.onPrimary,
+          onPressed: _onCreatePressed,
+          child: const Icon(Icons.add),
+        ),
         appBar: AppBar(
           title: _searching
               ? TextField(
