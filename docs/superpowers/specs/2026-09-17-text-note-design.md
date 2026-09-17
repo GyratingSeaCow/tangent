@@ -15,18 +15,18 @@ A third capture mode on the home screen — **Text Note** — that lets Jeff typ
 3. **Title:** auto-generated (`Note 2026-09-17 05-50-12`), editable in the detail screen. The body is the note text.
 4. **Durability:** notes publish a durable file pair to the current default save folder, like recordings, so they survive uninstall.
 
-## Data model (Approach A — note is a dump)
+## Data model (Approach A — note is a dump; REVISED post-audit 2026-09-17)
 
-Schema **5 → 6** migration:
+**No schema migration.** Schema stays 5. Pre-dispatch audit proved the capture pipeline enforces `row.audioPath == binding.audio.value` (bind/commit/cleanup) and journal coherence `audioSizeBytes == stopped.sizeBytes`; relaxing columns to nullable would contradict ~10 validated invariants. Instead:
 
-- `dumps.audioPath` → nullable; `dumps.audioSizeBytes` → nullable. Existing rows untouched (relax-only migration; no row rewrites).
-- New `mode` value: `text_note` (joins `brain_dump`, `meeting`).
+- `dumps.audioPath` holds the note's published **`.md` locator** (the primary-content component slot); `dumps.audioSizeBytes` holds the `.md` byte length. Non-null, coherent with the journal.
+- New `mode` value: `text_note` (TEXT column — no schema change). UI/sync/playback branch on `mode`, never on audioPath nullness.
 - Note body stored in the existing `transcript` column → FTS search works with zero new code.
-- `transcriptionStatus` gains terminal value `not_applicable` (set at creation for notes; transcription endpoints and queue reject/never accept notes).
+- `transcriptionStatus` gains enum value `not_applicable` (terminal). Requires extending `TranscriptionStatus` + `fromWire` + every exhaustive switch, plus the status gates in `updateDumpTranscript` and `claimLocalDeletion` (audit findings).
 - `durationSeconds = 0` for notes.
-- A text note has **no recording binding audio component**; its bound components are `text` (`<id>.md`) and `metadata` (`<id>.meta.json`).
+- The `RecordingComponent` enum stays `{audio, metadata}`; the audio slot's filename becomes **mode-aware** (`<id>.opus` for audio modes, `<id>.md` for `text_note`) across codec, capture IO, and both storage backends. Same-file identity checks keep full strength.
 
-**Migration gates (blocking):** synthetic schema-5 fixture AND the preserved real device DB copy; every transcription/sync state represented; all-column row-identity diff must show zero changed rows for existing data. Android SQLite dialect + trigger behavior covered per the established migration discipline (see flutter-android-app skill references).
+**Gate:** existing-row behavior byte-identical (no migration means the gate is a no-op by construction; regression suite still proves it).
 
 ## Capture flow
 
