@@ -275,6 +275,19 @@ class AndroidDocumentsPort(context: Context) : DocumentsIoPort, CaptureDocuments
         if (method == "validateCandidate") {
             return probeReceipts.capture { policy.probe(d,literal(args["token"])) }
         }
+        if (method == "probeLocationAt") {
+            // Reachability only: query the directory document itself instead of
+            // enumerating its children. inspectLocation used to route to
+            // listRecordingsAt, which parsed every recording in the folder and
+            // discarded the result — 5.8s on a real 81-file folder, paid on
+            // EVERY record tap before any audio work could begin.
+            val uri = DC.buildDocumentUriUsingTree(grant(d), d.documentId)
+            resolver.query(uri, arrayOf(DC.Document.COLUMN_DOCUMENT_ID, DC.Document.COLUMN_MIME_TYPE), null, null, null)?.use { cursor ->
+                if (!cursor.moveToFirst()) fault("absent","Recording folder is unavailable")
+                if (cursor.getString(1) != DC.Document.MIME_TYPE_DIR) fault("invalid","Recording folder is not a directory")
+                return null
+            } ?: fault("absent","Recording folder is unavailable")
+        }
         if (method == "listRecordingsAt") {
             // Durable-pair primary content mirrors the shared Dart mode helper
             // (contentExtensionForMode): audio modes publish .opus, text notes

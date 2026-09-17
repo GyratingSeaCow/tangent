@@ -62,7 +62,12 @@ class StorageMethodRouterTest {
     }
 
     @Test fun everySupportedMethodAndLifecycleRouteForwardsExactMethodAndPayload() {
-        val expected = setOf("inspectLegacyStorage", "validateCandidate", "readAudioAt", "playbackSourceAt",
+        val expected = setOf("inspectLegacyStorage", "validateCandidate",
+            // Cheap reachability probe: answers "is the folder still there?"
+            // without enumerating it. Routing that question to listRecordingsAt
+            // cost 5.8s per record tap on a real 81-file folder.
+            "probeLocationAt",
+            "readAudioAt", "playbackSourceAt",
             "writeMetadataAt", "deleteComponentAt", "listRecordingsAt", "prepareCaptureAt",
             "inspectPreparedCaptureAt", "publishPreparedCaptureAt",
             // Durable notebook documents publish through the same router.

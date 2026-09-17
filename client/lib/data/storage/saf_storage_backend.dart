@@ -566,7 +566,11 @@ class SafStorageBackend implements StorageBackend {
   @override
   IoOperation<Outcome<void>> inspectLocation(StorageLocation location) =>
       _start<void>(
-        'listRecordingsAt',
+        // Reachability, not inventory. This used to invoke 'listRecordingsAt',
+        // enumerating and parsing every recording in the folder only to discard
+        // the result — 5.8 s on an 81-file folder, paid on EVERY record tap
+        // before the microphone was even touched.
+        'probeLocationAt',
         {'location': _wire(StorageCodec.encodeLocation(location))},
         (_) {},
       );

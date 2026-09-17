@@ -390,9 +390,14 @@ class FilesystemStorageBackend implements StorageBackend {
   @override
   IoOperation<Outcome<void>> inspectLocation(StorageLocation location) => _run(
         () => _outcome(() async {
-          await Directory(await _root(location))
-              .list(followLinks: false)
-              .toList();
+          // Reachability only — existence and directory-ness. Listing the whole
+          // folder here made every record tap pay for a full enumeration.
+          final root = Directory(await _root(location));
+          if (!await root.exists()) {
+            throw const StorageFault(
+              (code: ProblemCode.absent, message: 'Recording folder is unavailable'),
+            );
+          }
         }),
       );
   Future<File> _temporary(String root, String prefix) async {
