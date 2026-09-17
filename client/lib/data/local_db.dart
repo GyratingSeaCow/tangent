@@ -234,6 +234,20 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
         );
       });
 
+  /// Spend a storage location's one-shot legacy-restore authorization.
+  ///
+  /// Legacy restore adopts files that pre-date this build's catalog. It is a
+  /// migration, not a steady state: once a location's adoption sweep has
+  /// completed with nothing left unsettled, the flag must come down or the
+  /// sweep re-enumerates the user's folder on every single launch forever.
+  /// Callers must only reach here after a fully settled sweep — a partial
+  /// success has to stay authorized so the next launch retries.
+  Future<void> completeLegacyRestore(String locationId) =>
+      transaction(() async {
+        await (update(storageLocations)..where((l) => l.id.equals(locationId)))
+            .write(const StorageLocationsCompanion(legacyRestore: Value(false)));
+      });
+
   /// Resolve only persisted original ownership, never a current default.
   @override
   Future<BoundRecording?> boundRecording(String id) => transaction(() async {

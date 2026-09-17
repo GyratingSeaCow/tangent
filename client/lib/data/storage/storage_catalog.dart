@@ -117,13 +117,21 @@ class SqliteStorageCatalog implements StorageCatalog {
   Future<StorageLocation> _register(
     StorageLocation location, {
     bool legacy = false,
+    bool renewLegacy = false,
   }) async {
     final canonical = StorageCodec.canonicalKey(location.directory);
     final existing = await (_db.select(_db.storageLocations)
           ..where((l) => l.canonicalKey.equals(canonical)))
         .getSingleOrNull();
     if (existing != null) {
-      if (legacy && !existing.legacyRestore) {
+      // Legacy restore is a ONE-SHOT authorization: granted when a folder
+      // first enters the catalog, spent by the adoption sweep once that
+      // folder has been swept clean. Only a caller with genuine outstanding
+      // legacy work may re-authorize a row that already exists — an
+      // unconditional re-grant here put the flag back up as fast as the
+      // sweep took it down, so the user's folder was re-enumerated and
+      // re-adopted on every single launch, forever.
+      if (legacy && renewLegacy && !existing.legacyRestore) {
         await (_db.update(_db.storageLocations)
               ..where((l) => l.id.equals(existing.id)))
             .write(const StorageLocationsCompanion(legacyRestore: Value(true)));
@@ -654,10 +662,22 @@ class SqliteStorageCatalog implements StorageCatalog {
                 );
               }
               final location = legacy.location!;
-              final entries =
-                  _value(await _settled(_backend.listRecordingsAt(location)));
+              // Only enumerate when there are unresolved bindings to match
+              // against: `entries` is consumed solely by the loop below, so
+              // the always-present empty anchor seed group was paying for a
+              // full folder listing on every launch to resolve nothing.
+              final entries = group.value.isEmpty
+                  ? const <ImportedEntry>[]
+                  : _value(await _settled(_backend.listRecordingsAt(location)));
               final registered = await _db.transaction(() async {
-                final stored = await _register(location, legacy: true);
+                // Re-authorize legacy restore only for a group that actually
+                // has outstanding work. The empty seed group must not renew
+                // the one-shot flag, or the adoption sweep runs forever.
+                final stored = await _register(
+                  location,
+                  legacy: true,
+                  renewLegacy: group.value.isNotEmpty,
+                );
                 if (group.key == anchor) {
                   await (_db.update(_db.storageCatalogStates)
                         ..where(

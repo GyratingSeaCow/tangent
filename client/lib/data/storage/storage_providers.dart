@@ -91,14 +91,30 @@ final storageBootstrapProvider = FutureProvider<void>((ref) async {
       Ok<ImportPreview>(:final value) => value.entries,
       Fail<ImportPreview>(:final problem) => throw StorageFault(problem),
     };
-    if (entries.isEmpty) continue;
-    final adopted = await ref.read(recordingImporterProvider).adoptConfirmed(
-      (
-        operationId: const Uuid().v4(),
-        entries: entries,
-      ),
-    );
-    if (adopted case Fail(:final problem)) throw StorageFault(problem);
+    // Legacy restore is a one-shot migration, not a steady state. An empty
+    // folder is a COMPLETED sweep — there was nothing to adopt — so it spends
+    // the authorization too. Leaving the flag set re-enumerated the user's
+    // folder on every single launch forever (39 recordings out of a 65-file
+    // SAF directory, re-previewed at each cold start).
+    var settled = true;
+    if (entries.isNotEmpty) {
+      final adopted = await ref.read(recordingImporterProvider).adoptConfirmed(
+        (
+          operationId: const Uuid().v4(),
+          entries: entries,
+        ),
+      );
+      if (adopted case Fail(:final problem)) throw StorageFault(problem);
+      // Only a sweep that left nothing unsettled may spend the flag. An entry
+      // that did not adopt keeps this location authorized so the next launch
+      // retries it; a partial success must never silently strand files.
+      settled = (adopted as Ok<ImportResult>).value.items.every(
+            (item) =>
+                item.state == ImportState.adopted ||
+                item.state == ImportState.alreadyKnown,
+          );
+    }
+    if (settled) await db.completeLegacyRestore(row.id);
   }
   final recovery =
       await ref.read(recordingImporterProvider).recoverOwnedCaptures();
