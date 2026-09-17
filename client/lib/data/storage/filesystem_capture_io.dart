@@ -86,7 +86,8 @@ abstract final class FilesystemCaptureIo {
     CapturePublicationCodec.reservationMap(r);
     CapturePublicationCodec.digest(digest);
     if (r.location.directory.kind != 'file' ||
-        p.basename(r.stagingPath) != '${r.id}.opus' ||
+        p.basename(r.stagingPath) !=
+            '${r.id}.${contentExtensionForMode(r.mode)}' ||
         CapturePublicationCodec.metadata(metadata, r.key.dumpId)['mode'] !=
             r.mode) {
       captureIoFault(
@@ -150,13 +151,15 @@ abstract final class FilesystemCaptureIo {
       }
       root = openCaptureHandle(r.location.directory.path, directory: true);
       source.verifyAssociation();
-      _available(root, {'${r.key.dumpId}.opus', '${r.key.dumpId}.meta.json'});
+      final contentName =
+          '${r.key.dumpId}.${contentExtensionForMode(r.mode)}';
+      _available(root, {contentName, '${r.key.dumpId}.meta.json'});
       final sourceIdentity = source.identity;
       final rootIdentity = root.identity;
       snapshot();
       for (final component in RecordingComponent.values) {
         final name = component == RecordingComponent.audio
-            ? '${r.key.dumpId}.opus'
+            ? contentName
             : '${r.key.dumpId}.meta.json';
         _available(root, {name});
         dispatched = true;

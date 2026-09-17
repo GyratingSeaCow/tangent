@@ -221,11 +221,13 @@ abstract final class CapturePublicationCodec {
     final hash = _text(m, 'audioSha256');
     digest(hash);
     final json = _text(m, 'metadataJson');
-    metadata(json, key.dumpId);
+    final modeRaw = metadata(json, key.dumpId)['mode'];
+    final contentName =
+        '${key.dumpId}.${contentExtensionForMode(modeRaw is String ? modeRaw : '')}';
     final audio = m['audio'] == null ? null : _claim(m['audio']);
     final meta = m['metadata'] == null ? null : _claim(m['metadata']);
     for (final entry in [
-      (audio, RecordingComponent.audio, '${key.dumpId}.opus'),
+      (audio, RecordingComponent.audio, contentName),
       (meta, RecordingComponent.metadata, '${key.dumpId}.meta.json'),
     ]) {
       final claim = entry.$1;
@@ -304,7 +306,7 @@ abstract final class CapturePublicationCodec {
     }
     StorageCodec.validateLiteralId(r.id);
     StorageCodec.encodeAudio((kind: 'file', value: r.stagingPath));
-    if (r.mode != 'meeting' && r.mode != 'brain_dump') {
+    if (r.mode != 'meeting' && r.mode != 'brain_dump' && r.mode != 'text_note') {
       _bad('Invalid capture mode');
     }
     return {

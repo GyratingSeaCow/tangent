@@ -449,7 +449,7 @@ class SqliteStorageCatalog implements StorageCatalog {
   Future<Outcome<CaptureReservation>> reserveCapture({required String mode}) =>
       _guard(() async {
         await _ready();
-        if (!['brain_dump', 'meeting'].contains(mode)) {
+        if (!['brain_dump', 'meeting', 'text_note'].contains(mode)) {
           _fault(ProblemCode.invalid, 'Invalid recording mode');
         }
         return _mutations.catalogAdmission(() async {
@@ -503,7 +503,7 @@ class SqliteStorageCatalog implements StorageCatalog {
             final reservationId = '${_mutations.processEpoch}-$id';
             final startedAt = _now();
             final stagingPath =
-                '$_stagingDirectory${_stagingDirectory.endsWith('/') || _stagingDirectory.endsWith('\\') ? '' : '/'}$reservationId.opus';
+                '$_stagingDirectory${_stagingDirectory.endsWith('/') || _stagingDirectory.endsWith('\\') ? '' : '/'}$reservationId.${contentExtensionForMode(mode)}';
             await _db.into(_db.captureReservations).insert(
                   CaptureReservationsCompanion.insert(
                     reservationId: reservationId,

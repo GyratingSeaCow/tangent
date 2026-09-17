@@ -208,15 +208,23 @@ class FilesystemStorageBackend implements StorageBackend {
     StorageCodec.encodeBinding(binding);
     final root = await _root(binding.location);
     final id = binding.key.dumpId;
+    // Owned content names derive from the ONE shared mode helper; a binding
+    // carries no mode, so exactly the mode-derived names are acceptable.
+    final contentNames = {
+      for (final mode in const ['brain_dump', 'meeting', 'text_note'])
+        '$id.${contentExtensionForMode(mode)}',
+    };
     if (binding.metadataName != '$id.meta.json' ||
         binding.audio.kind != 'file' ||
         !p.equals(p.dirname(binding.audio.value), root) ||
-        p.basename(binding.audio.value) != '$id.opus') {
+        !contentNames.contains(p.basename(binding.audio.value))) {
       _invalid('Binding does not identify exact owned components');
     }
     return p.join(
       root,
-      component == RecordingComponent.audio ? '$id.opus' : binding.metadataName,
+      component == RecordingComponent.audio
+          ? p.basename(binding.audio.value)
+          : binding.metadataName,
     );
   }
 

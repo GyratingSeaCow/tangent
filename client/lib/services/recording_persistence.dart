@@ -93,7 +93,8 @@ class RecordingPersistence {
   Future<void> _staging(CaptureReservation r, int size) async {
     StorageCodec.encodeAudio((kind: 'file', value: r.stagingPath));
     final file = File(r.stagingPath);
-    var valid = p.basename(r.stagingPath) == '${r.id}.opus' &&
+    var valid = p.basename(r.stagingPath) ==
+            '${r.id}.${contentExtensionForMode(r.mode)}' &&
         await FileSystemEntity.type(r.stagingPath, followLinks: false) ==
             FileSystemEntityType.file &&
         size > 0;
@@ -936,7 +937,8 @@ class RecordingPersistence {
       // _resolvesUnderOwnedParent. A symlink entry has type link (not file)
       // under followLinks:false and is rejected before resolution runs.
       final owned = type == FileSystemEntityType.file &&
-          p.basename(r.stagingPath) == '${r.id}.opus' &&
+          p.basename(r.stagingPath) ==
+              '${r.id}.${contentExtensionForMode(r.mode)}' &&
           await _resolvesUnderOwnedParent(r.stagingPath);
       if (!owned) {
         _fault(ProblemCode.invalid, 'Staging cleanup source is not owned');

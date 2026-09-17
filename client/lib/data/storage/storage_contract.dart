@@ -45,6 +45,11 @@ final class StorageFault implements Exception {
   String toString() => '${problem.code.name}: ${problem.message}';
 }
 
+/// Primary-content file extension for a capture mode. Text notes publish
+/// markdown; every audio mode publishes opus.
+String contentExtensionForMode(String mode) =>
+    mode == 'text_note' ? 'md' : 'opus';
+
 typedef RecordingKey = ({String dumpId, String incarnation});
 typedef DirectoryRef = ({
   String kind,
