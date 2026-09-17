@@ -24,24 +24,65 @@ def _now_ts() -> int:
     return int(time.time())
 
 
+def fail_interrupted_jobs(db: sqlite3.Connection) -> int:
+    """Fail jobs whose in-process owner disappeared during a server restart."""
+    completed_at = _now_ts()
+    cursor = db.execute(
+        """
+        UPDATE jobs
+        SET status = 'failed', completed_at = ?,
+            error = 'Server restarted before transcription completed'
+        WHERE status IN ('queued', 'running')
+        """,
+        (completed_at,),
+    )
+    db.commit()
+    if cursor.rowcount:
+        log.warning("job.interrupted", count=cursor.rowcount)
+    return cursor.rowcount
+
+
+class RequestIdConflict(Exception):  # noqa: N818
+    """A request ID was already used for a different dump or model."""
+
+
 def enqueue_job(
     db: sqlite3.Connection,
     dump_id: str,
     model: str,
-    audio_path: str,
-) -> str:
-    """Create a job row in 'queued' state. Returns the job id."""
+    request_id: str,
+) -> tuple[str, bool]:
+    """Create a queued job, or return an identical request's existing job."""
+    existing = db.execute(
+        "SELECT id, dump_id, model FROM jobs WHERE request_id = ?", (request_id,)
+    ).fetchone()
+    if existing is not None:
+        if existing["dump_id"] == dump_id and existing["model"] == model:
+            return existing["id"], False
+        raise RequestIdConflict(request_id)
+
     job_id = str(uuid.uuid4())
-    db.execute(
-        """
-        INSERT INTO jobs (id, dump_id, status, model, started_at)
-        VALUES (?, ?, 'queued', ?, NULL)
-        """,
-        (job_id, dump_id, model),
-    )
-    db.commit()  # explicit commit so BackgroundTasks readers see the row
+    try:
+        db.execute(
+            """
+            INSERT INTO jobs (id, request_id, dump_id, status, model, started_at)
+            VALUES (?, ?, ?, 'queued', ?, NULL)
+            """,
+            (job_id, request_id, dump_id, model),
+        )
+        db.commit()
+    except sqlite3.IntegrityError:
+        db.rollback()
+        existing = db.execute(
+            "SELECT id, dump_id, model FROM jobs WHERE request_id = ?", (request_id,)
+        ).fetchone()
+        if existing is not None:
+            if existing["dump_id"] == dump_id and existing["model"] == model:
+                return existing["id"], False
+            raise RequestIdConflict(request_id) from None
+        raise
     log.info("job.queued", job_id=job_id, dump_id=dump_id, model=model)
-    return job_id
+    return job_id, True
 
 
 def run_job_inline(job_id: str, audio_path: str) -> None:

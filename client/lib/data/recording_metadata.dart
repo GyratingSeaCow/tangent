@@ -1,7 +1,68 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import '../models/transcription_status.dart';
 import 'local_db.dart';
+import 'storage/storage_contract.dart';
 
-const recordingMetadataSchemaVersion = 1;
+/// Validate external sidecars before the legacy-compatible serializer runs.
+/// Absent optional/nullable fields retain their existing restoration semantics.
+void validateImportedMetadata(String id, Map<String, dynamic>? metadata) {
+  if (metadata == null) return;
+  Never invalid() => throw const StorageFault(
+        (code: ProblemCode.invalid, message: 'Invalid recording sidecar'),
+      );
+  if (metadata['id'] != id ||
+      metadata['schemaVersion'] is! int ||
+      !const [1, 2].contains(metadata['schemaVersion'])) {
+    invalid();
+  }
+  for (final key in [
+    'title',
+    'mode',
+    'transcript',
+    'meetingNotes',
+    'syncStatus',
+    'lastSyncError',
+    'transcriptionStatus',
+    'transcriptionRequestId',
+    'transcriptionJobId',
+    'transcriptionError',
+  ]) {
+    if (metadata[key] != null && metadata[key] is! String) invalid();
+  }
+  for (final key in [
+    'durationSeconds',
+    'audioSizeBytes',
+    'syncAttempts',
+    'transcriptionAttempt',
+  ]) {
+    final value = metadata[key];
+    if (value != null && (value is! int || value < 0)) invalid();
+  }
+  for (final key in [
+    'createdAt',
+    'updatedAt',
+    'transcriptionStartedAt',
+    'transcriptionUpdatedAt',
+    'transcriptionCompletedAt',
+  ]) {
+    final value = metadata[key];
+    if (value != null &&
+        (value is! String || DateTime.tryParse(value) == null)) {
+      invalid();
+    }
+  }
+  if (metadata['mode'] != null &&
+      !const ['brain_dump', 'meeting'].contains(metadata['mode'])) {
+    invalid();
+  }
+  if (metadata['transcriptionStatus'] != null &&
+      !TranscriptionStatus.values
+          .any((s) => s.wireValue == metadata['transcriptionStatus'])) {
+    invalid();
+  }
+}
+
+const recordingMetadataSchemaVersion = 2;
 
 String generatedRecordingTitle(DateTime createdAt) {
   final local = createdAt.toLocal();
@@ -20,6 +81,17 @@ Map<String, dynamic> dumpMetadata(DumpRow row) => {
       'title': row.title,
       'transcript': row.transcript,
       'meetingNotes': row.meetingNotes,
+      'transcriptionStatus': row.transcriptionStatus,
+      'transcriptionRequestId': row.transcriptionRequestId,
+      'transcriptionJobId': row.transcriptionJobId,
+      'transcriptionAttempt': row.transcriptionAttempt,
+      'transcriptionStartedAt':
+          row.transcriptionStartedAt?.toUtc().toIso8601String(),
+      'transcriptionUpdatedAt':
+          row.transcriptionUpdatedAt?.toUtc().toIso8601String(),
+      'transcriptionCompletedAt':
+          row.transcriptionCompletedAt?.toUtc().toIso8601String(),
+      'transcriptionError': row.transcriptionError,
       'audioSizeBytes': row.audioSizeBytes,
       'syncStatus': row.syncStatus,
       'syncAttempts': row.syncAttempts,
@@ -50,9 +122,28 @@ DumpRow importedDumpRow({
     return raw is String ? raw : fallback;
   }
 
+  String? nullableText(String key) {
+    final raw = metadata?[key];
+    return raw is String && raw.isNotEmpty ? raw : null;
+  }
+
+  DateTime? utcDate(String key) {
+    final raw = nullableText(key);
+    return raw == null ? null : DateTime.tryParse(raw)?.toUtc();
+  }
+
   final modifiedUtc = modifiedAt.toUtc();
   final createdAt = date('createdAt', modifiedUtc);
   final restoredTitle = text('title', '').trim();
+  final transcript = metadata?['transcript'] as String?;
+  final schemaVersion = number('schemaVersion', 1);
+  final legacyStatus = transcript != null && transcript.trim().isNotEmpty
+      ? 'completed'
+      : 'not_transcribed';
+  final importedStatus = nullableText('transcriptionStatus');
+  final validImportedStatus = TranscriptionStatus.values.any(
+    (status) => status.wireValue == importedStatus,
+  );
   return DumpRow(
     id: id,
     createdAt: createdAt,
@@ -62,12 +153,31 @@ DumpRow importedDumpRow({
     title: restoredTitle.isEmpty
         ? generatedRecordingTitle(createdAt)
         : restoredTitle,
-    transcript: metadata?['transcript'] as String?,
+    transcript: transcript,
     meetingNotes: metadata?['meetingNotes'] as String?,
     audioPath: locator,
     audioSizeBytes: sizeBytes,
     syncStatus: text('syncStatus', 'pending'),
     syncAttempts: number('syncAttempts', 0),
     lastSyncError: metadata?['lastSyncError'] as String?,
+    transcriptionStatus: schemaVersion >= 2
+        ? validImportedStatus
+            ? importedStatus!
+            : legacyStatus
+        : legacyStatus,
+    transcriptionRequestId:
+        schemaVersion >= 2 ? nullableText('transcriptionRequestId') : null,
+    transcriptionJobId:
+        schemaVersion >= 2 ? nullableText('transcriptionJobId') : null,
+    transcriptionAttempt:
+        schemaVersion >= 2 ? number('transcriptionAttempt', 0) : 0,
+    transcriptionStartedAt:
+        schemaVersion >= 2 ? utcDate('transcriptionStartedAt') : null,
+    transcriptionUpdatedAt:
+        schemaVersion >= 2 ? utcDate('transcriptionUpdatedAt') : null,
+    transcriptionCompletedAt:
+        schemaVersion >= 2 ? utcDate('transcriptionCompletedAt') : null,
+    transcriptionError:
+        schemaVersion >= 2 ? nullableText('transcriptionError') : null,
   );
 }

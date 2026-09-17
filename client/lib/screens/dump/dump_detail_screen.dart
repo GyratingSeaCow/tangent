@@ -1,29 +1,32 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import 'dart:async';
 
-import 'package:drift/drift.dart' show Value;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:uuid/uuid.dart';
 
 import '../../data/local_db.dart';
+import '../../data/manual_transcript_publication.dart';
 import '../../data/recording_metadata.dart';
+import '../../data/storage/storage_contract.dart';
+import '../../data/storage/storage_providers.dart';
 import '../../models/dump_mode.dart';
 import '../../models/sync_status.dart';
+import '../../models/transcription_status.dart';
 import '../../services/meeting_notes_processor.dart';
 import '../../services/recording_playback.dart';
-import '../../services/server_transcription.dart';
+import 'local_deletion_presentation.dart';
 import '../home/home_screen.dart' show localDbProvider;
 import '../home/home_providers.dart'
     show
-        audioStorageProvider,
         recordingPlaybackEngineFactoryProvider,
         serverTranscriptionServiceProvider;
 
 /// Watch a single dump by id.
 final dumpByIdProvider =
-    FutureProvider.family<DumpRow?, String>((ref, id) async {
+    StreamProvider.autoDispose.family<DumpRow?, String>((ref, id) {
   final db = ref.watch(localDbProvider);
-  return db.getDump(id);
+  return db.watchDump(id);
 });
 
 class DumpDetailScreen extends ConsumerStatefulWidget {
@@ -44,8 +47,25 @@ class DumpDetailScreen extends ConsumerStatefulWidget {
 
 class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
   late final TextEditingController _titleController;
-  late final RecordingPlaybackController _playbackController;
+  late final TextEditingController _transcriptController;
+  RecordingPlaybackController? _playbackController;
+  PlaybackLease? _playbackLease;
+  late Future<void> _playbackInitialization;
+  bool _playbackOpening = true;
+  bool _canRetryPlayback = false;
+  bool _deleteBusy = false;
+  int _deletionPreviewGeneration = 0;
+  String? _deletionPreviewError;
+  final _deletionRecovery = LocalDeletionRecoveryState();
+  BulkDeletionResult? get _deletionResult => _deletionRecovery.latest;
+  String? _playbackError;
+  bool _closing = false;
   bool _saving = false;
+  bool _savingTranscript = false;
+  bool _transcriptDirty = false;
+  String? _editorBaseTranscript;
+  int? _editorBaseAttempt;
+  String? _editorBaseRequestId;
   String? _statusMessage;
   String? _statusError;
 
@@ -53,13 +73,12 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
   void initState() {
     super.initState();
     _titleController = TextEditingController();
-    _playbackController = RecordingPlaybackController(
-      engine: ref.read(recordingPlaybackEngineFactoryProvider)(),
-    )..addListener(_onPlaybackChanged);
-    unawaited(_playbackController.initialize(widget.audioPath));
+    _transcriptController = TextEditingController();
+    _playbackInitialization = _initializePlayback();
+    unawaited(_discoverDeletion());
+    final db = ref.read(localDbProvider);
     // Async-load the existing title.
     Future.microtask(() async {
-      final db = ref.read(localDbProvider);
       final row = await db.getDump(widget.dumpId);
       if (row != null && mounted) {
         setState(() {
@@ -71,15 +90,263 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
 
   @override
   void dispose() {
-    _playbackController
-      ..removeListener(_onPlaybackChanged)
-      ..dispose();
+    _closing = true;
+    final playback = _playbackController;
+    if (playback != null) {
+      playback.removeListener(_onPlaybackChanged);
+      playback.dispose();
+    } else {
+      unawaited(_playbackLease?.close());
+    }
     _titleController.dispose();
+    _transcriptController.dispose();
     super.dispose();
   }
 
   void _onPlaybackChanged() {
     if (mounted) setState(() {});
+  }
+
+  Future<void> _initializePlayback() async {
+    final raw = ref.read(recordingPlaybackEngineFactoryProvider)();
+    final access = ref.read(recordingAccessProvider);
+    try {
+      final binding =
+          await ref.read(localDbProvider).boundRecording(widget.dumpId);
+      if (binding == null) throw StateError('Recording storage is unresolved');
+      final opened = await access.openPlayback(binding.key, raw);
+      final lease = switch (opened) {
+        Ok<PlaybackLease>(:final value) => value,
+        Fail<PlaybackLease>(:final problem) => throw StorageFault(problem),
+      };
+      if (_closing || !mounted) {
+        await lease.close();
+        return;
+      }
+      final controller = RecordingPlaybackController(engine: lease.engine)
+        ..addListener(_onPlaybackChanged);
+      _playbackLease = lease;
+      _playbackController = controller;
+      setState(() {});
+      await controller.initialize(lease.source);
+    } catch (error) {
+      await raw.dispose();
+      if (mounted && !_closing) {
+        setState(() => _playbackError = 'Playback unavailable: $error');
+      }
+    } finally {
+      if (mounted) setState(() => _playbackOpening = false);
+    }
+  }
+
+  Future<void> _retryPlayback() async {
+    if (_deleteBusy || _playbackOpening || !_canRetryPlayback || !mounted) return;
+    setState(() { _playbackOpening=true; _canRetryPlayback=false; });
+    final service=ref.read(localDeletionServiceProvider);
+    _playbackInitialization=() async {
+      try {
+        final preview=switch(await service.preview({widget.dumpId})) {
+          Ok<DeletionPreview>(:final value)=>value,
+          Fail<DeletionPreview>(:final problem)=>throw StorageFault(problem),
+        };
+        if(!mounted) return;
+        final target=preview.targets.single;
+        if(target.binding==null || !{Eligibility.eligible,Eligibility.busy,Eligibility.nonterminal,Eligibility.syncing,Eligibility.publicationPending}.contains(target.eligibility)) {
+          setState(()=>_playbackError='Playback unavailable: ${target.eligibility.name}. Resolve local storage or retry pending local deletion.');
+          return;
+        }
+        // The previous engine/lease has actually closed. Only this explicit
+        // user action may start a fresh binding lookup + engine on this route.
+        _closing=false;_playbackError=null;
+        await _initializePlayback();
+      } catch(e) {if(mounted)setState(()=>_playbackError='Playback unavailable: $e');}
+      finally {if(mounted)setState(()=>_playbackOpening=false);}
+    }();
+    await _playbackInitialization;
+  }
+
+  Future<void> _playbackAfterFailedDelete(LocalDeletionService service) async {
+    try {
+      final preview=switch(await service.preview({widget.dumpId})) {
+        Ok<DeletionPreview>(:final value)=>value,
+        Fail<DeletionPreview>(:final problem)=>throw StorageFault(problem),
+      };
+      if(!mounted) return;
+      final target=preview.targets.single;
+      final playable=target.binding!=null && {Eligibility.eligible,Eligibility.busy,Eligibility.nonterminal,Eligibility.syncing,Eligibility.publicationPending}.contains(target.eligibility);
+      setState(() {
+        _canRetryPlayback=playable;
+        _playbackError=playable ? 'Playback stopped after local deletion was blocked.'
+          : target.eligibility==Eligibility.retryOnly ? 'Playback unavailable while local deletion is pending. Retry failed local deletion.'
+          : 'Playback unavailable: ${target.eligibility.name}. Resolve local storage first.';
+      });
+    } catch(e) {if(mounted)setState((){_canRetryPlayback=false;_playbackError='Playback unavailable: $e';});}
+  }
+
+  Future<void> _closePlayback() async {
+    _closing = true;
+    await _playbackInitialization;
+    final controller = _playbackController;
+    final lease = _playbackLease;
+    _playbackController = null;
+    _playbackLease = null;
+    _playbackError = 'Playback stopped for local deletion.';
+    if (mounted) setState(() {});
+    if (controller != null) {
+      controller.removeListener(_onPlaybackChanged);
+      await controller.close();
+    }
+    if (lease != null) await lease.close();
+  }
+
+  Future<T> _withEdit<T>(Future<T> Function(RecordingKey key) action) async {
+    final outcome = await ref
+        .read(recordingMutationsProvider)
+        .acquire(widget.dumpId, UseKind.edit);
+    final lease = switch (outcome) {
+      Ok<UseLease>(:final value) => value,
+      Fail<UseLease>(:final problem) => throw StorageFault(problem),
+    };
+    try {
+      return await action(lease.key);
+    } finally {
+      await lease.close();
+    }
+  }
+
+  Future<void> _writeLatestMetadata(
+      LocalDb db, RecordingKey key, RecordingAccess access,) {
+    return access.runSerializedMetadataWrite<void>(
+      key,
+      (writer) async {
+        final latest = await db.getDump(widget.dumpId);
+        if (latest == null) throw StateError('Dump not found');
+        final pending =
+            latest.transcriptionError?.startsWith('sidecar_sync_pending:') ??
+                false;
+        final restoredError =
+            LocalDb.errorAfterSidecarSync(latest.transcriptionError);
+        final metadata = dumpMetadata(latest);
+        if (pending) metadata['transcriptionError'] = restoredError;
+        await writer.write(metadata);
+        if (pending) {
+          await db.updateTranscriptionSidecarError(
+            latest.id,
+            storageKey: writer.binding.key,
+            attempt: latest.transcriptionAttempt,
+            requestId: latest.transcriptionRequestId,
+            error: restoredError,
+            now: DateTime.now().toUtc(),
+            expectedTranscript: latest.transcript,
+            expectedError: latest.transcriptionError,
+          );
+        }
+      },
+    );
+  }
+
+  void _syncTranscriptEditor(DumpRow row) {
+    final transcript = row.transcript;
+    if (transcript == null || transcript.isEmpty) return;
+    final revisionChanged = _editorBaseTranscript != transcript ||
+        _editorBaseAttempt != row.transcriptionAttempt ||
+        _editorBaseRequestId != row.transcriptionRequestId;
+    if (_editorBaseTranscript == null ||
+        (!_savingTranscript && !_transcriptDirty && revisionChanged)) {
+      _transcriptController.value = TextEditingValue(
+        text: transcript,
+        selection: TextSelection.collapsed(offset: transcript.length),
+      );
+      _editorBaseTranscript = transcript;
+      _editorBaseAttempt = row.transcriptionAttempt;
+      _editorBaseRequestId = row.transcriptionRequestId;
+      _transcriptDirty = false;
+    }
+  }
+
+  void _onTranscriptChanged(String value) {
+    final dirty = value != _editorBaseTranscript;
+    setState(() => _transcriptDirty = dirty);
+  }
+
+  bool _manualSidecarPending = false;
+
+  Future<void> _saveTranscript() async {
+    final expectedTranscript = _editorBaseTranscript;
+    final expectedAttempt = _editorBaseAttempt;
+    if (expectedTranscript == null || expectedAttempt == null) return;
+    final transcript = _transcriptController.text;
+    if (transcript.trim().isEmpty) return;
+    setState(() {
+      _savingTranscript = true;
+      _statusError = null;
+      _statusMessage = 'Saving transcript…';
+    });
+    try {
+      final db = ref.read(localDbProvider);
+      // Captured before admission/DB awaits: publication can outlive the route.
+      final access = ref.read(recordingAccessProvider);
+      await _withEdit((key) async {
+        final saved = await db.updateDumpTranscript(
+          widget.dumpId,
+          storageKey: key,
+          expectedTranscript: expectedTranscript,
+          expectedTranscriptionAttempt: expectedAttempt,
+          expectedTranscriptionRequestId: _editorBaseRequestId,
+          transcript: transcript,
+          now: DateTime.now().toUtc(),
+        );
+        // SQLite owns this revision even when the following sidecar write fails.
+        // A retry must compare against it, not against the old editor base.
+        if (mounted) {
+          setState(() {
+            _editorBaseTranscript = saved.transcript;
+            _editorBaseAttempt = saved.transcriptionAttempt;
+            _editorBaseRequestId = saved.transcriptionRequestId;
+            _transcriptDirty = _transcriptController.text != saved.transcript;
+            _manualSidecarPending = true;
+          });
+        }
+        final published = await publishManualTranscriptSidecar(
+          db: db,
+          access: access,
+          storageKey: key,
+          revision: saved,
+        );
+        if (!published) throw StateError('Manual edit was superseded');
+        if (mounted) {
+          setState(() {
+            _manualSidecarPending = false;
+            _editorBaseTranscript = saved.transcript;
+            _editorBaseAttempt = saved.transcriptionAttempt;
+            _editorBaseRequestId = saved.transcriptionRequestId;
+            _transcriptDirty = _transcriptController.text != saved.transcript;
+            _statusMessage = _transcriptDirty
+                ? 'Previous edit saved; newer changes are unsaved'
+                : 'Transcript saved';
+          });
+        }
+      });
+    } on StateError {
+      if (mounted) {
+        setState(() {
+          _statusMessage = null;
+          _statusError =
+              'Transcript not saved: a newer transcription or recording change won. Your draft is still here.';
+        });
+      }
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _statusMessage = null;
+          _statusError = 'Transcript save failed: $error';
+        });
+      }
+    } finally {
+      // The app-scoped durable-row observer owns repair, even after navigation
+      // or client replacement. mounted guards only the editor's UI state.
+      if (mounted) setState(() => _savingTranscript = false);
+    }
   }
 
   Future<void> _save() async {
@@ -90,20 +357,18 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
     });
     try {
       final db = ref.read(localDbProvider);
-      final existing = await db.getDump(widget.dumpId);
-      if (existing == null) {
-        throw StateError('Dump not found');
-      }
-      final updated = existing.copyWith(
-        title: _titleController.text.trim(),
-        updatedAt: DateTime.now(),
-      );
-      if (updated.title.isEmpty) throw StateError('Title cannot be empty');
-      await ref.read(audioStorageProvider).writeMetadata(
-            updated.id,
-            dumpMetadata(updated),
-          );
-      await db.upsertDump(updated);
+      final title = _titleController.text.trim();
+      final access = ref.read(recordingAccessProvider);
+      if (title.isEmpty) throw StateError('Title cannot be empty');
+      await _withEdit((key) async {
+        await db.updateDumpTitle(
+          widget.dumpId,
+          storageKey: key,
+          title: title,
+          now: DateTime.now().toUtc(),
+        );
+        await _writeLatestMetadata(db, key, access);
+      });
       if (mounted) {
         setState(() => _statusMessage = 'Saved');
       }
@@ -119,7 +384,37 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
     }
   }
 
-  Future<void> _transcribe() async {
+  void _requestTranscription(DumpRow row) {
+    if (row.transcript?.trim().isNotEmpty ?? false) {
+      showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Overwrite transcript?'),
+          content: const Text(
+            'The current transcript stays visible while replacement transcription runs. It is replaced only if the new transcription succeeds.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                Navigator.of(dialogContext).pop();
+                unawaited(_runTranscription());
+              },
+              child: const Text('Overwrite'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+    unawaited(_runTranscription());
+  }
+
+  Future<void> _runTranscription() async {
+    if (!mounted) return;
     setState(() {
       _statusError = null;
       _statusMessage = null;
@@ -127,14 +422,6 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
     final service = ref.read(serverTranscriptionServiceProvider);
     try {
       await service.transcribeDump(widget.dumpId);
-      if (!mounted) return;
-      ref.invalidate(dumpByIdProvider(widget.dumpId));
-      if (service.operation.status == ServerTranscriptionStatus.error) {
-        setState(() {
-          _statusError =
-              'Transcribe failed: ${service.operation.error ?? "unknown"}';
-        });
-      }
     } catch (error) {
       if (mounted) {
         setState(() => _statusError = 'Transcribe failed: $error');
@@ -142,38 +429,38 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
     }
   }
 
-  void _cancelTranscription() {
-    ref
-        .read(serverTranscriptionServiceProvider)
-        .cancel(widget.dumpId);
-  }
-
   /// Regenerate secretary notes from the existing transcript without
   /// re-running Whisper. Preserves the raw transcript; only writes to
   /// `meeting_notes` and the public sidecar.
   Future<void> _regenerateMeetingNotes(String transcript) async {
     final db = ref.read(localDbProvider);
-    final audio = ref.read(audioStorageProvider);
+    final access = ref.read(recordingAccessProvider);
+
     setState(() {
       _statusError = null;
       _statusMessage = 'Generating meeting notes…';
     });
     try {
-      final existing = await db.getDump(widget.dumpId);
-      if (existing == null) throw StateError('Dump not found');
-      const processor = MeetingNotesProcessor();
-      final notes = processor.process(
-        title: existing.title,
-        transcript: transcript,
-      );
-      final updated = existing.copyWith(
-        meetingNotes: Value(notes),
-        updatedAt: DateTime.now().toUtc(),
-      );
-      await audio.writeMetadata(updated.id, dumpMetadata(updated));
-      await db.upsertDump(updated);
-      ref.invalidate(dumpByIdProvider(widget.dumpId));
+      await _withEdit((key) async {
+        final existing = await db.getDump(widget.dumpId);
+        if (existing == null) throw StateError('Dump not found');
+        const processor = MeetingNotesProcessor();
+        final notes =
+            processor.process(title: existing.title, transcript: transcript);
+        await db.updateDumpMeetingNotes(
+          widget.dumpId,
+          storageKey: key,
+          expectedTitle: existing.title,
+          expectedTranscript: transcript,
+          expectedTranscriptionAttempt: existing.transcriptionAttempt,
+          expectedTranscriptionRequestId: existing.transcriptionRequestId,
+          meetingNotes: notes,
+          now: DateTime.now().toUtc(),
+        );
+        await _writeLatestMetadata(db, key, access);
+      });
       if (mounted) {
+        ref.invalidate(dumpByIdProvider(widget.dumpId));
         setState(() => _statusMessage = 'Meeting notes updated');
       }
     } catch (e) {
@@ -186,46 +473,140 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
     }
   }
 
-  Future<void> _delete() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Delete dump?'),
-        content: const Text('This removes the local record and audio file.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton.tonal(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true) return;
+  Future<DeleteTarget> _previewDeletionTarget(LocalDeletionService service) async {
+    final preview = switch (await service.preview({widget.dumpId})) {
+      Ok<DeletionPreview>(:final value) => value,
+      Fail<DeletionPreview>(:final problem) => throw StorageFault(problem),
+    };
+    if (preview.targets.length != 1 || preview.targets.single.id != widget.dumpId) {
+      throw StateError('Recording deletion identity is unavailable');
+    }
+    final target = preview.targets.single;
+    if (target.eligibility == Eligibility.retryOnly &&
+        (target.binding?.key.dumpId != widget.dumpId ||
+         target.retryTicketId == null || target.retryTicketId!.isEmpty)) {
+      throw StateError('Pending deletion identity is unavailable');
+    }
+    return target;
+  }
 
+  Future<void> _discoverDeletion() async {
+    if (!mounted || _deleteBusy) return;
+    final generation = ++_deletionPreviewGeneration;
+    final service = ref.read(localDeletionServiceProvider);
     try {
-      final db = ref.read(localDbProvider);
-      final audio = ref.read(audioStorageProvider);
-      await audio.deleteFile(widget.dumpId);
-      await db.deleteDump(widget.dumpId);
+      final target = await _previewDeletionTarget(service);
+      if (!mounted || generation != _deletionPreviewGeneration) return;
+      setState(() {
+        if (target.eligibility == Eligibility.retryOnly) _deletionRecovery.discover(target);
+        _deletionPreviewError = null;
+      });
+    } catch (e) {
+      if (mounted && generation == _deletionPreviewGeneration) {
+        setState(() => _deletionPreviewError = 'Could not check pending local deletion. Check again before deleting: $e');
+      }
+    }
+  }
+
+  Future<void> _delete() async {
+    if(_deleteBusy || !mounted) return;
+    setState(()=>_deleteBusy=true);
+    ++_deletionPreviewGeneration;
+    final service=ref.read(localDeletionServiceProvider);
+    try {
+      // Revalidate before choosing the confirmation, including callbacks captured
+      // before entry discovery completed. Never turn ordinary consent into retry.
+      final before = await _previewDeletionTarget(service);
+      if (!mounted) return;
+      setState(() {
+        _deletionPreviewError = null;
+        if (before.eligibility == Eligibility.retryOnly) {
+          if (!_deletionRecovery.discover(before)) throw StateError('Pending deletion identity changed');
+        }
+      });
+      if (_deletionRecovery.hasPending) {
+        await _confirmDeletionRetry(service);
+        return;
+      }
+      if(!await confirmLocalDeletion(context,1) || !mounted) return;
+      await _closePlayback();
+      // Already-confirmed work retains its owner through actual close/settlement,
+      // even if the route leaves. A new pending ticket requires separate consent.
+      final target = await _previewDeletionTarget(service);
+      if (target.eligibility == Eligibility.retryOnly) {
+        if (mounted) {
+          setState(() {
+          _deletionRecovery.discover(target);
+          _deletionPreviewError = 'A local deletion is pending. Choose Retry deletion to confirm it separately.';
+        });
+        }
+        return;
+      }
+      if (target.binding != before.binding) throw StateError('Recording identity changed. Check again before deleting.');
+      final result = switch (await service.deleteConfirmed(
+        (
+          operationId: const Uuid().v4(),
+          targets: List<DeleteTarget>.unmodifiable([target]),
+        ),
+      )) {
+        Ok<BulkDeletionResult>(:final value) => value,
+        Fail<BulkDeletionResult>(:final problem) => throw StorageFault(problem),
+      };
+      final item = result.items.single;
+      if(mounted) setState(()=>_deletionRecovery.record(result));
+      if (item.state != DeleteState.deleted) {
+        throw StorageFault(
+          item.problem ??
+              const (
+                code: ProblemCode.busy,
+                message: 'Recording is still in use'
+              ),
+        );
+      }
       if (mounted) Navigator.of(context).pop();
     } catch (e) {
+      if (mounted) setState(() => _deletionPreviewError = 'Local deletion could not continue. Check again or retry the pending deletion: $e');
+      if (mounted && _closing) {
+        await _playbackAfterFailedDelete(service);
+      }
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Delete failed: $e')),
         );
       }
+    } finally {if(mounted)setState(()=>_deleteBusy=false);}
+  }
+
+  Future<void> _retryLocalDeletion() async {
+    if(_deleteBusy || !mounted) return;
+    final ids=_deletionRecovery.ticketIds;
+    if(ids.isEmpty)return;
+    setState(()=>_deleteBusy=true);
+    ++_deletionPreviewGeneration;
+    final service=ref.read(localDeletionServiceProvider);
+    try {
+      await _confirmDeletionRetry(service);
+    } catch(e) {if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('Delete failed: $e')));}
+    finally {if(mounted)setState(()=>_deleteBusy=false);}
+  }
+
+  Future<void> _confirmDeletionRetry(LocalDeletionService service) async {
+    final ids = _deletionRecovery.ticketIds;
+    if (ids.isEmpty || !await confirmLocalDeletion(context,ids.length,retry:true) || !mounted) return;
+    await _closePlayback();
+    final result = switch(await service.retryConfirmed((operationId: const Uuid().v4(), ticketIds: ids))) {
+      Ok<BulkDeletionResult>(:final value) => value,
+      Fail<BulkDeletionResult>(:final problem) => throw StorageFault(problem),
+    };
+    if (mounted) {
+      setState(() { _deletionRecovery.record(result); _deletionPreviewError = null; });
+      if (!_deletionRecovery.hasPending) Navigator.of(context).pop();
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final rowAsync = ref.watch(dumpByIdProvider(widget.dumpId));
-    final service = ref.watch(serverTranscriptionServiceProvider);
-    final operation = service.operationFor(widget.dumpId);
 
     return Scaffold(
       appBar: AppBar(
@@ -233,13 +614,13 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
         actions: [
           IconButton(
             icon: const Icon(Icons.delete_outline),
-            tooltip: 'Delete',
-            onPressed: _delete,
+            tooltip: _deletionRecovery.hasPending ? 'Retry deletion' : 'Delete',
+            onPressed: _deleteBusy || (_playbackOpening && _canRetryPlayback) ? null : _delete,
           ),
         ],
       ),
       body: rowAsync.when(
-        data: (row) => _buildBody(context, row, operation),
+        data: (row) => _buildBody(context, row),
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, _) => Center(child: Text('Error: $e')),
       ),
@@ -252,29 +633,23 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
     return mode == DumpMode.meeting ? 'Meeting' : 'Dump';
   }
 
-  Widget _buildBody(
-    BuildContext context,
-    DumpRow? row,
-    ServerTranscriptionOperation operation,
-  ) {
+  Widget _buildBody(BuildContext context, DumpRow? row) {
     if (row == null) {
       return const Center(child: Text('Dump not found'));
     }
 
+    _syncTranscriptEditor(row);
     final sync = SyncStatus.fromWire(row.syncStatus);
     final mode = DumpMode.fromWire(row.mode);
-    final isCurrentOperation = operation.dumpId == widget.dumpId &&
-        operation.status != ServerTranscriptionStatus.idle;
-    final operationActive = isCurrentOperation && operation.isActive;
-    final displayTranscript = isCurrentOperation &&
-            operation.status == ServerTranscriptionStatus.complete
-        ? operation.transcript
-        : row.transcript;
+    final transcription = TranscriptionStatus.fromWire(row.transcriptionStatus);
+    final operationActive = transcription.isInProgress;
+    final displayTranscript = row.transcript;
 
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
         TextField(
+          key: ValueKey('title-editor-${widget.dumpId}'),
           controller: _titleController,
           decoration: const InputDecoration(
             labelText: 'Title',
@@ -293,11 +668,21 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
           ],
         ),
         const SizedBox(height: 16),
+        if (_deletionPreviewError != null) ...[
+          Text(_deletionPreviewError!),
+          TextButton(onPressed: _deleteBusy ? null : _discoverDeletion, child: const Text('Check pending deletion again')),
+        ],
+        if(_deletionResult!=null || _deletionRecovery.hasPending) LocalDeletionResults(result:_deletionResult,pending:_deletionRecovery.pending,discovered:_deletionRecovery.discovered,onRetry:_retryLocalDeletion,busy:_deleteBusy),
+        if(_canRetryPlayback || _playbackOpening && _closing) TextButton(key:const ValueKey('retry-playback'),onPressed:_playbackOpening || _deleteBusy ? null : _retryPlayback,child:const Text('Retry playback')),
         _RecordingPlaybackPanel(
-          state: _playbackController.state,
+          state: _playbackController?.state ??
+              RecordingPlaybackState(
+                loading: _playbackOpening,
+                error: _playbackError,
+              ),
           expectedDuration: Duration(seconds: row.durationSeconds),
-          onToggle: _playbackController.togglePlayback,
-          onSeek: _playbackController.seek,
+          onToggle: _playbackController?.togglePlayback ?? () async {},
+          onSeek: _playbackController?.seek ?? (_) async {},
         ),
         const SizedBox(height: 16),
         if (mode == DumpMode.meeting &&
@@ -325,55 +710,62 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
                 onPressed: () => _regenerateMeetingNotes(displayTranscript),
               ),
             ),
-          Card(
-            child: ExpansionTile(
-              title: const Text('Raw Transcript'),
-              childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-              children: [
-                SelectableText(displayTranscript ?? 'None stated'),
-              ],
-            ),
-          ),
-        ] else if (mode == DumpMode.meeting &&
-            displayTranscript != null &&
-            displayTranscript.isNotEmpty) ...[
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Raw Transcript',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 8),
-                  SelectableText(displayTranscript),
-                  const SizedBox(height: 12),
-                  FilledButton.icon(
-                    key: ValueKey('generate-notes-${widget.dumpId}'),
-                    icon: const Icon(Icons.auto_awesome),
-                    label: const Text('Generate meeting notes'),
-                    onPressed: () =>
-                        _regenerateMeetingNotes(displayTranscript),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ] else if (displayTranscript != null &&
-            displayTranscript.isNotEmpty) ...[
+          const SizedBox(height: 16),
+        ],
+        if (displayTranscript != null && displayTranscript.isNotEmpty) ...[
           Text(
             mode == DumpMode.meeting ? 'Raw Transcript' : 'Transcript',
             style: Theme.of(context).textTheme.titleMedium,
           ),
           const SizedBox(height: 8),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: SelectableText(displayTranscript),
+          TextField(
+            key: ValueKey('transcript-editor-${widget.dumpId}'),
+            controller: _transcriptController,
+            keyboardType: TextInputType.multiline,
+            minLines: 6,
+            maxLines: null,
+            onChanged: _onTranscriptChanged,
+            decoration: InputDecoration(
+              alignLabelWithHint: true,
+              border: const OutlineInputBorder(),
+              errorText: _transcriptController.text.isNotEmpty &&
+                      _transcriptController.text.trim().isEmpty
+                  ? 'Transcript cannot be blank'
+                  : null,
             ),
           ),
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: FilledButton.icon(
+              key: ValueKey('save-transcript-${widget.dumpId}'),
+              icon: _savingTranscript
+                  ? const SizedBox.square(
+                      dimension: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.save),
+              label: const Text('Save transcript'),
+              onPressed: (transcription == TranscriptionStatus.completed ||
+                          transcription == TranscriptionStatus.failed) &&
+                      (_transcriptDirty || _manualSidecarPending) &&
+                      _transcriptController.text.trim().isNotEmpty &&
+                      !_savingTranscript
+                  ? _saveTranscript
+                  : null,
+            ),
+          ),
+          if (mode == DumpMode.meeting &&
+              (row.meetingNotes == null ||
+                  row.meetingNotes!.trim().isEmpty)) ...[
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              key: ValueKey('generate-notes-${widget.dumpId}'),
+              icon: const Icon(Icons.auto_awesome),
+              label: const Text('Generate meeting notes'),
+              onPressed: () => _regenerateMeetingNotes(displayTranscript),
+            ),
+          ],
         ] else ...[
           Card(
             child: Padding(
@@ -386,10 +778,10 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
           ),
         ],
         const SizedBox(height: 16),
-        if (isCurrentOperation) ...[
+        if (operationActive || transcription == TranscriptionStatus.failed) ...[
           _ServerTranscriptionProgressPanel(
-            operation: operation,
-            onCancel: _cancelTranscription,
+            row: row,
+            status: transcription,
           ),
           const SizedBox(height: 16),
         ],
@@ -421,6 +813,7 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
             const SizedBox(width: 8),
             Expanded(
               child: FilledButton.icon(
+                key: ValueKey('transcribe-${widget.dumpId}'),
                 icon: operationActive
                     ? const SizedBox(
                         width: 16,
@@ -429,23 +822,17 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
                       )
                     : const Icon(Icons.cloud_upload),
                 label: Text(
-                  switch (operation.status) {
-                    ServerTranscriptionStatus.uploading =>
-                      'Uploading…',
-                    ServerTranscriptionStatus.queued => 'Queued',
-                    ServerTranscriptionStatus.running =>
-                      'Transcribing on server',
-                    ServerTranscriptionStatus.cancelling => 'Cancelling',
-                    ServerTranscriptionStatus.complete => 'Done',
-                    ServerTranscriptionStatus.error => 'Retry',
-                    ServerTranscriptionStatus.idle => 'Transcribe',
+                  switch (transcription) {
+                    TranscriptionStatus.uploading => 'Uploading…',
+                    TranscriptionStatus.queued => 'Queued',
+                    TranscriptionStatus.running => 'Transcribing on server',
+                    TranscriptionStatus.completed => 'Transcribe again',
+                    TranscriptionStatus.failed => 'Retry',
+                    TranscriptionStatus.notTranscribed => 'Transcribe',
                   },
                 ),
-                onPressed: operationActive ||
-                        operation.status ==
-                            ServerTranscriptionStatus.queued
-                    ? null
-                    : _transcribe,
+                onPressed:
+                    operationActive ? null : () => _requestTranscription(row),
               ),
             ),
           ],
@@ -567,12 +954,12 @@ class _RecordingPlaybackPanel extends StatelessWidget {
 
 class _ServerTranscriptionProgressPanel extends StatefulWidget {
   const _ServerTranscriptionProgressPanel({
-    required this.operation,
-    required this.onCancel,
+    required this.row,
+    required this.status,
   });
 
-  final ServerTranscriptionOperation operation;
-  final VoidCallback onCancel;
+  final DumpRow row;
+  final TranscriptionStatus status;
 
   @override
   State<_ServerTranscriptionProgressPanel> createState() =>
@@ -596,14 +983,14 @@ class _ServerTranscriptionProgressPanelState
   }
 
   void _syncTimer() {
-    if (widget.operation.isActive && _elapsedTimer == null) {
+    if (widget.status.isInProgress && _elapsedTimer == null) {
       _elapsedTimer = Timer.periodic(
         const Duration(seconds: 1),
         (_) {
           if (mounted) setState(() {});
         },
       );
-    } else if (!widget.operation.isActive) {
+    } else if (!widget.status.isInProgress) {
       _elapsedTimer?.cancel();
       _elapsedTimer = null;
     }
@@ -617,23 +1004,20 @@ class _ServerTranscriptionProgressPanelState
 
   @override
   Widget build(BuildContext context) {
-    final operation = widget.operation;
-    final title = switch (operation.status) {
-      ServerTranscriptionStatus.uploading =>
-        'Uploading audio to your server',
-      ServerTranscriptionStatus.queued =>
-        'Queued on your server',
-      ServerTranscriptionStatus.running =>
-        'Transcribing on your server',
-      ServerTranscriptionStatus.cancelling => 'Cancelling',
-      ServerTranscriptionStatus.complete => 'Transcription complete',
-      ServerTranscriptionStatus.error => 'Server transcription failed',
-      ServerTranscriptionStatus.idle => 'Idle',
+    final status = widget.status;
+    final title = switch (status) {
+      TranscriptionStatus.uploading => 'Uploading audio to your server',
+      TranscriptionStatus.queued => 'Queued on your server',
+      TranscriptionStatus.running => 'Transcribing on your server',
+      TranscriptionStatus.failed => 'Server transcription failed',
+      TranscriptionStatus.completed => 'Transcription complete',
+      TranscriptionStatus.notTranscribed => 'Not transcribed',
     };
-    final startedAt = operation.startedAt;
-    final elapsed = startedAt == null
+    final startedAt = widget.row.transcriptionStartedAt;
+    final rawElapsed = startedAt == null
         ? Duration.zero
         : DateTime.now().difference(startedAt);
+    final elapsed = rawElapsed.isNegative ? Duration.zero : rawElapsed;
 
     return Semantics(
       liveRegion: true,
@@ -647,30 +1031,16 @@ class _ServerTranscriptionProgressPanelState
             children: [
               Text(title, style: Theme.of(context).textTheme.titleMedium),
               const SizedBox(height: 8),
-              Text(_detailText(operation, elapsed)),
-              if (operation.isActive ||
-                  operation.status == ServerTranscriptionStatus.queued) ...[
+              Text(_detailText(status, elapsed)),
+              if (status.isInProgress) ...[
                 const SizedBox(height: 12),
                 const LinearProgressIndicator(),
-                const SizedBox(height: 12),
-                OutlinedButton.icon(
-                  onPressed:
-                      operation.status == ServerTranscriptionStatus.cancelling
-                          ? null
-                          : widget.onCancel,
-                  icon: const Icon(Icons.cancel_outlined),
-                  label: Text(
-                    operation.status == ServerTranscriptionStatus.cancelling
-                        ? 'Cancelling…'
-                        : 'Cancel',
-                  ),
-                ),
               ],
-              if (operation.status == ServerTranscriptionStatus.error &&
-                  operation.error != null) ...[
+              if (status == TranscriptionStatus.failed &&
+                  widget.row.transcriptionError != null) ...[
                 const SizedBox(height: 8),
                 Text(
-                  operation.error!,
+                  widget.row.transcriptionError!,
                   style: TextStyle(color: Theme.of(context).colorScheme.error),
                 ),
               ],
@@ -681,23 +1051,19 @@ class _ServerTranscriptionProgressPanelState
     );
   }
 
-  String _detailText(
-    ServerTranscriptionOperation operation,
-    Duration elapsed,
-  ) {
+  String _detailText(TranscriptionStatus status, Duration elapsed) {
     final elapsedText = _formatElapsed(elapsed);
-    return switch (operation.status) {
-      ServerTranscriptionStatus.uploading =>
-        'Streaming the recording to your personal Docker container · Elapsed $elapsedText',
-      ServerTranscriptionStatus.queued =>
-        'Waiting for the server to start the worker · Elapsed $elapsedText',
-      ServerTranscriptionStatus.running =>
-        'The server is decoding audio with faster-whisper · Elapsed $elapsedText',
-      ServerTranscriptionStatus.cancelling =>
-        'Cancelling the queued or active job · Elapsed $elapsedText',
-      ServerTranscriptionStatus.complete => 'Saved locally',
-      ServerTranscriptionStatus.error => 'The recording is preserved on this device.',
-      ServerTranscriptionStatus.idle => 'Elapsed $elapsedText',
+    return switch (status) {
+      TranscriptionStatus.uploading =>
+        'Streaming the preserved recording to your personal Docker container · Elapsed $elapsedText',
+      TranscriptionStatus.queued =>
+        'Waiting for the server worker · Elapsed $elapsedText',
+      TranscriptionStatus.running =>
+        'The server is decoding audio with faster-whisper. This continues if you leave this screen · Elapsed $elapsedText',
+      TranscriptionStatus.failed =>
+        'The previous transcript and raw recording are preserved on this device.',
+      TranscriptionStatus.completed => 'Saved locally',
+      TranscriptionStatus.notTranscribed => 'No transcription attempt yet',
     };
   }
 

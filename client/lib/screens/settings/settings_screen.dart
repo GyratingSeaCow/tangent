@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/settings_store.dart';
 import '../server/server_connection_screen.dart';
+import 'storage_settings_section.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -32,6 +33,17 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final settings = ref.read(settingsStoreProvider);
     final store = ref.read(secureStoreProvider);
     final url = await store.getServerUrl();
+    if (!mounted) return;
+    setState(() {
+      _triggerMode = settings.triggerMode;
+      _wifiOnly = settings.wifiOnlySync;
+      _keepScreenAwake = settings.keepScreenAwakeWhileRecording;
+      _serverUrl = url ?? '';
+      _loaded = true;
+      _serverBusy = url != null && url.isNotEmpty;
+      _serverError = null;
+      _serverInfo = null;
+    });
     ServerInfoSnapshot? info;
     String? infoError;
     if (url != null && url.isNotEmpty) {
@@ -44,13 +56,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     }
     if (mounted) {
       setState(() {
-        _triggerMode = settings.triggerMode;
-        _wifiOnly = settings.wifiOnlySync;
-        _keepScreenAwake = settings.keepScreenAwakeWhileRecording;
-        _serverUrl = url ?? '';
         _serverInfo = info;
         _serverError = infoError;
-        _loaded = true;
+        _serverBusy = false;
       });
     }
   }
@@ -94,28 +102,28 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (!_loaded) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
-      );
-    }
     return Scaffold(
       appBar: AppBar(
         title: const Text('Settings'),
         actions: [
           TextButton(
-            onPressed: _save,
+            onPressed: _loaded ? _save : null,
             child: const Text('SAVE'),
           ),
         ],
       ),
       body: ListView(
         children: [
+          const StorageSettingsSection(),
+          const Divider(),
+          if (!_loaded)
+            const ListTile(title: Text('Loading settings…'))
+          else ...[
           ListTile(
             title: const Text('Server'),
             subtitle: Text(_serverUrl.isEmpty ? '(not set)' : _serverUrl),
             trailing: const Icon(Icons.chevron_right),
-            onTap: _changeServer,
+            onTap: _serverBusy ? null : _changeServer,
           ),
           const Divider(),
           const Padding(
@@ -197,12 +205,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               style: TextStyle(color: Colors.grey),
             ),
           ),
+          ],
         ],
       ),
     );
   }
 
   String _serverInfoText() {
+    if (_serverBusy) return 'Loading server information…';
     if (_serverError != null) return 'Server unreachable: $_serverError';
     final info = _serverInfo;
     if (info == null) return 'Not configured — tap Server above to set up';

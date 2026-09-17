@@ -4,6 +4,9 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../services/recording_service.dart';
+import '../../data/local_db.dart';
+import '../../data/storage/storage_contract.dart';
+import '../../data/storage/storage_providers.dart';
 import '../../services/screen_awake.dart';
 import '../home/home_providers.dart';
 import '../settings/settings_screen.dart';
@@ -15,6 +18,8 @@ final recordingTickProvider = StateProvider<int>((ref) => 0);
 
 class RecordingController extends StateNotifier<RecordingState> {
   final RecordingService _service;
+  final RecordingCoordinator Function() _coordinator;
+  final Future<void> Function() _ready;
   final ScreenAwake _screenAwake;
   final StateController<int> _tick;
   final WaveformNotifier _waveform;
@@ -25,6 +30,8 @@ class RecordingController extends StateNotifier<RecordingState> {
 
   RecordingController(
     this._service,
+    this._coordinator,
+    this._ready,
     this._screenAwake,
     this._tick,
     this._waveform,
@@ -37,12 +44,14 @@ class RecordingController extends StateNotifier<RecordingState> {
     return DateTime.now().difference(_startedAt!).inSeconds;
   }
 
-  Future<void> start() async {
+  Future<void> start({required String mode}) async {
     if (state != RecordingState.idle) return;
     state = RecordingState.starting;
     _clearVisualState();
     try {
-      await _service.start();
+      await _ready();
+      final outcome = await _coordinator().start(mode: mode);
+      if (outcome case Fail(:final problem)) throw StorageFault(problem);
       _startedAt = DateTime.now();
       state = RecordingState.recording;
       _timer = Timer.periodic(const Duration(seconds: 1), (_) {
@@ -71,11 +80,14 @@ class RecordingController extends StateNotifier<RecordingState> {
     }
   }
 
-  Future<RecordingResult?> stop() async {
+  Future<DumpRow?> stop() async {
     if (state != RecordingState.recording) return null;
     state = RecordingState.saving;
     try {
-      return await _service.stop();
+      return switch (await _coordinator().stopAndPersist()) {
+        Ok(:final value) => value,
+        Fail(:final problem) => throw StorageFault(problem),
+      };
     } finally {
       await _releaseRecordingUi();
       state = RecordingState.idle;
@@ -125,6 +137,8 @@ final recordingControllerProvider =
     StateNotifierProvider<RecordingController, RecordingState>((ref) {
   return RecordingController(
     ref.watch(recordingServiceProvider),
+    () => ref.read(recordingCoordinatorProvider),
+    () => ref.read(storageBootstrapProvider.future),
     ref.watch(screenAwakeProvider),
     ref.watch(recordingTickProvider.notifier),
     ref.watch(waveformProvider.notifier),

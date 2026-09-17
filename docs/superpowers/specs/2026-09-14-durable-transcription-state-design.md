@@ -20,6 +20,8 @@ The observed `test3` incident did not truncate audio: the phone and server both 
 - Reattach to an existing server job without uploading or enqueueing a duplicate.
 - Reconcile server completion into the local database and recoverable sidecar even when the initiating screen no longer exists.
 - Prevent an older attempt from overwriting a newer attempt.
+- Require explicit confirmation before retranscribing a recording that already has a transcript.
+- Let the user correct a completed transcript without changing or deleting its raw recording.
 - Keep the server as the owner of inference; do not add an Android foreground service for v1.
 - Preserve raw recordings on every failure path.
 
@@ -157,6 +159,43 @@ The detail screen observes the dump row reactively:
 
 Retry creates a new request ID and increments the attempt. It must not reuse a failed request ID.
 
+### Confirmed retranscription
+
+Pressing **Transcribe** or **Retry** for a dump with a non-empty existing
+transcript opens a confirmation dialog before any durable or network change:
+
+- **Cancel** is the default safe action and performs no database write, upload,
+  enqueue, or request-ID allocation.
+- **Overwrite** starts the normal durable attempt with a fresh request ID.
+- The existing transcript remains visible while the replacement is uploading,
+  queued, or running and remains available if that attempt fails.
+- Only a successfully committed completion replaces the existing transcript.
+  Existing meeting notes remain unchanged until the user explicitly regenerates
+  them. The raw recording is never modified or deleted.
+
+### Manual transcript editing
+
+For a completed dump, render the raw transcript as an always-editable multiline
+text area rather than read-only selectable text. Editing is explicit rather than
+autosaved:
+
+- **Save transcript** is enabled only when the text differs from the persisted
+  transcript and no transcription attempt is in progress.
+- A blank or whitespace-only transcript cannot be saved.
+- Save updates only the transcript and timestamp. It preserves the completed
+  status, attempt, request ID, job ID, recording, title, and existing meeting
+  notes.
+- The database update is a compare-and-set against the transcript, attempt, and
+  nullable request ID captured when editing began. A completion or another edit
+  that wins first causes the stale save to fail visibly rather than overwrite
+  newer state.
+- After the database update succeeds, write the latest committed row to the
+  sidecar through the shared per-dump metadata serializer.
+- Existing meeting notes remain unchanged after a manual correction. The user
+  can select **Regenerate notes** to derive new notes from the corrected
+  transcript; its existing title/transcript/attempt/request compare-and-set
+  continues to reject stale generation.
+
 ## Error handling
 
 - Audio read/upload failure: mark `failed`; preserve audio and prior transcript.
@@ -185,6 +224,13 @@ Retry creates a new request ID and increments the attempt. It must not reuse a f
 11. Duplicate taps cannot create a second request.
 12. Older job completion cannot overwrite a newer attempt.
 13. DB and sidecar both contain the completed transcript.
+14. Canceling overwrite confirmation performs no database or network work.
+15. Confirming overwrite allocates one new attempt and replaces text only after
+    successful completion; existing meeting notes stay unchanged, and failure
+    retains the prior transcript and recording.
+16. A manual transcript edit updates database and sidecar while preserving job
+    identity and meeting notes.
+17. Blank edits and stale edits racing a newer attempt are rejected.
 
 ### Widget tests
 
@@ -200,6 +246,10 @@ Cover every list pill and both independent filter rows:
 - Search constrained by both filters
 
 Also prove that list and detail screens update automatically from SQLite after background reconciliation.
+
+Detail widget tests also cover the overwrite confirmation's Cancel/Overwrite
+branches and the multiline transcript editor's dirty, blank, saved, and stale
+concurrent-attempt states.
 
 ### Server tests
 
@@ -221,6 +271,11 @@ Also prove that list and detail screens update automatically from SQLite after b
 8. Pull the local SQLite database and verify request ID, job ID, terminal state, transcript, and attempt number.
 9. Confirm the server has only one job for the request ID.
 10. Confirm PID-scoped logcat has no Flutter/unhandled transcription errors.
+11. On a completed recording, verify Cancel leaves the transcript unchanged and
+    Overwrite replaces it only after confirmation and successful completion.
+12. Correct the replacement transcript in the multiline editor, save it, reopen
+    the detail screen, and verify the correction persists without altering the
+    raw recording.
 
 ## Decision summary
 
@@ -229,4 +284,8 @@ Also prove that list and detail screens update automatically from SQLite after b
 - Use durable latest-attempt fields on `dumps` rather than a separate history table.
 - Add client-generated idempotency request IDs to close enqueue crash windows.
 - Reconcile on startup/resume and fall back from SSE to polling.
+- Confirm every retranscription that would replace existing text, retaining the
+  old text until successful completion.
+- Make completed raw transcripts explicitly editable with guarded database and
+  sidecar persistence; preserve meeting notes until manual regeneration.
 - Do not add an Android foreground service for v1.

@@ -1,154 +1,200 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import 'dart:async';
 import 'dart:io';
 
+import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:tangent/data/audio_storage.dart';
+import '../support/legacy_audio_storage_fixture.dart';
 import 'package:tangent/data/local_db.dart';
-import 'package:tangent/models/server_info.dart';
 import 'package:tangent/screens/dump/dumps_list_screen.dart';
+import 'package:tangent/screens/dump/dumps_providers.dart';
 import 'package:tangent/screens/home/home_providers.dart';
 import 'package:tangent/screens/home/home_screen.dart';
-import 'package:tangent/screens/server/server_connection_screen.dart';
-import 'package:tangent/services/server_transcription.dart';
-import 'package:tangent/services/server_transcription_service.dart';
-import 'package:tangent/services/transcription_client.dart';
 
 void main() {
-  testWidgets(
-      'Dumps list identifies the recording being transcribed on the server',
+  testWidgets('list renders every durable status and two independent filters',
       (tester) async {
-    final temp = Directory.systemTemp.createTempSync('tangent-list-progress-');
+    tester.view.physicalSize = const Size(1080, 3000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    final temp = Directory.systemTemp.createTempSync('tangent-list-status-');
     final db = LocalDb.forTesting(NativeDatabase.memory());
     final storage = AudioStorage.test(temp);
-    final service = _QueuedService(db: db, audioStorage: storage);
-    final fake = _FakeClient();
     addTearDown(() async {
       await db.close();
       temp.deleteSync(recursive: true);
     });
 
-    await db.upsertDump(_row('active', 'Currently processing'));
-    await db.upsertDump(_row('queued', 'Waiting recording'));
-    await db.upsertDump(_row('other', 'Another recording'));
-    await db.upsertDump(_row('meeting', 'Meeting recording', mode: 'meeting'));
+    final rows = [
+      _row('not-a', 'Brain without transcript'),
+      _row('not-b', 'Meeting without transcript', mode: 'meeting'),
+      _row('uploading', 'Uploading recording', status: 'uploading'),
+      _row('queued', 'Queued meeting', mode: 'meeting', status: 'queued'),
+      _row('running', 'Running recording', status: 'running'),
+      _row(
+        'done-a',
+        'Completed recording',
+        status: 'completed',
+        transcript: 'first transcript',
+      ),
+      _row(
+        'done-b',
+        'Completed meeting',
+        mode: 'meeting',
+        status: 'completed',
+        transcript: 'second transcript',
+      ),
+      _row('failed', 'Failed meeting', mode: 'meeting', status: 'failed'),
+    ];
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          localDbProvider.overrideWithValue(db),
+          audioStorageProvider.overrideWithValue(storage),
+          // This status/filter presentation fixture has no bound storage owner.
+          // Eligibility/lifetime behavior is covered by the selection and bound detail suites.
+          deletionEligibilityProvider.overrideWith((_) => Stream.value(const {})),
+          dumpsProvider.overrideWith((_) => Stream.value(rows)),
+        ],
+        child: const MaterialApp(home: DumpsListScreen()),
+      ),
+    );
+    await _pumpData(tester);
+
+    _expectPill('not-a', 'not-transcribed', 'Not transcribed');
+    _expectPill('not-b', 'not-transcribed', 'Not transcribed');
+    _expectPill('uploading', 'uploading', 'Uploading');
+    _expectPill('queued', 'queued', 'Queued');
+    _expectPill('running', 'running', 'Transcribing');
+    _expectPill('done-a', 'completed', 'Transcribed');
+    _expectPill('done-b', 'completed', 'Transcribed');
+    _expectPill('failed', 'failed', 'Failed');
+
+    final chips = tester
+        .widgetList<FilterChip>(find.byType(FilterChip))
+        .map((chip) => (chip.label as Text).data)
+        .toList();
+    expect(
+      chips,
+      [
+        'All',
+        'Brain Dump',
+        'Meeting',
+        'All',
+        'Needs transcript',
+        'In progress',
+        'Transcribed',
+        'Failed',
+      ],
+    );
+
+    await tester.tap(find.byKey(const ValueKey('mode-filter-meeting')));
+    await _pumpData(tester);
+    await tester.tap(
+      find.byKey(const ValueKey('transcript-filter-needsTranscript')),
+    );
+    await _pumpData(tester);
+
+    expect(find.text('Meeting without transcript'), findsOneWidget);
+    expect(find.text('Brain without transcript'), findsNothing);
+    expect(find.text('Queued meeting'), findsNothing);
+    expect(find.text('Completed meeting'), findsNothing);
+    expect(find.text('Failed meeting'), findsNothing);
+
+    await _disposeTree(tester);
+  });
+
+  testWidgets('list pill reacts from running to completed durable state',
+      (tester) async {
+    tester.view.physicalSize = const Size(1080, 1600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    final temp = Directory.systemTemp.createTempSync('tangent-list-reactive-');
+    final db = LocalDb.forTesting(NativeDatabase.memory());
+    final storage = AudioStorage.test(temp);
+    final rows = StreamController<List<DumpRow>>();
+    addTearDown(() async {
+      await rows.close();
+      await db.close();
+      temp.deleteSync(recursive: true);
+    });
+    final running = _row('reactive', 'Reactive recording', status: 'running');
 
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
           localDbProvider.overrideWithValue(db),
           audioStorageProvider.overrideWithValue(storage),
-          transcriptionClientProvider.overrideWith((ref) => fake),
-          serverTranscriptionServiceProvider.overrideWith((ref) => service),
+          // This status/filter presentation fixture has no bound storage owner.
+          // Eligibility/lifetime behavior is covered by the selection and bound detail suites.
+          deletionEligibilityProvider.overrideWith((_) => Stream.value(const {})),
+          dumpsProvider.overrideWith((_) => rows.stream),
         ],
         child: const MaterialApp(home: DumpsListScreen()),
       ),
     );
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 100));
-    await tester.pump();
+    rows.add([running]);
+    await _pumpData(tester);
+    _expectPill('reactive', 'running', 'Transcribing');
+
+    rows.add([
+      running.copyWith(
+        updatedAt: DateTime.utc(2026, 9, 15),
+        transcript: const Value('Completed reactively'),
+        transcriptionStatus: 'completed',
+        transcriptionCompletedAt: Value(DateTime.utc(2026, 9, 15)),
+      ),
+    ]);
+    await _pumpData(tester);
 
     expect(
-      find.byKey(const ValueKey('transcription-indicator-active')),
-      findsOneWidget,
-    );
-    expect(find.text('Uploading to your server…'), findsOneWidget);
-    expect(
-      find.byKey(const ValueKey('transcription-queued-queued')),
-      findsOneWidget,
-    );
-    expect(find.textContaining('Queued'), findsWidgets);
-    expect(
-      find.byKey(const ValueKey('transcription-indicator-other')),
+      find.byKey(const ValueKey('transcription-pill-reactive-running')),
       findsNothing,
     );
-    expect(find.text('All'), findsOneWidget);
-    expect(find.text('Brain Dump'), findsOneWidget);
-    expect(find.text('Meeting'), findsOneWidget);
-    expect(find.text('Awaiting'), findsOneWidget);
+    _expectPill('reactive', 'completed', 'Transcribed');
 
-    await tester.tap(find.text('Meeting'));
-    await tester.pumpAndSettle();
-    expect(find.text('Meeting recording'), findsOneWidget);
-    expect(find.text('Currently processing'), findsNothing);
-
-    await tester.pumpWidget(const SizedBox.shrink());
-    await tester.pump(const Duration(milliseconds: 1));
+    await _disposeTree(tester);
   });
 }
 
-DumpRow _row(String id, String title, {String mode = 'brain_dump'}) => DumpRow(
+Future<void> _pumpData(WidgetTester tester) async {
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 100));
+}
+
+Future<void> _disposeTree(WidgetTester tester) async {
+  await tester.pumpWidget(const SizedBox.shrink());
+  await tester.pump();
+}
+
+void _expectPill(String id, String status, String label) {
+  final pill = find.byKey(ValueKey('transcription-pill-$id-$status'));
+  expect(pill, findsOneWidget);
+  expect(find.descendant(of: pill, matching: find.text(label)), findsOneWidget);
+}
+
+DumpRow _row(
+  String id,
+  String title, {
+  String mode = 'brain_dump',
+  String status = 'not_transcribed',
+  String? transcript,
+}) =>
+    DumpRow(
       id: id,
       createdAt: DateTime.utc(2026, 9, 14),
       updatedAt: DateTime.utc(2026, 9, 14),
       mode: mode,
       durationSeconds: 9,
       title: title,
+      transcript: transcript,
       audioPath: 'content://tangent/$id.opus',
       audioSizeBytes: 3,
       syncStatus: 'pending',
       syncAttempts: 0,
+      transcriptionStatus: status,
+      transcriptionAttempt: 0,
     );
-
-class _FakeClient implements TranscriptionClient {
-  @override
-  String get baseUrl => 'http://test';
-  @override
-  Future<ServerInfo> getServerInfo() async => throw UnimplementedError();
-  @override
-  Future<String> createDump({
-    required String id,
-    required String mode,
-    required int durationSeconds,
-    required String title,
-    required DateTime createdAt,
-  }) async =>
-      id;
-  @override
-  Future<void> uploadAudio({
-    required String dumpId,
-    required List<int> audioBytes,
-    String filename = '',
-    String mimeType = '',
-  }) async {}
-  @override
-  Future<String> enqueueTranscription(
-    String dumpId, {
-    String model = 'large-v3',
-  }) async =>
-      'job';
-  @override
-  Stream<JobEvent> streamJob(
-    String jobId, {
-    Duration maxWait = const Duration(minutes: 30),
-  }) async* {}
-}
-
-/// Subclass that fakes the active+queued state without touching the
-/// network.
-class _QueuedService extends ServerTranscriptionService {
-  _QueuedService({required super.db, required super.audioStorage})
-      : super(
-          client: _FakeClient(),
-        );
-
-  @override
-  ServerTranscriptionOperation get operation =>
-      const ServerTranscriptionOperation(
-        status: ServerTranscriptionStatus.uploading,
-        dumpId: 'active',
-        startedAt: null,
-      );
-
-  @override
-  ServerTranscriptionOperation operationFor(String dumpId) => switch (dumpId) {
-        'active' => operation,
-        'queued' => const ServerTranscriptionOperation(
-            status: ServerTranscriptionStatus.queued,
-            dumpId: 'queued',
-          ),
-        _ => const ServerTranscriptionOperation.idle(),
-      };
-}
