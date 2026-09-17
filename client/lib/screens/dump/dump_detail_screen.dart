@@ -108,6 +108,24 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
   }
 
   Future<void> _initializePlayback() async {
+    final DumpRow? existing;
+    try {
+      existing = await ref.read(localDbProvider).getDump(widget.dumpId);
+    } catch (error) {
+      if (mounted && !_closing) {
+        setState(() => _playbackError = 'Playback unavailable: $error');
+      }
+      if (mounted) setState(() => _playbackOpening = false);
+      return;
+    }
+    if (_closing || !mounted) return;
+    if (existing != null &&
+        DumpMode.fromWire(existing.mode) == DumpMode.textNote) {
+      // Text notes publish markdown into the primary-content slot, not
+      // audio: never construct a playback engine for them.
+      setState(() => _playbackOpening = false);
+      return;
+    }
     final raw = ref.read(recordingPlaybackEngineFactoryProvider)();
     final access = ref.read(recordingAccessProvider);
     try {
@@ -641,6 +659,7 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
     _syncTranscriptEditor(row);
     final sync = SyncStatus.fromWire(row.syncStatus);
     final mode = DumpMode.fromWire(row.mode);
+    final isNote = mode == DumpMode.textNote;
     final transcription = TranscriptionStatus.fromWire(row.transcriptionStatus);
     final operationActive = transcription.isInProgress;
     final displayTranscript = row.transcript;
@@ -663,7 +682,7 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
           spacing: 8,
           children: [
             _MetaChip(label: 'Mode: ${mode.displayName}'),
-            _MetaChip(label: '${row.durationSeconds}s'),
+            if (!isNote) _MetaChip(label: '${row.durationSeconds}s'),
             _MetaChip(label: sync.displayName, color: _syncColor(sync)),
           ],
         ),
@@ -674,17 +693,19 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
         ],
         if(_deletionResult!=null || _deletionRecovery.hasPending) LocalDeletionResults(result:_deletionResult,pending:_deletionRecovery.pending,discovered:_deletionRecovery.discovered,onRetry:_retryLocalDeletion,busy:_deleteBusy),
         if(_canRetryPlayback || _playbackOpening && _closing) TextButton(key:const ValueKey('retry-playback'),onPressed:_playbackOpening || _deleteBusy ? null : _retryPlayback,child:const Text('Retry playback')),
-        _RecordingPlaybackPanel(
-          state: _playbackController?.state ??
-              RecordingPlaybackState(
-                loading: _playbackOpening,
-                error: _playbackError,
-              ),
-          expectedDuration: Duration(seconds: row.durationSeconds),
-          onToggle: _playbackController?.togglePlayback ?? () async {},
-          onSeek: _playbackController?.seek ?? (_) async {},
-        ),
-        const SizedBox(height: 16),
+        if (!isNote) ...[
+          _RecordingPlaybackPanel(
+            state: _playbackController?.state ??
+                RecordingPlaybackState(
+                  loading: _playbackOpening,
+                  error: _playbackError,
+                ),
+            expectedDuration: Duration(seconds: row.durationSeconds),
+            onToggle: _playbackController?.togglePlayback ?? () async {},
+            onSeek: _playbackController?.seek ?? (_) async {},
+          ),
+          const SizedBox(height: 16),
+        ],
         if (mode == DumpMode.meeting &&
             row.meetingNotes != null &&
             row.meetingNotes!.trim().isNotEmpty) ...[
@@ -714,7 +735,11 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
         ],
         if (displayTranscript != null && displayTranscript.isNotEmpty) ...[
           Text(
-            mode == DumpMode.meeting ? 'Raw Transcript' : 'Transcript',
+            isNote
+                ? 'Note'
+                : mode == DumpMode.meeting
+                    ? 'Raw Transcript'
+                    : 'Transcript',
             style: Theme.of(context).textTheme.titleMedium,
           ),
           const SizedBox(height: 8),
@@ -747,7 +772,8 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
                   : const Icon(Icons.save),
               label: const Text('Save transcript'),
               onPressed: (transcription == TranscriptionStatus.completed ||
-                          transcription == TranscriptionStatus.failed) &&
+                          transcription == TranscriptionStatus.failed ||
+                          transcription == TranscriptionStatus.notApplicable) &&
                       (_transcriptDirty || _manualSidecarPending) &&
                       _transcriptController.text.trim().isNotEmpty &&
                       !_savingTranscript
@@ -810,32 +836,34 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
                 onPressed: _saving ? null : _save,
               ),
             ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: FilledButton.icon(
-                key: ValueKey('transcribe-${widget.dumpId}'),
-                icon: operationActive
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.cloud_upload),
-                label: Text(
-                  switch (transcription) {
-                    TranscriptionStatus.uploading => 'Uploading…',
-                    TranscriptionStatus.queued => 'Queued',
-                    TranscriptionStatus.running => 'Transcribing on server',
-                    TranscriptionStatus.completed => 'Transcribe again',
-                    TranscriptionStatus.failed => 'Retry',
-                    TranscriptionStatus.notTranscribed => 'Transcribe',
-                    TranscriptionStatus.notApplicable => 'Not applicable',
-                  },
+            if (!isNote) ...[
+              const SizedBox(width: 8),
+              Expanded(
+                child: FilledButton.icon(
+                  key: ValueKey('transcribe-${widget.dumpId}'),
+                  icon: operationActive
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.cloud_upload),
+                  label: Text(
+                    switch (transcription) {
+                      TranscriptionStatus.uploading => 'Uploading…',
+                      TranscriptionStatus.queued => 'Queued',
+                      TranscriptionStatus.running => 'Transcribing on server',
+                      TranscriptionStatus.completed => 'Transcribe again',
+                      TranscriptionStatus.failed => 'Retry',
+                      TranscriptionStatus.notTranscribed => 'Transcribe',
+                      TranscriptionStatus.notApplicable => 'Not applicable',
+                    },
+                  ),
+                  onPressed:
+                      operationActive ? null : () => _requestTranscription(row),
                 ),
-                onPressed:
-                    operationActive ? null : () => _requestTranscription(row),
               ),
-            ),
+            ],
           ],
         ),
       ],
