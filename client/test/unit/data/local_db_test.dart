@@ -3,6 +3,8 @@ import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqlite3/sqlite3.dart';
 import 'package:tangent/data/local_db.dart';
+import 'package:tangent/data/storage/recording_mutation_coordinator.dart';
+import 'package:tangent/data/storage/storage_contract.dart';
 import 'package:tangent/models/transcription_status.dart';
 import '../../support/bound_row_fixture.dart';
 
@@ -783,6 +785,89 @@ void main() {
         saved.transcriptionCompletedAt!.millisecondsSinceEpoch,
         now.millisecondsSinceEpoch,
       );
+    });
+
+    test('note body edit succeeds against the not_applicable revision gate',
+        () async {
+      final now = DateTime.utc(2026, 9, 17, 9);
+      final original = DumpRow(
+        id: 'note-edit',
+        createdAt: now,
+        updatedAt: now,
+        mode: 'text_note',
+        durationSeconds: 0,
+        title: 'Note 2026-09-17 09-00-00',
+        transcript: 'First draft',
+        audioPath: '/note-edit.md',
+        audioSizeBytes: 11,
+        syncStatus: 'pending',
+        syncAttempts: 0,
+        transcriptionStatus: 'not_applicable',
+        transcriptionAttempt: 0,
+      );
+      await seedFileFixtureRow(db, original);
+
+      final saved = await db.updateDumpTranscript(
+        original.id,
+        storageKey: fileFixtureKey(original.id),
+        expectedTranscript: original.transcript!,
+        expectedTranscriptionAttempt: 0,
+        expectedTranscriptionRequestId: null,
+        transcript: 'Edited note body',
+        now: now.add(const Duration(minutes: 1)),
+      );
+
+      expect(saved.transcript, 'Edited note body');
+      expect(saved.mode, 'text_note');
+      expect(saved.transcriptionStatus, 'not_applicable');
+      expect(
+        saved.transcriptionError,
+        startsWith('sidecar_sync_pending: manual_edit:'),
+      );
+    });
+
+    test('note deletion claim and eligibility treat not_applicable as terminal',
+        () async {
+      final now = DateTime.utc(2026, 9, 17, 9, 30);
+      final note = DumpRow(
+        id: 'note-delete',
+        createdAt: now,
+        updatedAt: now,
+        mode: 'text_note',
+        durationSeconds: 0,
+        title: 'Note 2026-09-17 09-30-00',
+        transcript: 'Delete me',
+        audioPath: '/note-delete.md',
+        audioSizeBytes: 9,
+        syncStatus: 'local_only',
+        syncAttempts: 0,
+        transcriptionStatus: 'not_applicable',
+        transcriptionAttempt: 0,
+      );
+      final binding = await seedFileFixtureRow(db, note);
+      final coordinator = DefaultRecordingMutationCoordinator(db: db);
+      addTearDown(coordinator.drain);
+      await coordinator.restoreFences();
+
+      expect(
+        (await coordinator.watchEligibility().first)[note.id],
+        Eligibility.eligible,
+      );
+      final admission = await coordinator.acquire(note.id, UseKind.deletion);
+      expect(admission, isA<Ok<UseLease>>());
+      await (admission as Ok<UseLease>).value.close();
+
+      final claimed = await db.claimLocalDeletion(
+        'note-delete-op',
+        (
+          id: note.id,
+          binding: binding,
+          title: note.title,
+          eligibility: Eligibility.eligible,
+          retryTicketId: null,
+        ),
+      );
+      expect(claimed, isA<Ok<DeletionTicket>>());
     });
 
     test(

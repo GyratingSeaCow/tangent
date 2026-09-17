@@ -2,6 +2,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tangent/data/local_db.dart';
 import 'package:tangent/data/recording_metadata.dart';
+import 'package:tangent/data/storage/storage_contract.dart';
 
 void main() {
   test('orphan recording without metadata gets a valid generated title', () {
@@ -141,5 +142,42 @@ void main() {
     );
 
     expect(row.transcriptionStatus, 'not_transcribed');
+  });
+
+  test('note sidecar with text_note mode and not_applicable status validates',
+      () {
+    expect(
+      () => validateImportedMetadata('note-1', const {
+        'schemaVersion': 2,
+        'id': 'note-1',
+        'title': 'Note 2026-09-17 10-00-00',
+        'mode': 'text_note',
+        'transcript': 'typed note body',
+        'transcriptionStatus': 'not_applicable',
+        'durationSeconds': 0,
+        'audioSizeBytes': 15,
+      }),
+      returnsNormally,
+    );
+  });
+
+  test('sidecar validation still rejects unknown modes and statuses', () {
+    Map<String, dynamic> sidecar(Map<String, dynamic> overrides) => {
+          'schemaVersion': 2,
+          'id': 'bogus-1',
+          'title': 'Bogus',
+          ...overrides,
+        };
+    expect(
+      () => validateImportedMetadata('bogus-1', sidecar({'mode': 'bogus'})),
+      throwsA(isA<StorageFault>()),
+    );
+    expect(
+      () => validateImportedMetadata(
+        'bogus-1',
+        sidecar({'transcriptionStatus': 'bogus'}),
+      ),
+      throwsA(isA<StorageFault>()),
+    );
   });
 }

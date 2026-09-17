@@ -411,7 +411,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
             ),
           );
         }
-        if (!['not_transcribed', 'completed', 'failed']
+        if (!['not_transcribed', 'completed', 'failed', 'not_applicable']
                 .contains(row.transcriptionStatus) ||
             row.syncStatus == 'syncing' ||
             (row.transcriptionError?.startsWith('sidecar_sync_pending:') ??
@@ -729,6 +729,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
                     d.transcriptionStatus.isIn([
                       TranscriptionStatus.completed.wireValue,
                       TranscriptionStatus.failed.wireValue,
+                      // Text notes never transcribe; their body edits go
+                      // through the same guarded manual-edit path.
+                      TranscriptionStatus.notApplicable.wireValue,
                     ]) &
                     d.transcript.equals(expectedTranscript) &
                     d.transcriptionAttempt.equals(

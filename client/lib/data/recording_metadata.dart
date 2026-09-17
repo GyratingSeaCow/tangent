@@ -52,7 +52,8 @@ void validateImportedMetadata(String id, Map<String, dynamic>? metadata) {
     }
   }
   if (metadata['mode'] != null &&
-      !const ['brain_dump', 'meeting'].contains(metadata['mode'])) {
+      !const ['brain_dump', 'meeting', 'text_note']
+          .contains(metadata['mode'])) {
     invalid();
   }
   if (metadata['transcriptionStatus'] != null &&
