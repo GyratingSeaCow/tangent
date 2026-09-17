@@ -90,19 +90,37 @@ class RecordingPersistence {
           ),
         );
       });
-  Future<void> _staging(CaptureReservation r, int size) async {
+  Future<int> _staging(CaptureReservation r, int size) async {
     StorageCodec.encodeAudio((kind: 'file', value: r.stagingPath));
-    if (p.basename(r.stagingPath) != '${r.id}.opus' ||
-        await FileSystemEntity.type(r.stagingPath, followLinks: false) !=
-            FileSystemEntityType.file ||
-        !p.equals(
-          await File(r.stagingPath).resolveSymbolicLinks(),
-          p.normalize(p.absolute(r.stagingPath)),
-        ) ||
-        await File(r.stagingPath).length() != size ||
-        size <= 0) {
+    final file = File(r.stagingPath);
+    var valid = p.basename(r.stagingPath) == '${r.id}.opus' &&
+        await FileSystemEntity.type(r.stagingPath, followLinks: false) ==
+            FileSystemEntityType.file &&
+        size > 0;
+    var length = 0;
+    if (valid) {
+      // Canonicalize BOTH sides. Android may hand out the staging directory
+      // through a symlinked alias (/data/user/0 vs /data/data), so comparing
+      // the file's resolved path against the literal reservation path rejects
+      // valid owned staging. Resolving the owned parent directory keeps the
+      // same-file identity check while accepting an aliased directory prefix.
+      try {
+        final resolved = await file.resolveSymbolicLinks();
+        final parent =
+            await Directory(p.dirname(r.stagingPath)).resolveSymbolicLinks();
+        valid = p.equals(resolved, p.join(parent, p.basename(r.stagingPath)));
+        length = await file.length();
+      } on FileSystemException {
+        valid = false;
+      }
+    }
+    // The opus encoder may flush trailing bytes between the recorder's stop()
+    // length capture and this validation. The on-disk length is authoritative
+    // when it has not shrunk below the recorder-reported size.
+    if (!valid || length < size) {
       _fault(ProblemCode.invalid, 'Invalid owned staging source');
     }
+    return length;
   }
 
   Map<String, dynamic> _object(Object? value, Set<String> keys) {
@@ -513,6 +531,14 @@ class RecordingPersistence {
       _fault(ProblemCode.conflict, 'Capture already has a stopped handoff');
     }
     await _staging(r, result.sizeBytes);
+    // One read supplies both the frozen digest and the authoritative length,
+    // so the journal can never pair a digest with a different byte count.
+    final audioBytes = await File(r.stagingPath).readAsBytes();
+    if (audioBytes.length < result.sizeBytes) {
+      _fault(ProblemCode.invalid, 'Invalid owned staging source');
+    }
+    final sizeBytes = audioBytes.length;
+    final digest = sha256.convert(audioBytes).toString();
     final staged = DumpRow(
       id: r.key.dumpId,
       createdAt: now.toUtc(),
@@ -521,21 +547,19 @@ class RecordingPersistence {
       durationSeconds: result.durationSeconds,
       title: generatedRecordingTitle(now),
       audioPath: r.stagingPath,
-      audioSizeBytes: result.sizeBytes,
+      audioSizeBytes: sizeBytes,
       syncStatus: r.mode == 'meeting' ? 'local_only' : 'pending',
       syncAttempts: 0,
       transcriptionStatus: 'not_transcribed',
       transcriptionAttempt: 0,
     );
     final metadata = dumpMetadata(staged);
-    final digest =
-        (await sha256.bind(File(r.stagingPath).openRead()).first).toString();
     final journal = <String, dynamic>{
       'version': 2,
       'stopped': {
         'path': result.path,
         'durationSeconds': result.durationSeconds,
-        'sizeBytes': result.sizeBytes,
+        'sizeBytes': sizeBytes,
       },
       'metadata': metadata,
       'handoff': {
