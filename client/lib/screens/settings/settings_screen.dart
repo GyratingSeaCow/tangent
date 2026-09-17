@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/settings_store.dart';
 import '../server/server_connection_screen.dart';
+import 'input_device_section.dart';
 import 'storage_settings_section.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
@@ -16,6 +17,8 @@ class SettingsScreen extends ConsumerStatefulWidget {
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   TriggerMode _triggerMode = TriggerMode.tap;
   bool _wifiOnly = false;
+  // Defaults to true: recordings stay on the device unless the user opts in.
+  bool _keepOnDeviceOnly = true;
   bool _keepScreenAwake = true;
   String _serverUrl = '';
   ServerInfoSnapshot? _serverInfo;
@@ -37,6 +40,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     setState(() {
       _triggerMode = settings.triggerMode;
       _wifiOnly = settings.wifiOnlySync;
+      _keepOnDeviceOnly = settings.keepRecordingsOnDeviceOnly;
       _keepScreenAwake = settings.keepScreenAwakeWhileRecording;
       _serverUrl = url ?? '';
       _loaded = true;
@@ -67,6 +71,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final settings = ref.read(settingsStoreProvider);
     await settings.setTriggerMode(_triggerMode);
     await settings.setWifiOnlySync(_wifiOnly);
+    await settings.setKeepRecordingsOnDeviceOnly(_keepOnDeviceOnly);
     await settings.setKeepScreenAwakeWhileRecording(_keepScreenAwake);
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -115,6 +120,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       body: ListView(
         children: [
           const StorageSettingsSection(),
+          const Divider(),
+          const InputDeviceSection(),
           const Divider(),
           if (!_loaded)
             const ListTile(title: Text('Loading settings…'))
@@ -182,9 +189,23 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
           const Divider(),
           SwitchListTile(
-            title: const Text('Wi-Fi only sync'),
+            title: const Text('Keep recordings on this device'),
             subtitle: const Text(
-                'Wait for Wi-Fi before uploading recordings to the server',),
+              'Recordings are never uploaded to the server for storage. '
+              'Transcription still works over Wi-Fi or mobile data.',
+            ),
+            value: _keepOnDeviceOnly,
+            onChanged: (v) => setState(() => _keepOnDeviceOnly = v),
+          ),
+          SwitchListTile(
+            title: const Text('Upload recordings only on Wi-Fi'),
+            subtitle: Text(
+              _keepOnDeviceOnly
+                  ? 'No effect while recordings are kept on this device. '
+                      'Transcription is never limited to Wi-Fi.'
+                  : 'Wait for Wi-Fi before uploading recordings for storage. '
+                      'Transcription is exempt and still runs on mobile data.',
+            ),
             value: _wifiOnly,
             onChanged: (v) => setState(() => _wifiOnly = v),
           ),

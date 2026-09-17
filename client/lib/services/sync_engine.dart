@@ -73,6 +73,12 @@ class SyncEngine {
     try {
       final status = await _connectivity.currentStatus();
       if (_disposed || !status.isOnline) return;
+      // Bulk upload is backup, and backup is opt-in. This gate is deliberately
+      // separate from transcription: ServerTranscriptionService reaches the
+      // self-hosted server on any connection (including cellular over
+      // Tailscale) because the audio it sends IS the transcription request,
+      // not a copy retained on the server for storage.
+      if (_settings.keepRecordingsOnDeviceOnly) return;
       if (_settings.wifiOnlySync && status != ConnectivityStatus.wifi) return;
       final pending = await _db.dumpsNeedingUpload();
       for (final candidate in pending) {
