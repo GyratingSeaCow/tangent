@@ -145,9 +145,16 @@ DumpRow importedDumpRow({
   final restoredTitle = text('title', '').trim();
   final transcript = metadata?['transcript'] as String?;
   final schemaVersion = number('schemaVersion', 1);
-  final legacyStatus = transcript != null && transcript.trim().isNotEmpty
-      ? 'completed'
-      : 'not_transcribed';
+  final mode = text('mode', 'brain_dump');
+  // A restored note is never transcribable: absent/degraded sidecar status
+  // must fall back to the terminal note status, and an untitled note gets a
+  // Note title, not a Recording title.
+  final isNote = mode == 'text_note';
+  final legacyStatus = isNote
+      ? 'not_applicable'
+      : transcript != null && transcript.trim().isNotEmpty
+          ? 'completed'
+          : 'not_transcribed';
   final importedStatus = nullableText('transcriptionStatus');
   final validImportedStatus = TranscriptionStatus.values.any(
     (status) => status.wireValue == importedStatus,
@@ -156,10 +163,12 @@ DumpRow importedDumpRow({
     id: id,
     createdAt: createdAt,
     updatedAt: date('updatedAt', modifiedUtc),
-    mode: text('mode', 'brain_dump'),
+    mode: mode,
     durationSeconds: number('durationSeconds', 0),
     title: restoredTitle.isEmpty
-        ? generatedRecordingTitle(createdAt)
+        ? isNote
+            ? generatedNoteTitle(createdAt)
+            : generatedRecordingTitle(createdAt)
         : restoredTitle,
     transcript: transcript,
     meetingNotes: metadata?['meetingNotes'] as String?,

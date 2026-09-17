@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/services.dart';
+import 'package:path/path.dart' as p;
+import 'package:tangent/data/recording_metadata.dart';
 import 'package:tangent/data/storage/saf_storage_backend.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tangent/data/storage/storage_contract.dart';
@@ -481,5 +484,285 @@ void main() {
     expect(entries.single.problem, isNull);
     expect(entries.single.metadata!['schemaVersion'], 1);
     expect(entries.single.metadata!['transcript'], 'Original words');
+  });
+  test(
+      'durable note pair imports the note row, re-import is idempotent, and '
+      'an .opus peer still adopts', () async {
+    final h = CatalogHarness();
+    addTearDown(h.close);
+    await h.bootstrap();
+    final importer = BoundRecordingImporter(
+      db: h.f.db,
+      backend: h.backend,
+      mutations: h.mutations,
+    );
+    const noteId = 'fixture-note-pair';
+    const body = 'Durable note body words';
+    final bytes = utf8.encode(body);
+    await File(p.join(h.f.directory('B'), '$noteId.md'))
+        .writeAsBytes(bytes, flush: true);
+    await h.f.metadata('B', noteId).writeAsString(
+          jsonEncode({
+            'schemaVersion': 2,
+            'id': noteId,
+            'createdAt': '2030-01-02T03:04:05.000Z',
+            'updatedAt': '2030-01-02T03:04:05.000Z',
+            'mode': 'text_note',
+            'durationSeconds': 0,
+            'title': 'Retained note title',
+            'transcript': body,
+            'transcriptionStatus': 'not_applicable',
+            'audioSizeBytes': bytes.length,
+            'syncStatus': 'pending',
+          }),
+          flush: true,
+        );
+    const peerId = 'fixture-note-audio-peer';
+    await h.f.audio('B', peerId).writeAsBytes([1, 2, 3]);
+    await h.f.metadata('B', peerId).writeAsString(
+          jsonEncode({
+            'schemaVersion': 2,
+            'id': peerId,
+            'mode': 'brain_dump',
+            'transcript': 'Peer words',
+            'transcriptionStatus': 'completed',
+          }),
+        );
+    final source = fileLocation('B', h.f.directory('B'));
+    final preview = requireOk(await importer.preview(source));
+    expect(preview.entries.map((e) => e.problem), everyElement(isNull));
+    expect(preview.entries.map((e) => e.id).toSet(), {noteId, peerId});
+    final result = requireOk(
+      await importer.adoptConfirmed(
+        (operationId: 'fixture-note-adopt', entries: preview.entries),
+      ),
+    );
+    expect(result.items.map((i) => i.state), everyElement(ImportState.adopted));
+    final row = (await h.f.db.getDump(noteId))!;
+    expect(row.mode, 'text_note');
+    expect(row.transcript, body, reason: 'note body restores from sidecar');
+    expect(row.transcriptionStatus, 'not_applicable');
+    expect(row.durationSeconds, 0);
+    expect(row.title, 'Retained note title');
+    expect(p.basename(row.audioPath), '$noteId.md');
+    expect(row.audioSizeBytes, bytes.length);
+    expect(
+      row.syncStatus,
+      'pending',
+      reason: 'a recovered note is never marked synced without proof',
+    );
+    final peer = (await h.f.db.getDump(peerId))!;
+    expect(peer.mode, 'brain_dump');
+    expect(p.basename(peer.audioPath), '$peerId.opus');
+    final snapshots =
+        (await h.f.db.customSelect('SELECT * FROM dumps ORDER BY id').get())
+            .map((r) => r.data)
+            .toList();
+    final repeated = requireOk(
+      await importer.adoptConfirmed(
+        (operationId: 'fixture-note-adopt-again', entries: preview.entries),
+      ),
+    );
+    expect(
+      repeated.items.map((i) => i.state),
+      everyElement(ImportState.alreadyKnown),
+    );
+    expect(
+      (await h.f.db.customSelect('SELECT * FROM dumps ORDER BY id').get())
+          .map((r) => r.data)
+          .toList(),
+      snapshots,
+      reason: 're-import must not duplicate or mutate rows',
+    );
+  });
+  test(
+      'sidecar without its .md is flagged as a missing component and the '
+      'adopted row is preserved', () async {
+    final h = CatalogHarness();
+    addTearDown(h.close);
+    await h.bootstrap();
+    final importer = BoundRecordingImporter(
+      db: h.f.db,
+      backend: h.backend,
+      mutations: h.mutations,
+    );
+    const noteId = 'fixture-note-orphan';
+    const body = 'Orphaned note body';
+    final md = File(p.join(h.f.directory('B'), '$noteId.md'));
+    await md.writeAsBytes(utf8.encode(body), flush: true);
+    await h.f.metadata('B', noteId).writeAsString(
+          jsonEncode({
+            'schemaVersion': 2,
+            'id': noteId,
+            'mode': 'text_note',
+            'title': 'Orphaned note',
+            'transcript': body,
+            'transcriptionStatus': 'not_applicable',
+            'durationSeconds': 0,
+          }),
+        );
+    final source = fileLocation('B', h.f.directory('B'));
+    final preview = requireOk(await importer.preview(source));
+    expect(
+      requireOk(
+        await importer.adoptConfirmed(
+          (operationId: 'fixture-orphan-adopt', entries: preview.entries),
+        ),
+      ).items.single.state,
+      ImportState.adopted,
+    );
+    final before = (await h.f.db.getDump(noteId))!.toJson();
+    await md.delete();
+    final after = requireOk(await importer.preview(source));
+    expect(
+      after.entries.where((e) => e.id == noteId),
+      isEmpty,
+      reason: 'an orphan sidecar has no importable content component',
+    );
+    final result = requireOk(
+      await importer.adoptConfirmed(
+        (operationId: 'fixture-orphan-retry', entries: preview.entries),
+      ),
+    );
+    final item = result.items.singleWhere((i) => i.id == noteId);
+    expect(item.state, ImportState.unavailable);
+    expect(item.problem?.code, ProblemCode.unavailable);
+    expect(
+      (await h.f.db.getDump(noteId))!.toJson(),
+      before,
+      reason: 'the missing .md must not damage the already-adopted row',
+    );
+  });
+  test(
+      'degraded note sidecar restores a Note title and not_applicable status',
+      () async {
+    final h = CatalogHarness();
+    addTearDown(h.close);
+    await h.bootstrap();
+    final importer = BoundRecordingImporter(
+      db: h.f.db,
+      backend: h.backend,
+      mutations: h.mutations,
+    );
+    const noteId = 'fixture-note-degraded';
+    const body = 'Degraded note body';
+    final createdAt = DateTime.utc(2030, 5, 6, 7, 8, 9);
+    await File(p.join(h.f.directory('B'), '$noteId.md'))
+        .writeAsBytes(utf8.encode(body), flush: true);
+    await h.f.metadata('B', noteId).writeAsString(
+          jsonEncode({
+            'schemaVersion': 2,
+            'id': noteId,
+            'mode': 'text_note',
+            'transcript': body,
+            'createdAt': createdAt.toIso8601String(),
+          }),
+        );
+    final preview = requireOk(
+      await importer.preview(fileLocation('B', h.f.directory('B'))),
+    );
+    expect(
+      requireOk(
+        await importer.adoptConfirmed(
+          (operationId: 'fixture-degraded-adopt', entries: preview.entries),
+        ),
+      ).items.single.state,
+      ImportState.adopted,
+    );
+    final row = (await h.f.db.getDump(noteId))!;
+    expect(row.mode, 'text_note');
+    expect(row.transcript, body);
+    expect(
+      row.title,
+      generatedNoteTitle(createdAt),
+      reason: 'an untitled note falls back to the Note title, not Recording',
+    );
+    expect(
+      row.transcriptionStatus,
+      'not_applicable',
+      reason: 'a note must never resurrect a transcribable status',
+    );
+    expect(row.durationSeconds, 0);
+  });
+  test('SAF note durable pair adopts the text_note row from channel entries',
+      () async {
+    const channel = MethodChannel('fixture/task11-saf-note');
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    final h = CatalogHarness();
+    final backend = SafStorageBackend(channel: channel);
+    final location = (
+      id: 'fixture-saf-note-source',
+      label: 'Fixture',
+      directory: (
+        kind: 'saf',
+        path: '',
+        treeUri: 'content://fixture/tree/root',
+        authority: 'fixture',
+        documentId: 'root'
+      )
+    );
+    const noteId = 'fixture-saf-note';
+    const body = 'Saf note body';
+    final bytes = utf8.encode(body);
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'activeOperations') return [];
+      if (call.method == 'listRecordingsAt') {
+        return {'operationId': (call.arguments as Map)['operationId']};
+      }
+      if (call.method == 'acknowledgeOperation') return null;
+      return {
+        'state': 'settled',
+        'result': [
+          {
+            'id': noteId,
+            'audio': {
+              'version': 1,
+              'kind': 'saf',
+              'value': 'content://fixture/document/$noteId',
+            },
+            'sizeBytes': bytes.length,
+            'modifiedAt': 1234,
+            'metadataJson': jsonEncode({
+              'schemaVersion': 2,
+              'id': noteId,
+              'mode': 'text_note',
+              'title': 'Retained note',
+              'transcript': body,
+              'transcriptionStatus': 'not_applicable',
+              'durationSeconds': 0,
+              'audioSizeBytes': bytes.length,
+            }),
+            'problem': null,
+          },
+        ],
+      };
+    });
+    addTearDown(() async {
+      await backend.drain();
+      messenger.setMockMethodCallHandler(channel, null);
+      await h.close();
+    });
+    final importer = BoundRecordingImporter(
+      db: h.f.db,
+      backend: backend,
+      mutations: h.mutations,
+    );
+    final preview = requireOk(await importer.preview(location));
+    expect(preview.entries.single.problem, isNull);
+    expect(preview.entries.single.metadata!['mode'], 'text_note');
+    final result = requireOk(
+      await importer.adoptConfirmed(
+        (operationId: 'fixture-saf-note-adopt', entries: preview.entries),
+      ),
+    );
+    expect(result.items.single.state, ImportState.adopted);
+    final row = (await h.f.db.getDump(noteId))!;
+    expect(row.mode, 'text_note');
+    expect(row.transcript, body);
+    expect(row.transcriptionStatus, 'not_applicable');
+    expect(row.durationSeconds, 0);
+    expect(row.title, 'Retained note');
+    expect(row.audioSizeBytes, bytes.length);
   });
 }

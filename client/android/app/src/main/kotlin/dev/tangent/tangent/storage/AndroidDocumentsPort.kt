@@ -246,8 +246,13 @@ class AndroidDocumentsPort(context: Context) : DocumentsIoPort, CaptureDocuments
         }
         if (method == "listRecordingsAt") {
             val nodes = children(d)
-            return nodes.filter { it.name.endsWith(".opus") }.map { node ->
-                val id = node.name.removeSuffix(".opus")
+            // Durable-pair primary content mirrors the shared Dart mode helper
+            // (contentExtensionForMode): audio modes publish .opus, text notes
+            // publish .md. Both enumerate as importable pairs.
+            val contentSuffixes = listOf(".opus", ".md")
+            return nodes.mapNotNull { node ->
+                val suffix = contentSuffixes.firstOrNull { node.name.endsWith(it) } ?: return@mapNotNull null
+                val id = node.name.removeSuffix(suffix)
                 var problem:Map<String,Any?>? = null; var meta:String? = null; var size = 0L; var modified = 0L
                 try {
                     literal(id); val owned = policy.ownedNode(d,node.name,node.id) ?: fault("absent","Audio disappeared")
