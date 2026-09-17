@@ -16,6 +16,7 @@ import 'storage_contract.dart';
 import 'storage_codec.dart';
 import 'recording_access.dart';
 import 'local_deletion_service.dart';
+import '../../services/notebook_persistence.dart';
 
 final storageBackendProvider = Provider<StorageBackend>(
   (ref) =>
@@ -102,6 +103,12 @@ final storageBootstrapProvider = FutureProvider<void>((ref) async {
   final recovery =
       await ref.read(recordingImporterProvider).recoverOwnedCaptures();
   if (recovery case Fail(:final problem)) throw StorageFault(problem);
+  // Re-adopt durable notebook files. Recordings alone are not the whole
+  // folder: a reinstall that restored dumps but skipped this left every
+  // <id>.notebook.json stranded on disk with no way back into the app.
+  // Import problems are reported by the result, not thrown: a single
+  // unreadable notebook file must not abort storage bootstrap.
+  await ref.read(notebookPersistenceProvider).importNotebooks();
 });
 final recordingCoordinatorProvider = Provider<RecordingCoordinator>(
   (ref) => DefaultRecordingCoordinator(
