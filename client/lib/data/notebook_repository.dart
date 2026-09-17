@@ -74,6 +74,24 @@ class NotebookRepository {
     );
   }
 
+  /// Writes [notebook] verbatim, inserting or replacing the row and keeping
+  /// the supplied timestamps instead of stamping `now`.
+  ///
+  /// Used by durable adoption, where the file's own `updated_at` decides the
+  /// conflict and must survive intact; ordinary edits use [saveNotebook].
+  Future<void> upsertNotebook(Notebook notebook) async {
+    await _db.into(_db.notebooks).insertOnConflictUpdate(
+          NotebooksCompanion.insert(
+            id: notebook.id,
+            title: notebook.title,
+            createdAt: notebook.createdAt.millisecondsSinceEpoch,
+            updatedAt: notebook.updatedAt.millisecondsSinceEpoch,
+            docJson: notebook.document.encode(),
+            inkJson: notebook.ink.encode(),
+          ),
+        );
+  }
+
   /// Deleting a notebook never touches the dumps its cards referenced.
   Future<void> deleteNotebook(String id) async {
     await (_db.delete(_db.notebooks)..where((n) => n.id.equals(id))).go();

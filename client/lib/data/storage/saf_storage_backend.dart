@@ -677,6 +677,145 @@ class SafStorageBackend implements StorageBackend {
       await Future.wait(_pending.toList());
     }
   }
+
+  /// Decodes one native durable-document row. The locator stays the exact
+  /// provider-issued string; it is validated as a document capability and
+  /// never parsed into a path.
+  DurableDocument _document(Object? raw) {
+    if (raw is! Map ||
+        raw['name'] is! String ||
+        raw['content'] is! String ||
+        raw['locator'] == null) {
+      throw const StorageFault(
+        (code: ProblemCode.invalid, message: 'Malformed durable document'),
+      );
+    }
+    return (
+      name: raw['name']! as String,
+      locator: StorageCodec.decodeAudio(jsonEncode(raw['locator'])),
+      content: raw['content']! as String
+    );
+  }
+
+  Map<String, Object?> _documentArgs(
+    StorageLocation location,
+    String directoryName,
+  ) {
+    StorageCodec.validateLiteralId(directoryName);
+    return {
+      'location': _wire(StorageCodec.encodeLocation(location)),
+      'directoryName': directoryName,
+    };
+  }
+
+  @override
+  IoOperation<Outcome<DurableDocument>> publishDocument(
+    StorageLocation location,
+    String directoryName,
+    String name,
+    String content,
+    String publicationId,
+  ) {
+    final id = _id();
+    try {
+      StorageCodec.validateLiteralId(publicationId);
+      StorageCodec.validateLiteralId(name);
+      final args = {
+        ..._documentArgs(location, directoryName),
+        'name': name,
+        'content': content,
+        'publicationId': publicationId,
+      };
+      return _track(
+        id,
+        (value) => Ok(_document(value)),
+        (problem) => Fail<DurableDocument>(problem),
+        method: 'publishDocumentAt',
+        args: args,
+        typedDecode: true,
+      );
+    } on StorageFault catch (e) {
+      return _local(id, Fail<DurableDocument>(e.problem));
+    }
+  }
+
+  @override
+  IoOperation<Outcome<List<DurableDocument>>> listDocuments(
+    StorageLocation location,
+    String directoryName,
+    String suffix,
+  ) {
+    final id = _id();
+    try {
+      final args = {
+        ..._documentArgs(location, directoryName),
+        'suffix': suffix,
+      };
+      return _track(
+        id,
+        (value) {
+          if (value is! List) {
+            throw const StorageFault(
+              (
+                code: ProblemCode.invalid,
+                message: 'Malformed durable document listing'
+              ),
+            );
+          }
+          return Ok(value.map(_document).toList());
+        },
+        (problem) => Fail<List<DurableDocument>>(problem),
+        method: 'listDocumentsAt',
+        args: args,
+        typedDecode: true,
+      );
+    } on StorageFault catch (e) {
+      return _local(id, Fail<List<DurableDocument>>(e.problem));
+    }
+  }
+
+  @override
+  IoOperation<ComponentResult> deleteDocument(
+    StorageLocation location,
+    String directoryName,
+    String name,
+    AudioLocator locator,
+    String operationId,
+  ) {
+    final id = _id();
+    ComponentResult failure(StorageProblem problem) =>
+        (state: ComponentState.failed, problem: problem);
+    try {
+      StorageCodec.validateLiteralId(operationId);
+      StorageCodec.validateLiteralId(name);
+      final args = {
+        ..._documentArgs(location, directoryName),
+        'name': name,
+        'locator': _wire(StorageCodec.encodeAudio(locator)),
+        'deletionId': operationId,
+      };
+      return _track(
+        id,
+        (value) {
+          final map = value as Map;
+          final states =
+              ComponentState.values.where((s) => s.name == map['state']);
+          if (states.isEmpty) {
+            return (state: ComponentState.unknown, problem: _problem(null));
+          }
+          return (
+            state: states.first,
+            problem: map['problem'] == null ? null : _problem(map['problem'])
+          );
+        },
+        failure,
+        method: 'deleteDocumentAt',
+        args: args,
+      );
+    } on StorageFault catch (e) {
+      return _local(id, failure(e.problem));
+    }
+  }
 }
 
 class _NativeOperation<T> implements IoOperation<T> {

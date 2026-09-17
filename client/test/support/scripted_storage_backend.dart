@@ -91,6 +91,40 @@ class ScriptedStorageBackend extends FilesystemStorageBackend {
     CaptureReservation,
     PreparedCapture,
   )? publication;
+  IoOperation<Outcome<DurableDocument>> Function(
+    StorageLocation,
+    String,
+    String,
+    String,
+    String,
+  )? documentPublication;
+  final publishedDocuments = <String>[];
+  @override
+  IoOperation<Outcome<DurableDocument>> publishDocument(
+    StorageLocation location,
+    String directoryName,
+    String name,
+    String content,
+    String publicationId,
+  ) {
+    publishedDocuments.add(name);
+    return documentPublication == null
+        ? super.publishDocument(
+            location,
+            directoryName,
+            name,
+            content,
+            publicationId,
+          )
+        : documentPublication!(
+            location,
+            directoryName,
+            name,
+            content,
+            publicationId,
+          );
+  }
+
   @override
   IoOperation<Outcome<PublishedCapture>> publishPreparedCapture(
     CaptureReservation r,

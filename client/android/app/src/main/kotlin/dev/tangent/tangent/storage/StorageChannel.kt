@@ -58,6 +58,16 @@ class StorageChannel(private val supervisor: NativeIoSupervisor,
                         CaptureWire.digest(args["audioSha256"])
                     } else CaptureWire.preparation(args["preparation"],reservation)
                 }
+                if (method in documentMethods) {
+                    val fields = when(method) {
+                        "publishDocumentAt" -> setOf("operationId","location","directoryName","name","content","publicationId")
+                        "listDocumentsAt" -> setOf("operationId","location","directoryName","suffix")
+                        else -> setOf("operationId","location","directoryName","name","locator","deletionId")
+                    }
+                    if (args.keys != fields) throw NativeStorageException("invalid","Unexpected document payload fields")
+                    CaptureWire.literal(id())
+                    CaptureWire.directory(args["location"]); DocumentWire.literal(args["directoryName"])
+                }
                 val payload = (args["binding"] ?: args["reservation"]) as? Map<*,*>
                 val key = payload?.get("key") as? Map<*,*> ?: mapOf("dumpId" to "catalog", "incarnation" to id())
                 val dumpId = key["dumpId"] as? String ?: throw NativeStorageException("invalid","Missing recording ID")
@@ -75,6 +85,7 @@ class StorageChannel(private val supervisor: NativeIoSupervisor,
     }
     companion object {
         val captureMethods = setOf("prepareCaptureAt","inspectPreparedCaptureAt","publishPreparedCaptureAt")
-        val methods = setOf("inspectLegacyStorage","validateCandidate","readAudioAt","playbackSourceAt","writeMetadataAt","deleteComponentAt","listRecordingsAt") + captureMethods
+        val documentMethods = setOf("publishDocumentAt","listDocumentsAt","deleteDocumentAt")
+        val methods = setOf("inspectLegacyStorage","validateCandidate","readAudioAt","playbackSourceAt","writeMetadataAt","deleteComponentAt","listRecordingsAt") + captureMethods + documentMethods
     }
 }

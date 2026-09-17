@@ -551,6 +551,150 @@ class FilesystemStorageBackend implements StorageBackend {
           return result;
         }),
       );
+
+  /// Resolves the named child of an owned root. Idempotent: an existing real
+  /// directory is reused, a same-name non-directory is a conflict (never a
+  /// silent fall back to the root, which would scatter documents), and the
+  /// child is only created when [create] is set.
+  Future<String?> _childDirectory(
+    StorageLocation location,
+    String directoryName, {
+    required bool create,
+  }) async {
+    StorageCodec.validateLiteralId(directoryName);
+    final root = await _root(location);
+    final child = p.join(root, directoryName);
+    final type = await FileSystemEntity.type(child, followLinks: false);
+    if (type == FileSystemEntityType.directory) return child;
+    if (type != FileSystemEntityType.notFound) {
+      throw const StorageFault(
+        (
+          code: ProblemCode.conflict,
+          message: 'Document directory name is not a directory'
+        ),
+      );
+    }
+    if (!create) return null;
+    await Directory(child).create();
+    if (await FileSystemEntity.type(child, followLinks: false) !=
+        FileSystemEntityType.directory) {
+      throw const StorageFault(
+        (
+          code: ProblemCode.unavailable,
+          message: 'Created document directory is not observable'
+        ),
+      );
+    }
+    return child;
+  }
+
+  @override
+  IoOperation<Outcome<DurableDocument>> publishDocument(
+    StorageLocation location,
+    String directoryName,
+    String name,
+    String content,
+    String publicationId,
+  ) =>
+      _run(
+        () => _outcome(() async {
+          StorageCodec.validateLiteralId(publicationId);
+          StorageCodec.validateLiteralId(name);
+          final directory = (await _childDirectory(
+            location,
+            directoryName,
+            create: true,
+          ))!;
+          final target = p.join(directory, name);
+          final type = await FileSystemEntity.type(target, followLinks: false);
+          if (type != FileSystemEntityType.file &&
+              type != FileSystemEntityType.notFound) {
+            _invalid('Not an owned document file');
+          }
+          // Write-then-rename: a torn write never replaces the last good copy.
+          final tmp = await _temporary(directory, publicationId);
+          try {
+            await tmp.writeAsString(content, flush: true);
+            await tmp.rename(target);
+          } finally {
+            if (await tmp.exists()) await tmp.delete();
+          }
+          return (
+            name: name,
+            locator: (kind: 'file', value: target),
+            content: content
+          );
+        }),
+      );
+
+  @override
+  IoOperation<Outcome<List<DurableDocument>>> listDocuments(
+    StorageLocation location,
+    String directoryName,
+    String suffix,
+  ) =>
+      _run(
+        () => _outcome(() async {
+          final directory =
+              await _childDirectory(location, directoryName, create: false);
+          if (directory == null) return <DurableDocument>[];
+          final result = <DurableDocument>[];
+          final entries =
+              await Directory(directory).list(followLinks: false).toList();
+          for (final entry in entries) {
+            final name = p.basename(entry.path);
+            if (!name.endsWith(suffix) || name.length == suffix.length) {
+              continue;
+            }
+            await _regular(entry.path);
+            result.add(
+              (
+                name: name,
+                locator: (kind: 'file', value: entry.path),
+                content: await File(entry.path).readAsString()
+              ),
+            );
+          }
+          return result;
+        }),
+      );
+
+  @override
+  IoOperation<ComponentResult> deleteDocument(
+    StorageLocation location,
+    String directoryName,
+    String name,
+    AudioLocator locator,
+    String operationId,
+  ) =>
+      _run(() async {
+        try {
+          StorageCodec.validateLiteralId(operationId);
+          StorageCodec.validateLiteralId(name);
+          StorageCodec.encodeAudio(locator);
+          final directory =
+              await _childDirectory(location, directoryName, create: false);
+          if (directory == null) {
+            return (state: ComponentState.absent, problem: null);
+          }
+          // The stored locator is authoritative for identity, but it must
+          // still resolve inside the owned child under the expected name:
+          // a foreign locator is refused rather than followed.
+          if (locator.kind != 'file' ||
+              !p.equals(p.dirname(locator.value), directory) ||
+              p.basename(locator.value) != name) {
+            _invalid('Locator does not identify an owned document');
+          }
+          return await _remove(locator.value);
+        } on StorageFault catch (e) {
+          return (state: ComponentState.failed, problem: e.problem);
+        } on FileSystemException catch (e) {
+          return (
+            state: ComponentState.failed,
+            problem: (code: ProblemCode.io, message: e.message)
+          );
+        }
+      });
 }
 
 class _FileOperation<T> implements IoOperation<T> {

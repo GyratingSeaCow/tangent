@@ -9,6 +9,7 @@ import '../../models/dump_mode.dart';
 import '../dump/dump_detail_screen.dart';
 import '../dump/dumps_list_screen.dart';
 import '../note/note_compose_screen.dart';
+import '../notebook/notebook_list_screen.dart';
 import '../recording/recording_controller.dart';
 import '../recording/recording_waveform.dart';
 import '../settings/settings_screen.dart';
@@ -163,6 +164,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             icon: const Icon(Icons.list),
             tooltip: 'View dumps',
             onPressed: _openDumpsList,
+          ),
+          IconButton(
+            icon: const Icon(Icons.menu_book),
+            tooltip: 'Notebooks',
+            onPressed: () => Navigator.of(context).push<void>(
+              MaterialPageRoute<void>(
+                builder: (_) => const NotebookListScreen(),
+              ),
+            ),
           ),
           IconButton(
             icon: const Icon(Icons.settings),

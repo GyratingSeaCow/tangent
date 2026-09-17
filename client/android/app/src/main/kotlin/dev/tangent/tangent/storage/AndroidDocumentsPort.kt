@@ -15,12 +15,13 @@ import java.io.FileDescriptor
 import java.io.ByteArrayOutputStream
 
 /** Sole ContentResolver adapter. Never consults a current-default preference. */
-class AndroidDocumentsPort(context: Context) : DocumentsIoPort, CaptureDocumentsPort {
+class AndroidDocumentsPort(context: Context) : DocumentsIoPort, CaptureDocumentsPort, DurableDocumentsPort {
     private val app = context.applicationContext
     private val resolver = app.contentResolver
     private val policy = SafPolicy(this)
     private val probeReceipts = ProbeReceipts()
     private val capture = CapturePublication(this)
+    private val documents = DocumentPublication(this)
     private fun <T> captureIo(action:()->T):T = try { action() }
         catch(e:ErrnoException) { fault(if(e.errno == OsConstants.EACCES || e.errno == OsConstants.EPERM) "denied" else if(e.errno == OsConstants.ENOENT) "absent" else "io","Capture descriptor operation failed") }
     private fun statIdentity(fd:FileDescriptor):Map<String,Any?> = captureIo {
@@ -172,6 +173,19 @@ class AndroidDocumentsPort(context: Context) : DocumentsIoPort, CaptureDocuments
             node
         }
     }
+    /** Creates a child DIRECTORY (notebooks live in their own folder). Mirrors
+     *  create(), but asserts the provider handed back an actual directory. */
+    override fun createDirectory(directory:NativeDirectory,name:String):NativeNode {
+        policy.requireAvailableNames(directory, setOf(name))
+        grant(directory,true)
+        val created = DC.createDocument(resolver,document(directory),DC.Document.MIME_TYPE_DIR,name)
+            ?: fault("io","Provider refused directory create")
+        return probeReceipts.observe(created.toString()) {
+            val node = query(created).singleOrNull() ?: fault("io","Created directory not observable")
+            if (node.name != name || !node.directory || node.virtual) fault("conflict","Provider changed created identity")
+            node
+        }
+    }
     override fun rename(directory:NativeDirectory,node:NativeNode,name:String):NativeNode {
         policy.requireAvailableNames(directory, setOf(name), node.id)
         val target = DC.renameDocument(resolver,checked(directory,node,DC.Document.FLAG_SUPPORTS_RENAME),name) ?: fault("io","Provider refused rename")
@@ -246,6 +260,7 @@ class AndroidDocumentsPort(context: Context) : DocumentsIoPort, CaptureDocuments
     }
     fun execute(method:String,args:Map<String,Any?>):Any? {
         if(method in setOf("prepareCaptureAt","inspectPreparedCaptureAt","publishPreparedCaptureAt")) return capture.execute(method,args)
+        if(method in setOf("publishDocumentAt","listDocumentsAt","deleteDocumentAt")) return documents.execute(method,args)
         if (method == "inspectLegacyStorage") {
             return LegacyStorageInspection(
                 { app.getSharedPreferences("tangent_storage",Context.MODE_PRIVATE).getString("recordings_tree_uri",null) },
