@@ -8,6 +8,7 @@ import '../../models/dump_mode.dart';
 
 import '../dump/dump_detail_screen.dart';
 import '../dump/dumps_list_screen.dart';
+import '../note/note_compose_screen.dart';
 import '../recording/recording_controller.dart';
 import '../recording/recording_waveform.dart';
 import '../settings/settings_screen.dart';
@@ -73,6 +74,16 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     }
   }
 
+  /// Text Note mode never touches the recording state machine: the center
+  /// button opens the compose screen instead of `controller.start`.
+  Future<void> _openNoteCompose() {
+    return Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => const NoteComposeScreen(),
+      ),
+    );
+  }
+
   Future<void> _syncNow() async {
     setState(() => _syncing = true);
     try {
@@ -97,6 +108,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   Widget build(BuildContext context) {
     final state = ref.watch(recordingControllerProvider);
     final isRecording = state == RecordingState.recording;
+    final isNoteMode = _mode == DumpMode.textNote;
     // Read the current elapsed seconds. Watching recordingTickProvider
     // makes this build re-run every second while recording so the timer
     // text updates. Without this the timer stays frozen at 00:00 even
@@ -147,16 +159,17 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Text(
-              timeLabel,
-              style: TextStyle(
-                fontSize: 72,
-                fontWeight: FontWeight.w200,
-                color: isRecording
-                    ? Theme.of(context).colorScheme.error
-                    : Theme.of(context).colorScheme.onSurface,
+            if (!isNoteMode)
+              Text(
+                timeLabel,
+                style: TextStyle(
+                  fontSize: 72,
+                  fontWeight: FontWeight.w200,
+                  color: isRecording
+                      ? Theme.of(context).colorScheme.error
+                      : Theme.of(context).colorScheme.onSurface,
+                ),
               ),
-            ),
             if (isRecording) ...[
               const SizedBox(height: 12),
               Padding(
@@ -169,7 +182,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             ] else
               const SizedBox(height: 32),
             GestureDetector(
-              onTap: _toggleRecording,
+              onTap: isNoteMode ? _openNoteCompose : _toggleRecording,
               child: Container(
                 width: 120,
                 height: 120,
@@ -180,7 +193,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       : Theme.of(context).colorScheme.primary,
                 ),
                 child: Icon(
-                  isRecording ? Icons.stop : Icons.mic,
+                  isNoteMode
+                      ? Icons.edit_note
+                      : isRecording
+                          ? Icons.stop
+                          : Icons.mic,
                   size: 64,
                   color: Colors.white,
                 ),
@@ -188,7 +205,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             ),
             const SizedBox(height: 24),
             Text(
-              isRecording ? 'Tap to stop' : 'Tap to record',
+              isNoteMode
+                  ? 'Tap to write'
+                  : isRecording
+                      ? 'Tap to stop'
+                      : 'Tap to record',
               style: Theme.of(context).textTheme.titleMedium,
             ),
             const SizedBox(height: 24),
@@ -240,6 +261,13 @@ class _ModeSelector extends StatelessWidget {
           value: DumpMode.meeting,
           label: Text('Meeting'),
           icon: Icon(Icons.groups),
+        ),
+        ButtonSegment(
+          value: DumpMode.textNote,
+          label: Text('Text Note'),
+          // Distinct from the center button's Icons.edit_note so the compose
+          // affordance stays uniquely identifiable.
+          icon: Icon(Icons.sticky_note_2),
         ),
       ],
       selected: {current},
