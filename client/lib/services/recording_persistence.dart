@@ -902,12 +902,27 @@ class RecordingPersistence {
     await _db.transaction(verify);
     final type = await FileSystemEntity.type(r.stagingPath, followLinks: false);
     if (type != FileSystemEntityType.notFound) {
-      if (type != FileSystemEntityType.file ||
-          p.basename(r.stagingPath) != '${r.id}.opus' ||
-          !p.equals(
-            await File(r.stagingPath).resolveSymbolicLinks(),
-            p.normalize(p.absolute(r.stagingPath)),
-          )) {
+      // Canonicalize BOTH sides, exactly like _staging(): Android hands the
+      // staging directory out through a symlinked alias (/data/user/0 vs
+      // /data/data), so comparing the file's resolved path against the
+      // literal reservation path faulted every successful save at cleanup.
+      // Resolving the owned parent keeps the same-file identity check while
+      // accepting an aliased directory prefix; an entry that is itself a
+      // symlink still resolves outside the owned parent and stays rejected.
+      var owned = type == FileSystemEntityType.file &&
+          p.basename(r.stagingPath) == '${r.id}.opus';
+      if (owned) {
+        try {
+          final resolved = await File(r.stagingPath).resolveSymbolicLinks();
+          final parent =
+              await Directory(p.dirname(r.stagingPath)).resolveSymbolicLinks();
+          owned =
+              p.equals(resolved, p.join(parent, p.basename(r.stagingPath)));
+        } on FileSystemException {
+          owned = false;
+        }
+      }
+      if (!owned) {
         _fault(ProblemCode.invalid, 'Staging cleanup source is not owned');
       }
       await File(r.stagingPath).delete();
