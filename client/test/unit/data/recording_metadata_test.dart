@@ -180,4 +180,41 @@ void main() {
       throwsA(isA<StorageFault>()),
     );
   });
+
+  test('sidecar validation rejects incoherent mode/status pairs', () {
+    Map<String, dynamic> sidecar(Map<String, dynamic> overrides) => {
+          'schemaVersion': 2,
+          'id': 'coherence-1',
+          'title': 'Coherence',
+          ...overrides,
+        };
+    // Audio mode may not claim the note-only terminal status.
+    expect(
+      () => validateImportedMetadata(
+        'coherence-1',
+        sidecar({
+          'mode': 'brain_dump',
+          'transcriptionStatus': 'not_applicable',
+        }),
+      ),
+      throwsA(isA<StorageFault>()),
+    );
+    // A note may not claim an audio transcription status.
+    expect(
+      () => validateImportedMetadata(
+        'coherence-1',
+        sidecar({'mode': 'text_note', 'transcriptionStatus': 'completed'}),
+      ),
+      throwsA(isA<StorageFault>()),
+    );
+    // Coherent pairs stay valid in both directions.
+    validateImportedMetadata(
+      'coherence-1',
+      sidecar({'mode': 'text_note', 'transcriptionStatus': 'not_applicable'}),
+    );
+    validateImportedMetadata(
+      'coherence-1',
+      sidecar({'mode': 'meeting', 'transcriptionStatus': 'completed'}),
+    );
+  });
 }

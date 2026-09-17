@@ -783,6 +783,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
       if (current == null) throw StateError('Dump not found: $id');
       final currentStatus =
           TranscriptionStatus.fromWire(current.transcriptionStatus);
+      if (currentStatus == TranscriptionStatus.notApplicable) {
+        throw StateError('Transcription is not applicable: $id');
+      }
       final sidecarPending = currentStatus.isTerminal &&
           (current.transcriptionError?.startsWith('sidecar_sync_pending:') ??
               false);

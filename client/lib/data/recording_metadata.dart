@@ -61,6 +61,17 @@ void validateImportedMetadata(String id, Map<String, dynamic>? metadata) {
           .any((s) => s.wireValue == metadata['transcriptionStatus'])) {
     invalid();
   }
+  // Mode and status must cohere: not_applicable belongs to text notes
+  // exclusively. An audio-mode sidecar claiming not_applicable would arm a
+  // live Transcribe button past the terminal-status invariant; a note
+  // claiming an audio status could never save body edits again.
+  final mode = metadata['mode'];
+  final status = metadata['transcriptionStatus'];
+  if (mode != null && status != null) {
+    final isNoteStatus =
+        status == TranscriptionStatus.notApplicable.wireValue;
+    if ((mode == 'text_note') != isNoteStatus) invalid();
+  }
 }
 
 const recordingMetadataSchemaVersion = 2;

@@ -272,22 +272,24 @@ class AndroidDocumentsPort(context: Context) : DocumentsIoPort, CaptureDocuments
         if (b["metadataName"] != "$id.meta.json") fault("invalid","Wrong metadata component")
         val expected = audioId(b,d)
         // Durable-pair primary content mirrors the shared Dart mode helper
-        // (contentExtensionForMode): the binding carries no mode, so exactly
-        // the mode-derived names are acceptable — matching the Dart backend's
-        // _component check. All bound operations use the binding's own name.
-        val contentName = expected.substringAfterLast('/').substringAfterLast(':')
-        if (contentName != "$id.opus" && contentName != "$id.md") fault("invalid","Binding does not identify exact owned components")
+        // (contentExtensionForMode): audio modes publish .opus, text notes .md.
+        // SAF document IDs are provider-opaque, so NEVER parse them for a
+        // filename — resolve by constant-name lookup exactly as before, with
+        // the .md fallback. ownedNode validates name+docId together, so a
+        // foreign same-name document still faults.
+        fun ownedContent() = policy.ownedNode(d,"$id.opus",expected) ?: policy.ownedNode(d,"$id.md",expected)
         // If content is present, even metadata-only work must reject a same-name
         // foreign document. Absence remains valid for explicit deletion retry.
-        policy.ownedNode(d,contentName,expected)
+        val present = ownedContent()
         return when(method) {
             "readAudioAt", "playbackSourceAt" -> {
-                val node = policy.ownedNode(d,contentName,expected) ?: fault("absent","Audio absent")
+                val node = present ?: fault("absent","Audio absent")
                 if (method == "readAudioAt") read(d,node) else b["audio"]
             }
             "deleteComponentAt" -> {
                 val component = text(args["component"])
                 if (component != "audio" && component != "metadata") fault("invalid","Unknown component")
+                val contentName = present?.name ?: "$id.opus"
                 val result = policy.deleteComponent(d,if(component == "audio") contentName else "$id.meta.json",if(component == "audio") expected else null)
                 mapOf("state" to result.state,"problem" to result.problem?.let { mapOf("code" to it.code,"message" to it.message) })
             }

@@ -843,6 +843,15 @@ class ServerTranscriptionService extends ChangeNotifier {
         throw const LocalTranscriptionServerError('Dump not found');
       }
       if (job.recoveryOnly) return;
+      // Notes are terminally not_applicable: this service must never upload
+      // a text note's .md bytes as audio, regardless of how it was reached.
+      if (existing.mode == 'text_note' ||
+          existing.transcriptionStatus ==
+              TranscriptionStatus.notApplicable.wireValue) {
+        throw const LocalTranscriptionServerError(
+          'Text notes cannot be transcribed',
+        );
+      }
       if (TranscriptionStatus.fromWire(existing.transcriptionStatus)
           .isInProgress) {
         throw const _ExistingDurableTranscription();

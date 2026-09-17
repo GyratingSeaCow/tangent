@@ -263,3 +263,30 @@ def test_transcribe_without_audio_returns_422(authed_client) -> None:
     )
     assert resp.status_code == 422
     assert "audio" in resp.json()["detail"].lower()
+
+
+def test_upload_audio_rejected_for_text_note(authed_client, temp_data_dir: Path) -> None:
+    """Text notes must never accept audio bytes — 422, nothing written."""
+    client, token = authed_client
+    resp = client.post(
+        "/v1/dumps",
+        json={
+            "id": "note-dump-1",
+            "mode": "text_note",
+            "duration_seconds": 0,
+            "title": "Note",
+            "created_at": datetime.now(UTC).isoformat(),
+        },
+        headers=_auth(token),
+    )
+    assert resp.status_code == 201, resp.text
+
+    resp = client.post(
+        "/v1/dumps/note-dump-1/audio",
+        files={"audio": ("note-dump-1.opus", b"\x4f\x67\x67\x53" + b"\x00" * 10, "audio/ogg")},
+        headers=_auth(token),
+    )
+    assert resp.status_code == 422
+    assert "Text notes" in resp.json()["detail"]
+    audio_dir = temp_data_dir / "audio"
+    assert not list(audio_dir.glob("note-dump-1.*")) if audio_dir.exists() else True

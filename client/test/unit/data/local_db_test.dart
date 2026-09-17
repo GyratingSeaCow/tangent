@@ -1074,5 +1074,45 @@ void main() {
       expect(saved.transcriptionJobId, 'job-monotonic');
       expect(saved.transcriptionError, isNull);
     });
+
+    test('beginTranscriptionAttempt rejects not_applicable note rows',
+        () async {
+      final now = DateTime.utc(2026, 9, 17, 12);
+      await seedFileFixtureRow(
+        db,
+        DumpRow(
+          id: 'note-na',
+          createdAt: now,
+          updatedAt: now,
+          mode: 'text_note',
+          durationSeconds: 0,
+          title: 'Note',
+          audioPath: '/note-na.md',
+          audioSizeBytes: 4,
+          transcript: 'body',
+          syncStatus: 'pending',
+          syncAttempts: 0,
+          transcriptionStatus: 'not_applicable',
+          transcriptionAttempt: 0,
+        ),
+      );
+
+      await expectLater(
+        db.beginTranscriptionAttempt(
+          'note-na',
+          storageKey: fileFixtureKey('note-na'),
+          requestId: 'request-note',
+          now: now,
+        ),
+        throwsA(isA<StateError>().having(
+          (e) => e.message,
+          'message',
+          contains('not applicable'),
+        ),),
+      );
+      final after = (await db.getDump('note-na'))!;
+      expect(after.transcriptionStatus, 'not_applicable');
+      expect(after.transcriptionAttempt, 0);
+    });
   });
 }
