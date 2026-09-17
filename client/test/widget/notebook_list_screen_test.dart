@@ -3,17 +3,44 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tangent/data/local_db.dart';
+import 'package:tangent/data/storage/storage_contract.dart';
 import 'package:tangent/data/notebook_repository.dart';
 import 'package:tangent/models/notebook.dart';
 import 'package:tangent/screens/dump/dumps_providers.dart';
 import 'package:tangent/screens/notebook/notebook_editor_screen.dart';
 import 'package:tangent/screens/notebook/notebook_list_screen.dart';
+import 'package:tangent/services/notebook_persistence.dart';
 
 import '../support/fake_notebook_repository.dart';
 
 /// T4: the notebook list — live rows from [notebooksProvider], tap to edit,
 /// a `+` FAB that creates AND immediately opens a notebook, and a confirmed
 /// delete that never fires without the user saying so.
+
+/// Forwards to the fake repository so tests still observe deletes, while the
+/// screen exercises the real durable-publication seam (row + file), not the
+/// bare repository — the device found the editor and list wired to the wrong
+/// one, leaving orphan files in 'Tangent Notebooks'.
+class _ForwardingNotebookPersistence implements NotebookPersistence {
+  _ForwardingNotebookPersistence(this._repository);
+
+  final NotebookRepository _repository;
+
+  @override
+  Future<Notebook> saveNotebook(Notebook notebook) async {
+    await _repository.saveNotebook(notebook);
+    return notebook;
+  }
+
+  @override
+  Future<ComponentResult> deleteNotebook(String id) async {
+    await _repository.deleteNotebook(id);
+    return (state: ComponentState.removed, problem: null);
+  }
+
+  @override
+  noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -34,6 +61,9 @@ void main() {
       ProviderScope(
         overrides: <Override>[
           notebookRepositoryProvider.overrideWithValue(repository),
+          notebookPersistenceProvider.overrideWithValue(
+            _ForwardingNotebookPersistence(repository),
+          ),
           dumpsProvider.overrideWith(
             (_) => Stream<List<DumpRow>>.value(const <DumpRow>[]),
           ),

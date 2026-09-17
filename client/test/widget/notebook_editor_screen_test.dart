@@ -11,6 +11,7 @@ import 'package:tangent/data/notebook_repository.dart';
 import 'package:tangent/models/notebook.dart';
 import 'package:tangent/screens/dump/dumps_providers.dart';
 import 'package:tangent/screens/notebook/notebook_editor_screen.dart';
+import 'package:tangent/services/notebook_persistence.dart';
 import 'package:tangent/widgets/dump_picker_sheet.dart';
 import 'package:tangent/widgets/notebook_dump_card.dart';
 import 'package:tangent/widgets/notebook_ink_canvas.dart';
@@ -35,10 +36,31 @@ DumpRow _dumpRow(String id, String title) => DumpRow(
       transcriptionAttempt: 0,
     );
 
+/// Records notebooks handed to the durable-publication path so a test can
+/// prove Save went through NotebookPersistence and not just the repository.
+class _RecordingNotebookPersistence implements NotebookPersistence {
+  _RecordingNotebookPersistence(this._repository, this.published);
+
+  final NotebookRepository _repository;
+  final List<Notebook> published;
+
+  @override
+  Future<Notebook> saveNotebook(Notebook notebook) async {
+    await _repository.saveNotebook(notebook);
+    published.add(notebook);
+    return notebook;
+  }
+
+  @override
+  noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   late FakeNotebookRepository repository;
+  final List<Notebook> publishedNotebooks = <Notebook>[];
+  setUp(publishedNotebooks.clear);
 
   /// Mounts a host route and pushes the editor onto it, so the app-bar back
   /// button (and therefore the unsaved-changes guard) behaves as it does in
@@ -59,6 +81,9 @@ void main() {
       ProviderScope(
         overrides: <Override>[
           notebookRepositoryProvider.overrideWithValue(repository),
+          notebookPersistenceProvider.overrideWithValue(
+            _RecordingNotebookPersistence(repository, publishedNotebooks),
+          ),
           dumpsProvider.overrideWith((_) => Stream<List<DumpRow>>.value(dumps)),
         ],
         child: MaterialApp(
@@ -217,6 +242,37 @@ void main() {
     expect(tester.takeException(), isNull);
 
     await unmount(tester);
+  });
+
+  testWidgets('Save publishes the durable file, not just the database row',
+      (tester) async {
+    // Regression: the editor called notebookRepositoryProvider (database only)
+    // instead of notebookPersistenceProvider, so notebooks never reached
+    // 'Tangent Notebooks' on disk and an uninstall would lose them. Caught on
+    // the device: the row saved, the folder was never created.
+    await mountEditor(tester, notebook: seeded());
+
+    await tester.enterText(textBlocks().first, 'durable body');
+    await tester.pump();
+
+    await tester.tap(find.byIcon(Icons.save));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(
+      publishedNotebooks,
+      hasLength(1),
+      reason: 'Save must route through NotebookPersistence so the '
+          '<id>.notebook.json file is published.',
+    );
+    expect(publishedNotebooks.single.id, 'nb-1');
+    expect(
+      publishedNotebooks.single.document.blocks
+          .whereType<NotebookTextBlock>()
+          .single
+          .text,
+      'durable body',
+    );
   });
 
   testWidgets('Save writes the edited title, text and checkbox state',

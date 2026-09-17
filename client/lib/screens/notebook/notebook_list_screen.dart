@@ -11,6 +11,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/notebook_repository.dart';
 import '../../models/notebook.dart';
+import '../../services/notebook_persistence.dart';
 import 'notebook_editor_screen.dart';
 
 class NotebookListScreen extends ConsumerStatefulWidget {
@@ -75,7 +76,9 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
     );
     if (confirmed != true || !mounted) return;
     try {
-      await ref.read(notebookRepositoryProvider).deleteNotebook(notebook.id);
+      // Persistence deletes the row AND its durable file; the bare repository
+      // would leave an orphan in 'Tangent Notebooks' that import resurrects.
+      await ref.read(notebookPersistenceProvider).deleteNotebook(notebook.id);
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(

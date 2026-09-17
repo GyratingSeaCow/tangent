@@ -23,6 +23,7 @@ import '../../models/dump.dart';
 import '../../models/dump_mode.dart';
 import '../../models/notebook.dart';
 import '../../models/sync_status.dart';
+import '../../services/notebook_persistence.dart';
 import '../../widgets/dump_picker_sheet.dart';
 import '../../widgets/notebook_dump_card.dart';
 import '../../widgets/notebook_ink_canvas.dart';
@@ -291,7 +292,10 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
       ink: NotebookInk(List<InkStroke>.of(_strokes)),
     );
     try {
-      await ref.read(notebookRepositoryProvider).saveNotebook(updated);
+      // Route through NotebookPersistence, not the bare repository: it writes
+      // the row AND publishes <id>.notebook.json into 'Tangent Notebooks', so
+      // an uninstall no longer loses the notebook.
+      await ref.read(notebookPersistenceProvider).saveNotebook(updated);
       if (!mounted) return;
       setState(() {
         _notebook = updated;
