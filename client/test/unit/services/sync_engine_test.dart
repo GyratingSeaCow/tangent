@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -138,10 +139,80 @@ void main() {
       final fetched = await db.getDump('test-dump');
       expect(fetched!.syncStatus, SyncStatus.synced.wireValue);
       expect(engine.lastSync, isNotNull);
+      verify(
+        () => client.createDump(
+          id: 'test-dump',
+          mode: 'brain_dump',
+          durationSeconds: any(named: 'durationSeconds'),
+          title: any(named: 'title'),
+          createdAt: any(named: 'createdAt'),
+        ),
+      ).called(1);
+      verify(
+        () => client.uploadAudio(
+          dumpId: 'test-dump',
+          audioBytes: any(named: 'audioBytes'),
+        ),
+      ).called(1);
       verifyNever(
         () => client.enqueueTranscription(
           any(),
           requestId: any(named: 'requestId'),
+        ),
+      );
+    });
+
+    test('text_note rows sync metadata only — no audio transport', () async {
+      const body = 'typed note body';
+      final noteBytes = utf8.encode(body);
+      await seedFileFixtureRow(
+        db,
+        DumpRow(
+          id: 'note-dump',
+          createdAt: DateTime.utc(2026, 1, 2),
+          updatedAt: DateTime.utc(2026, 1, 2),
+          mode: 'text_note',
+          durationSeconds: 0,
+          title: 'Note 2026-01-02 00-00-00',
+          transcript: body,
+          audioPath: '${tmp.path}/Tangent/note-dump.md',
+          audioSizeBytes: noteBytes.length,
+          syncStatus: SyncStatus.pending.wireValue,
+          syncAttempts: 0,
+          transcriptionStatus: 'not_applicable',
+          transcriptionAttempt: 0,
+        ),
+      );
+      await File('${tmp.path}/Tangent/note-dump.md').writeAsBytes(noteBytes);
+      when(
+        () => client.createDump(
+          id: any(named: 'id'),
+          mode: any(named: 'mode'),
+          durationSeconds: any(named: 'durationSeconds'),
+          title: any(named: 'title'),
+          createdAt: any(named: 'createdAt'),
+        ),
+      ).thenAnswer((_) async => 'note-dump');
+
+      await engine.syncNow();
+
+      expect(
+        (await db.getDump('note-dump'))!.syncStatus,
+        SyncStatus.synced.wireValue,
+      );
+      verify(
+        () => client.createDump(
+          id: 'note-dump',
+          mode: 'text_note',
+          durationSeconds: 0,
+          title: any(named: 'title'),
+          createdAt: any(named: 'createdAt'),
+        ),
+      ).called(1);
+      verifyNever(
+        () => client.uploadAudio(
+          dumpId: any(named: 'dumpId'),
+          audioBytes: any(named: 'audioBytes'),
         ),
       );
     });

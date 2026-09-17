@@ -95,25 +95,31 @@ class SyncEngine {
             continue;
           }
           await _check(lease);
-          final audio = switch (await _access.openAudio(lease.key)) {
-            Ok<AudioReadLease>(:final value) => value,
-            Fail<AudioReadLease>(:final problem) => throw StorageFault(problem),
-          };
-          late final List<int> audioBytes;
-          try {
-            audioBytes = await audio.read();
-          } on StorageFault catch (error) {
-            throw StorageFault(
-              (
-                code: error.problem.code,
-                message:
-                    'audio file missing or unreadable: ${error.problem.message}'
-              ),
-            );
-          } finally {
-            await audio.close();
+          // Text notes sync metadata only: the note body already travels in
+          // the dump metadata, so the primary-content (.md) component is never
+          // opened or uploaded.
+          final isNote = row.mode == 'text_note';
+          var audioBytes = const <int>[];
+          if (!isNote) {
+            final audio = switch (await _access.openAudio(lease.key)) {
+              Ok<AudioReadLease>(:final value) => value,
+              Fail<AudioReadLease>(:final problem) => throw StorageFault(problem),
+            };
+            try {
+              audioBytes = await audio.read();
+            } on StorageFault catch (error) {
+              throw StorageFault(
+                (
+                  code: error.problem.code,
+                  message:
+                      'audio file missing or unreadable: ${error.problem.message}'
+                ),
+              );
+            } finally {
+              await audio.close();
+            }
+            if (audioBytes.isEmpty) throw StateError('audio file missing');
           }
-          if (audioBytes.isEmpty) throw StateError('audio file missing');
           await _transport(
             lease,
             () => _client.createDump(
@@ -124,10 +130,13 @@ class SyncEngine {
               createdAt: row.createdAt,
             ),
           );
-          await _transport(
-            lease,
-            () => _client.uploadAudio(dumpId: row!.id, audioBytes: audioBytes),
-          );
+          if (!isNote) {
+            await _transport(
+              lease,
+              () =>
+                  _client.uploadAudio(dumpId: row!.id, audioBytes: audioBytes),
+            );
+          }
           await _check(lease);
           await _db.updateSyncStatus(
             row.id,
