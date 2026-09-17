@@ -123,11 +123,14 @@ object CaptureWire {
         val r=obj(x,setOf("id","key","location","stagingPath","mode","startedAtMs"))
         val id=literal(r["id"]); key(r["key"]); directory(r["location"]); integer(r["startedAtMs"])
         val path=text(r["stagingPath"])
-        if (!path.startsWith('/') || path.contains('\u0000') || path.split('/').any { it == "." || it == ".." } || path.substringAfterLast('/') != "$id.opus") fault("invalid","Invalid reservation staging path")
-        if (text(r["mode"]) !in setOf("meeting","brain_dump")) fault("invalid","Invalid capture mode")
+        if (text(r["mode"]) !in setOf("meeting","brain_dump","text_note")) fault("invalid","Invalid capture mode")
+        val suffix=contentSuffix(text(r["mode"]))
+        if (!path.startsWith('/') || path.contains('\u0000') || path.split('/').any { it == "." || it == ".." } || path.substringAfterLast('/') != "$id$suffix") fault("invalid","Invalid reservation staging path")
         return r
     }
     fun key(x:Any?):Map<String,Any?> = obj(x,setOf("dumpId","incarnation")).also { literal(it["dumpId"]); literal(it["incarnation"]) }
+    // Mirrors the shared Dart helper contentExtensionForMode: text notes publish .md, audio modes .opus.
+    fun contentSuffix(mode:String):String = if (mode == "text_note") ".md" else ".opus"
     fun digest(x:Any?):String = text(x).also { if (!Regex("[0-9a-f]{64}").matches(it)) fault("invalid","Invalid capture SHA-256") }
     fun sha(bytes:ByteArray):String = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
     fun metadata(json:String,r:Map<String,Any?>) {
@@ -138,7 +141,7 @@ object CaptureWire {
     }
     fun claim(x:Any?, component:String, r:Map<String,Any?>):Map<String,Any?> {
         val c=obj(x,setOf("component","name","locator","identity")); val d=directory(r["location"])
-        val expected="${key(r["key"])["dumpId"]}" + if(component == "audio") ".opus" else ".meta.json"
+        val expected="${key(r["key"])["dumpId"]}" + if(component == "audio") contentSuffix(text(r["mode"])) else ".meta.json"
         if (c["component"] != component || c["name"] != expected) fault("invalid","Wrong capture component")
         val l=obj(c["locator"],setOf("kind","value")); if(l["kind"] != "saf") fault("invalid","Wrong capture locator kind")
         val id=identity(c["identity"]); val u=uri(text(l["value"]))
@@ -190,15 +193,16 @@ class CapturePublication(private val port:CaptureDocumentsPort) {
             val root=port.captureRoot(d); if(root != CaptureWire.safIdentity(d,d.documentId)) CaptureWire.fault("conflict","Capture root differs")
             val id=CaptureWire.key(r["key"])["dumpId"] as String
             val before=inventory(d).map { it.id }.toSet()
-            policy.requireAvailableNames(d,setOf("$id.opus","$id.meta.json"))
+            val suffix=CaptureWire.contentSuffix(CaptureWire.text(r["mode"]))
+            policy.requireAvailableNames(d,setOf("$id$suffix","$id.meta.json"))
             prepared=linkedMapOf("version" to 1,"publicationId" to r["id"],"reservationId" to r["id"],"key" to r["key"],"location" to r["location"],"stagingPath" to r["stagingPath"],"sourceIdentity" to source.identity,"rootIdentity" to root,"audioSizeBytes" to source.bytes.size,"audioSha256" to digest,"metadataJson" to metadata,"audio" to null,"metadata" to null)
             for(component in listOf("audio","metadata")) {
-                val name=if(component == "audio") "$id.opus" else "$id.meta.json"
+                val name=if(component == "audio") "$id$suffix" else "$id.meta.json"
                 if(port.captureRoot(d) != root) CaptureWire.fault("conflict","Capture root changed")
                 val prior=inventory(d).map { it.id }.toSet()
                 policy.requireAvailableNames(d,setOf(name))
                 dispatched=true
-                val uri=port.captureCreate(d,name,if(component == "audio") "audio/ogg" else "application/json") { raw.add(it) }
+                val uri=port.captureCreate(d,name,if(component == "audio") (if (suffix == ".md") "text/markdown" else "audio/ogg") else "application/json") { raw.add(it) }
                 if(raw.lastOrNull() != uri) CaptureWire.fault("invalid","Missing raw capture creation receipt")
                 val decoded=CaptureWire.uri(uri)
                 if(decoded.first != d.authority || decoded.second in before || decoded.second in prior || decoded.second == d.documentId) CaptureWire.fault("conflict","Returned capture ID was not newly created")
