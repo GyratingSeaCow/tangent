@@ -59,7 +59,8 @@ void main() {
             (ref) =>
                 WidgetRecordingCoordinator(ref.watch(recordingServiceProvider)),
           ),
-          storageBootstrapProvider.overrideWith((ref) async {}),
+          captureReadyProvider.overrideWith((ref) async {}),
+          catalogSyncProvider.overrideWith((ref) async {}),
           settingsStoreProvider.overrideWithValue(SettingsStore()),
           screenAwakeProvider.overrideWithValue(_NoopScreenAwake()),
           deletionEligibilityProvider.overrideWith(

@@ -138,7 +138,7 @@ final recordingControllerProvider =
   return RecordingController(
     ref.watch(recordingServiceProvider),
     () => ref.read(recordingCoordinatorProvider),
-    () => ref.read(storageBootstrapProvider.future),
+    () => ref.read(captureReadyProvider.future),
     ref.watch(screenAwakeProvider),
     ref.watch(recordingTickProvider.notifier),
     ref.watch(waveformProvider.notifier),

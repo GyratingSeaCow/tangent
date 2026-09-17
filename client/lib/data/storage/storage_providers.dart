@@ -65,7 +65,18 @@ final recordingImporterProvider = Provider<RecordingImporter>(
     mutations: ref.watch(recordingMutationCoordinatorProvider),
   ),
 );
-final storageBootstrapProvider = FutureProvider<void>((ref) async {
+/// Everything a capture genuinely needs before it may start, and nothing else.
+///
+/// Recording is this app's primary function, so `start()` waits on THIS and not
+/// on the folder scan: fence restoration (concurrent-capture protection),
+/// legacy binding bootstrap (installs the default recording location on a
+/// first-ever launch — `reserveCapture` cannot present a folder without it),
+/// and owned-capture recovery (re-adopts a capture interrupted mid-write, so an
+/// unfinished recording is neither lost nor duplicated).
+///
+/// Adopting pre-existing files and re-reading notebooks are catalog concerns;
+/// they live in [catalogSyncProvider] and must never gate the record button.
+final captureReadyProvider = FutureProvider<void>((ref) async {
   final backend = ref.watch(storageBackendProvider);
   final mutations = ref.watch(recordingMutationsProvider);
   await mutations.restoreFences(unsettled: await backend.unsettledUses());
@@ -76,6 +87,16 @@ final storageBootstrapProvider = FutureProvider<void>((ref) async {
         filesystemLegacyDirectory: Platform.isAndroid ? '' : audio.audioDirPath,
       );
   if (result case Fail(:final problem)) throw StorageFault(problem);
+  final recovery =
+      await ref.read(recordingImporterProvider).recoverOwnedCaptures();
+  if (recovery case Fail(:final problem)) throw StorageFault(problem);
+});
+
+/// The folder-scanning half of startup: adopt pre-existing recordings once, and
+/// re-adopt durable notebook files. Runs after capture is ready and never
+/// blocks it.
+final catalogSyncProvider = FutureProvider<void>((ref) async {
+  await ref.watch(captureReadyProvider.future);
   final db = ref.watch(localDbProvider);
   final legacyRows = await (db.select(db.storageLocations)
         ..where((location) => location.legacyRestore.equals(true)))
@@ -116,23 +137,23 @@ final storageBootstrapProvider = FutureProvider<void>((ref) async {
     }
     if (settled) await db.completeLegacyRestore(row.id);
   }
-  final recovery =
-      await ref.read(recordingImporterProvider).recoverOwnedCaptures();
   // Re-adopt durable notebook files. Recordings alone are not the whole
   // folder: a reinstall that restored dumps but skipped this left every
   // <id>.notebook.json stranded on disk with no way back into the app.
-  //
-  // This runs BEFORE the recovery fault is rethrown and in its own guard:
-  // capture recovery and notebook adoption are independent, and a failure
-  // in either must not strand the other. Problems are reported in the
-  // result, so one unreadable file cannot abort bootstrap.
   try {
     await ref.read(notebookPersistenceProvider).importNotebooks();
   } catch (_) {
     // Notebook adoption is best-effort: recordings and capture recovery must
     // not be held hostage by an unreadable notebook file.
   }
-  if (recovery case Fail(:final problem)) throw StorageFault(problem);
+});
+
+/// Full startup: capture readiness followed by the catalog sweep. Callers that
+/// need the whole folder reconciled (startup orchestration, tests) await this;
+/// the record button deliberately does not.
+final storageBootstrapProvider = FutureProvider<void>((ref) async {
+  await ref.watch(captureReadyProvider.future);
+  await ref.watch(catalogSyncProvider.future);
 });
 final recordingCoordinatorProvider = Provider<RecordingCoordinator>(
   (ref) => DefaultRecordingCoordinator(

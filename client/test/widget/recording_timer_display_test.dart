@@ -30,7 +30,8 @@ void main() {
           recordingServiceProvider.overrideWithValue(service),
           recordingCoordinatorProvider
               .overrideWith((ref) => WidgetRecordingCoordinator(service)),
-          storageBootstrapProvider.overrideWith((ref) async {}),
+          captureReadyProvider.overrideWith((ref) async {}),
+          catalogSyncProvider.overrideWith((ref) async {}),
           screenAwakeProvider.overrideWithValue(_NoopScreenAwake()),
           settingsStoreProvider.overrideWithValue(SettingsStore()),
         ],

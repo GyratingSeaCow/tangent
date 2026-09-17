@@ -154,7 +154,8 @@ void main() {
           storageBackendProvider.overrideWithValue(h.backend),
           recordingMutationsProvider.overrideWithValue(h.mutations),
           storageCatalogProvider.overrideWithValue(h.catalog),
-          storageBootstrapProvider.overrideWith((ref) async {}),
+          captureReadyProvider.overrideWith((ref) async {}),
+          catalogSyncProvider.overrideWith((ref) async {}),
           notePersistenceProvider.overrideWithValue(notes),
           recordingPlaybackEngineFactoryProvider
               .overrideWithValue(_StubEngine.new),

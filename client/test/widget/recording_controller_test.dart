@@ -44,7 +44,8 @@ ProviderContainer containerFor(
       recordingServiceProvider.overrideWithValue(service),
       recordingCoordinatorProvider
           .overrideWithValue(WidgetRecordingCoordinator(service)),
-      storageBootstrapProvider.overrideWith((ref) async {}),
+      captureReadyProvider.overrideWith((ref) async {}),
+      catalogSyncProvider.overrideWith((ref) async {}),
       screenAwakeProvider.overrideWithValue(awake ?? FakeScreenAwake()),
       settingsStoreProvider.overrideWithValue(settings ?? SettingsStore()),
     ],
@@ -73,7 +74,12 @@ void main() {
       overrides: [
         recordingServiceProvider.overrideWithValue(recorder),
         recordingCoordinatorProvider.overrideWithValue(coordinator),
-        storageBootstrapProvider.overrideWith((ref) => h.bootstrap()),
+        // h.bootstrap() installs the default recording location, which
+        // reserveCapture requires — so it belongs on the capture-ready half of
+        // the split, not the catalog sweep. Making this a no-op would leave
+        // the coordinator with 'No default recording folder'.
+        captureReadyProvider.overrideWith((ref) => h.bootstrap()),
+        catalogSyncProvider.overrideWith((ref) async {}),
         screenAwakeProvider.overrideWithValue(awake),
         settingsStoreProvider.overrideWithValue(SettingsStore()),
       ],

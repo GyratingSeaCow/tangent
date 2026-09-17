@@ -69,7 +69,8 @@ void main() {
           transcriptionClientProvider.overrideWith((ref) => _StubClient()),
           recordingServiceProvider.overrideWithValue(stub),
           recordingCoordinatorProvider.overrideWith((ref) => coordinator),
-          storageBootstrapProvider.overrideWith((ref) async {}),
+          captureReadyProvider.overrideWith((ref) async {}),
+          catalogSyncProvider.overrideWith((ref) async {}),
           settingsStoreProvider.overrideWithValue(SettingsStore()),
           screenAwakeProvider.overrideWithValue(_NoopScreenAwake()),
           // Keep the pushed dumps list off the real DB watch/fake clock.
