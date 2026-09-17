@@ -83,6 +83,7 @@ void main() {
         'All',
         'Brain Dump',
         'Meeting',
+        'Text Note',
         'All',
         'Needs transcript',
         'In progress',

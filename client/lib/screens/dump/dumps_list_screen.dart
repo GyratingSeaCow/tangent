@@ -421,11 +421,20 @@ class _DumpList extends StatelessWidget {
             final compact = constraints.maxWidth < 500 ||
                 MediaQuery.textScalerOf(context).scale(14) > 21;
             final reason = _eligibilityReason(eligibility[dump.id]);
+            final isNote = dump.mode == 'text_note';
             final pill = _TranscriptionStatusPill(
                 dumpId: dump.id, status: transcription,);
             final subtitle = Row(children: [
               _SyncBadge(status: sync),
               const SizedBox(width: 6),
+              if (isNote) ...[
+                Icon(
+                  Icons.edit_note,
+                  key: ValueKey('note-row-icon-${dump.id}'),
+                  size: 16,
+                ),
+                const SizedBox(width: 6),
+              ],
               Expanded(
                   child: Text(_subtitleFor(dump),
                       maxLines: 2, overflow: TextOverflow.ellipsis,),),
@@ -504,10 +513,11 @@ class _DumpList extends StatelessWidget {
       };
 
   String _subtitleFor(DumpRow dump) {
+    final date = dump.createdAt.toLocal().toString().split('.').first;
+    if (dump.mode == 'text_note') return date;
     final mins = (dump.durationSeconds / 60).floor();
     final secs = dump.durationSeconds % 60;
     final duration = mins > 0 ? '${mins}m ${secs}s' : '${secs}s';
-    final date = dump.createdAt.toLocal().toString().split('.').first;
     return '$duration · $date';
   }
 }

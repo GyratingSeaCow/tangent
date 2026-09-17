@@ -50,13 +50,14 @@ final deletionEligibilityProvider = StreamProvider<Map<String, Eligibility>>(
   (ref) => ref.watch(localDeletionServiceProvider).watchEligibility(),
 );
 
-enum DumpModeFilter { all, brainDump, meeting }
+enum DumpModeFilter { all, brainDump, meeting, textNote }
 
 extension DumpModeFilterX on DumpModeFilter {
   String get label => switch (this) {
         DumpModeFilter.all => 'All',
         DumpModeFilter.brainDump => 'Brain Dump',
         DumpModeFilter.meeting => 'Meeting',
+        DumpModeFilter.textNote => 'Text Note',
       };
 }
 
@@ -82,6 +83,7 @@ List<DumpRow> filterDumps(
       DumpModeFilter.all => true,
       DumpModeFilter.brainDump => row.mode == 'brain_dump',
       DumpModeFilter.meeting => row.mode == 'meeting',
+      DumpModeFilter.textNote => row.mode == 'text_note',
     };
     final status = TranscriptionStatus.fromWire(row.transcriptionStatus);
     final transcriptMatches = switch (transcriptFilter) {
