@@ -2,7 +2,7 @@
 import 'dart:io';
 import 'package:tangent/services/recording_service.dart';
 
-final class FileRecorder implements RecordingService {
+final class FileRecorder with NoInputDeviceSelection implements RecordingService {
   @override
   bool isRecording = false;
   @override

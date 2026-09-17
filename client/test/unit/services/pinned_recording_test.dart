@@ -41,7 +41,7 @@ class CommitHookDb extends LocalDb {
   }
 }
 
-class ControlledRecorder implements RecordingService {
+class ControlledRecorder with NoInputDeviceSelection implements RecordingService {
   ControlledRecorder(this.failure);
   final String failure;
   final inner = FileRecorder();

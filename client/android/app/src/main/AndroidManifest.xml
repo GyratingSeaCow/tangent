@@ -7,6 +7,11 @@
          Android's Storage Access Framework. No broad storage permission is used. -->
 
     <!-- Internet for syncing with the Tangent server. -->
+    <!-- Required on Android 12+ (API 31) to enumerate and select a Bluetooth
+         headset microphone. Without it AudioManager returns a silently EMPTY
+         input-device list rather than an error, so the headset never appears
+         in the picker. Recording through the built-in mic does not need it. -->
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 

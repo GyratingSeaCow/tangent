@@ -2,6 +2,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:record/record.dart';
 
@@ -26,27 +27,106 @@ abstract class RecordingService {
   Future<String> start({required String stagingPath});
   Future<RecordingResult?> stop();
   Future<void> dispose();
+
+  /// Input devices the platform currently reports, for the Settings picker.
+  ///
+  /// Call this from Settings, never from the record path. Returns an empty
+  /// list rather than throwing when enumeration is unavailable (for example
+  /// when BLUETOOTH_CONNECT has not been granted on Android 12+).
+  Future<List<InputDevice>> listInputDevices() async => const <InputDevice>[];
+
+  /// Chooses the microphone to record with. Passing null returns the recorder
+  /// to the system default input.
+  Future<void> selectInputDevice(InputDevice? device) async {}
+}
+
+/// Default no-op input-device behaviour for services that do not select a
+/// microphone (stubs, fakes, and platforms without device enumeration).
+mixin NoInputDeviceSelection implements RecordingService {
+  @override
+  Future<List<InputDevice>> listInputDevices() async => const <InputDevice>[];
+
+  @override
+  Future<void> selectInputDevice(InputDevice? device) async {}
+}
+
+/// The slice of `package:record`'s [AudioRecorder] this app depends on.
+///
+/// Declared so tests can substitute a fake without real hardware.
+abstract class InputAwareAudioRecorder {
+  Future<bool> hasPermission();
+  Future<List<InputDevice>> listInputDevices();
+  Future<void> start(RecordConfig config, {required String path});
+  Future<String?> stop();
+  Stream<Amplitude> onAmplitudeChanged(Duration interval);
+  Future<void> dispose();
+}
+
+/// Adapts the concrete [AudioRecorder] to [InputAwareAudioRecorder].
+class PlatformAudioRecorder implements InputAwareAudioRecorder {
+  PlatformAudioRecorder([AudioRecorder? inner])
+      : _inner = inner ?? AudioRecorder();
+
+  final AudioRecorder _inner;
+
+  @override
+  Future<bool> hasPermission() => _inner.hasPermission();
+
+  @override
+  Future<List<InputDevice>> listInputDevices() => _inner.listInputDevices();
+
+  @override
+  Future<void> start(RecordConfig config, {required String path}) =>
+      _inner.start(config, path: path);
+
+  @override
+  Future<String?> stop() => _inner.stop();
+
+  @override
+  Stream<Amplitude> onAmplitudeChanged(Duration interval) =>
+      _inner.onAmplitudeChanged(interval);
+
+  @override
+  Future<void> dispose() => _inner.dispose();
 }
 
 class DefaultRecordingService implements RecordingService {
-  AudioRecorder? _recorder;
+  InputAwareAudioRecorder? _recorder;
   final Directory _outputDir;
   String? _currentPath;
   DateTime? _startedAt;
   bool _isRecording = false;
 
-  DefaultRecordingService({Directory? outputDir, AudioRecorder? recorder})
-      : _recorder = recorder,
+  /// The user's chosen microphone, or null for the system default.
+  InputDevice? _selectedDevice;
+
+  /// Whether [_selectedDevice] was present the last time we enumerated.
+  ///
+  /// Selection and the Settings picker both refresh this, so [start] can
+  /// honour the choice without paying for a platform round trip. It is only
+  /// null when the choice was restored from settings and never verified.
+  bool? _selectedDeviceAvailable;
+
+  DefaultRecordingService({
+    Directory? outputDir,
+    InputAwareAudioRecorder? recorder,
+    InputDevice? initialDevice,
+  })  : _recorder = recorder,
+        _selectedDevice = initialDevice,
         _outputDir = outputDir ??
             (throw ArgumentError('A staging output directory is required'));
 
-  AudioRecorder get _ensureRecorder => _recorder ??= AudioRecorder();
+  InputAwareAudioRecorder get _ensureRecorder =>
+      _recorder ??= PlatformAudioRecorder();
 
   @override
   bool get isRecording => _isRecording;
 
   @override
   String? get currentPath => _currentPath;
+
+  /// The microphone currently selected, or null for the system default.
+  InputDevice? get selectedDevice => _selectedDevice;
 
   @override
   Future<bool> requestPermission() => _ensureRecorder.hasPermission();
@@ -55,6 +135,56 @@ class DefaultRecordingService implements RecordingService {
   Stream<double> amplitudeStream(Duration interval) => _ensureRecorder
       .onAmplitudeChanged(interval)
       .map((value) => value.current);
+
+  @override
+  Future<List<InputDevice>> listInputDevices() async {
+    final List<InputDevice> devices;
+    try {
+      devices = await _ensureRecorder.listInputDevices();
+    } catch (_) {
+      // Enumeration is best-effort: a denied BLUETOOTH_CONNECT permission or a
+      // platform without device selection must not surface as an error.
+      return const <InputDevice>[];
+    }
+    final selected = _selectedDevice;
+    if (selected != null) {
+      _selectedDeviceAvailable =
+          devices.any((device) => device.id == selected.id);
+    }
+    return devices;
+  }
+
+  @override
+  Future<void> selectInputDevice(InputDevice? device) async {
+    _selectedDevice = device;
+    // A device handed to us by the picker was, by construction, just listed.
+    _selectedDeviceAvailable = device == null ? null : true;
+  }
+
+  /// Drops the cached availability verdict so the next [start] re-checks.
+  ///
+  /// Used by tests and by restore-from-settings, where the remembered headset
+  /// may since have been switched off.
+  @visibleForTesting
+  void debugForgetAvailability() => _selectedDeviceAvailable = null;
+
+  /// Resolves the device to record with, falling back to the system default.
+  ///
+  /// Costs a platform round trip ONLY when a device was chosen and its
+  /// availability is unknown (first record after launch). With no selection —
+  /// the default for every user who never opened the picker — this is free.
+  Future<InputDevice?> _resolveDevice() async {
+    final selected = _selectedDevice;
+    if (selected == null) return null;
+    if (_selectedDeviceAvailable ?? false) return selected;
+    final devices = await listInputDevices();
+    for (final device in devices) {
+      if (device.id == selected.id) return device;
+    }
+    // Headset gone: record on the system default rather than failing. The
+    // preference is kept so it re-engages when the headset comes back.
+    return null;
+  }
 
   @override
   Future<String> start({required String stagingPath}) async {
@@ -70,12 +200,14 @@ class DefaultRecordingService implements RecordingService {
     await _outputDir.create(recursive: true);
     final path = stagingPath;
     await File(path).create(exclusive: true);
+    final device = await _resolveDevice();
     await recorder.start(
-      const RecordConfig(
+      RecordConfig(
         encoder: AudioEncoder.opus,
         sampleRate: 16000,
         numChannels: 1,
         bitRate: 32000,
+        device: device,
       ),
       path: path,
     );
@@ -121,7 +253,7 @@ class DefaultRecordingService implements RecordingService {
   }
 }
 
-class StubRecordingService implements RecordingService {
+class StubRecordingService with NoInputDeviceSelection implements RecordingService {
   bool _isRecording = false;
   String? _path;
   bool _disposed = false;
