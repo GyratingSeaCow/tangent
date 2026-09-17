@@ -72,6 +72,13 @@ String generatedRecordingTitle(DateTime createdAt) {
       '${two(local.hour)}-${two(local.minute)}-${two(local.second)}';
 }
 
+String generatedNoteTitle(DateTime createdAt) {
+  final local = createdAt.toLocal();
+  String two(int value) => value.toString().padLeft(2, '0');
+  return 'Note ${local.year}-${two(local.month)}-${two(local.day)} '
+      '${two(local.hour)}-${two(local.minute)}-${two(local.second)}';
+}
+
 Map<String, dynamic> dumpMetadata(DumpRow row) => {
       'schemaVersion': recordingMetadataSchemaVersion,
       'id': row.id,

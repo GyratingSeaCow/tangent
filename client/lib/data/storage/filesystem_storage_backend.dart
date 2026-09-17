@@ -476,8 +476,15 @@ class FilesystemStorageBackend implements StorageBackend {
           final result = <ImportedEntry>[];
           final entries =
               await Directory(root).list(followLinks: false).toList();
+          // Owned primary-content names derive from the ONE shared mode
+          // helper (see _component): audio modes publish .opus, text notes
+          // publish .md. Both are enumerable durable-pair content.
+          final contentSuffixes = {
+            for (final mode in const ['brain_dump', 'meeting', 'text_note'])
+              '.${contentExtensionForMode(mode)}',
+          };
           for (final entry in entries) {
-            if (!entry.path.endsWith('.opus')) continue;
+            if (!contentSuffixes.any(entry.path.endsWith)) continue;
             final id = p.basenameWithoutExtension(entry.path);
             Map<String, dynamic>? metadata;
             StorageProblem? problem;
