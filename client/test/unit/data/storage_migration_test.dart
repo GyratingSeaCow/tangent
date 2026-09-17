@@ -133,7 +133,7 @@ VALUES('fixture-other','inc','ticket-one','operation-one','{}','removed','absent
 
 void main() {
   for (final version in [3, 4]) {
-    test('v$version to v5 preserves every original column and queue row',
+    test('v$version to v6 preserves every original column and queue row',
         () async {
       final sql = oldStorageDatabase(version);
       final before = sqlRows(sql, 'dumps');
@@ -144,7 +144,7 @@ void main() {
       expect(queue, hasLength(10));
       expect(sql.userVersion, version);
       await db.listDumps();
-      expect(sql.userVersion, 5);
+      expect(sql.userVersion, 6);
       final after = sqlRows(sql, 'dumps');
       expect(after, hasLength(before.length));
       for (var i = 0; i < before.length; i++) {
@@ -211,7 +211,7 @@ void main() {
       verifyCatalogSchema(sql);
     });
   }
-  test('fresh v5 starts without a claimed legacy/default location', () async {
+  test('fresh v6 starts without a claimed legacy/default location', () async {
     final sql = sqlite3.openInMemory();
     final db = LocalDb.forTesting(NativeDatabase.opened(sql));
     addTearDown(db.close);
@@ -231,7 +231,7 @@ void main() {
       7,
     );
   });
-  test('file-backed v4 upgrade and v5 reopen preserve rows and catalog state',
+  test('file-backed v4 upgrade and v6 reopen preserve rows and catalog state',
       () async {
     final dir =
         Directory.systemTemp.createTempSync('storage-migration-fixture-');
@@ -255,7 +255,7 @@ void main() {
           .data
           .values
           .single,
-      5,
+      6,
     );
     expect(
       (await db

@@ -55,6 +55,28 @@ class SyncQueue extends Table {
   DateTimeColumn get queuedAt => dateTime()();
 }
 
+/// One row per notebook: the whole document and ink layer save atomically.
+///
+/// Deliberately has no relationship to [Dumps]. A notebook may embed a dump as
+/// a card, but embedding never moves, copies, deletes or cascades a recording;
+/// a missing dump renders as a placeholder instead.
+@DataClassName('NotebookRow')
+class Notebooks extends Table {
+  @override
+  String get tableName => 'notebooks';
+  TextColumn get id => text()();
+  TextColumn get title => text()();
+
+  /// Epoch milliseconds, stored as integers so the JSON payload columns and the
+  /// timestamps read identically from raw SQL.
+  IntColumn get createdAt => integer()();
+  IntColumn get updatedAt => integer()();
+  TextColumn get docJson => text()();
+  TextColumn get inkJson => text()();
+  @override
+  Set<Column> get primaryKey => {id};
+}
+
 @DriftDatabase(
   tables: [
     Dumps,
@@ -65,6 +87,7 @@ class SyncQueue extends Table {
     CaptureReservations,
     LocalDeletionBatches,
     LocalDeletionTickets,
+    Notebooks,
   ],
 )
 class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
@@ -73,7 +96,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   LocalDb.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 5;
+  int get schemaVersion => 6;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -120,6 +143,11 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
           }
           if (from < 5) {
             await _createStorageCatalog(m);
+          }
+          if (from < 6) {
+            // Notebooks are purely additive: no existing table is altered and
+            // no existing row is touched.
+            await m.createTable(notebooks);
           }
         },
       );
