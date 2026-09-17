@@ -90,7 +90,7 @@ class RecordingPersistence {
           ),
         );
       });
-  Future<int> _staging(CaptureReservation r, int size) async {
+  Future<void> _staging(CaptureReservation r, int size) async {
     StorageCodec.encodeAudio((kind: 'file', value: r.stagingPath));
     final file = File(r.stagingPath);
     var valid = p.basename(r.stagingPath) == '${r.id}.opus' &&
@@ -120,7 +120,6 @@ class RecordingPersistence {
     if (!valid || length < size) {
       _fault(ProblemCode.invalid, 'Invalid owned staging source');
     }
-    return length;
   }
 
   Map<String, dynamic> _object(Object? value, Set<String> keys) {
@@ -531,14 +530,25 @@ class RecordingPersistence {
       _fault(ProblemCode.conflict, 'Capture already has a stopped handoff');
     }
     await _staging(r, result.sizeBytes);
-    // One read supplies both the frozen digest and the authoritative length,
-    // so the journal can never pair a digest with a different byte count.
-    final audioBytes = await File(r.stagingPath).readAsBytes();
-    if (audioBytes.length < result.sizeBytes) {
+    // One streaming pass supplies both the frozen digest and the
+    // authoritative length, so the journal can never pair a digest with a
+    // different byte count — without buffering a long recording in memory.
+    Digest? digestValue;
+    final byteSink = sha256.startChunkedConversion(
+      ChunkedConversionSink<Digest>.withCallback(
+        (digests) => digestValue = digests.single,
+      ),
+    );
+    var sizeBytes = 0;
+    await for (final chunk in File(r.stagingPath).openRead()) {
+      sizeBytes += chunk.length;
+      byteSink.add(chunk);
+    }
+    byteSink.close();
+    if (sizeBytes < result.sizeBytes) {
       _fault(ProblemCode.invalid, 'Invalid owned staging source');
     }
-    final sizeBytes = audioBytes.length;
-    final digest = sha256.convert(audioBytes).toString();
+    final digest = digestValue!.toString();
     final staged = DumpRow(
       id: r.key.dumpId,
       createdAt: now.toUtc(),
