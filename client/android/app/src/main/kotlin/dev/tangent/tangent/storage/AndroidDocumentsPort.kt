@@ -215,7 +215,14 @@ class AndroidDocumentsPort(context: Context) : DocumentsIoPort, CaptureDocuments
     private fun publish(d:NativeDirectory,name:String,mime:String,bytes:ByteArray,replace:Boolean):NativeNode {
         val old = policy.ownedNode(d,name,null)
         if (!replace && old != null) fault("conflict","Capture target exists")
-        var temp = create(d,".$name-${UUID.randomUUID()}.partial",mime)
+        // AOSP FileSystemProvider appends a MIME-derived extension when the
+        // requested display name's extension does not match the MIME type,
+        // silently renaming the temp and tripping the created-identity check
+        // (observed on-device: '.x.partial' became '.x.partial.json'). Keep
+        // the temp's final extension MIME-coherent so the provider returns
+        // the exact requested name.
+        val tempExt = when(mime) { "application/json" -> ".json"; "text/markdown" -> ".md"; "audio/ogg" -> ".ogg"; else -> "" }
+        var temp = create(d,".$name-${UUID.randomUUID()}.partial$tempExt",mime)
         try {
             write(d,temp,bytes)
             if (!read(d,temp).contentEquals(bytes)) fault("io","Publication readback mismatch")
