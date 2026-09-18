@@ -42,6 +42,13 @@ class NotebookInkCanvas extends StatefulWidget {
   /// and interact with whatever sits beneath it.
   final bool drawingEnabled;
 
+  /// When true, pointer input removes whole strokes instead of drawing.
+  ///
+  /// Strokes are the stored unit (they round-trip through the durable notebook
+  /// file), so erasing removes entire strokes rather than clearing pixels —
+  /// the file format is unchanged either way.
+  final bool erasing;
+
   /// Width applied to the NEXT stroke started. Existing ink is untouched.
   final double penWidth;
 
@@ -50,6 +57,7 @@ class NotebookInkCanvas extends StatefulWidget {
     required this.strokes,
     required this.onStrokesChanged,
     required this.drawingEnabled,
+    this.erasing = false,
     required this.penWidth,
   });
 
@@ -69,6 +77,15 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
   static const Uuid _uuid = Uuid();
 
   final List<InkStroke> _strokes = <InkStroke>[];
+
+  /// The ink as it stood before the current (or most recent) eraser gesture.
+  /// Null when the last action was drawing, so undo falls through to removing
+  /// the last stroke.
+  List<InkStroke>? _eraseUndoSnapshot;
+
+  /// Last position touched by the active eraser gesture, so each move erases
+  /// along the path travelled since the previous sample.
+  Offset? _lastErasePosition;
 
   /// Points of the stroke currently under the pen, if any.
   List<InkPoint>? _activePoints;
@@ -112,6 +129,20 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
   /// Removes the most recent stroke. Returns false when there is nothing to
   /// undo (and then does not notify).
   bool undoLastStroke() {
+    // An eraser gesture is undone as one action, restoring every stroke it
+    // removed. Without this an accidental wipe would be unrecoverable.
+    final List<InkStroke>? snapshot = _eraseUndoSnapshot;
+    if (snapshot != null) {
+      setState(() {
+        _strokes
+          ..clear()
+          ..addAll(snapshot);
+        _eraseUndoSnapshot = null;
+        _revision++;
+      });
+      _notify();
+      return true;
+    }
     if (_strokes.isEmpty) return false;
     setState(() {
       _strokes.removeLast();
@@ -164,10 +195,81 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
     return true;
   }
 
+  /// Extra reach around a stroke, in logical pixels.
+  ///
+  /// Exact-pixel hit testing on a 3px line is unusable with a fingertip and
+  /// fiddly even with a stylus, so the band is generous — but not so wide that
+  /// neighbouring lines are erased by accident.
+  static const double _eraseTolerance = 12;
+
+  /// Distance from [p] to the segment a-b. Strokes are polylines, so hit
+  /// testing measures against segments, not just the recorded vertices: a long
+  /// straight line has few points and a midpoint tap must still register.
+  static double _distanceToSegment(Offset p, Offset a, Offset b) {
+    final Offset ab = b - a;
+    final double lengthSquared = ab.dx * ab.dx + ab.dy * ab.dy;
+    if (lengthSquared == 0) return (p - a).distance;
+    double t = ((p - a).dx * ab.dx + (p - a).dy * ab.dy) / lengthSquared;
+    t = t.clamp(0.0, 1.0);
+    return (p - (a + ab * t)).distance;
+  }
+
+  /// True when any part of stroke [s] lies within reach of the segment a-b.
+  bool _strokeHitSegment(InkStroke s, Offset a, Offset b) {
+    final List<InkPoint> points = s.points;
+    if (points.isEmpty) return false;
+    final double reach = _eraseTolerance + s.width / 2;
+    if (points.length == 1) {
+      return _distanceToSegment(Offset(points.first.x, points.first.y), a, b) <=
+          reach;
+    }
+    for (int i = 0; i < points.length - 1; i++) {
+      final Offset p1 = Offset(points[i].x, points[i].y);
+      final Offset p2 = Offset(points[i + 1].x, points[i + 1].y);
+      // Segment-to-segment proximity, approximated by the four endpoint-to-
+      // segment distances. Exact for the crossing case that matters here: if
+      // the segments intersect, at least one endpoint distance is zero.
+      final double closest = [
+        _distanceToSegment(p1, a, b),
+        _distanceToSegment(p2, a, b),
+        _distanceToSegment(a, p1, p2),
+        _distanceToSegment(b, p1, p2),
+      ].reduce((double x, double y) => x < y ? x : y);
+      if (closest <= reach) return true;
+    }
+    return false;
+  }
+
+  /// Removes every stroke touched between [from] and [to]. Returns true when
+  /// ink was removed.
+  ///
+  /// A drag is erased along its travelled path rather than at sampled points:
+  /// a quick sweep reports widely spaced positions, and point-sampling would
+  /// skip straight over lines lying between two samples.
+  bool _eraseAlong(Offset from, Offset to) {
+    final int before = _strokes.length;
+    _strokes.removeWhere((InkStroke s) => _strokeHitSegment(s, from, to));
+    return _strokes.length != before;
+  }
+
+  /// Removes every stroke under [position]. Returns true when ink was removed.
+  bool _eraseAt(Offset position) => _eraseAlong(position, position);
+
   void _onPointerDown(PointerDownEvent event) {
     if (!widget.drawingEnabled) return;
     if (!_acceptsDevice(event.kind)) return;
     if (_activePointer != null) return;
+    if (widget.erasing) {
+      // One eraser gesture is one user action, so the pre-gesture ink is
+      // snapshotted once and restored by a single undo.
+      _eraseUndoSnapshot = List<InkStroke>.of(_strokes);
+      _activePointer = event.pointer;
+      _lastErasePosition = event.localPosition;
+      final bool removed = _eraseAt(event.localPosition);
+      setState(() => _revision++);
+      if (removed) _notify();
+      return;
+    }
     setState(() {
       _activePointer = event.pointer;
       _activeWidth = widget.penWidth;
@@ -178,6 +280,16 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
   }
 
   void _onPointerMove(PointerMoveEvent event) {
+    if (widget.erasing) {
+      if (event.pointer != _activePointer) return;
+      final Offset from = _lastErasePosition ?? event.localPosition;
+      _lastErasePosition = event.localPosition;
+      final bool removed = _eraseAlong(from, event.localPosition);
+      if (!removed) return;
+      setState(() => _revision++);
+      _notify();
+      return;
+    }
     final List<InkPoint>? points = _activePoints;
     if (points == null || event.pointer != _activePointer) return;
     if (!_appendPoint(points, event.localPosition)) return;
@@ -185,6 +297,16 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
   }
 
   void _onPointerUp(PointerUpEvent event) {
+    if (widget.erasing) {
+      if (event.pointer != _activePointer) return;
+      final Offset from = _lastErasePosition ?? event.localPosition;
+      final bool removed = _eraseAlong(from, event.localPosition);
+      _lastErasePosition = null;
+      _activePointer = null;
+      setState(() => _revision++);
+      if (removed) _notify();
+      return;
+    }
     final List<InkPoint>? points = _activePoints;
     if (points == null || event.pointer != _activePointer) return;
     _appendPoint(points, event.localPosition);
@@ -196,6 +318,8 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
     );
     setState(() {
       _strokes.add(stroke);
+      // Drawing supersedes the erase: undo now removes this new stroke.
+      _eraseUndoSnapshot = null;
       _cancelActiveStroke();
       _revision++;
     });

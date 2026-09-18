@@ -570,4 +570,63 @@ void main() {
 
     await unmount(tester);
   });
+  testWidgets('the eraser toggle actually reaches the ink canvas',
+      (tester) async {
+    // Guards the failure mode that recurred through this project: a control
+    // that flips a field nothing reads, so the feature does nothing on device
+    // while looking complete in the toolbar. Asserts the canvas property, not
+    // the button's own state.
+    await mountEditor(tester, notebook: seeded());
+
+    await tester.tap(find.byIcon(Icons.draw));
+    await tester.pump();
+
+    NotebookInkCanvas canvas() =>
+        tester.widget<NotebookInkCanvas>(find.byType(NotebookInkCanvas));
+
+    expect(canvas().erasing, isFalse, reason: 'draw mode starts on the pen');
+    expect(find.byIcon(Icons.auto_fix_normal), findsOneWidget);
+
+    await tester.tap(find.byIcon(Icons.auto_fix_normal));
+    await tester.pump();
+
+    expect(
+      canvas().erasing,
+      isTrue,
+      reason: 'the toggle must be wired through to the canvas',
+    );
+    // The icon flips to a pen so the active tool is never ambiguous.
+    expect(find.byIcon(Icons.edit), findsOneWidget);
+
+    await tester.tap(find.byIcon(Icons.edit));
+    await tester.pump();
+    expect(canvas().erasing, isFalse, reason: 'toggles back to the pen');
+
+    await unmount(tester);
+  });
+
+  testWidgets('leaving draw mode does not strand the eraser on',
+      (tester) async {
+    // Otherwise reopening the pen later silently starts in erase mode and the
+    // next stroke deletes work instead of drawing it.
+    await mountEditor(tester, notebook: seeded());
+
+    await tester.tap(find.byIcon(Icons.draw));
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.auto_fix_normal));
+    await tester.pump();
+
+    await tester.tap(find.byIcon(Icons.draw));
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.draw));
+    await tester.pump();
+
+    expect(
+      tester.widget<NotebookInkCanvas>(find.byType(NotebookInkCanvas)).erasing,
+      isFalse,
+      reason: 'the pen is the safe default when drawing resumes',
+    );
+
+    await unmount(tester);
+  });
 }

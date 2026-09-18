@@ -75,6 +75,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
   bool _dirty = false;
   bool _saving = false;
   bool _drawing = false;
+  bool _erasing = false;
   double _penWidth = PenSizeControl.defaultPenWidth;
 
   /// Suppresses dirty-marking while the stored notebook is being poured into
@@ -474,8 +475,23 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
               isSelected: _drawing,
               onPressed: _notebook == null
                   ? null
-                  : () => setState(() => _drawing = !_drawing),
+                  : () => setState(() {
+                        _drawing = !_drawing;
+                        // The pen is the safe default whenever drawing
+                        // resumes: a stranded eraser would make the next
+                        // stroke delete work instead of adding it.
+                        if (!_drawing) _erasing = false;
+                      }),
             ),
+            if (_drawing)
+              IconButton(
+                // An unlabelled mode is how you end up erasing when you meant
+                // to draw, so the active tool is always shown as selected.
+                icon: Icon(_erasing ? Icons.edit : Icons.auto_fix_normal),
+                tooltip: _erasing ? 'Switch to pen' : 'Erase lines',
+                isSelected: _erasing,
+                onPressed: () => setState(() => _erasing = !_erasing),
+              ),
             if (_drawing)
               IconButton(
                 icon: const Icon(Icons.undo),
@@ -602,6 +618,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
               key: _canvasKey,
               strokes: _strokes,
               drawingEnabled: _drawing,
+              erasing: _erasing,
               penWidth: _penWidth,
               onStrokesChanged: (List<InkStroke> strokes) {
                 setState(() {
