@@ -539,6 +539,47 @@ void main() {
     await unmount(tester);
   });
 
+  testWidgets('saving after editing blocks keeps existing ink', (tester) async {
+    // Device evidence: a notebook saved with 2 strokes, then a later save
+    // wrote strokes=0. Ink loss is a data-safety bug, so pin the exact
+    // sequence: open a notebook that HAS ink, change only blocks, save.
+    await mountEditor(
+      tester,
+      notebook: testNotebook(
+        id: 'nb-1',
+        blocks: const <NotebookBlock>[
+          NotebookTextBlock(id: 'b1', text: 'keep', x: 20, y: 40),
+        ],
+        strokes: <InkStroke>[
+          const InkStroke(
+            id: 's1',
+            points: <InkPoint>[InkPoint(x: 10, y: 10), InkPoint(x: 40, y: 40)],
+            width: 3,
+          ),
+        ],
+      ),
+    );
+
+    // Touch only the blocks.
+    await tester.enterText(
+      find.byKey(const ValueKey('notebook-text-block-b1')),
+      'edited',
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.save));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(
+      repository.saved.single.ink.strokes,
+      hasLength(1),
+      reason: 'editing text must never drop handwriting already on the page',
+    );
+
+    await unmount(tester);
+  });
+
   testWidgets('a block\'s remove button is on screen, not off the page edge',
       (tester) async {
     // Jeff: "there is no way to delete the imported list items etc".
