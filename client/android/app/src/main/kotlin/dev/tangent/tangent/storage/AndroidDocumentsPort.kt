@@ -271,7 +271,7 @@ class AndroidDocumentsPort(context: Context) : DocumentsIoPort, CaptureDocuments
         // (observed on-device: '.x.partial' became '.x.partial.json'). Keep
         // the temp's final extension MIME-coherent so the provider returns
         // the exact requested name.
-        val tempExt = when(mime) { "application/json" -> ".json"; "text/markdown" -> ".md"; "audio/ogg" -> ".ogg"; else -> "" }
+        val tempExt = when(mime) { "application/json" -> ".json"; "text/markdown" -> ".md"; "audio/ogg" -> ".ogg"; "audio/wav" -> ".wav"; else -> "" }
         var temp = create(d,".$name-${UUID.randomUUID()}.partial$tempExt",mime)
         try {
             write(d,temp,bytes)

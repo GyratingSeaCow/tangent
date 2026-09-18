@@ -150,6 +150,21 @@ object CaptureWire {
     // literally so this JVM-tested file never imports Android classes.
     const val TEXT_NOTE_DIRECTORY = "Tangent Text Notes"
     const val DIRECTORY_MIME = "vnd.android.document/directory"
+
+    /**
+     * MIME type for a published audio component, derived from its suffix.
+     *
+     * Load-bearing: AOSP's FileSystemProvider APPENDS a MIME-derived extension
+     * when the requested display name's extension disagrees with the MIME
+     * type. Declaring "audio/ogg" for a .wav produced "<id>.wav.oga" on a
+     * Galaxy Tab S10 FE — an unplayable, unfindable file — because the name
+     * said WAV and the MIME said Ogg.
+     */
+    fun audioMimeForSuffix(suffix: String): String = when (suffix) {
+        ".md" -> "text/markdown"
+        ".wav" -> "audio/wav"
+        else -> "audio/ogg"
+    }
     fun digest(x:Any?):String = text(x).also { if (!Regex("[0-9a-f]{64}").matches(it)) fault("invalid","Invalid capture SHA-256") }
     fun sha(bytes:ByteArray):String = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
     fun metadata(json:String,r:Map<String,Any?>) {
@@ -254,7 +269,7 @@ class CapturePublication(private val port:CaptureDocumentsPort) {
                 val prior=inventory(pub).map { it.id }.toSet()
                 policy.requireAvailableNames(pub,setOf(name))
                 dispatched=true
-                val uri=port.captureCreate(pub,name,if(component == "audio") (if (suffix == ".md") "text/markdown" else "audio/ogg") else "application/json") { raw.add(it) }
+                val uri=port.captureCreate(pub,name,if(component == "audio") CaptureWire.audioMimeForSuffix(suffix) else "application/json") { raw.add(it) }
                 if(raw.lastOrNull() != uri) CaptureWire.fault("invalid","Missing raw capture creation receipt")
                 val decoded=CaptureWire.uri(uri)
                 if(decoded.first != d.authority || decoded.second in before || decoded.second in prior || decoded.second == d.documentId || decoded.second == pub.documentId) CaptureWire.fault("conflict","Returned capture ID was not newly created")

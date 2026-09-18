@@ -21,6 +21,62 @@ class RecordingResult {
   });
 }
 
+/// Waits for a PCM capture stream to finish delivering, then releases it.
+///
+/// Why this is not simply `subscription.asFuture()`: package:record hands out
+/// a BROADCAST stream (record-5.2.1 `record.dart:81`), and a broadcast
+/// subscription's `asFuture()` never completes when the stream closes — it
+/// only completes on error. Awaiting it wedged stop() forever on device: the
+/// spinner stayed up, the audio sat in staging, and nothing was ever published
+/// or logged, because nothing had actually failed.
+///
+/// Why not simply `cancel()`: cancelling discards chunks the platform has
+/// already emitted but not yet delivered, silently truncating the tail of
+/// every amplified recording.
+///
+/// So: listen for the stream's done event, which fires for broadcast and
+/// single-subscription streams alike, and bound the wait.
+///
+/// The bound is not a safety net here — it is the normal path. On a Galaxy
+/// Tab S10 FE the PCM stream never closes at all when the recorder stops, so
+/// every amplified finalisation ends by reaching this timeout. It is kept
+/// short because the user is watching a spinner for its whole duration, and
+/// generous enough that chunks already in flight still land: the recorder has
+/// stopped by the time this is called, so nothing new is being produced.
+Future<void> drainPcmSubscription(
+  StreamSubscription<Uint8List> subscription,
+  Stream<Uint8List>? stream, {
+  Duration limit = const Duration(milliseconds: 750),
+}) async {
+  final Completer<void> done = Completer<void>();
+
+  if (stream != null && stream.isBroadcast) {
+    // A broadcast stream accepts another listener, and that listener's onDone
+    // does fire on close.
+    late final StreamSubscription<Uint8List> watcher;
+    watcher = stream.listen(
+      (_) {},
+      onDone: () {
+        if (!done.isCompleted) done.complete();
+      },
+      onError: (Object _) {
+        if (!done.isCompleted) done.complete();
+      },
+      cancelOnError: false,
+    );
+    unawaited(done.future.whenComplete(watcher.cancel));
+  } else {
+    unawaited(
+      subscription.asFuture<void>().catchError((Object _) {}).whenComplete(() {
+        if (!done.isCompleted) done.complete();
+      }),
+    );
+  }
+
+  await done.future.timeout(limit, onTimeout: () {});
+  await subscription.cancel();
+}
+
 abstract class RecordingService {
   bool get isRecording;
   String? get currentPath;
@@ -145,6 +201,11 @@ class DefaultRecordingService implements RecordingService {
   IOSink? _wavSink;
   int _wavPayloadBytes = 0;
   StreamSubscription<Uint8List>? _pcmSubscription;
+
+  /// The PCM stream itself, kept so finalisation can watch it for the done
+  /// event. package:record's stream does not close on stop, so the drain
+  /// needs the stream, not just the subscription.
+  Stream<Uint8List>? _pcmStream;
 
   DefaultRecordingService({
     Directory? outputDir,
@@ -351,6 +412,7 @@ class DefaultRecordingService implements RecordingService {
       sink.add(wavHeader(sampleRate: 16000, numChannels: 1, dataBytes: 0));
       _wavSink = sink;
       _wavPayloadBytes = 0;
+      _pcmStream = pcm;
       _pcmSubscription = pcm.listen(
         (Uint8List chunk) {
           final Uint8List amplified = applyGain(chunk, gain);
@@ -372,6 +434,10 @@ class DefaultRecordingService implements RecordingService {
   /// zero. Leaving them there is the classic streamed-WAV defect: the file is
   /// complete on disk but every player reads it as a fraction of a second.
   Future<void> _patchWavLengths(String path, int payloadBytes) async {
+    // APPEND, deliberately: it is the only mode that both keeps the existing
+    // bytes and honours setPosition() for writes. FileMode.write truncates the
+    // file to nothing on open, which would destroy the recording it is meant
+    // to finalise.
     final RandomAccessFile handle =
         await File(path).open(mode: FileMode.append);
     try {
@@ -401,16 +467,24 @@ class DefaultRecordingService implements RecordingService {
         // lengths are only correct once every chunk has been flushed, and a
         // half-written file would be published with a header describing
         // audio that is not there.
-        // Let the stream drain rather than cancelling it: cancel() discards
-        // chunks the platform has already emitted but that have not been
-        // delivered yet, silently truncating the tail of the recording. The
-        // recorder is stopped first so the stream actually ends.
         await _ensureRecorder.stop();
         final StreamSubscription<Uint8List>? pending = _pcmSubscription;
+        final Stream<Uint8List>? pendingStream = _pcmStream;
         _pcmSubscription = null;
+        _pcmStream = null;
         if (pending != null) {
-          await pending.asFuture<void>().catchError((Object _) {});
-          await pending.cancel();
+          // Drain rather than cancel: cancel() discards chunks the platform
+          // has already emitted but not yet delivered, truncating the tail.
+          //
+          // Verified on a Galaxy Tab S10 FE: package:record's PCM stream does
+          // NOT close when the recorder stops, so the previous
+          // `await pending.asFuture()` never returned. stop() hung forever —
+          // the spinner stayed up, the audio sat in staging, nothing was
+          // published, and nothing appeared in the log because nothing had
+          // failed. The device trace stopped dead between 'before drain' and
+          // 'drained'. The bounded drain below is what makes finalisation
+          // terminate.
+          await drainPcmSubscription(pending, pendingStream);
         }
         final IOSink sink = _wavSink!;
         _wavSink = null;

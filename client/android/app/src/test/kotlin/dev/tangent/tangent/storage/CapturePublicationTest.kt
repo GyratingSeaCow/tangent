@@ -7,6 +7,29 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 class CapturePublicationTest {
+    /**
+     * The MIME type must agree with the filename's extension.
+     *
+     * AOSP's FileSystemProvider appends a MIME-derived extension when the two
+     * disagree, so declaring audio/ogg for a .wav published "<id>.wav.oga" on
+     * a Galaxy Tab S10 FE: unplayable, and invisible to the app's own lookup.
+     */
+    @Test fun amplifiedWavPublishesWithAWavMimeType() {
+        assertEquals("audio/wav", CaptureWire.audioMimeForSuffix(".wav"))
+    }
+
+    @Test fun opusKeepsItsOggMimeType() {
+        assertEquals("audio/ogg", CaptureWire.audioMimeForSuffix(".opus"))
+    }
+
+    @Test fun textNotesKeepTheirMarkdownMimeType() {
+        assertEquals("text/markdown", CaptureWire.audioMimeForSuffix(".md"))
+    }
+
+    @Test fun anUnknownSuffixFallsBackToTheAudioDefault() {
+        assertEquals("audio/ogg", CaptureWire.audioMimeForSuffix(""))
+    }
+
     @Test fun androidSourceSearchOnlyAncestryPreparesBeforeAnyContentWrite() {
         CaptureSourceFixture().use { source ->
             val fixture = CapturePublicationFixture()
