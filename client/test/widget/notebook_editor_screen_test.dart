@@ -1020,6 +1020,93 @@ void main() {
     await unmount(tester);
   });
 
+  testWidgets('a JUST-INSERTED card can be dragged', (tester) async {
+    // Jeff: "when you ADD IN a dump or text note etc. into the notebooks, it
+    // can no longer be dragged". The distinction from an already-saved card
+    // matters: insertion is what might leave it in a non-draggable state.
+    await mountEditor(
+      tester,
+      notebook: testNotebook(id: 'nb-1'),
+      dumps: <DumpRow>[_dumpRow('d1', 'Morning ideas')],
+    );
+
+    // Insert it through the real menu, exactly as a user would.
+    await tester.tap(find.byKey(const ValueKey('notebook-insert-menu')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Dump'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Morning ideas').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Add'));
+    await tester.pumpAndSettle();
+
+    final Finder card = find.byType(NotebookDumpCard);
+    expect(card, findsOneWidget, reason: 'the dump must be on the page');
+    final Rect before = tester.getRect(card);
+
+    final TestGesture gesture =
+        await tester.startGesture(tester.getCenter(find.text('Morning ideas')));
+    for (int i = 0; i < 20; i++) {
+      await gesture.moveBy(const Offset(2, 3));
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.getRect(find.byType(NotebookDumpCard)).topLeft,
+      isNot(before.topLeft),
+      reason: 'a freshly inserted card must be draggable',
+    );
+
+    await unmount(tester);
+  });
+
+  testWidgets('a card drags when the finger moves in small steps',
+      (tester) async {
+    // Jeff: "when you add in a dump or text note etc. into the notebooks, it
+    // can no longer be dragged and put somewhere else on the screen".
+    //
+    // tester.drag() emits ONE move event covering the whole distance, so the
+    // card's recognizer crosses its threshold on the very first event and
+    // wins the arena. A real finger emits a stream of 1-3px moves, which lets
+    // the page scroll -- whose own slop is smaller -- claim the gesture
+    // first. This reproduces the real input stream.
+    await mountEditor(
+      tester,
+      notebook: seeded(),
+      dumps: <DumpRow>[_dumpRow('d1', 'Morning ideas')],
+    );
+
+    final Rect before =
+        tester.getRect(find.byKey(const ValueKey('notebook-card-b3')));
+
+    final TestGesture gesture =
+        await tester.startGesture(tester.getCenter(find.text('Morning ideas')));
+    // 1.5px steps: below the scroll view's own slop per event, which is how a
+    // slow finger moves. On device this speed failed while a fast swipe
+    // worked.
+    // 1px steps: no single event is anywhere near the 18px slop, which is
+    // exactly the slow finger that failed on device.
+    for (int i = 0; i < 60; i++) {
+      await gesture.moveBy(const Offset(1.0, 1.0));
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    final Rect after =
+        tester.getRect(find.byKey(const ValueKey('notebook-card-b3')));
+
+    expect(
+      after.topLeft,
+      isNot(before.topLeft),
+      reason: 'a real finger drag must move the card, not scroll the page',
+    );
+
+    await unmount(tester);
+  });
+
   testWidgets('a second drag still settles where the finger left the card',
       (tester) async {
     await mountEditor(

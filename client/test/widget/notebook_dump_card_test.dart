@@ -106,6 +106,35 @@ void main() {
     );
   });
 
+  testWidgets('a SLOW drag still moves the card', (tester) async {
+    // Jeff: "when you add in a dump or text note etc. into the notebooks, it
+    // can no longer be dragged and put somewhere else on the screen".
+    //
+    // Device evidence, same card and same path, only speed changed:
+    //   fast 120ms swipe -> card moves
+    //   slow 900ms swipe -> card does not move at all
+    // A slow finger delivers 1-2px move events. The touch-slop check added to
+    // fix stolen taps measured each event in isolation, so no single event
+    // ever exceeded the slop and the card never claimed the gesture. The
+    // distance must accumulate from where the pointer went DOWN.
+    final position = await _pumpCard(tester, dump: _dump());
+
+    final TestGesture gesture =
+        await tester.startGesture(tester.getCenter(find.text('Morning ideas')));
+    for (int i = 0; i < 40; i++) {
+      await gesture.moveBy(const Offset(1.5, 1.5));
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    expect(
+      position(),
+      isNot(const Offset(20, 30)),
+      reason: 'a slow drag is still a drag: 40 x 1.5px = 60px of travel',
+    );
+  });
+
   testWidgets('a deliberate drag is still a drag, not a tap', (tester) async {
     // The fix must not go too far the other way: past the slop it is a drag.
     var opened = 0;
