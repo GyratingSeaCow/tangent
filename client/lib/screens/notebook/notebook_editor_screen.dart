@@ -531,6 +531,24 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                             controller: _controllerFor(c.id, c.text),
                             focusNode: _focusFor(c.id),
                             maxLines: null,
+                            // Android IGNORES the IME action whenever the
+                            // input type carries the multi-line flag: it shows
+                            // a newline key, commits the newline straight into
+                            // the value, and never calls performAction. That
+                            // is why intercepting KeyDownEvent alone fixed
+                            // only a physical keyboard while the on-screen one
+                            // still grew the box. The single-line type still
+                            // WRAPS — that is maxLines' job — but its enter
+                            // key now delivers an action we can act on.
+                            keyboardType: TextInputType.text,
+                            textInputAction: TextInputAction.next,
+                            // Suppresses the default 'next' focus traversal.
+                            // This list owns where the caret goes; letting the
+                            // framework jump to an arbitrary neighbour first
+                            // scrolls the page before the new item exists.
+                            onEditingComplete: () =>
+                                _controllerFor(c.id, c.text).clearComposing(),
+                            onSubmitted: (_) => _splitCheckboxBlock(c),
                             style: _pageTextStyle,
                             cursorColor: NotebookInkCanvas.inkColor,
                             decoration: _pageInput('List item…'),

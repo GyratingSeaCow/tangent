@@ -759,6 +759,180 @@ void main() {
     );
   });
 
+  testWidgets('the soft keyboard enter key starts the next checkbox item',
+      (tester) async {
+    // The hardware-key test above passed while the DEVICE still grew the box:
+    // an on-screen keyboard does not send key events at all. It commits text
+    // and sends an EDITING ACTION through the text-input channel, so a fix
+    // hung only off KeyDownEvent is dead for every user without a physical
+    // keyboard — which on a tablet is all of them.
+    await mountEditor(
+      tester,
+      notebook: testNotebook(
+        id: 'nb-1',
+        blocks: const <NotebookBlock>[
+          NotebookCheckboxBlock(id: 'b1', text: 'milk', x: 20, y: 40),
+        ],
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('notebook-checkbox-block-b1')));
+    await tester.pumpAndSettle();
+    await tester.testTextInput.receiveAction(TextInputAction.next);
+    await tester.pumpAndSettle();
+
+    expect(
+      checkboxBlocks(),
+      findsNWidgets(2),
+      reason: 'the on-screen enter key must start a new checkbox item',
+    );
+    expect(
+      tester
+          .widget<TextField>(
+            find.byKey(const ValueKey('notebook-checkbox-block-b1')),
+          )
+          .controller!
+          .text,
+      'milk',
+      reason: 'the line being left must keep its own text',
+    );
+  });
+
+  testWidgets('the checkbox field asks Android for an action key, not a newline',
+      (tester) async {
+    // Android IGNORES the IME action whenever the input type carries the
+    // multi-line flag: it shows a newline key instead, the newline is
+    // committed directly into the value, and performAction never fires. So
+    // the field must declare a single-line INPUT TYPE (it still wraps, which
+    // is maxLines' job) together with an explicit action.
+    //
+    // A widget test cannot host a real IME, so this pins the configuration
+    // that makes the device behave. It is the half the harness can prove;
+    // the other half is verified on hardware.
+    await mountEditor(
+      tester,
+      notebook: testNotebook(
+        id: 'nb-1',
+        blocks: const <NotebookBlock>[
+          NotebookCheckboxBlock(id: 'b1', text: 'milk', x: 20, y: 40),
+        ],
+      ),
+    );
+
+    final TextField field = tester.widget<TextField>(
+      find.byKey(const ValueKey('notebook-checkbox-block-b1')),
+    );
+
+    expect(
+      field.keyboardType,
+      TextInputType.text,
+      reason: 'a multiline input type makes Android ignore the action key',
+    );
+    expect(
+      field.textInputAction,
+      TextInputAction.next,
+      reason: 'the enter key must deliver an action, not insert a newline',
+    );
+    expect(
+      field.maxLines,
+      isNull,
+      reason: 'a long item must still wrap rather than scroll sideways',
+    );
+  });
+
+  testWidgets('a prose block keeps the multiline keyboard and its newlines',
+      (tester) async {
+    // The counterpart to the rule above: prose is meant to take newlines, so
+    // it must keep the multi-line input type and must NOT declare an action.
+    await mountEditor(
+      tester,
+      notebook: testNotebook(
+        id: 'nb-1',
+        blocks: const <NotebookBlock>[
+          NotebookTextBlock(id: 'b1', text: 'para', x: 20, y: 40),
+        ],
+      ),
+    );
+
+    final TextField field = tester.widget<TextField>(
+      find.byKey(const ValueKey('notebook-text-block-b1')),
+    );
+
+    expect(
+      field.keyboardType,
+      anyOf(isNull, TextInputType.multiline),
+      reason: 'prose keeps the multiline keyboard',
+    );
+    expect(
+      field.textInputAction,
+      isNull,
+      reason: 'prose must keep taking newlines from the enter key',
+    );
+  });
+
+  testWidgets('a soft-keyboard action on a prose line never spawns a checkbox',
+      (tester) async {
+    // Some IMEs send an action even to a multiline field. Prose must ignore
+    // it rather than converting the paragraph into a list.
+    await mountEditor(
+      tester,
+      notebook: testNotebook(
+        id: 'nb-1',
+        blocks: const <NotebookBlock>[
+          NotebookTextBlock(id: 'b1', text: 'para', x: 20, y: 40),
+        ],
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('notebook-text-block-b1')));
+    await tester.pumpAndSettle();
+    await tester.testTextInput.receiveAction(TextInputAction.next);
+    await tester.pumpAndSettle();
+
+    expect(
+      checkboxBlocks(),
+      findsNothing,
+      reason: 'a text block must never spawn a checkbox',
+    );
+    expect(
+      find.byKey(const ValueKey('notebook-block-b1')),
+      findsOneWidget,
+      reason: 'the text block must survive',
+    );
+  });
+
+  testWidgets('a soft-keyboard action on an empty checkbox ends the list',
+      (tester) async {
+    // The escape hatch must work from the on-screen keyboard too, or there is
+    // no way to stop adding items without a physical keyboard.
+    await mountEditor(
+      tester,
+      notebook: testNotebook(
+        id: 'nb-1',
+        blocks: const <NotebookBlock>[
+          NotebookCheckboxBlock(id: 'b1', text: 'milk', x: 20, y: 40),
+          NotebookCheckboxBlock(id: 'b2', text: '', x: 20, y: 160),
+        ],
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('notebook-checkbox-block-b2')));
+    await tester.pumpAndSettle();
+    await tester.testTextInput.receiveAction(TextInputAction.next);
+    await tester.pumpAndSettle();
+
+    expect(
+      checkboxBlocks(),
+      findsOneWidget,
+      reason: 'an action on a blank item must end the list, not extend it',
+    );
+    expect(
+      find.byKey(const ValueKey('notebook-block-b1')),
+      findsOneWidget,
+      reason: 'the filled item above must survive',
+    );
+  });
+
   testWidgets('enter on a plain text line still inserts a newline',
       (tester) async {
     // The checkbox behaviour must not leak into ordinary prose blocks, where
