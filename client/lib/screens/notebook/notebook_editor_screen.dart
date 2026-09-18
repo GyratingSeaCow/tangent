@@ -47,11 +47,11 @@ const ColorFilter kNotebookInkCutout = ColorFilter.matrix(<double>[
 
 /// Side of the square notebook canvas, in logical pixels.
 ///
-/// "Infinite" in practice: at 1x this is ~13 phone screens across and ~26
-/// down, and the viewer's boundary margin lets you drag past it. A finite
-/// extent keeps stroke coordinates plain page coordinates, so existing
-/// notebooks and their saved ink need no migration.
-const double _canvasExtent = 5000;
+/// "Infinite" in practice: at 1x this is ~5 phone screens across and ~9 down,
+/// and zooming out reaches all of it at once. A finite extent keeps stroke
+/// coordinates plain page coordinates, so existing notebooks and their saved
+/// ink need no migration.
+const double _canvasExtent = 2000;
 
 /// Width of the typed-block column on the canvas.
 ///
@@ -60,10 +60,14 @@ const double _canvasExtent = 5000;
 const double _pageColumnWidth = 720;
 
 /// How far past the canvas edge the viewer may be dragged.
-const double _canvasBoundaryMargin = 1000;
+///
+/// Deliberately small. A large margin lets a single fling strand the page in
+/// empty space with the work off-screen and no landmark to navigate back by
+/// -- observed on device, where one swipe left a blank black page.
+const double _canvasBoundaryMargin = 80;
 
 /// Insert actions offered by the editor's bottom-left menu.
-enum _InsertAction { text, checkbox, dump, meeting, textNote }
+enum _InsertAction { text, checkbox, dump, meeting, textNote, recentre }
 
 class NotebookEditorScreen extends ConsumerStatefulWidget {
   const NotebookEditorScreen({super.key, required this.notebookId});
@@ -98,6 +102,9 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
 
   /// True while a card is being dragged, so the canvas holds still.
   bool _draggingCard = false;
+
+  /// Pan/zoom of the notebook canvas, so it can be recentred.
+  final TransformationController _canvasTransform = TransformationController();
   bool _erasing = false;
   double _penWidth = PenSizeControl.defaultPenWidth;
 
@@ -113,6 +120,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
 
   @override
   void dispose() {
+    _canvasTransform.dispose();
     _title.dispose();
     for (final TextEditingController controller in _controllers.values) {
       controller.dispose();
@@ -599,6 +607,8 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                             unawaited(_importDumps(dumps, DumpMode.meeting));
                           case _InsertAction.textNote:
                             unawaited(_importDumps(dumps, DumpMode.textNote));
+                          case _InsertAction.recentre:
+                            _canvasTransform.value = Matrix4.identity();
                         }
                       },
                       itemBuilder: (BuildContext context) =>
@@ -641,6 +651,17 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                           child: ListTile(
                             leading: Icon(dumpModeIcon(DumpMode.textNote)),
                             title: const Text('Text note'),
+                            contentPadding: EdgeInsets.zero,
+                          ),
+                        ),
+                        const PopupMenuDivider(),
+                        // The page can be panned until the work is off-screen
+                        // on identical black canvas; this is the way home.
+                        const PopupMenuItem<_InsertAction>(
+                          value: _InsertAction.recentre,
+                          child: ListTile(
+                            leading: Icon(Icons.filter_center_focus),
+                            title: Text('Back to start'),
                             contentPadding: EdgeInsets.zero,
                           ),
                         ),
@@ -689,6 +710,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
     // ink, because only one of the two layers moved.
     return InteractiveViewer(
       key: const ValueKey('notebook-canvas-viewer'),
+      transformationController: _canvasTransform,
       // An unconstrained child is what lets the canvas exceed the viewport.
       constrained: false,
       // Generous margin so you can always drag a little past your work.
@@ -741,14 +763,18 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
             // Top: the ink layer. It ignores pointers unless draw mode is on,
             // so typing and card dragging work normally the rest of the time.
             Positioned.fill(
-              child: ColorFiltered(
-                colorFilter: kNotebookInkCutout,
+              child: RepaintBoundary(
                 child: NotebookInkCanvas(
                   key: _canvasKey,
                   strokes: _strokes,
                   drawingEnabled: _drawing,
                   erasing: _erasing,
                   penWidth: _penWidth,
+                  // The page below already painted the backdrop. Letting the
+                  // ink layer paint its own black and then filtering it back
+                  // out cost a saveLayer the full size of the canvas, which
+                  // the GPU declined -- leaving an opaque black page.
+                  opaqueBackground: false,
                   onStrokesChanged: (List<InkStroke> strokes) {
                     setState(() {
                       _strokes = List<InkStroke>.of(strokes);

@@ -49,6 +49,12 @@ class NotebookInkCanvas extends StatefulWidget {
   /// the file format is unchanged either way.
   final bool erasing;
 
+  /// Whether this canvas paints its own opaque backdrop.
+  ///
+  /// False when it is layered over a page that already painted one: the ink
+  /// then composites directly, with no colour filter and no giant saveLayer.
+  final bool opaqueBackground;
+
   /// Width applied to the NEXT stroke started. Existing ink is untouched.
   final double penWidth;
 
@@ -58,6 +64,7 @@ class NotebookInkCanvas extends StatefulWidget {
     required this.onStrokesChanged,
     required this.drawingEnabled,
     this.erasing = false,
+    this.opaqueBackground = true,
     required this.penWidth,
   });
 
@@ -372,7 +379,14 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
             onPointerCancel: _onPointerCancel,
             child: ColoredBox(
               key: NotebookInkCanvas.backgroundKey,
-              color: NotebookInkCanvas.backgroundColor,
+              // Transparent when the page already paints the backdrop, so the
+              // caller does not have to punch the black back out with a
+              // colour filter. On a canvas the size of the notebook page that
+              // filter is a saveLayer tens of megapixels wide, and when the
+              // GPU declines it the black stays opaque and hides the page.
+              color: widget.opaqueBackground
+                  ? NotebookInkCanvas.backgroundColor
+                  : const Color(0x00000000),
               child: CustomPaint(
                 painter: NotebookInkPainter(
                   strokes: _strokes,

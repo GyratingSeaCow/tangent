@@ -629,6 +629,70 @@ void main() {
     await unmount(tester);
   });
 
+  testWidgets('page content is actually on screen, not just in the tree',
+      (tester) async {
+    // find.byKey succeeds for a widget laid out far outside the viewport, so
+    // the canvas tests above cannot tell "rendered where you can see it" from
+    // "rendered 3000px off the side". On device that difference showed as a
+    // completely blank page.
+    await mountEditor(
+      tester,
+      notebook: testNotebook(
+        id: 'nb-1',
+        blocks: const <NotebookBlock>[
+          NotebookTextBlock(id: 'b1', text: 'visible please'),
+        ],
+      ),
+    );
+
+    final Rect screen = Offset.zero & tester.view.physicalSize /
+        tester.view.devicePixelRatio;
+    final Rect row =
+        tester.getRect(find.byKey(const ValueKey('notebook-text-row-b1')));
+
+    expect(
+      row.overlaps(screen),
+      isTrue,
+      reason: 'the first block must be within the viewport on open, not '
+          'parked off-canvas: got \$row against screen \$screen',
+    );
+
+    await unmount(tester);
+  });
+
+  testWidgets('the insert menu can recentre a panned canvas', (tester) async {
+    // A pannable page needs a way home: on device one swipe moved the work
+    // off-screen onto identical black canvas, with nothing to aim back at.
+    await mountEditor(
+      tester,
+      notebook: testNotebook(
+        id: 'nb-1',
+        blocks: const <NotebookBlock>[
+          NotebookTextBlock(id: 'b1', text: 'home'),
+        ],
+      ),
+    );
+
+    final Finder viewer = find.byKey(const ValueKey('notebook-canvas-viewer'));
+    final TransformationController controller =
+        tester.widget<InteractiveViewer>(viewer).transformationController!;
+    controller.value = Matrix4.identity()..translate(-900.0, -1500.0);
+    await tester.pump();
+
+    await tester.tap(find.byKey(const ValueKey('notebook-insert-menu')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Back to start'));
+    await tester.pumpAndSettle();
+
+    expect(
+      controller.value,
+      Matrix4.identity(),
+      reason: 'recentring must bring the page origin back into view',
+    );
+
+    await unmount(tester);
+  });
+
   testWidgets('dragging a card persists its settled position', (tester) async {
     await mountEditor(
       tester,
