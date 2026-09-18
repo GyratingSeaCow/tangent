@@ -16,6 +16,7 @@ class Notebook {
     required this.updatedAt,
     required this.document,
     required this.ink,
+    this.folderId,
   });
 
   final String id;
@@ -24,6 +25,12 @@ class Notebook {
   final DateTime updatedAt;
   final NotebookDocument document;
   final NotebookInk ink;
+
+  /// Which folder this notebook is filed in, or null when unfiled.
+  ///
+  /// Filing is metadata: moving a notebook between folders never moves its
+  /// published file, so a reorganise cannot half-fail across storage.
+  final String? folderId;
 
   Notebook copyWith({
     String? title,
@@ -38,6 +45,7 @@ class Notebook {
         updatedAt: updatedAt ?? this.updatedAt,
         document: document ?? this.document,
         ink: ink ?? this.ink,
+        folderId: folderId,
       );
 }
 

@@ -80,6 +80,18 @@ class NotebookRepository {
   /// Used by durable adoption, where the file's own `updated_at` decides the
   /// conflict and must survive intact; ordinary edits use [saveNotebook].
   Future<void> upsertNotebook(Notebook notebook) async {
+    // Filing is local metadata and the published file carries no folder, so an
+    // adopted notebook always arrives unfiled. Writing that straight through
+    // would empty the user's folders one adoption at a time: file twenty
+    // notebooks, let durable adoption re-import them, and the folder is bare.
+    // Keep the existing filing unless the caller states one.
+    final String? existingFolderId = notebook.folderId ??
+        await (_db.selectOnly(_db.notebooks)
+              ..addColumns([_db.notebooks.folderId])
+              ..where(_db.notebooks.id.equals(notebook.id)))
+            .map((row) => row.read(_db.notebooks.folderId))
+            .getSingleOrNull();
+
     await _db.into(_db.notebooks).insertOnConflictUpdate(
           NotebooksCompanion.insert(
             id: notebook.id,
@@ -88,6 +100,7 @@ class NotebookRepository {
             updatedAt: notebook.updatedAt.millisecondsSinceEpoch,
             docJson: notebook.document.encode(),
             inkJson: notebook.ink.encode(),
+            folderId: Value<String?>(existingFolderId),
           ),
         );
   }
@@ -106,6 +119,7 @@ class NotebookRepository {
             DateTime.fromMillisecondsSinceEpoch(row.updatedAt, isUtc: true),
         document: NotebookDocument.decode(row.docJson),
         ink: NotebookInk.decode(row.inkJson),
+        folderId: row.folderId,
       );
 }
 
