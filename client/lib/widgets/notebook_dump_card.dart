@@ -39,6 +39,7 @@ class NotebookDumpCard extends StatefulWidget {
     required this.onPositionChanged,
     this.onTap,
     this.onRemove,
+    this.onDragActive,
   });
 
   /// The embedded dump, or null when the referenced dump no longer exists.
@@ -58,6 +59,13 @@ class NotebookDumpCard extends StatefulWidget {
   /// Removes the card from the notebook. Omit to hide the affordance.
   final VoidCallback? onRemove;
 
+  /// True while this card is being dragged.
+  ///
+  /// The pannable canvas uses this to hold still: its recognizer would
+  /// otherwise win mostly-vertical drags and move the page instead of the
+  /// card.
+  final ValueChanged<bool>? onDragActive;
+
   /// Widest the floating card ever gets, so it stays a "little box".
   static const double maxCardWidth = 220;
 
@@ -66,6 +74,28 @@ class NotebookDumpCard extends StatefulWidget {
 
   @override
   State<NotebookDumpCard> createState() => _NotebookDumpCardState();
+}
+
+/// Pan recognizer that claims the gesture immediately instead of waiting to
+/// out-compete its rivals.
+///
+/// The notebook canvas pans with the same drags, and in a normal arena its
+/// recognizer wins mostly-vertical ones — dragging the page while the user is
+/// dragging a card. A card drag starts on the card itself, so there is no
+/// ambiguity to resolve: resolve it as accepted at once.
+class _EagerPanRecognizer extends PanGestureRecognizer {
+  _EagerPanRecognizer({super.debugOwner});
+
+  @override
+  void handleEvent(PointerEvent event) {
+    super.handleEvent(event);
+    // Claim only once the finger has actually MOVED. Accepting on pointer
+    // down would swallow taps, which open the card and press its remove
+    // button.
+    if (event is PointerMoveEvent) {
+      resolve(GestureDisposition.accepted);
+    }
+  }
 }
 
 class _NotebookDumpCardState extends State<NotebookDumpCard> {
@@ -83,6 +113,11 @@ class _NotebookDumpCardState extends State<NotebookDumpCard> {
   void _onPanStart(DragStartDetails _) {
     _anchor = widget.position;
     _dragged = Offset.zero;
+    // The canvas pans and zooms with the same drags a card responds to, and
+    // its recognizer wins mostly-vertical ones. The page is told to hold
+    // still for the duration so the card cannot be dragged out from under
+    // the finger.
+    widget.onDragActive?.call(true);
   }
 
   void _onPanUpdate(DragUpdateDetails details) {
@@ -91,6 +126,7 @@ class _NotebookDumpCardState extends State<NotebookDumpCard> {
   }
 
   void _onPanEnd() {
+    widget.onDragActive?.call(false);
     if (_anchor == null) return;
     final settled = _anchor! + _dragged;
     setState(() {
@@ -117,15 +153,27 @@ class _NotebookDumpCardState extends State<NotebookDumpCard> {
     return Positioned(
       left: at.dx,
       top: at.dy,
-      child: GestureDetector(
-        // `down` keeps reported offsets faithful to the finger: the touch slop
-        // consumed before the pan is recognised is reported too, so the card
-        // never drifts away from the pointer.
-        dragStartBehavior: DragStartBehavior.down,
-        onPanStart: _onPanStart,
-        onPanUpdate: _onPanUpdate,
-        onPanEnd: (_) => _onPanEnd(),
-        onPanCancel: _onPanEnd,
+      child: RawGestureDetector(
+        // The pannable canvas competes for these same drags and its
+        // recognizer wins mostly-vertical ones, which moved the page instead
+        // of the card. An eager recognizer claims the gesture the moment it
+        // starts on a card, so a card drag is always a card drag.
+        gestures: <Type, GestureRecognizerFactory>{
+          _EagerPanRecognizer:
+              GestureRecognizerFactoryWithHandlers<_EagerPanRecognizer>(
+            () => _EagerPanRecognizer(debugOwner: this),
+            (_EagerPanRecognizer instance) {
+              // `down` keeps reported offsets faithful to the finger: the
+              // touch slop consumed before the pan is recognised is reported
+              // too, so the card never drifts away from the pointer.
+              instance.dragStartBehavior = DragStartBehavior.down;
+              instance.onStart = _onPanStart;
+              instance.onUpdate = _onPanUpdate;
+              instance.onEnd = (_) => _onPanEnd();
+              instance.onCancel = _onPanEnd;
+            },
+          ),
+        },
         child: Material(
           elevation: missing ? 1 : 4,
           shape: shape,

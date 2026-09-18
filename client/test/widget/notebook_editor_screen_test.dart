@@ -539,6 +539,96 @@ void main() {
     await unmount(tester);
   });
 
+  testWidgets('the page is an infinite canvas that pans and zooms',
+      (tester) async {
+    // Jeff: "There needs to be an infinite canvas option". The page used to be
+    // exactly one screen: ink was Positioned.fill, so there was nowhere to
+    // draw past the first screenful.
+    await mountEditor(tester, notebook: testNotebook(id: 'nb-1'));
+
+    final Finder viewer = find.byKey(const ValueKey('notebook-canvas-viewer'));
+    expect(viewer, findsOneWidget, reason: 'the page must be pan/zoomable');
+
+    final InteractiveViewer iv = tester.widget<InteractiveViewer>(viewer);
+    expect(
+      iv.constrained,
+      isFalse,
+      reason: 'an unconstrained child is what makes the canvas bigger than '
+          'the viewport',
+    );
+    expect(iv.scaleEnabled, isTrue, reason: 'pinch-to-zoom is required');
+
+    await unmount(tester);
+  });
+
+  testWidgets('one finger draws in draw mode instead of panning the canvas',
+      (tester) async {
+    // InteractiveViewer pans with ONE finger, which would fight the pen. In
+    // draw mode one-finger pan is therefore off: the finger inks, and two
+    // fingers still pinch/zoom.
+    await mountEditor(tester, notebook: testNotebook(id: 'nb-1'));
+
+    InteractiveViewer viewer() => tester.widget<InteractiveViewer>(
+          find.byKey(const ValueKey('notebook-canvas-viewer')),
+        );
+
+    expect(
+      viewer().panEnabled,
+      isTrue,
+      reason: 'with the pen down you must be able to drag the page around',
+    );
+
+    await tester.tap(find.byIcon(Icons.draw));
+    await tester.pumpAndSettle();
+
+    expect(
+      viewer().panEnabled,
+      isFalse,
+      reason: 'in draw mode one finger must ink, not pan',
+    );
+    expect(
+      viewer().scaleEnabled,
+      isTrue,
+      reason: 'two-finger zoom stays available while drawing',
+    );
+
+    await unmount(tester);
+  });
+
+  testWidgets('ink and text scroll together on the canvas', (tester) async {
+    // The ink layer used to be Positioned.fill over a separately scrolling
+    // ListView, so scrolling the text slid it out from under its own ink.
+    // One shared canvas means they move as one.
+    await mountEditor(
+      tester,
+      notebook: testNotebook(
+        id: 'nb-1',
+        blocks: const <NotebookBlock>[
+          NotebookTextBlock(id: 'b1', text: 'anchored'),
+        ],
+      ),
+    );
+
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('notebook-canvas-viewer')),
+        matching: find.byType(NotebookInkCanvas),
+      ),
+      findsOneWidget,
+      reason: 'the ink must live inside the pannable canvas',
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('notebook-canvas-viewer')),
+        matching: find.byKey(const ValueKey('notebook-text-row-b1')),
+      ),
+      findsOneWidget,
+      reason: 'text blocks must live on that same canvas',
+    );
+
+    await unmount(tester);
+  });
+
   testWidgets('dragging a card persists its settled position', (tester) async {
     await mountEditor(
       tester,

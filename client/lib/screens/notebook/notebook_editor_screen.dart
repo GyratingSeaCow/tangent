@@ -45,6 +45,23 @@ const ColorFilter kNotebookInkCutout = ColorFilter.matrix(<double>[
   0.2126, 0.7152, 0.0722, 0, 0, //
 ]);
 
+/// Side of the square notebook canvas, in logical pixels.
+///
+/// "Infinite" in practice: at 1x this is ~13 phone screens across and ~26
+/// down, and the viewer's boundary margin lets you drag past it. A finite
+/// extent keeps stroke coordinates plain page coordinates, so existing
+/// notebooks and their saved ink need no migration.
+const double _canvasExtent = 5000;
+
+/// Width of the typed-block column on the canvas.
+///
+/// Typed blocks stay in a readable column instead of stretching across the
+/// whole canvas; handwriting and cards use the full area.
+const double _pageColumnWidth = 720;
+
+/// How far past the canvas edge the viewer may be dragged.
+const double _canvasBoundaryMargin = 1000;
+
 /// Insert actions offered by the editor's bottom-left menu.
 enum _InsertAction { text, checkbox, dump, meeting, textNote }
 
@@ -78,6 +95,9 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
   bool _dirty = false;
   bool _saving = false;
   bool _drawing = false;
+
+  /// True while a card is being dragged, so the canvas holds still.
+  bool _draggingCard = false;
   bool _erasing = false;
   double _penWidth = PenSizeControl.defaultPenWidth;
 
@@ -363,8 +383,20 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
   // -------------------------------------------------------------------
 
   Widget _buildBlockList() {
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(12, 12, 12, 96),
+    // The canvas is what moves now: this column sits on the page at a fixed
+    // size and is panned by the viewer, so it must not scroll on its own.
+    // (A scrollable inside an unconstrained parent would also be unbounded.)
+    //
+    // Width is capped to a readable column rather than the full canvas width:
+    // a text field stretched across 5000px puts its own centre far off-screen
+    // and is unusable.
+    return SizedBox(
+      width: _pageColumnWidth,
+      child: ListView(
+        primary: false,
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(12, 12, 12, 96),
       children: <Widget>[
         for (final NotebookBlock block in _blocks)
           switch (block) {
@@ -429,7 +461,8 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
             // through storage untouched and have nothing to render.
             NotebookBlock() => const SizedBox.shrink(),
           },
-      ],
+        ],
+      ),
     );
   }
 
@@ -648,53 +681,86 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
       );
     }
 
-    return Stack(
-      children: <Widget>[
-        // Bottom: the page itself — black, per the phase-1 ink contract.
-        Positioned.fill(
-          child: ColoredBox(
-            color: NotebookInkCanvas.backgroundColor,
-            child: _buildBlockList(),
-          ),
-        ),
-        // Middle: floating recording cards. Each is a Positioned, so they
-        // MUST be direct children of this Stack.
-        for (final NotebookBlock block in _blocks)
-          if (block is NotebookDumpCardBlock)
-            NotebookDumpCard(
-              key: ValueKey<String>('notebook-card-${block.id}'),
-              dump: rowsById[block.dumpId] == null
-                  ? null
-                  : dumpFromRow(rowsById[block.dumpId]!),
-              position: Offset(block.x, block.y),
-              onPositionChanged: (Offset position) =>
-                  _onCardMoved(block.id, position),
-              onTap: rowsById[block.dumpId] == null
-                  ? null
-                  : () => _openDump(rowsById[block.dumpId]!),
-              onRemove: () => _removeBlock(block.id),
+    // One shared canvas, larger than the viewport, inside a pan/zoom viewer.
+    //
+    // The page used to be exactly one screenful: ink was Positioned.fill over
+    // a separately scrolling ListView, so there was nowhere to draw past the
+    // first screen — and scrolling the text slid it out from under its own
+    // ink, because only one of the two layers moved.
+    return InteractiveViewer(
+      key: const ValueKey('notebook-canvas-viewer'),
+      // An unconstrained child is what lets the canvas exceed the viewport.
+      constrained: false,
+      // Generous margin so you can always drag a little past your work.
+      boundaryMargin: const EdgeInsets.all(_canvasBoundaryMargin),
+      minScale: 0.2,
+      maxScale: 4,
+      // InteractiveViewer pans with ONE finger, which would fight the pen.
+      // While drawing, the finger inks and only two-finger pinch still moves
+      // the page.
+      panEnabled: !_drawing && !_draggingCard,
+      scaleEnabled: !_draggingCard,
+      child: SizedBox(
+        width: _canvasExtent,
+        height: _canvasExtent,
+        child: Stack(
+          children: <Widget>[
+            // Bottom: the page itself — black, per the phase-1 ink contract.
+            // Filling paints the whole canvas; the typed column inside is
+            // left-aligned at its own readable width rather than stretched.
+            Positioned.fill(
+              child: ColoredBox(
+                color: NotebookInkCanvas.backgroundColor,
+                child: Align(
+                  alignment: Alignment.topLeft,
+                  child: _buildBlockList(),
+                ),
+              ),
             ),
-        // Top: the ink layer. It ignores pointers unless draw mode is on, so
-        // typing and card dragging work normally the rest of the time.
-        Positioned.fill(
-          child: ColorFiltered(
-            colorFilter: kNotebookInkCutout,
-            child: NotebookInkCanvas(
-              key: _canvasKey,
-              strokes: _strokes,
-              drawingEnabled: _drawing,
-              erasing: _erasing,
-              penWidth: _penWidth,
-              onStrokesChanged: (List<InkStroke> strokes) {
-                setState(() {
-                  _strokes = List<InkStroke>.of(strokes);
-                  _dirty = true;
-                });
-              },
+            // Middle: floating recording cards. Each is a Positioned, so they
+            // MUST be direct children of this Stack.
+            for (final NotebookBlock block in _blocks)
+              if (block is NotebookDumpCardBlock)
+                NotebookDumpCard(
+                  key: ValueKey<String>('notebook-card-${block.id}'),
+                  dump: rowsById[block.dumpId] == null
+                      ? null
+                      : dumpFromRow(rowsById[block.dumpId]!),
+                  position: Offset(block.x, block.y),
+                  onPositionChanged: (Offset position) =>
+                      _onCardMoved(block.id, position),
+                  onTap: rowsById[block.dumpId] == null
+                      ? null
+                      : () => _openDump(rowsById[block.dumpId]!),
+                  onRemove: () => _removeBlock(block.id),
+                  onDragActive: (bool dragging) {
+                    if (_draggingCard == dragging) return;
+                    setState(() => _draggingCard = dragging);
+                  },
+                ),
+            // Top: the ink layer. It ignores pointers unless draw mode is on,
+            // so typing and card dragging work normally the rest of the time.
+            Positioned.fill(
+              child: ColorFiltered(
+                colorFilter: kNotebookInkCutout,
+                child: NotebookInkCanvas(
+                  key: _canvasKey,
+                  strokes: _strokes,
+                  drawingEnabled: _drawing,
+                  erasing: _erasing,
+                  penWidth: _penWidth,
+                  onStrokesChanged: (List<InkStroke> strokes) {
+                    setState(() {
+                      _strokes = List<InkStroke>.of(strokes);
+                      _dirty = true;
+                    });
+                  },
+                ),
+              ),
             ),
-          ),
+          ],
         ),
-      ],
+      ),
     );
   }
 }
