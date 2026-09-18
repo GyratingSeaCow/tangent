@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -535,6 +535,118 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(Checkbox), findsOneWidget);
+
+    await unmount(tester);
+  });
+
+  testWidgets('a block\'s remove button is on screen, not off the page edge',
+      (tester) async {
+    // Jeff: "there is no way to delete the imported list items etc".
+    // The X existed but sat at the far edge of a 720px-wide row on a ~400px
+    // screen, so it was rendered off the visible page entirely.
+    await mountEditor(
+      tester,
+      notebook: testNotebook(
+        id: 'nb-1',
+        blocks: const <NotebookBlock>[
+          NotebookTextBlock(id: 'b1', text: 'delete me', x: 20, y: 40),
+        ],
+      ),
+    );
+
+    final Finder remove = find.byKey(const ValueKey('notebook-block-remove-b1'));
+    expect(remove, findsOneWidget, reason: 'every block needs a remove button');
+
+    final Rect rect = tester.getRect(remove);
+    final Size screen = tester.view.physicalSize / tester.view.devicePixelRatio;
+    expect(
+      rect.right,
+      lessThanOrEqualTo(screen.width),
+      reason: 'the X must be on screen, got $rect on a $screen viewport',
+    );
+
+    await unmount(tester);
+  });
+
+  testWidgets('tapping a block\'s remove button deletes that block',
+      (tester) async {
+    await mountEditor(
+      tester,
+      notebook: testNotebook(
+        id: 'nb-1',
+        blocks: const <NotebookBlock>[
+          NotebookTextBlock(id: 'b1', text: 'delete me', x: 20, y: 40),
+          NotebookTextBlock(id: 'b2', text: 'keep me', x: 20, y: 160),
+        ],
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('notebook-block-remove-b1')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('notebook-block-b1')), findsNothing);
+    expect(find.byKey(const ValueKey('notebook-block-b2')), findsOneWidget);
+
+    await unmount(tester);
+  });
+
+  testWidgets('backspace on an empty line deletes that line', (tester) async {
+    // Jeff: "I want it so that when you tap backspace when there's nothing
+    // left in the line, that it deletes the line item that you are currently
+    // on."
+    await mountEditor(
+      tester,
+      notebook: testNotebook(
+        id: 'nb-1',
+        blocks: const <NotebookBlock>[
+          NotebookTextBlock(id: 'b1', text: 'first', x: 20, y: 40),
+          NotebookCheckboxBlock(id: 'b2', text: '', x: 20, y: 160),
+        ],
+      ),
+    );
+
+    // Focus the empty checkbox line, then press backspace.
+    await tester.tap(find.byKey(const ValueKey('notebook-checkbox-block-b2')));
+    await tester.pumpAndSettle();
+    await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('notebook-block-b2')),
+      findsNothing,
+      reason: 'backspace on an empty line must delete the line',
+    );
+    expect(
+      find.byKey(const ValueKey('notebook-block-b1')),
+      findsOneWidget,
+      reason: 'other lines must survive',
+    );
+
+    await unmount(tester);
+  });
+
+  testWidgets('backspace with text on the line only deletes a character',
+      (tester) async {
+    await mountEditor(
+      tester,
+      notebook: testNotebook(
+        id: 'nb-1',
+        blocks: const <NotebookBlock>[
+          NotebookTextBlock(id: 'b1', text: 'abc', x: 20, y: 40),
+        ],
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('notebook-text-block-b1')));
+    await tester.pumpAndSettle();
+    await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('notebook-block-b1')),
+      findsOneWidget,
+      reason: 'a line with text must not be deleted by backspace',
+    );
 
     await unmount(tester);
   });

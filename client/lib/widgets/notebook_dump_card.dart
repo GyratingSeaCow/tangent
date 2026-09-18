@@ -86,14 +86,38 @@ class NotebookDumpCard extends StatefulWidget {
 class _EagerPanRecognizer extends PanGestureRecognizer {
   _EagerPanRecognizer({super.debugOwner});
 
+  /// Where the current pointer went down, so movement can be measured from
+  /// its true origin rather than per-event.
+  final Map<int, Offset> _origins = <int, Offset>{};
+
+  @override
+  void addAllowedPointer(PointerDownEvent event) {
+    _origins[event.pointer] = event.position;
+    super.addAllowedPointer(event);
+  }
+
   @override
   void handleEvent(PointerEvent event) {
     super.handleEvent(event);
-    // Claim only once the finger has actually MOVED. Accepting on pointer
-    // down would swallow taps, which open the card and press its remove
-    // button.
+    // Claim only once the finger has moved FARTHER THAN THE TOUCH SLOP.
+    //
+    // Claiming on any PointerMoveEvent at all looked right in tests and was
+    // broken in the hand: tester.tap() moves exactly zero pixels, but a real
+    // finger always slides a pixel or two on the way up. Those stray moves
+    // were claimed as drags, so tapping a card never opened the recording and
+    // the X never fired. Past the slop it is unambiguously a drag.
     if (event is PointerMoveEvent) {
-      resolve(GestureDisposition.accepted);
+      final Offset? origin = _origins[event.pointer];
+      if (origin != null &&
+          (event.position - origin).distance > computeHitSlop(
+            event.kind,
+            gestureSettings,
+          )) {
+        resolve(GestureDisposition.accepted);
+      }
+    }
+    if (event is PointerUpEvent || event is PointerCancelEvent) {
+      _origins.remove(event.pointer);
     }
   }
 }

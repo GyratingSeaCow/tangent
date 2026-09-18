@@ -15,6 +15,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart';
+import 'package:flutter/services.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -59,6 +60,9 @@ const double _unplacedBlockSpacing = 72;
 /// Typed blocks stay in a readable column instead of stretching across the
 /// whole canvas; handwriting and cards use the full area.
 const double _pageColumnWidth = 720;
+
+/// Floor for a block's width, so a block dragged far right stays usable.
+const double _minBlockWidth = 160;
 
 
 
@@ -391,7 +395,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
   ///
   /// Blocks written before they were movable have no x/y. Those are stacked
   /// in order down the page, so an old notebook opens looking the same.
-  List<Widget> _buildPositionedBlocks() {
+  List<Widget> _buildPositionedBlocks(double viewportWidth) {
     final List<Widget> out = <Widget>[];
     double flowY = _pagePadding;
     for (final NotebookBlock block in _blocks) {
@@ -418,7 +422,13 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
           left: left,
           top: top,
           child: SizedBox(
-            width: _pageColumnWidth,
+            // Never wider than what is left of the page from this block's
+            // left edge. A fixed 720 ran the row (and its X) straight off a
+            // phone screen, which is why blocks could not be deleted.
+            width: math.max(
+              _minBlockWidth,
+              math.min(_pageColumnWidth, viewportWidth - left - _pagePadding),
+            ),
             child: _MovableBlock(
               id: block.id,
               // Dragging is off while the pen is down: in draw mode the whole
@@ -427,13 +437,17 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
               onMoved: (Offset delta) => _onBlockMoved(block.id, delta),
               onRemove: () => _removeBlock(block.id),
               child: switch (block) {
-                NotebookTextBlock t => TextField(
-                    key: ValueKey<String>('notebook-text-block-${t.id}'),
+                NotebookTextBlock t => _BackspaceDeletes(
                     controller: _controllerFor(t.id, t.text),
+                    onDeleteLine: () => _removeBlock(t.id),
+                    child: TextField(
+                      key: ValueKey<String>('notebook-text-block-${t.id}'),
+                      controller: _controllerFor(t.id, t.text),
                     maxLines: null,
-                    style: _pageTextStyle,
-                    cursorColor: NotebookInkCanvas.inkColor,
-                    decoration: _pageInput('Write something…'),
+                      style: _pageTextStyle,
+                      cursorColor: NotebookInkCanvas.inkColor,
+                      decoration: _pageInput('Write something…'),
+                    ),
                   ),
                 NotebookCheckboxBlock c => Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -455,15 +469,19 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                             _toggleChecked(c, checked ?? false),
                       ),
                       Expanded(
-                        child: TextField(
-                          key: ValueKey<String>(
-                            'notebook-checkbox-block-${c.id}',
-                          ),
+                        child: _BackspaceDeletes(
                           controller: _controllerFor(c.id, c.text),
-                          maxLines: null,
-                          style: _pageTextStyle,
-                          cursorColor: NotebookInkCanvas.inkColor,
-                          decoration: _pageInput('List item…'),
+                          onDeleteLine: () => _removeBlock(c.id),
+                          child: TextField(
+                            key: ValueKey<String>(
+                              'notebook-checkbox-block-${c.id}',
+                            ),
+                            controller: _controllerFor(c.id, c.text),
+                            maxLines: null,
+                            style: _pageTextStyle,
+                            cursorColor: NotebookInkCanvas.inkColor,
+                            decoration: _pageInput('List item…'),
+                          ),
                         ),
                       ),
                     ],
@@ -802,7 +820,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                   child: ColoredBox(color: NotebookInkCanvas.backgroundColor),
                 ),
                 // Typed blocks, each positioned where it was left.
-                ..._buildPositionedBlocks(),
+                ..._buildPositionedBlocks(constraints.maxWidth),
                 // Floating recording cards. Each is a Positioned, so they
                 // MUST be direct children of this Stack.
                 for (final NotebookBlock block in _blocks)
@@ -861,6 +879,42 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
 /// The grip is separate from the content on purpose: dragging anywhere on a
 /// text field would fight placing the text cursor, so the handle moves the
 /// block and the field still edits normally.
+/// Deletes the whole line when backspace is pressed on an empty one.
+///
+/// Jeff: "when you tap backspace when there's nothing left in the line ...
+/// it deletes the line item that you are currently on."
+///
+/// The key event is intercepted ABOVE the field: a TextField with an empty
+/// value swallows backspace itself and reports nothing, so there is no
+/// callback to hang this off.
+class _BackspaceDeletes extends StatelessWidget {
+  const _BackspaceDeletes({
+    required this.controller,
+    required this.onDeleteLine,
+    required this.child,
+  });
+
+  final TextEditingController controller;
+  final VoidCallback onDeleteLine;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => Focus(
+        onKeyEvent: (FocusNode node, KeyEvent event) {
+          if (event is! KeyDownEvent ||
+              event.logicalKey != LogicalKeyboardKey.backspace) {
+            return KeyEventResult.ignored;
+          }
+          // Only when the line is genuinely empty: otherwise backspace must
+          // keep deleting characters normally.
+          if (controller.text.isNotEmpty) return KeyEventResult.ignored;
+          onDeleteLine();
+          return KeyEventResult.handled;
+        },
+        child: child,
+      );
+}
+
 /// Pan recognizer for a block's grip handle.
 ///
 /// The page scroll also wants vertical drags; in a normal arena it wins and
@@ -869,11 +923,33 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
 class _GripPanRecognizer extends PanGestureRecognizer {
   _GripPanRecognizer({super.debugOwner});
 
+  final Map<int, Offset> _origins = <int, Offset>{};
+
+  @override
+  void addAllowedPointer(PointerDownEvent event) {
+    _origins[event.pointer] = event.position;
+    super.addAllowedPointer(event);
+  }
+
   @override
   void handleEvent(PointerEvent event) {
     super.handleEvent(event);
+    // Past the touch slop only. Claiming every stray move swallowed taps on
+    // the dump card (tapping a recording stopped opening it), and the grip
+    // sits next to a text field whose cursor placement must survive a
+    // slightly wobbly tap.
     if (event is PointerMoveEvent) {
-      resolve(GestureDisposition.accepted);
+      final Offset? origin = _origins[event.pointer];
+      if (origin != null &&
+          (event.position - origin).distance > computeHitSlop(
+            event.kind,
+            gestureSettings,
+          )) {
+        resolve(GestureDisposition.accepted);
+      }
+    }
+    if (event is PointerUpEvent || event is PointerCancelEvent) {
+      _origins.remove(event.pointer);
     }
   }
 }
@@ -952,14 +1028,17 @@ class _MovableBlockState extends State<_MovableBlock> {
                 ),
               ),
             Expanded(child: widget.child),
-            _RemoveBlockButton(onPressed: widget.onRemove),
+            _RemoveBlockButton(
+              key: ValueKey<String>('notebook-block-remove-${widget.id}'),
+              onPressed: widget.onRemove,
+            ),
           ],
         ),
       );
 }
 
 class _RemoveBlockButton extends StatelessWidget {
-  const _RemoveBlockButton({required this.onPressed});
+  const _RemoveBlockButton({required this.onPressed, super.key});
 
   final VoidCallback onPressed;
 
