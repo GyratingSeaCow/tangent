@@ -539,66 +539,153 @@ void main() {
     await unmount(tester);
   });
 
-  testWidgets('the page is an infinite canvas that pans and zooms',
+  testWidgets('the page scrolls vertically and never pinch-zooms',
       (tester) async {
-    // Jeff: "There needs to be an infinite canvas option". The page used to be
-    // exactly one screen: ink was Positioned.fill, so there was nowhere to
-    // draw past the first screenful.
+    // Jeff, after using the pinch/drag canvas: "Make it more like the
+    // infinite scrollable screen on samsung notes rather than the pinch and
+    // drag since the pinch and drag seems to be interfering with the pen
+    // eraser/writer." No InteractiveViewer at all: an endless vertical roll,
+    // so nothing competes with the pen for the gesture.
     await mountEditor(tester, notebook: testNotebook(id: 'nb-1'));
 
-    final Finder viewer = find.byKey(const ValueKey('notebook-canvas-viewer'));
-    expect(viewer, findsOneWidget, reason: 'the page must be pan/zoomable');
-
-    final InteractiveViewer iv = tester.widget<InteractiveViewer>(viewer);
     expect(
-      iv.constrained,
-      isFalse,
-      reason: 'an unconstrained child is what makes the canvas bigger than '
-          'the viewport',
+      find.byType(InteractiveViewer),
+      findsNothing,
+      reason: 'pinch/pan fights the pen; the page is a vertical scroll',
     );
-    expect(iv.scaleEnabled, isTrue, reason: 'pinch-to-zoom is required');
+    expect(
+      find.byKey(const ValueKey('notebook-canvas-scroll')),
+      findsOneWidget,
+      reason: 'the page must scroll vertically',
+    );
 
     await unmount(tester);
   });
 
-  testWidgets('one finger draws in draw mode instead of panning the canvas',
+  testWidgets('drawing locks the page scroll so the pen never pans it',
       (tester) async {
-    // InteractiveViewer pans with ONE finger, which would fight the pen. In
-    // draw mode one-finger pan is therefore off: the finger inks, and two
-    // fingers still pinch/zoom.
+    // A scrollable still steals a vertical drag from the ink layer, which is
+    // exactly the interference Jeff reported. While drawing, the page holds.
     await mountEditor(tester, notebook: testNotebook(id: 'nb-1'));
 
-    InteractiveViewer viewer() => tester.widget<InteractiveViewer>(
-          find.byKey(const ValueKey('notebook-canvas-viewer')),
-        );
+    ScrollPhysics? physics() => tester
+        .widget<SingleChildScrollView>(
+          find.byKey(const ValueKey('notebook-canvas-scroll')),
+        )
+        .physics;
 
     expect(
-      viewer().panEnabled,
-      isTrue,
-      reason: 'with the pen down you must be able to drag the page around',
+      physics(),
+      isNot(isA<NeverScrollableScrollPhysics>()),
+      reason: 'with the pen up the page scrolls normally',
     );
 
     await tester.tap(find.byIcon(Icons.draw));
     await tester.pumpAndSettle();
 
     expect(
-      viewer().panEnabled,
-      isFalse,
-      reason: 'in draw mode one finger must ink, not pan',
-    );
-    expect(
-      viewer().scaleEnabled,
-      isTrue,
-      reason: 'two-finger zoom stays available while drawing',
+      physics(),
+      isA<NeverScrollableScrollPhysics>(),
+      reason: 'in draw mode the finger inks and the page must not scroll',
     );
 
     await unmount(tester);
   });
 
-  testWidgets('ink and text scroll together on the canvas', (tester) async {
+  testWidgets('the page grows downward as content is placed lower',
+      (tester) async {
+    // "Infinite" in the Samsung Notes sense: the roll extends past whatever
+    // you have written so there is always fresh page below.
+    await mountEditor(
+      tester,
+      notebook: testNotebook(
+        id: 'nb-1',
+        blocks: const <NotebookBlock>[
+          NotebookTextBlock(id: 'b1', text: 'low', x: 20, y: 4000),
+        ],
+      ),
+    );
+
+    final double height = tester
+        .getRect(find.byKey(const ValueKey('notebook-canvas-surface')))
+        .height;
+
+    expect(
+      height,
+      greaterThan(4000),
+      reason: 'the page must extend past its lowest content, got $height',
+    );
+
+    await unmount(tester);
+  });
+
+  testWidgets('text blocks are draggable by their grip handle', (tester) async {
+    // Jeff: "the text boxes need to be movable just like the audio boxes".
+    // The grip is a separate handle so dragging never fights placing the
+    // text cursor.
+    await mountEditor(
+      tester,
+      notebook: testNotebook(
+        id: 'nb-1',
+        blocks: const <NotebookBlock>[
+          NotebookTextBlock(id: 'b1', text: 'movable', x: 40, y: 120),
+        ],
+      ),
+    );
+
+    final Finder grip = find.byKey(const ValueKey('notebook-block-grip-b1'));
+    expect(grip, findsOneWidget, reason: 'each block needs a drag handle');
+
+
+    await tester.drag(grip, const Offset(60, 90));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.save));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    final NotebookTextBlock moved = repository.saved.single.document.blocks
+        .whereType<NotebookTextBlock>()
+        .single;
+    expect(moved.x, closeTo(100, 0.5));
+    expect(moved.y, closeTo(210, 0.5));
+
+    await unmount(tester);
+  });
+
+  testWidgets('a block written before blocks were movable still opens',
+      (tester) async {
+    // Older notebooks have no x/y. They must lay out in order, not collapse
+    // onto the same spot or vanish.
+    await mountEditor(
+      tester,
+      notebook: testNotebook(
+        id: 'nb-1',
+        blocks: const <NotebookBlock>[
+          NotebookTextBlock(id: 'b1', text: 'first'),
+          NotebookTextBlock(id: 'b2', text: 'second'),
+        ],
+      ),
+    );
+
+    final Rect first =
+        tester.getRect(find.byKey(const ValueKey('notebook-block-b1')));
+    final Rect second =
+        tester.getRect(find.byKey(const ValueKey('notebook-block-b2')));
+
+    expect(
+      second.top,
+      greaterThan(first.top),
+      reason: 'unplaced blocks stack in order instead of overlapping',
+    );
+
+    await unmount(tester);
+  });
+
+  testWidgets('ink and text scroll together on the page', (tester) async {
     // The ink layer used to be Positioned.fill over a separately scrolling
     // ListView, so scrolling the text slid it out from under its own ink.
-    // One shared canvas means they move as one.
+    // One shared surface inside one scroll view means they move as one.
     await mountEditor(
       tester,
       notebook: testNotebook(
@@ -611,19 +698,19 @@ void main() {
 
     expect(
       find.descendant(
-        of: find.byKey(const ValueKey('notebook-canvas-viewer')),
+        of: find.byKey(const ValueKey('notebook-canvas-surface')),
         matching: find.byType(NotebookInkCanvas),
       ),
       findsOneWidget,
-      reason: 'the ink must live inside the pannable canvas',
+      reason: 'the ink must live on the scrolling page surface',
     );
     expect(
       find.descendant(
-        of: find.byKey(const ValueKey('notebook-canvas-viewer')),
-        matching: find.byKey(const ValueKey('notebook-text-row-b1')),
+        of: find.byKey(const ValueKey('notebook-canvas-surface')),
+        matching: find.byKey(const ValueKey('notebook-block-b1')),
       ),
       findsOneWidget,
-      reason: 'text blocks must live on that same canvas',
+      reason: 'text blocks must live on that same surface',
     );
 
     await unmount(tester);
@@ -648,7 +735,7 @@ void main() {
     final Rect screen = Offset.zero & tester.view.physicalSize /
         tester.view.devicePixelRatio;
     final Rect row =
-        tester.getRect(find.byKey(const ValueKey('notebook-text-row-b1')));
+        tester.getRect(find.byKey(const ValueKey('notebook-block-b1')));
 
     expect(
       row.overlaps(screen),
@@ -660,24 +747,28 @@ void main() {
     await unmount(tester);
   });
 
-  testWidgets('the insert menu can recentre a panned canvas', (tester) async {
-    // A pannable page needs a way home: on device one swipe moved the work
-    // off-screen onto identical black canvas, with nothing to aim back at.
+  testWidgets('the insert menu scrolls back to the top of the page',
+      (tester) async {
+    // With a long vertical roll it is still easy to end up far down it.
+    // (2D panning is gone, so this is now just "go to the top".)
     await mountEditor(
       tester,
       notebook: testNotebook(
         id: 'nb-1',
         blocks: const <NotebookBlock>[
-          NotebookTextBlock(id: 'b1', text: 'home'),
+          NotebookTextBlock(id: 'b1', text: 'home', x: 20, y: 20),
         ],
       ),
     );
 
-    final Finder viewer = find.byKey(const ValueKey('notebook-canvas-viewer'));
-    final TransformationController controller =
-        tester.widget<InteractiveViewer>(viewer).transformationController!;
-    controller.value = Matrix4.identity()..translate(-900.0, -1500.0);
+    final ScrollController controller = tester
+        .widget<SingleChildScrollView>(
+          find.byKey(const ValueKey('notebook-canvas-scroll')),
+        )
+        .controller!;
+    controller.jumpTo(1500);
     await tester.pump();
+    expect(controller.offset, 1500);
 
     await tester.tap(find.byKey(const ValueKey('notebook-insert-menu')));
     await tester.pumpAndSettle();
@@ -685,9 +776,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(
-      controller.value,
-      Matrix4.identity(),
-      reason: 'recentring must bring the page origin back into view',
+      controller.offset,
+      0,
+      reason: 'Back to start returns to the top of the page',
     );
 
     await unmount(tester);

@@ -12,6 +12,9 @@
 //     notebook never mutates a dump row.
 //   * Saving is explicit (Text Note convention); backing out dirty asks first.
 import 'dart:async';
+import 'dart:math' as math;
+
+import 'package:flutter/gestures.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -45,13 +48,11 @@ const ColorFilter kNotebookInkCutout = ColorFilter.matrix(<double>[
   0.2126, 0.7152, 0.0722, 0, 0, //
 ]);
 
-/// Side of the square notebook canvas, in logical pixels.
-///
-/// "Infinite" in practice: at 1x this is ~5 phone screens across and ~9 down,
-/// and zooming out reaches all of it at once. A finite extent keeps stroke
-/// coordinates plain page coordinates, so existing notebooks and their saved
-/// ink need no migration.
-const double _canvasExtent = 2000;
+/// Inset of the page's content from its top-left corner.
+const double _pagePadding = 12;
+
+/// Vertical step between blocks that have never been moved.
+const double _unplacedBlockSpacing = 72;
 
 /// Width of the typed-block column on the canvas.
 ///
@@ -59,12 +60,7 @@ const double _canvasExtent = 2000;
 /// whole canvas; handwriting and cards use the full area.
 const double _pageColumnWidth = 720;
 
-/// How far past the canvas edge the viewer may be dragged.
-///
-/// Deliberately small. A large margin lets a single fling strand the page in
-/// empty space with the work off-screen and no landmark to navigate back by
-/// -- observed on device, where one swipe left a blank black page.
-const double _canvasBoundaryMargin = 80;
+
 
 /// Insert actions offered by the editor's bottom-left menu.
 enum _InsertAction { text, checkbox, dump, meeting, textNote, recentre }
@@ -103,8 +99,8 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
   /// True while a card is being dragged, so the canvas holds still.
   bool _draggingCard = false;
 
-  /// Pan/zoom of the notebook canvas, so it can be recentred.
-  final TransformationController _canvasTransform = TransformationController();
+  /// Vertical position of the page, so it can be scrolled back to the top.
+  final ScrollController _pageScroll = ScrollController();
   bool _erasing = false;
   double _penWidth = PenSizeControl.defaultPenWidth;
 
@@ -120,7 +116,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
 
   @override
   void dispose() {
-    _canvasTransform.dispose();
+    _pageScroll.dispose();
     _title.dispose();
     for (final TextEditingController controller in _controllers.values) {
       controller.dispose();
@@ -390,88 +386,166 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
   // Rendering
   // -------------------------------------------------------------------
 
-  Widget _buildBlockList() {
-    // The canvas is what moves now: this column sits on the page at a fixed
-    // size and is panned by the viewer, so it must not scroll on its own.
-    // (A scrollable inside an unconstrained parent would also be unbounded.)
-    //
-    // Width is capped to a readable column rather than the full canvas width:
-    // a text field stretched across 5000px puts its own centre far off-screen
-    // and is unusable.
-    return SizedBox(
-      width: _pageColumnWidth,
-      child: ListView(
-        primary: false,
-        shrinkWrap: true,
-        physics: const NeverScrollableScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(12, 12, 12, 96),
-      children: <Widget>[
+  /// Lays out every typed block on the page, positioned where the user left
+  /// it.
+  ///
+  /// Blocks written before they were movable have no x/y. Those are stacked
+  /// in order down the page, so an old notebook opens looking the same.
+  List<Widget> _buildPositionedBlocks() {
+    final List<Widget> out = <Widget>[];
+    double flowY = _pagePadding;
+    for (final NotebookBlock block in _blocks) {
+      final double? bx = switch (block) {
+        NotebookTextBlock t => t.x,
+        NotebookCheckboxBlock c => c.x,
+        NotebookBlock() => null,
+      };
+      final double? by = switch (block) {
+        NotebookTextBlock t => t.y,
+        NotebookCheckboxBlock c => c.y,
+        NotebookBlock() => null,
+      };
+      if (block is! NotebookTextBlock && block is! NotebookCheckboxBlock) {
+        continue;
+      }
+      final double left = bx ?? _pagePadding;
+      final double top = by ?? flowY;
+      if (by == null) flowY += _unplacedBlockSpacing;
+
+      out.add(
+        Positioned(
+          key: ValueKey<String>('notebook-block-${block.id}'),
+          left: left,
+          top: top,
+          child: SizedBox(
+            width: _pageColumnWidth,
+            child: _MovableBlock(
+              id: block.id,
+              // Dragging is off while the pen is down: in draw mode the whole
+              // page belongs to the ink layer.
+              draggable: !_drawing,
+              onMoved: (Offset delta) => _onBlockMoved(block.id, delta),
+              onRemove: () => _removeBlock(block.id),
+              child: switch (block) {
+                NotebookTextBlock t => TextField(
+                    key: ValueKey<String>('notebook-text-block-${t.id}'),
+                    controller: _controllerFor(t.id, t.text),
+                    maxLines: null,
+                    style: _pageTextStyle,
+                    cursorColor: NotebookInkCanvas.inkColor,
+                    decoration: _pageInput('Write something…'),
+                  ),
+                NotebookCheckboxBlock c => Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Checkbox(
+                        key: ValueKey<String>('notebook-checkbox-${c.id}'),
+                        value: c.checked,
+                        side: const BorderSide(
+                          color: NotebookInkCanvas.inkColor,
+                        ),
+                        checkColor: NotebookInkCanvas.backgroundColor,
+                        fillColor: WidgetStateProperty.resolveWith<Color?>(
+                          (Set<WidgetState> states) =>
+                              states.contains(WidgetState.selected)
+                                  ? NotebookInkCanvas.inkColor
+                                  : null,
+                        ),
+                        onChanged: (bool? checked) =>
+                            _toggleChecked(c, checked ?? false),
+                      ),
+                      Expanded(
+                        child: TextField(
+                          key: ValueKey<String>(
+                            'notebook-checkbox-block-${c.id}',
+                          ),
+                          controller: _controllerFor(c.id, c.text),
+                          maxLines: null,
+                          style: _pageTextStyle,
+                          cursorColor: NotebookInkCanvas.inkColor,
+                          decoration: _pageInput('List item…'),
+                        ),
+                      ),
+                    ],
+                  ),
+                NotebookBlock() => const SizedBox.shrink(),
+              },
+            ),
+          ),
+        ),
+      );
+    }
+    return out;
+  }
+
+  /// Moves a typed block by [delta], resolving its first position from where
+  /// it was actually laid out so an unplaced block does not jump.
+  void _onBlockMoved(String id, Offset delta) {
+    setState(() {
+      _blocks = <NotebookBlock>[
         for (final NotebookBlock block in _blocks)
-          switch (block) {
-            NotebookTextBlock t => Padding(
-                key: ValueKey<String>('notebook-text-row-${t.id}'),
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    Expanded(
-                      child: TextField(
-                        key: ValueKey<String>('notebook-text-block-${t.id}'),
-                        controller: _controllerFor(t.id, t.text),
-                        maxLines: null,
-                        style: _pageTextStyle,
-                        cursorColor: NotebookInkCanvas.inkColor,
-                        decoration: _pageInput('Write something…'),
-                      ),
-                    ),
-                    _RemoveBlockButton(onPressed: () => _removeBlock(t.id)),
-                  ],
+          if (block.id != id)
+            block
+          else
+            switch (block) {
+              NotebookTextBlock t => t.copyWith(
+                  x: (t.x ?? _pagePadding) + delta.dx,
+                  y: (t.y ?? _flowTopOf(id)) + delta.dy,
                 ),
-              ),
-            NotebookCheckboxBlock c => Padding(
-                key: ValueKey<String>('notebook-checkbox-row-${c.id}'),
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    Checkbox(
-                      key: ValueKey<String>('notebook-checkbox-${c.id}'),
-                      value: c.checked,
-                      side: const BorderSide(
-                        color: NotebookInkCanvas.inkColor,
-                      ),
-                      checkColor: NotebookInkCanvas.backgroundColor,
-                      fillColor: WidgetStateProperty.resolveWith<Color?>(
-                        (Set<WidgetState> states) =>
-                            states.contains(WidgetState.selected)
-                                ? NotebookInkCanvas.inkColor
-                                : null,
-                      ),
-                      onChanged: (bool? checked) =>
-                          _toggleChecked(c, checked ?? false),
-                    ),
-                    Expanded(
-                      child: TextField(
-                        key:
-                            ValueKey<String>('notebook-checkbox-block-${c.id}'),
-                        controller: _controllerFor(c.id, c.text),
-                        maxLines: null,
-                        style: _pageTextStyle,
-                        cursorColor: NotebookInkCanvas.inkColor,
-                        decoration: _pageInput('List item…'),
-                      ),
-                    ),
-                    _RemoveBlockButton(onPressed: () => _removeBlock(c.id)),
-                  ],
+              NotebookCheckboxBlock c => c.copyWith(
+                  x: (c.x ?? _pagePadding) + delta.dx,
+                  y: (c.y ?? _flowTopOf(id)) + delta.dy,
                 ),
-              ),
-            // Cards live in the Stack layer above; unknown kinds are carried
-            // through storage untouched and have nothing to render.
-            NotebookBlock() => const SizedBox.shrink(),
-          },
-        ],
-      ),
-    );
+              NotebookBlock() => block,
+            },
+      ];
+      _dirty = true;
+    });
+  }
+
+  /// Where an unplaced block currently sits in the top-down flow.
+  double _flowTopOf(String id) {
+    double flowY = _pagePadding;
+    for (final NotebookBlock block in _blocks) {
+      final double? y = switch (block) {
+        NotebookTextBlock t => t.y,
+        NotebookCheckboxBlock c => c.y,
+        NotebookBlock() => null,
+      };
+      if (block is! NotebookTextBlock && block is! NotebookCheckboxBlock) {
+        continue;
+      }
+      if (block.id == id) return y ?? flowY;
+      if (y == null) flowY += _unplacedBlockSpacing;
+    }
+    return _pagePadding;
+  }
+
+  /// Height of the page: always a screen beyond the lowest thing on it, so
+  /// there is fresh page to write on however far down you scroll.
+  double _pageHeight(double viewportHeight) {
+    double lowest = 0;
+    double flowY = _pagePadding;
+    for (final NotebookBlock block in _blocks) {
+      switch (block) {
+        case NotebookTextBlock t:
+          lowest = math.max(lowest, t.y ?? flowY);
+          if (t.y == null) flowY += _unplacedBlockSpacing;
+        case NotebookCheckboxBlock c:
+          lowest = math.max(lowest, c.y ?? flowY);
+          if (c.y == null) flowY += _unplacedBlockSpacing;
+        case NotebookDumpCardBlock d:
+          lowest = math.max(lowest, d.y);
+        case NotebookBlock():
+          break;
+      }
+    }
+    for (final InkStroke stroke in _strokes) {
+      for (final InkPoint point in stroke.points) {
+        lowest = math.max(lowest, point.y);
+      }
+    }
+    return math.max(viewportHeight, lowest + viewportHeight);
   }
 
   static const TextStyle _pageTextStyle =
@@ -608,7 +682,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                           case _InsertAction.textNote:
                             unawaited(_importDumps(dumps, DumpMode.textNote));
                           case _InsertAction.recentre:
-                            _canvasTransform.value = Matrix4.identity();
+                            _pageScroll.jumpTo(0);
                         }
                       },
                       itemBuilder: (BuildContext context) =>
@@ -702,93 +776,186 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
       );
     }
 
-    // One shared canvas, larger than the viewport, inside a pan/zoom viewer.
+    // An endless vertical roll, like Samsung Notes.
     //
-    // The page used to be exactly one screenful: ink was Positioned.fill over
-    // a separately scrolling ListView, so there was nowhere to draw past the
-    // first screen — and scrolling the text slid it out from under its own
-    // ink, because only one of the two layers moved.
-    return InteractiveViewer(
-      key: const ValueKey('notebook-canvas-viewer'),
-      transformationController: _canvasTransform,
-      // An unconstrained child is what lets the canvas exceed the viewport.
-      constrained: false,
-      // Generous margin so you can always drag a little past your work.
-      boundaryMargin: const EdgeInsets.all(_canvasBoundaryMargin),
-      minScale: 0.2,
-      maxScale: 4,
-      // InteractiveViewer pans with ONE finger, which would fight the pen.
-      // While drawing, the finger inks and only two-finger pinch still moves
-      // the page.
-      panEnabled: !_drawing && !_draggingCard,
-      scaleEnabled: !_draggingCard,
-      child: SizedBox(
-        width: _canvasExtent,
-        height: _canvasExtent,
-        child: Stack(
-          children: <Widget>[
-            // Bottom: the page itself — black, per the phase-1 ink contract.
-            // Filling paints the whole canvas; the typed column inside is
-            // left-aligned at its own readable width rather than stretched.
-            Positioned.fill(
-              child: ColoredBox(
-                color: NotebookInkCanvas.backgroundColor,
-                child: Align(
-                  alignment: Alignment.topLeft,
-                  child: _buildBlockList(),
+    // This replaces a pinch/pan InteractiveViewer: on device its pan
+    // recognizer competed with the pen for every drag, so writing and erasing
+    // fought the page. With one axis and no zoom there is nothing left to
+    // compete -- and while drawing, the scroll is locked outright.
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        final double pageHeight = _pageHeight(constraints.maxHeight);
+        return SingleChildScrollView(
+          key: const ValueKey('notebook-canvas-scroll'),
+          controller: _pageScroll,
+          physics: _drawing || _draggingCard
+              ? const NeverScrollableScrollPhysics()
+              : const ClampingScrollPhysics(),
+          child: SizedBox(
+            key: const ValueKey('notebook-canvas-surface'),
+            height: pageHeight,
+            width: constraints.maxWidth,
+            child: Stack(
+              children: <Widget>[
+                // Bottom: the page itself -- black, per the ink contract.
+                const Positioned.fill(
+                  child: ColoredBox(color: NotebookInkCanvas.backgroundColor),
                 ),
-              ),
+                // Typed blocks, each positioned where it was left.
+                ..._buildPositionedBlocks(),
+                // Floating recording cards. Each is a Positioned, so they
+                // MUST be direct children of this Stack.
+                for (final NotebookBlock block in _blocks)
+                  if (block is NotebookDumpCardBlock)
+                    NotebookDumpCard(
+                      key: ValueKey<String>('notebook-card-${block.id}'),
+                      dump: rowsById[block.dumpId] == null
+                          ? null
+                          : dumpFromRow(rowsById[block.dumpId]!),
+                      position: Offset(block.x, block.y),
+                      onPositionChanged: (Offset position) =>
+                          _onCardMoved(block.id, position),
+                      onTap: rowsById[block.dumpId] == null
+                          ? null
+                          : () => _openDump(rowsById[block.dumpId]!),
+                      onRemove: () => _removeBlock(block.id),
+                      onDragActive: (bool dragging) {
+                        if (_draggingCard == dragging) return;
+                        setState(() => _draggingCard = dragging);
+                      },
+                    ),
+                // Top: the ink layer. It ignores pointers unless draw mode is
+                // on, so typing and card dragging work normally otherwise.
+                Positioned.fill(
+                  child: RepaintBoundary(
+                    child: NotebookInkCanvas(
+                      key: _canvasKey,
+                      strokes: _strokes,
+                      drawingEnabled: _drawing,
+                      erasing: _erasing,
+                      penWidth: _penWidth,
+                      // The page below already painted the backdrop, so the
+                      // ink layer composites directly instead of painting
+                      // black and filtering it back out.
+                      opaqueBackground: false,
+                      onStrokesChanged: (List<InkStroke> strokes) {
+                        setState(() {
+                          _strokes = List<InkStroke>.of(strokes);
+                          _dirty = true;
+                        });
+                      },
+                    ),
+                  ),
+                ),
+              ],
             ),
-            // Middle: floating recording cards. Each is a Positioned, so they
-            // MUST be direct children of this Stack.
-            for (final NotebookBlock block in _blocks)
-              if (block is NotebookDumpCardBlock)
-                NotebookDumpCard(
-                  key: ValueKey<String>('notebook-card-${block.id}'),
-                  dump: rowsById[block.dumpId] == null
-                      ? null
-                      : dumpFromRow(rowsById[block.dumpId]!),
-                  position: Offset(block.x, block.y),
-                  onPositionChanged: (Offset position) =>
-                      _onCardMoved(block.id, position),
-                  onTap: rowsById[block.dumpId] == null
-                      ? null
-                      : () => _openDump(rowsById[block.dumpId]!),
-                  onRemove: () => _removeBlock(block.id),
-                  onDragActive: (bool dragging) {
-                    if (_draggingCard == dragging) return;
-                    setState(() => _draggingCard = dragging);
-                  },
-                ),
-            // Top: the ink layer. It ignores pointers unless draw mode is on,
-            // so typing and card dragging work normally the rest of the time.
-            Positioned.fill(
-              child: RepaintBoundary(
-                child: NotebookInkCanvas(
-                  key: _canvasKey,
-                  strokes: _strokes,
-                  drawingEnabled: _drawing,
-                  erasing: _erasing,
-                  penWidth: _penWidth,
-                  // The page below already painted the backdrop. Letting the
-                  // ink layer paint its own black and then filtering it back
-                  // out cost a saveLayer the full size of the canvas, which
-                  // the GPU declined -- leaving an opaque black page.
-                  opaqueBackground: false,
-                  onStrokesChanged: (List<InkStroke> strokes) {
-                    setState(() {
-                      _strokes = List<InkStroke>.of(strokes);
-                      _dirty = true;
-                    });
-                  },
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
+}
+
+/// A typed block that can be dragged around the page by a grip handle.
+///
+/// The grip is separate from the content on purpose: dragging anywhere on a
+/// text field would fight placing the text cursor, so the handle moves the
+/// block and the field still edits normally.
+/// Pan recognizer for a block's grip handle.
+///
+/// The page scroll also wants vertical drags; in a normal arena it wins and
+/// the grip does nothing. A drag that starts on the grip is unambiguous, so
+/// claim it the moment the finger moves.
+class _GripPanRecognizer extends PanGestureRecognizer {
+  _GripPanRecognizer({super.debugOwner});
+
+  @override
+  void handleEvent(PointerEvent event) {
+    super.handleEvent(event);
+    if (event is PointerMoveEvent) {
+      resolve(GestureDisposition.accepted);
+    }
+  }
+}
+
+class _MovableBlock extends StatefulWidget {
+  const _MovableBlock({
+    required this.id,
+    required this.draggable,
+    required this.onMoved,
+    required this.onRemove,
+    required this.child,
+  });
+
+  final String id;
+  final bool draggable;
+
+  /// Reports the block's new absolute position when the drag settles.
+  final ValueChanged<Offset> onMoved;
+  final VoidCallback onRemove;
+  final Widget child;
+
+  @override
+  State<_MovableBlock> createState() => _MovableBlockState();
+}
+
+class _MovableBlockState extends State<_MovableBlock> {
+  /// Offset accumulated during the current drag.
+  ///
+  /// The block tracks its own drag and reports once at the end, rather than
+  /// pushing every delta up: reporting per-update rebuilds this widget from
+  /// the parent mid-gesture, which drops the in-flight drag and leaves the
+  /// block where it started.
+  Offset _dragged = Offset.zero;
+
+  @override
+  Widget build(BuildContext context) => Transform.translate(
+        offset: _dragged,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            if (widget.draggable)
+              RawGestureDetector(
+                key: ValueKey<String>('notebook-block-grip-${widget.id}'),
+                behavior: HitTestBehavior.opaque,
+                // The page scroll competes for vertical drags and wins them
+                // in a normal arena, so a grip drag did nothing at all. This
+                // recognizer claims the gesture as soon as the finger moves;
+                // a drag starting on the grip is never meant to scroll.
+                gestures: <Type, GestureRecognizerFactory>{
+                  _GripPanRecognizer:
+                      GestureRecognizerFactoryWithHandlers<_GripPanRecognizer>(
+                    () => _GripPanRecognizer(debugOwner: this),
+                    (_GripPanRecognizer instance) {
+                      // `down` keeps the block faithful to the finger: the
+                      // slop consumed before recognition is reported too.
+                      instance.dragStartBehavior = DragStartBehavior.down;
+                      instance.onUpdate = (DragUpdateDetails details) =>
+                          setState(() => _dragged += details.delta);
+                      instance.onEnd = (_) {
+                        final Offset settled = _dragged;
+                        setState(() => _dragged = Offset.zero);
+                        widget.onMoved(settled);
+                      };
+                      instance.onCancel =
+                          () => setState(() => _dragged = Offset.zero);
+                    },
+                  ),
+                },
+                child: const Padding(
+                  padding: EdgeInsets.only(top: 12, right: 4),
+                  child: Icon(
+                    Icons.drag_indicator,
+                    size: 20,
+                    color: NotebookInkCanvas.inkColor,
+                  ),
+                ),
+              ),
+            Expanded(child: widget.child),
+            _RemoveBlockButton(onPressed: widget.onRemove),
+          ],
+        ),
+      );
 }
 
 class _RemoveBlockButton extends StatelessWidget {
