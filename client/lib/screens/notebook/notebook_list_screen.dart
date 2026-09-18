@@ -11,6 +11,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/notebook_repository.dart';
 import '../../models/notebook.dart';
 import '../../services/notebook_persistence.dart';
+import '../../widgets/folder_picker.dart';
+import '../../data/local_db.dart';
+import '../home/home_screen.dart' show localDbProvider;
 import '../../widgets/item_action_sheet.dart';
 import 'notebook_editor_screen.dart';
 
@@ -62,6 +65,7 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
       actions: const <ItemAction>[
         ItemAction.open,
         ItemAction.rename,
+        ItemAction.move,
         ItemAction.delete,
       ],
     );
@@ -71,13 +75,47 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
         await _openNotebook(notebook.id);
       case ItemAction.rename:
         await _rename(notebook);
+      case ItemAction.move:
+        await _move(notebook);
       case ItemAction.delete:
         await _confirmDelete(notebook);
-      case ItemAction.move:
       case ItemAction.duplicate:
       case ItemAction.share:
       case ItemAction.select:
         break;
+    }
+  }
+
+  Future<void> _move(Notebook notebook) async {
+    final LocalDb db = ref.read(localDbProvider);
+    final List<Folder> folders = await db.watchFolders().first;
+    if (!mounted) return;
+
+    final FolderChoice? choice = await showFolderPicker(
+      context,
+      folders: folders
+          .map((Folder f) => FolderOption(id: f.id, name: f.name))
+          .toList(growable: false),
+      currentFolderId: notebook.folderId,
+    );
+    // Null means the user dismissed the sheet: nothing moves. An explicit
+    // "No folder" arrives as a FolderChoice with a null id instead.
+    if (choice == null || !mounted) return;
+
+    try {
+      String? destination = choice.folderId;
+      if (choice.isNewFolder) {
+        destination = await db.createFolder(name: choice.newFolderName!);
+      }
+      await db.moveNotebookToFolder(
+        notebookId: notebook.id,
+        folderId: destination,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not move notebook: $error')),
+      );
     }
   }
 
