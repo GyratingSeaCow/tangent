@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:record/record.dart';
+import 'package:tangent/services/communication_routing.dart';
 import 'package:tangent/services/recording_service.dart';
 
 /// Jeff records meetings through Bluetooth earbuds. Two behaviours matter and
@@ -60,6 +62,32 @@ final class FakeAudioRecorder implements InputAwareAudioRecorder {
 
   @override
   Future<void> dispose() async {}
+}
+
+/// Stands in for the native setCommunicationDevice() call.
+final class FakeRouter implements CommunicationRouting {
+  FakeRouter({this.gate, this.failure});
+  final Completer<void>? gate;
+  final Object? failure;
+  final List<String> routed = <String>[];
+  int cleared = 0;
+
+  @override
+  Future<CommunicationRoute> route(String? deviceId) async {
+    if (deviceId == null) return CommunicationRoute.notApplicable;
+    routed.add(deviceId);
+    if (failure != null) throw failure!;
+    if (gate != null) await gate!.future;
+    return CommunicationRoute.applied;
+  }
+
+  @override
+  Future<void> clear() async {
+    cleared++;
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 const buds = InputDevice(
@@ -181,6 +209,102 @@ void main() {
       final service = DefaultRecordingService(outputDir: dir, recorder: recorder);
 
       expect(await service.listInputDevices(), isEmpty);
+    });
+  });
+  group('communication routing', () {
+    test('the chosen headset id is handed to the router', () async {
+      // Without this the recorder honours the device in its config but Android
+      // keeps capturing from the built-in mic, because the SCO link is never
+      // brought up. Proven on hardware: dumpsys showed source client=MIC.
+      final recorder = FakeAudioRecorder(devices: const [builtIn, buds]);
+      final router = FakeRouter();
+      final service = DefaultRecordingService(
+        outputDir: dir,
+        recorder: recorder,
+        routing: router,
+      );
+      await service.selectInputDevice(buds);
+
+      await service.start(stagingPath: staged('r1.opus'));
+
+      expect(router.routed, ['bt-17']);
+    });
+
+    test('routing is never awaited on the record path', () async {
+      // A SCO link takes hundreds of ms to a second to come up. This app just
+      // had a 5.8s stall removed from the record tap; capture must not wait.
+      final gate = Completer<void>();
+      final recorder = FakeAudioRecorder(devices: const [builtIn, buds]);
+      final router = FakeRouter(gate: gate);
+      final service = DefaultRecordingService(
+        outputDir: dir,
+        recorder: recorder,
+        routing: router,
+      );
+      await service.selectInputDevice(buds);
+
+      await service.start(stagingPath: staged('r2.opus')).timeout(
+            const Duration(seconds: 2),
+            onTimeout: () => fail('start() waited for the SCO route'),
+          );
+
+      expect(
+        recorder.startedPath,
+        isNotNull,
+        reason: 'capture must already be running',
+      );
+      expect(
+        gate.isCompleted,
+        isFalse,
+        reason: 'the route was still pending when recording began',
+      );
+      gate.complete();
+    });
+
+    test('a router failure does not stop the recording', () async {
+      final recorder = FakeAudioRecorder(devices: const [builtIn, buds]);
+      final router = FakeRouter(failure: StateError('synthetic route fault'));
+      final service = DefaultRecordingService(
+        outputDir: dir,
+        recorder: recorder,
+        routing: router,
+      );
+      await service.selectInputDevice(buds);
+
+      await service.start(stagingPath: staged('r3.opus'));
+
+      expect(recorder.startedPath, isNotNull);
+    });
+
+    test('no selection means no routing round trip', () async {
+      final recorder = FakeAudioRecorder(devices: const [builtIn, buds]);
+      final router = FakeRouter();
+      final service = DefaultRecordingService(
+        outputDir: dir,
+        recorder: recorder,
+        routing: router,
+      );
+
+      await service.start(stagingPath: staged('r4.opus'));
+
+      expect(router.routed, isEmpty);
+    });
+
+    test('stopping releases the route', () async {
+      // Leaving it applied pins the phone in call-audio mode.
+      final recorder = FakeAudioRecorder(devices: const [builtIn, buds]);
+      final router = FakeRouter();
+      final service = DefaultRecordingService(
+        outputDir: dir,
+        recorder: recorder,
+        routing: router,
+      );
+      await service.selectInputDevice(buds);
+      await service.start(stagingPath: staged('r5.opus'));
+
+      await service.stop();
+
+      expect(router.cleared, 1);
     });
   });
 }

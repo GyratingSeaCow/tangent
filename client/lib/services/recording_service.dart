@@ -6,6 +6,8 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:record/record.dart';
 
+import 'communication_routing.dart';
+
 class RecordingResult {
   final String path;
   final int durationSeconds;
@@ -111,10 +113,17 @@ class DefaultRecordingService implements RecordingService {
     Directory? outputDir,
     InputAwareAudioRecorder? recorder,
     InputDevice? initialDevice,
+    CommunicationRouting? routing,
   })  : _recorder = recorder,
+        _routing = routing ?? CommunicationRouting(),
         _selectedDevice = initialDevice,
         _outputDir = outputDir ??
             (throw ArgumentError('A staging output directory is required'));
+
+  /// Routes capture to a Bluetooth headset mic. See [CommunicationRouting]:
+  /// the `record` plugin's own Bluetooth handling does not bring SCO up on
+  /// this project's target hardware.
+  final CommunicationRouting _routing;
 
   InputAwareAudioRecorder get _ensureRecorder =>
       _recorder ??= PlatformAudioRecorder();
@@ -201,6 +210,21 @@ class DefaultRecordingService implements RecordingService {
     final path = stagingPath;
     await File(path).create(exclusive: true);
     final device = await _resolveDevice();
+    // Ask the platform to route capture to the headset, but DO NOT await it.
+    // Bringing up an SCO link takes hundreds of milliseconds to over a second,
+    // and this app just had a 5.8s stall removed from the record tap. Capture
+    // starts immediately; the route lands a moment later. Errors are swallowed
+    // by CommunicationRouting, so a dead headset can never block a recording.
+    if (device != null) {
+      unawaited(
+        _routing.route(device.id).catchError(
+          // Belt and braces: CommunicationRouting already swallows platform
+          // faults, but a throw escaping an unawaited future would become an
+          // unhandled async error and could crash in debug builds.
+          (_) => CommunicationRoute.unavailable,
+        ),
+      );
+    }
     await recorder.start(
       RecordConfig(
         encoder: AudioEncoder.opus,
@@ -228,6 +252,11 @@ class DefaultRecordingService implements RecordingService {
       _isRecording = false;
       _currentPath = null;
       _startedAt = null;
+      // Release the headset route. Leaving it applied keeps the phone in
+      // call-audio mode, which degrades music playback and pins the headset to
+      // its low-quality SCO profile. In the finally block so it happens even
+      // when the recorder throws on stop.
+      unawaited(_routing.clear().catchError((_) {}));
     }
     if (path == null || startedAt == null) return null;
     final file = File(path);
