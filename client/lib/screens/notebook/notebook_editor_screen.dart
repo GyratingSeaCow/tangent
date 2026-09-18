@@ -435,6 +435,10 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
               draggable: !_drawing,
               onMoved: (Offset delta) => _onBlockMoved(block.id, delta),
               onRemove: () => _removeBlock(block.id),
+              onDragActive: (bool dragging) {
+                if (_draggingCard == dragging) return;
+                setState(() => _draggingCard = dragging);
+              },
               child: switch (block) {
                 NotebookTextBlock t => _BackspaceDeletes(
                     controller: _controllerFor(t.id, t.text),
@@ -920,7 +924,18 @@ class _BackspaceDeletes extends StatelessWidget {
 /// the grip does nothing. A drag that starts on the grip is unambiguous, so
 /// claim it the moment the finger moves.
 class _GripPanRecognizer extends PanGestureRecognizer {
-  _GripPanRecognizer({super.debugOwner});
+  _GripPanRecognizer({super.debugOwner, this.onSlopCrossed});
+
+  /// Fires once the finger has genuinely travelled past the touch slop.
+  ///
+  /// The page is held still from here rather than from onPointerDown: holding
+  /// it on contact empties the gesture arena, and an uncontested
+  /// PanGestureRecognizer accepts on the very first move -- which with
+  /// DragStartBehavior.down replays the 1-2px wobble of an ordinary tap and
+  /// nudges the block. Holding only after slop keeps taps inert AND keeps the
+  /// page from stealing the drag, because everything after slop is delivered
+  /// to a recognizer that has already won.
+  final VoidCallback? onSlopCrossed;
 
   final Map<int, Offset> _origins = <int, Offset>{};
 
@@ -944,6 +959,7 @@ class _GripPanRecognizer extends PanGestureRecognizer {
             event.kind,
             gestureSettings,
           )) {
+        onSlopCrossed?.call();
         resolve(GestureDisposition.accepted);
       }
     }
@@ -960,10 +976,22 @@ class _MovableBlock extends StatefulWidget {
     required this.onMoved,
     required this.onRemove,
     required this.child,
+    this.onDragActive,
   });
 
   final String id;
   final bool draggable;
+
+  /// Tells the editor to hold the page still for the duration of a grip
+  /// gesture, exactly as the dump card does.
+  ///
+  /// Without this the page scroll and the grip recognizer both compete for a
+  /// slow vertical drag. The scroll accepts on the smaller threshold, wins the
+  /// arena, and REJECTS the grip mid-gesture -- so the block stops following
+  /// the finger and the page slides instead. Fired from onPointerDown, which
+  /// precedes every arena decision: hanging it off onStart would be too late,
+  /// because onStart never fires when the rival wins.
+  final ValueChanged<bool>? onDragActive;
 
   /// Reports the block's new absolute position when the drag settles.
   final ValueChanged<Offset> onMoved;
@@ -1000,7 +1028,10 @@ class _MovableBlockState extends State<_MovableBlock> {
                 gestures: <Type, GestureRecognizerFactory>{
                   _GripPanRecognizer:
                       GestureRecognizerFactoryWithHandlers<_GripPanRecognizer>(
-                    () => _GripPanRecognizer(debugOwner: this),
+                    () => _GripPanRecognizer(
+                      debugOwner: this,
+                      onSlopCrossed: () => widget.onDragActive?.call(true),
+                    ),
                     (_GripPanRecognizer instance) {
                       // `down` keeps the block faithful to the finger: the
                       // slop consumed before recognition is reported too.
@@ -1010,10 +1041,13 @@ class _MovableBlockState extends State<_MovableBlock> {
                       instance.onEnd = (_) {
                         final Offset settled = _dragged;
                         setState(() => _dragged = Offset.zero);
+                        widget.onDragActive?.call(false);
                         widget.onMoved(settled);
                       };
-                      instance.onCancel =
-                          () => setState(() => _dragged = Offset.zero);
+                      instance.onCancel = () {
+                        setState(() => _dragged = Offset.zero);
+                        widget.onDragActive?.call(false);
+                      };
                     },
                   ),
                 },

@@ -1252,4 +1252,223 @@ void main() {
 
     await unmount(tester);
   });
+
+  /// Drags like a real finger: many small steps, each its own move event.
+  ///
+  /// tester.drag() emits ONE move covering the whole distance, which clears the
+  /// touch slop on the first event and hands the grip recognizer the arena
+  /// immediately. A finger emits a stream of 1-3px moves that the scrolling
+  /// page competes for, so only this shape exercises the competition.
+  Future<void> slowDrag(
+    WidgetTester tester,
+    Finder target,
+    Offset total, {
+    int steps = 30,
+  }) async {
+    final TestGesture gesture =
+        await tester.startGesture(tester.getCenter(target));
+    final Offset step = total / steps.toDouble();
+    for (int i = 0; i < steps; i++) {
+      await gesture.moveBy(step);
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    await gesture.up();
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('a slow finger drags a text block', (tester) async {
+    await mountEditor(
+      tester,
+      notebook: testNotebook(
+        id: 'nb-1',
+        blocks: const <NotebookBlock>[
+          NotebookTextBlock(id: 'b1', text: 'movable', x: 40, y: 120),
+        ],
+      ),
+    );
+
+    await slowDrag(
+      tester,
+      find.byKey(const ValueKey('notebook-block-grip-b1')),
+      const Offset(60, 90),
+    );
+
+    await tester.tap(find.byIcon(Icons.save));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    final NotebookTextBlock moved = repository.saved.single.document.blocks
+        .whereType<NotebookTextBlock>()
+        .single;
+    expect(
+      moved.x,
+      closeTo(100, 2),
+      reason: 'a slow horizontal drag must still move the block',
+    );
+    expect(
+      moved.y,
+      closeTo(210, 2),
+      reason: 'the page scroll must not steal a slow vertical drag',
+    );
+
+    await unmount(tester);
+  });
+
+  testWidgets('a slow finger drags a checkbox block', (tester) async {
+    await mountEditor(
+      tester,
+      notebook: testNotebook(
+        id: 'nb-1',
+        blocks: const <NotebookBlock>[
+          NotebookCheckboxBlock(id: 'c1', text: 'task', x: 40, y: 120),
+        ],
+      ),
+    );
+
+    await slowDrag(
+      tester,
+      find.byKey(const ValueKey('notebook-block-grip-c1')),
+      const Offset(60, 90),
+    );
+
+    await tester.tap(find.byIcon(Icons.save));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    final NotebookCheckboxBlock moved = repository.saved.single.document.blocks
+        .whereType<NotebookCheckboxBlock>()
+        .single;
+    expect(moved.x, closeTo(100, 2));
+    expect(moved.y, closeTo(210, 2));
+
+    await unmount(tester);
+  });
+
+  testWidgets('the page does not scroll while a block is dragged',
+      (tester) async {
+    await mountEditor(
+      tester,
+      notebook: testNotebook(
+        id: 'nb-1',
+        blocks: const <NotebookBlock>[
+          NotebookTextBlock(id: 'b1', text: 'movable', x: 40, y: 120),
+        ],
+      ),
+    );
+
+    final ScrollableState scrollable = tester.state<ScrollableState>(
+      find.byType(Scrollable).first,
+    );
+    final double before = scrollable.position.pixels;
+
+    await slowDrag(
+      tester,
+      find.byKey(const ValueKey('notebook-block-grip-b1')),
+      const Offset(0, 140),
+    );
+
+    expect(
+      scrollable.position.pixels,
+      before,
+      reason: 'a grip drag must move the block, never scroll the page',
+    );
+
+    await unmount(tester);
+  });
+
+  testWidgets('a wobbly tap on the grip does not move the block',
+      (tester) async {
+    // A real finger never lands perfectly still. Under the slop the block must
+    // stay put, or every tap near the grip nudges the layout.
+    await mountEditor(
+      tester,
+      notebook: testNotebook(
+        id: 'nb-1',
+        blocks: const <NotebookBlock>[
+          NotebookTextBlock(id: 'b1', text: 'movable', x: 40, y: 120),
+        ],
+      ),
+    );
+
+    final TestGesture gesture = await tester.startGesture(
+      tester.getCenter(find.byKey(const ValueKey('notebook-block-grip-b1'))),
+    );
+    await gesture.moveBy(const Offset(1.5, 1.0));
+    await tester.pump(const Duration(milliseconds: 16));
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.save));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    final NotebookTextBlock block = repository.saved.single.document.blocks
+        .whereType<NotebookTextBlock>()
+        .single;
+    expect(block.x, closeTo(40, 0.5), reason: 'a tap must not move the block');
+    expect(block.y, closeTo(120, 0.5));
+
+    await unmount(tester);
+  });
+
+  testWidgets('the page is held still only once a drag really starts',
+      (tester) async {
+    // The mechanism, asserted directly: a competing page scroll is what stole
+    // slow block drags on device, and the fix is to hand the scrollable
+    // NeverScrollableScrollPhysics for the life of the gesture. Asserting the
+    // block's final position cannot see this -- the widget-test arena resolves
+    // differently from a real touch screen, so removing the hold entirely
+    // still passes a position assertion. This checks the physics itself.
+    await mountEditor(
+      tester,
+      notebook: testNotebook(
+        id: 'nb-1',
+        blocks: const <NotebookBlock>[
+          NotebookTextBlock(id: 'b1', text: 'movable', x: 40, y: 120),
+        ],
+      ),
+    );
+
+    ScrollPhysics physics() => tester
+        .widget<SingleChildScrollView>(
+          find.byKey(const ValueKey('notebook-canvas-scroll')),
+        )
+        .physics!;
+
+    expect(physics(), isA<ClampingScrollPhysics>(),
+        reason: 'the page scrolls normally at rest',);
+
+    final TestGesture gesture = await tester.startGesture(
+      tester.getCenter(find.byKey(const ValueKey('notebook-block-grip-b1'))),
+    );
+    await gesture.moveBy(const Offset(1, 1));
+    await tester.pump(const Duration(milliseconds: 16));
+    expect(
+      physics(),
+      isA<ClampingScrollPhysics>(),
+      reason: 'a wobble under the slop is a tap; the page must stay scrollable '
+          'or an uncontested recognizer replays the wobble onto the block',
+    );
+
+    for (int i = 0; i < 12; i++) {
+      await gesture.moveBy(const Offset(0, 6));
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    expect(
+      physics(),
+      isA<NeverScrollableScrollPhysics>(),
+      reason: 'past the slop the page must hold still so the grip keeps the '
+          'gesture instead of losing the arena to the scroll',
+    );
+
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(
+      physics(),
+      isA<ClampingScrollPhysics>(),
+      reason: 'the page must scroll again once the finger lifts',
+    );
+
+    await unmount(tester);
+  });
 }
