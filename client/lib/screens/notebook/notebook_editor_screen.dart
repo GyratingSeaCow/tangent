@@ -945,6 +945,17 @@ class _GripPanRecognizer extends PanGestureRecognizer {
     super.addAllowedPointer(event);
   }
 
+  /// Claim distance for the grip, measured on device.
+  ///
+  /// Flutter's kTouchSlop is 18px, but the enclosing SingleChildScrollView
+  /// claims a vertical drag at roughly half that: an instrumented run on the
+  /// tablet logged travel reaching only 8.6px before this recognizer was
+  /// REJECTED outright, so a threshold of 18 could never be reached. The grip
+  /// is a dedicated 20px handle that means nothing except "move me", so a
+  /// smaller claim costs nothing and is the only way to win the arena.
+  double _gripSlop(PointerEvent event) =>
+      computeHitSlop(event.kind, gestureSettings) / 4;
+
   @override
   void handleEvent(PointerEvent event) {
     super.handleEvent(event);
@@ -955,10 +966,10 @@ class _GripPanRecognizer extends PanGestureRecognizer {
     if (event is PointerMoveEvent) {
       final Offset? origin = _origins[event.pointer];
       if (origin != null &&
-          (event.position - origin).distance > computeHitSlop(
-            event.kind,
-            gestureSettings,
-          )) {
+          (event.position - origin).distance > _gripSlop(event)) {
+        // Both halves are needed. Claiming early wins the arena against the
+        // scroll view; holding the page still keeps it won for the rest of
+        // the gesture, and is what a later drag past kTouchSlop relies on.
         onSlopCrossed?.call();
         resolve(GestureDisposition.accepted);
       }

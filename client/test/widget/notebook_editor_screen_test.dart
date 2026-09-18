@@ -1471,4 +1471,53 @@ void main() {
 
     await unmount(tester);
   });
+
+  testWidgets('the grip wins a drag against the page scroll', (tester) async {
+    // Measured on the tablet, not theorised: an instrumented build logged the
+    // grip recognizer being REJECTED after only 8.6px of travel, because the
+    // enclosing scroll view claims a vertical drag long before Flutter's
+    // 18px kTouchSlop. A threshold of 18 could never be reached, so the
+    // earlier "hold the page once slop is crossed" fix never fired on device
+    // and dragging a block by its grip did nothing at all.
+    //
+    // This drives the real screen with a slow finger and stops at 12px --
+    // past the scroll's claim distance, still short of kTouchSlop -- so the
+    // test fails for exactly the reason the device did.
+    await mountEditor(
+      tester,
+      notebook: testNotebook(
+        id: 'nb-1',
+        blocks: const <NotebookBlock>[
+          NotebookTextBlock(id: 'b1', text: 'movable', x: 40, y: 120),
+        ],
+      ),
+    );
+
+    final Finder grip = find.byKey(const ValueKey('notebook-block-grip-b1'));
+    final TestGesture gesture = await tester.startGesture(
+      tester.getCenter(grip),
+    );
+    for (int i = 0; i < 12; i++) {
+      await gesture.moveBy(const Offset(0, 1));
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.save));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    final NotebookTextBlock moved = repository.saved.single.document.blocks
+        .whereType<NotebookTextBlock>()
+        .single;
+    expect(
+      moved.y,
+      closeTo(132, 2),
+      reason: 'a 12px drag must move the block: the grip has to claim the '
+          'gesture before the page scroll does',
+    );
+
+    await unmount(tester);
+  });
 }
