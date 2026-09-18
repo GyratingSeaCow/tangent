@@ -184,7 +184,10 @@ class CapturePublication(private val port:CaptureDocumentsPort) {
     private fun observe(d:NativeDirectory,claim:Map<String,Any?>):NativeNode? {
         val uri=CaptureWire.text((claim["locator"] as Map<*,*>)["value"])
         val id=CaptureWire.text((claim["identity"] as Map<*,*>)["objectId"])
-        val owned=policy.ownedNode(d,CaptureWire.text(claim["name"]),id) ?: return null
+        // The claim carries both the name and the document id, so membership is
+        // verified with a single document query instead of listing every file
+        // in the folder. This runs ~20 times per save (T8).
+        val owned=policy.ownedChildById(d,CaptureWire.text(claim["name"]),id) ?: return null
         val queried=port.captureNode(d,uri)
         if(queried != owned) CaptureWire.fault("conflict","Capture URI and membership differ")
         return owned

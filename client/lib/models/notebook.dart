@@ -77,14 +77,37 @@ sealed class NotebookBlock {
       case 'text':
         final text = raw['text'];
         if (text is! String) return NotebookUnknownBlock(raw);
-        return NotebookTextBlock(id: id, text: text);
+        final x = raw['x'];
+        final y = raw['y'];
+        // x/y are absent in notebooks written before blocks were movable.
+        // Null means "not placed yet"; the editor lays those out in order.
+        if ((x != null && x is! num) || (y != null && y is! num)) {
+          return NotebookUnknownBlock(raw);
+        }
+        return NotebookTextBlock(
+          id: id,
+          text: text,
+          x: (x as num?)?.toDouble(),
+          y: (y as num?)?.toDouble(),
+        );
       case 'checkbox':
         final text = raw['text'];
         final checked = raw['checked'] ?? false;
         if (text is! String || checked is! bool) {
           return NotebookUnknownBlock(raw);
         }
-        return NotebookCheckboxBlock(id: id, text: text, checked: checked);
+        final cx = raw['x'];
+        final cy = raw['y'];
+        if ((cx != null && cx is! num) || (cy != null && cy is! num)) {
+          return NotebookUnknownBlock(raw);
+        }
+        return NotebookCheckboxBlock(
+          id: id,
+          text: text,
+          checked: checked,
+          x: (cx as num?)?.toDouble(),
+          y: (cy as num?)?.toDouble(),
+        );
       case 'dumpCard':
         final dumpId = raw['dumpId'];
         final x = raw['x'];
@@ -106,17 +129,40 @@ sealed class NotebookBlock {
 
 /// Free typed text.
 class NotebookTextBlock extends NotebookBlock {
-  const NotebookTextBlock({required this.id, required this.text});
+  const NotebookTextBlock({
+    required this.id,
+    required this.text,
+    this.x,
+    this.y,
+  });
 
   @override
   final String id;
   final String text;
 
-  NotebookTextBlock copyWith({String? text}) =>
-      NotebookTextBlock(id: id, text: text ?? this.text);
+  /// Logical pixels from the page's top-left, or null when never moved.
+  ///
+  /// Null blocks are laid out in order by the editor, so notebooks written
+  /// before blocks were movable open exactly as they did.
+  final double? x;
+  final double? y;
+
+  NotebookTextBlock copyWith({String? text, double? x, double? y}) =>
+      NotebookTextBlock(
+        id: id,
+        text: text ?? this.text,
+        x: x ?? this.x,
+        y: y ?? this.y,
+      );
 
   @override
-  Map<String, dynamic> toJson() => {'kind': 'text', 'id': id, 'text': text};
+  Map<String, dynamic> toJson() => {
+        'kind': 'text',
+        'id': id,
+        'text': text,
+        if (x != null) 'x': x,
+        if (y != null) 'y': y,
+      };
 }
 
 /// A checkable line item.
@@ -125,6 +171,8 @@ class NotebookCheckboxBlock extends NotebookBlock {
     required this.id,
     required this.text,
     this.checked = false,
+    this.x,
+    this.y,
   });
 
   @override
@@ -132,11 +180,22 @@ class NotebookCheckboxBlock extends NotebookBlock {
   final String text;
   final bool checked;
 
-  NotebookCheckboxBlock copyWith({String? text, bool? checked}) =>
+  /// Logical pixels from the page's top-left, or null when never moved.
+  final double? x;
+  final double? y;
+
+  NotebookCheckboxBlock copyWith({
+    String? text,
+    bool? checked,
+    double? x,
+    double? y,
+  }) =>
       NotebookCheckboxBlock(
         id: id,
         text: text ?? this.text,
         checked: checked ?? this.checked,
+        x: x ?? this.x,
+        y: y ?? this.y,
       );
 
   @override
@@ -145,6 +204,8 @@ class NotebookCheckboxBlock extends NotebookBlock {
         'id': id,
         'text': text,
         'checked': checked,
+        if (x != null) 'x': x,
+        if (y != null) 'y': y,
       };
 }
 

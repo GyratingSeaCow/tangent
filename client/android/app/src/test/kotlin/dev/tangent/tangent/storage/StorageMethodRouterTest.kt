@@ -68,7 +68,12 @@ class StorageMethodRouterTest {
             // cost 5.8s per record tap on a real 81-file folder.
             "probeLocationAt",
             "readAudioAt", "playbackSourceAt",
-            "writeMetadataAt", "deleteComponentAt", "listRecordingsAt", "prepareCaptureAt",
+            "writeMetadataAt", "deleteComponentAt", "listRecordingsAt",
+            // Reads ONE published entry. Proving a freshly written receipt via
+            // listRecordingsAt parsed every recording in the folder and cost
+            // 4.4s of a 5.9s stop with 56 recordings.
+            "readRecordingAt",
+            "prepareCaptureAt",
             "inspectPreparedCaptureAt", "publishPreparedCaptureAt",
             // Durable notebook documents publish through the same router.
             "publishDocumentAt", "listDocumentsAt", "deleteDocumentAt")

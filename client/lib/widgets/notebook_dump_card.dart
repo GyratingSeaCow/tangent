@@ -39,6 +39,7 @@ class NotebookDumpCard extends StatefulWidget {
     required this.onPositionChanged,
     this.onTap,
     this.onRemove,
+    this.onDragActive,
   });
 
   /// The embedded dump, or null when the referenced dump no longer exists.
@@ -58,6 +59,13 @@ class NotebookDumpCard extends StatefulWidget {
   /// Removes the card from the notebook. Omit to hide the affordance.
   final VoidCallback? onRemove;
 
+  /// True while this card is being dragged.
+  ///
+  /// The pannable canvas uses this to hold still: its recognizer would
+  /// otherwise win mostly-vertical drags and move the page instead of the
+  /// card.
+  final ValueChanged<bool>? onDragActive;
+
   /// Widest the floating card ever gets, so it stays a "little box".
   static const double maxCardWidth = 220;
 
@@ -66,6 +74,52 @@ class NotebookDumpCard extends StatefulWidget {
 
   @override
   State<NotebookDumpCard> createState() => _NotebookDumpCardState();
+}
+
+/// Pan recognizer for a card, accepted as soon as the finger moves.
+///
+/// Eager acceptance is safe here only because the editor holds the page
+/// still from pointer-down (see [NotebookDumpCard.onDragActive]), so there
+/// is no scroll recognizer left to out-compete. The previous version tried
+/// to win that race by waiting for the 18px touch slop instead, and device
+/// logs showed it losing every slow drag: travel climbed 2.3 -> 12.2px and
+/// then events stopped, because the scroll had already claimed the gesture.
+///
+/// A tap is still a tap: acceptance requires an actual PointerMoveEvent,
+/// and a stationary finger never produces one.
+class _CardPanRecognizer extends PanGestureRecognizer {
+  _CardPanRecognizer({super.debugOwner});
+
+  /// Distance the finger must travel before this counts as a drag.
+  ///
+  /// Deliberately much smaller than the 18px touch slop. The page has
+  /// already stepped aside, so nothing is competing for the gesture and
+  /// there is no race to win -- this threshold exists only to tell a drag
+  /// apart from the pixel or two a real finger slides during a tap.
+  static const double _dragThreshold = 6;
+
+  final Map<int, Offset> _origins = <int, Offset>{};
+
+  @override
+  void addAllowedPointer(PointerDownEvent event) {
+    _origins[event.pointer] = event.position;
+    super.addAllowedPointer(event);
+  }
+
+  @override
+  void handleEvent(PointerEvent event) {
+    super.handleEvent(event);
+    if (event is PointerMoveEvent) {
+      final Offset? origin = _origins[event.pointer];
+      if (origin != null &&
+          (event.position - origin).distance > _dragThreshold) {
+        resolve(GestureDisposition.accepted);
+      }
+    }
+    if (event is PointerUpEvent || event is PointerCancelEvent) {
+      _origins.remove(event.pointer);
+    }
+  }
 }
 
 class _NotebookDumpCardState extends State<NotebookDumpCard> {
@@ -81,16 +135,24 @@ class _NotebookDumpCardState extends State<NotebookDumpCard> {
       _anchor == null ? widget.position : _anchor! + _dragged;
 
   void _onPanStart(DragStartDetails _) {
+    // Anchor to where the card is NOW. The page was already told to hold
+    // still on pointer-down (see build), so by the time a pan is recognised
+    // nothing else is competing for the gesture.
     _anchor = widget.position;
     _dragged = Offset.zero;
   }
 
   void _onPanUpdate(DragUpdateDetails details) {
+    // Tolerate an update arriving before onPanStart: the pointer-down
+    // handler can rebuild this widget first, and a missing anchor must not
+    // throw or silently drop the drag.
+    final Offset anchor = _anchor ??= widget.position;
     setState(() => _dragged += details.delta);
-    widget.onPositionChanged(_anchor! + _dragged);
+    widget.onPositionChanged(anchor + _dragged);
   }
 
   void _onPanEnd() {
+    widget.onDragActive?.call(false);
     if (_anchor == null) return;
     final settled = _anchor! + _dragged;
     setState(() {
@@ -117,41 +179,67 @@ class _NotebookDumpCardState extends State<NotebookDumpCard> {
     return Positioned(
       left: at.dx,
       top: at.dy,
-      child: GestureDetector(
-        // `down` keeps reported offsets faithful to the finger: the touch slop
-        // consumed before the pan is recognised is reported too, so the card
-        // never drifts away from the pointer.
-        dragStartBehavior: DragStartBehavior.down,
-        onPanStart: _onPanStart,
-        onPanUpdate: _onPanUpdate,
-        onPanEnd: (_) => _onPanEnd(),
-        onPanCancel: _onPanEnd,
-        child: Material(
-          elevation: missing ? 1 : 4,
-          shape: shape,
-          color: missing
-              ? colors.surfaceContainerHighest
-              : colors.surfaceContainerHigh,
-          clipBehavior: Clip.antiAlias,
-          child: InkWell(
-            onTap: missing ? null : widget.onTap,
-            borderRadius:
-                BorderRadius.circular(NotebookDumpCard.cornerRadius),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(
-                minWidth: NotebookDumpCard.minCardWidth,
-                maxWidth: NotebookDumpCard.maxCardWidth,
-              ),
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(10, 8, 4, 8),
-                child: missing
-                    ? _MissingBody(onRemove: widget.onRemove)
-                    : _DumpBody(dump: dump, onRemove: widget.onRemove),
+      // The page yields the moment a finger lands on a card.
+      //
+      // Previously this raced the page scroll: a custom recognizer tried to
+      // claim the gesture before the scroll could. Device logs showed why
+      // that loses on a SLOW drag -- travel climbed 2.3 -> 12.2px and then
+      // events stopped, because the scroll accepted on its own smaller
+      // threshold and this recognizer was rejected before reaching the 18px
+      // slop. A fast drag whose first event jumped 19.6px won and moved.
+      //
+      // So stop competing. onPointerDown tells the editor to hold the page
+      // still, which swaps in NeverScrollableScrollPhysics; Scrollable's
+      // setCanDrag(false) then drops its own drag recognizer entirely. With
+      // no rival in the arena a PLAIN pan recognizer is uncontested and
+      // behaves correctly at any speed -- and, being plain, it still yields
+      // to taps so the card opens and its X fires.
+      child: Listener(
+        onPointerDown: (_) => widget.onDragActive?.call(true),
+        onPointerUp: (_) => widget.onDragActive?.call(false),
+        onPointerCancel: (_) => widget.onDragActive?.call(false),
+        child: RawGestureDetector(
+          gestures: <Type, GestureRecognizerFactory>{
+            _CardPanRecognizer:
+                GestureRecognizerFactoryWithHandlers<_CardPanRecognizer>(
+              () => _CardPanRecognizer(debugOwner: this),
+              (_CardPanRecognizer instance) {
+                // `down` keeps reported offsets faithful to the finger.
+                instance.dragStartBehavior = DragStartBehavior.down;
+                instance.onStart = _onPanStart;
+                instance.onUpdate = _onPanUpdate;
+                instance.onEnd = (_) => _onPanEnd();
+                instance.onCancel = _onPanEnd;
+              },
+            ),
+          },
+          child: Material(
+            elevation: missing ? 1 : 4,
+            shape: shape,
+            color: missing
+                ? colors.surfaceContainerHighest
+                : colors.surfaceContainerHigh,
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              onTap: missing ? null : widget.onTap,
+              borderRadius:
+                  BorderRadius.circular(NotebookDumpCard.cornerRadius),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(
+                  minWidth: NotebookDumpCard.minCardWidth,
+                  maxWidth: NotebookDumpCard.maxCardWidth,
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(10, 8, 4, 8),
+                  child: missing
+                      ? _MissingBody(onRemove: widget.onRemove)
+                      : _DumpBody(dump: dump, onRemove: widget.onRemove),
+                ),
               ),
             ),
           ),
         ),
-      ),
+        ),
     );
   }
 }

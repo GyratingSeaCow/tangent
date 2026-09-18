@@ -96,7 +96,7 @@ class AndroidDocumentsPort(context: Context) : DocumentsIoPort, CaptureDocuments
         grant(directory)
         val node=query(Uri.parse(exactUri)).singleOrNull() ?: fault("unavailable","Capture document unobservable")
         if(node.id != decoded.second || node.directory || node.virtual) fault("conflict","Capture returned identity differs")
-        val owned=policy.ownedNode(directory,node.name,node.id) ?: fault("unavailable","Capture document is not a child")
+        val owned=policy.ownedChildById(directory,node.name,node.id) ?: fault("unavailable","Capture document is not a child")
         if(owned != node) fault("conflict","Capture membership differs")
         return node
     }
@@ -142,6 +142,42 @@ class AndroidDocumentsPort(context: Context) : DocumentsIoPort, CaptureDocuments
     override fun children(directory:NativeDirectory):List<NativeNode> {
         name(directory)
         return query(DC.buildChildDocumentsUriUsingTree(grant(directory),directory.documentId))
+    }
+    /** Verifies one known child without listing the directory (T8).
+     *
+     *  Membership is proved by building the child's URI THROUGH the tree and
+     *  confirming the document it resolves to reports the expected id and
+     *  name. buildDocumentUriUsingTree only yields a readable URI for a
+     *  document actually under the granted tree, so a foreign or detached id
+     *  cannot resolve here -- the same guarantee the listing gave, without
+     *  paying for all 81 rows.
+     *
+     *  Nothing is cached: every call re-queries, so a file removed by another
+     *  app is still seen as gone. */
+    override fun membership(directory:NativeDirectory,name:String,documentId:String):Membership {
+        val tree = try { grant(directory) } catch(e: SecurityException) { fault("denied","Provider access denied") }
+        val child = try {
+            DC.buildDocumentUriUsingTree(tree, documentId)
+        } catch(e: IllegalArgumentException) { return Membership.Absent }
+        val rows = try {
+            resolver.query(child,arrayOf(DC.Document.COLUMN_DOCUMENT_ID,DC.Document.COLUMN_DISPLAY_NAME,DC.Document.COLUMN_MIME_TYPE,DC.Document.COLUMN_FLAGS),null,null,null)?.use { cursor ->
+                val result = mutableListOf<NativeNode>()
+                while (cursor.moveToNext()) {
+                    val id = cursor.getString(0) ?: return Membership.Unsupported
+                    val display = cursor.getString(1) ?: return Membership.Unsupported
+                    result.add(NativeNode(id,display,cursor.getString(2) == DC.Document.MIME_TYPE_DIR,cursor.getLong(3) and DC.Document.FLAG_VIRTUAL_DOCUMENT.toLong() != 0L))
+                }
+                // A still-loading or errored cursor is not a definitive answer;
+                // fall back to the listing rather than risk a false 'absent'.
+                if (cursor.extras.getBoolean(DC.EXTRA_LOADING,false) || cursor.extras.getString(DC.EXTRA_ERROR) != null) null
+                else result
+            } ?: return Membership.Unsupported
+        } catch(e: SecurityException) { fault("denied","Provider access denied") }
+        catch(e: IllegalArgumentException) { return Membership.Absent }
+        val node = rows.singleOrNull() ?: return Membership.Absent
+        if (node.id != documentId || node.name != name) return Membership.Absent
+        if (node.directory || node.virtual) return Membership.Absent
+        return Membership.Present(node)
     }
     private fun checked(directory:NativeDirectory,node:NativeNode,flag:Int=0):Uri {
         val target = Uri.parse(uri(directory,node))
@@ -287,6 +323,35 @@ class AndroidDocumentsPort(context: Context) : DocumentsIoPort, CaptureDocuments
                 if (cursor.getString(1) != DC.Document.MIME_TYPE_DIR) fault("invalid","Recording folder is not a directory")
                 return null
             } ?: fault("absent","Recording folder is unavailable")
+        }
+        if (method == "readRecordingAt") {
+            // Reads ONE published entry instead of scanning the folder (T8).
+            // The listing path does two ownedNode lookups plus a stat and a
+            // metadata read PER recording; proving one freshly written receipt
+            // that way cost 4.4s of a 5.9s stop with 56 recordings.
+            //
+            // Same row shape as listRecordingsAt, decoded by the same Dart
+            // helper, so a single read can never disagree with the listing.
+            val dumpId = text(args["dumpId"]); literal(dumpId)
+            val contentSuffixes = listOf(".opus", ".md")
+            fun readOne(dir:NativeDirectory):Map<String,Any?>? {
+                for (suffix in contentSuffixes) {
+                    val name = "$dumpId$suffix"
+                    val node = try { policy.ownedNode(dir,name,null) } catch(e: Exception) { null } ?: continue
+                    var problem:Map<String,Any?>? = null; var meta:String? = null; var size = 0L; var modified = 0L
+                    try {
+                        resolver.query(checked(dir,node),arrayOf(DC.Document.COLUMN_SIZE,DC.Document.COLUMN_LAST_MODIFIED),null,null,null)?.use {
+                            if (!it.moveToFirst() || it.isNull(0) || it.isNull(1)) fault("unavailable","Provider size/time unavailable")
+                            size = it.getLong(0); modified = it.getLong(1)
+                        } ?: fault("unavailable","Provider stat unavailable")
+                        val sidecar = policy.ownedNode(dir,"$dumpId.meta.json",null)
+                        if (sidecar != null) meta = read(dir,sidecar).toString(Charsets.UTF_8)
+                    } catch(e: Exception) { problem = mapOf("code" to (if(e is NativeStorageException) e.code else "io"),"message" to "Could not inspect recording") }
+                    return mapOf("id" to dumpId,"audio" to mapOf("version" to 1,"kind" to "saf","value" to uri(dir,node)),"sizeBytes" to size,"modifiedAt" to modified,"metadataJson" to meta,"problem" to problem)
+                }
+                return null
+            }
+            return readOne(d) ?: noteDirectory(d)?.let { readOne(it) }
         }
         if (method == "listRecordingsAt") {
             // Durable-pair primary content mirrors the shared Dart mode helper

@@ -77,6 +77,30 @@ final class GatedIo<T> implements IoOperation<T> {
   final Future<void> settled;
 }
 
+/// Narrows a listing operation to the single entry [dumpId], preserving the
+/// underlying operation's id and settlement so lease accounting is identical
+/// to the listing path.
+class _SingleEntryOperation implements IoOperation<Outcome<ImportedEntry?>> {
+  _SingleEntryOperation(this._source, this._dumpId);
+  final IoOperation<Outcome<List<ImportedEntry>>> _source;
+  final String _dumpId;
+
+  @override
+  String get id => _source.id;
+
+  @override
+  Future<void> get settled => _source.settled;
+
+  @override
+  Future<Outcome<ImportedEntry?>> get result =>
+      _source.result.then((outcome) => switch (outcome) {
+            Ok(value: final entries) => Ok<ImportedEntry?>(
+                entries.where((e) => e.id == _dumpId).firstOrNull,
+              ),
+            Fail(problem: final problem) => Fail<ImportedEntry?>(problem),
+          },);
+}
+
 class ScriptedStorageBackend extends FilesystemStorageBackend {
   Outcome<StorageLocation?> choice = const Ok(null);
   bool validationFails = false;
@@ -193,6 +217,30 @@ class ScriptedStorageBackend extends FilesystemStorageBackend {
     return listing == null
         ? super.listRecordingsAt(location)
         : listing!(location);
+  }
+
+  /// Opt-in single-entry read, mirroring what the SAF backend does natively.
+  ///
+  /// Off by default so every existing test keeps exercising the listing path
+  /// unchanged. When enabled, it serves the entry from the same listing the
+  /// real backend would return, so the fast path cannot "pass" by inventing
+  /// an entry the folder does not actually contain.
+  bool singleEntryReads = false;
+  int singleReadCalls = 0;
+
+  @override
+  IoOperation<Outcome<ImportedEntry?>>? readRecordingAt(
+    StorageLocation location,
+    String dumpId,
+  ) {
+    if (!singleEntryReads) {
+      return null;
+    }
+    singleReadCalls++;
+    final source = listing == null
+        ? super.listRecordingsAt(location)
+        : listing!(location);
+    return _SingleEntryOperation(source, dumpId);
   }
 
   @override

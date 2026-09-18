@@ -509,9 +509,12 @@ class RecordingPersistence {
           published.sizeBytes != preparation.audioSizeBytes) {
         _fault(ProblemCode.invalid, 'Prepared publication receipt differs');
       }
-      if (!complete(await inspect())) {
-        _fault(ProblemCode.unresolved, 'Publication readback is incomplete');
-      }
+      // No post-publish inspection here. publishPreparedCapture already reads
+      // both components back and compares them byte-for-byte natively before
+      // returning, and its receipt (checked directly above) carries the
+      // binding and byte size. Re-reading the whole file over SAF to confirm
+      // the confirmation cost 352ms on a 90-second recording and grows with
+      // real audio content. See docs/.../2026-09-17-iteration-4.md.
     }
     if (h['stage'] != 'complete') {
       final prior = await _current(r, raw);
@@ -648,10 +651,24 @@ class RecordingPersistence {
       metadata: metadata,
     );
     // A receipt must refer to the exact regular entry in its reserved root.
-    final entries = _value(
-      await _runSettled(lease, () => _backend.listRecordingsAt(r.location)),
-    );
-    final matches = entries.where((e) => e.id == r.key.dumpId).toList();
+    //
+    // Read only THAT entry when the backend can: proving one receipt by
+    // enumerating and parsing every recording in the folder cost 4.4s of a
+    // 5.9s stop with 56 recordings (T8). Falls back to the full listing when
+    // the backend cannot answer for a single entry, so behaviour is unchanged
+    // everywhere else. Nothing is cached — the entry is still re-read from
+    // storage, so the proof is exactly as strong.
+    final single = _backend.readRecordingAt(r.location, r.key.dumpId);
+    final List<ImportedEntry> matches;
+    if (single != null) {
+      final entry = _value(await _runSettled(lease, () => single));
+      matches = <ImportedEntry>[if (entry != null) entry];
+    } else {
+      final entries = _value(
+        await _runSettled(lease, () => _backend.listRecordingsAt(r.location)),
+      );
+      matches = entries.where((e) => e.id == r.key.dumpId).toList();
+    }
     if (matches.length != 1 ||
         matches.single.problem != null ||
         StorageCodec.canonicalKey(matches.single.source.directory) !=

@@ -61,6 +61,103 @@ Future<Offset Function()> _pumpCard(
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  testWidgets('a real finger tap opens the card even though it jitters',
+      (tester) async {
+    // Jeff: "the recordings in notebooks, when you tap on them, it no longer
+    // links into the recording so you can review it".
+    //
+    // tester.tap() moves EXACTLY zero pixels, so it never produced a
+    // PointerMoveEvent and the eager recognizer stayed out of the way. A real
+    // finger always slides a pixel or two, which the recognizer was claiming
+    // as a drag -- swallowing the tap. This reproduces the human gesture.
+    var opened = 0;
+    await _pumpCard(tester, dump: _dump(), onTap: () => opened++);
+
+    final TestGesture gesture =
+        await tester.startGesture(tester.getCenter(find.text('Morning ideas')));
+    // Well under kTouchSlop (18px): a human tap, not a drag.
+    await gesture.moveBy(const Offset(1.5, 1.5));
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    expect(
+      opened,
+      1,
+      reason: 'a tap that wobbles a pixel must still open the recording',
+    );
+  });
+
+  testWidgets('a real finger tap still presses the remove button',
+      (tester) async {
+    // Jeff: "The X on the boxes aren't working".
+    var removed = 0;
+    await _pumpCard(tester, dump: _dump(), onRemove: () => removed++);
+
+    final TestGesture gesture =
+        await tester.startGesture(tester.getCenter(find.byIcon(Icons.close)));
+    await gesture.moveBy(const Offset(1.5, 1.5));
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    expect(
+      removed,
+      1,
+      reason: 'a slightly-wobbly tap on X must still remove the card',
+    );
+  });
+
+  testWidgets('a SLOW drag still moves the card', (tester) async {
+    // Jeff: "when you add in a dump or text note etc. into the notebooks, it
+    // can no longer be dragged and put somewhere else on the screen".
+    //
+    // Device evidence, same card and same path, only speed changed:
+    //   fast 120ms swipe -> card moves
+    //   slow 900ms swipe -> card does not move at all
+    // A slow finger delivers 1-2px move events. The touch-slop check added to
+    // fix stolen taps measured each event in isolation, so no single event
+    // ever exceeded the slop and the card never claimed the gesture. The
+    // distance must accumulate from where the pointer went DOWN.
+    final position = await _pumpCard(tester, dump: _dump());
+
+    final TestGesture gesture =
+        await tester.startGesture(tester.getCenter(find.text('Morning ideas')));
+    for (int i = 0; i < 40; i++) {
+      await gesture.moveBy(const Offset(1.5, 1.5));
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    expect(
+      position(),
+      isNot(const Offset(20, 30)),
+      reason: 'a slow drag is still a drag: 40 x 1.5px = 60px of travel',
+    );
+  });
+
+  testWidgets('a deliberate drag is still a drag, not a tap', (tester) async {
+    // The fix must not go too far the other way: past the slop it is a drag.
+    var opened = 0;
+    final position = await _pumpCard(
+      tester,
+      dump: _dump(),
+      onTap: () => opened++,
+    );
+
+    final TestGesture gesture =
+        await tester.startGesture(tester.getCenter(find.text('Morning ideas')));
+    await gesture.moveBy(const Offset(60, 40));
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    expect(opened, 0, reason: 'a real drag must not open the card');
+    expect(
+      position(),
+      isNot(const Offset(20, 30)),
+      reason: 'a real drag must still move the card',
+    );
+  });
+
   testWidgets('renders the dump title, mode icon and duration',
       (tester) async {
     await _pumpCard(tester, dump: _dump());

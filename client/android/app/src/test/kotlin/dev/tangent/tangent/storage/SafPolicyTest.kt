@@ -9,9 +9,25 @@ private class MemoryDocuments : DocumentsPort {
     val deleted = mutableListOf<String>()
     var denied = false
     var deleteSucceeds = true
+    /** Full-directory listings served. Each is a SAF query returning every
+     *  child, so the stop path's real cost is counted here. */
+    var enumerations = 0
+    /** When true this fake answers membership directly, like a path-based
+     *  provider (ExternalStorageProvider); when false it reports Unsupported
+     *  and callers must fall back to listing. */
+    var answersMembership = false
+    override fun membership(directory: NativeDirectory, name: String, documentId: String): Membership {
+        if (!answersMembership) return Membership.Unsupported
+        if (denied) throw NativeStorageException("denied", "Grant revoked")
+        val node = entries.singleOrNull { it.id == documentId && it.name == name }
+            ?: return Membership.Absent
+        if (node.directory || node.virtual) return Membership.Absent
+        return Membership.Present(node)
+    }
     override fun name(directory: NativeDirectory) = label
     override fun children(directory: NativeDirectory): List<NativeNode> {
         if (denied) throw NativeStorageException("denied", "Grant revoked")
+        enumerations++
         return entries
     }
     override fun delete(directory: NativeDirectory, node: NativeNode): Boolean {
@@ -193,5 +209,97 @@ class SafPolicyTest {
         docs.entries = listOf(NativeNode("owned","fixture-a.opus",false),NativeNode("other","fixture-a.opus",false))
         assertEquals("failed",policy.deleteComponent(dir,"fixture-a.opus","owned").state)
         assertTrue(docs.deleted.isEmpty())
+    }
+    /** T8: stopping a recording took 10,448ms on device. ownedNode answered
+     *  "is this one file present?" by enumerating the WHOLE directory -- all
+     *  81 files in Jeff's folder -- and the stop path asks ~20 times per save.
+     *
+     *  Same anti-pattern as the record-start defect (31645e8), where "does
+     *  this folder exist?" enumerated and parsed every recording.
+     *
+     *  When the provider can answer membership directly, no listing happens. */
+    @Test fun aKnownChildIsVerifiedWithoutListingTheDirectory() {
+        val port = MemoryDocuments()
+        port.answersMembership = true
+        port.entries = (1..80).map { NativeNode("id-$it", "file-$it.opus", false, false) } +
+            NativeNode("target", "wanted.opus", false, false)
+        val policy = SafPolicy(port)
+
+        val node = policy.ownedChildById(dir, "wanted.opus", "target")
+
+        assertEquals("target", node?.id)
+        assertEquals(
+            "verifying one known child must not list 81 files",
+            0,
+            port.enumerations,
+        )
+    }
+
+    /** Providers that cannot answer directly must still work: fall back to the
+     *  listing rather than reporting a real file as missing. */
+    @Test fun aProviderThatCannotAnswerFallsBackToListing() {
+        val port = MemoryDocuments()
+        port.answersMembership = false
+        port.entries = listOf(NativeNode("target", "wanted.opus", false, false))
+        val policy = SafPolicy(port)
+
+        val node = policy.ownedChildById(dir, "wanted.opus", "target")
+
+        assertEquals("target", node?.id)
+        assertTrue("the fallback must consult the listing", port.enumerations >= 1)
+    }
+
+    /** The fast path must never invent membership: a document whose id does not
+     *  match the claim is not ours, even if the name matches. */
+    @Test fun anIdMismatchIsNotOurChild() {
+        val port = MemoryDocuments()
+        port.answersMembership = true
+        port.entries = listOf(NativeNode("other", "wanted.opus", false, false))
+        val policy = SafPolicy(port)
+
+        assertNull(policy.ownedChildById(dir, "wanted.opus", "target"))
+    }
+
+    /** A directory or virtual node is never a usable capture component. */
+    @Test fun aDirectoryOrVirtualNodeIsNeverOwnedContent() {
+        val port = MemoryDocuments()
+        port.answersMembership = true
+        port.entries = listOf(NativeNode("target", "wanted.opus", true, false))
+        assertNull(SafPolicy(port).ownedChildById(dir, "wanted.opus", "target"))
+
+        val virtualPort = MemoryDocuments()
+        virtualPort.answersMembership = true
+        virtualPort.entries = listOf(NativeNode("target", "wanted.opus", false, true))
+        assertNull(SafPolicy(virtualPort).ownedChildById(dir, "wanted.opus", "target"))
+    }
+
+    /** A revoked grant must surface as denied, not be silently reported absent
+     *  -- otherwise a permissions problem looks like a missing recording. */
+    @Test fun aRevokedGrantStillThrowsOnTheFastPath() {
+        val port = MemoryDocuments()
+        port.answersMembership = true
+        port.denied = true
+        port.entries = listOf(NativeNode("target", "wanted.opus", false, false))
+
+        try {
+            SafPolicy(port).ownedChildById(dir, "wanted.opus", "target")
+            fail("a revoked grant must not be reported as absent")
+        } catch (e: NativeStorageException) {
+            assertEquals("denied", e.code)
+        }
+    }
+
+    /** Name validation is not skipped by the fast path. */
+    @Test fun theFastPathStillRejectsInvalidNames() {
+        val port = MemoryDocuments()
+        port.answersMembership = true
+        for (bad in listOf("", ".", "..", "a/b", "a\\b")) {
+            try {
+                SafPolicy(port).ownedChildById(dir, bad, "target")
+                fail("must reject invalid component name: '$bad'")
+            } catch (e: NativeStorageException) {
+                assertEquals("invalid", e.code)
+            }
+        }
     }
 }

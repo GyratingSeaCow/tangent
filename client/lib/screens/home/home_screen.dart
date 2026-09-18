@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/local_db.dart';
 
+import '../../data/storage/storage_contract.dart';
 import '../../models/dump_mode.dart';
 
 import '../dump/dump_detail_screen.dart';
@@ -28,6 +29,7 @@ class HomeScreen extends ConsumerStatefulWidget {
 
 class _HomeScreenState extends ConsumerState<HomeScreen> {
   bool _syncing = false;
+  bool _importing = false;
   DumpMode _mode = DumpMode.brainDump;
 
   @override
@@ -126,6 +128,37 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       }
     } finally {
       if (mounted) setState(() => _syncing = false);
+    }
+  }
+
+  /// Copies an existing audio file into the Tangent folder and catalogs it.
+  Future<void> _importAudio() async {
+    final picked = await ref.read(audioFilePickerProvider).pick();
+    if (picked == null) return; // cancelled
+    if (!mounted) return;
+
+    setState(() => _importing = true);
+    try {
+      final result = await ref.read(audioImportRunnerProvider).run(
+            sourcePath: picked.path,
+            mode: _mode.wireValue,
+            title: picked.name,
+          );
+      if (!mounted) return;
+      switch (result) {
+        case Ok<String>():
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Imported ${picked.name}')),
+          );
+        case Fail<String>(:final problem):
+          // Surfaced, never swallowed: a silent failure would look like the
+          // import worked.
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Import failed: ${problem.message}')),
+          );
+      }
+    } finally {
+      if (mounted) setState(() => _importing = false);
     }
   }
 
@@ -242,7 +275,25 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       : 'Tap to record',
               style: Theme.of(context).textTheme.titleMedium,
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: 12),
+            // Jeff: "There also needs to be an Import Audio button which will
+            // allow you to import audio into the tangent folder by copying it
+            // to the tangent folder and then processing it."
+            TextButton.icon(
+              key: const ValueKey('home-import-audio'),
+              // Importing reserves a capture, so it must not run while one is
+              // already active.
+              onPressed: isRecording || _importing ? null : _importAudio,
+              icon: _importing
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.library_music),
+              label: Text(_importing ? 'Importing…' : 'Import audio'),
+            ),
+            const SizedBox(height: 12),
             _ModeSelector(
               current: _mode,
               onChanged: isRecording ? null : (m) => setState(() => _mode = m),

@@ -14,6 +14,7 @@ class DumpPickerSheet extends StatefulWidget {
     super.key,
     required this.dumps,
     this.initiallySelected = const <String>{},
+    this.noun = 'recordings',
   });
 
   /// Candidate dumps, in the order they should be listed.
@@ -22,11 +23,18 @@ class DumpPickerSheet extends StatefulWidget {
   /// Dump ids that start checked (e.g. already embedded in the notebook).
   final Set<String> initiallySelected;
 
+  /// What this sheet is offering, e.g. 'meetings' or 'text notes'.
+  ///
+  /// A sheet full of text notes headed 'Add recordings' reads as the wrong
+  /// list having opened, so the caller names the kind it filtered to.
+  final String noun;
+
   /// Shows the picker and resolves with the chosen ids, or null if cancelled.
   static Future<Set<String>?> show(
     BuildContext context, {
     required List<Dump> dumps,
     Set<String> initiallySelected = const <String>{},
+    String noun = 'recordings',
   }) {
     return showModalBottomSheet<Set<String>>(
       context: context,
@@ -34,6 +42,7 @@ class DumpPickerSheet extends StatefulWidget {
       builder: (sheetContext) => DumpPickerSheet(
         dumps: dumps,
         initiallySelected: initiallySelected,
+        noun: noun,
       ),
     );
   }
@@ -89,7 +98,7 @@ class _DumpPickerSheetState extends State<DumpPickerSheet> {
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
                 child: Text(
-                  'Add recordings',
+                  'Add ${widget.noun}',
                   style: theme.textTheme.titleMedium,
                 ),
               ),
@@ -98,10 +107,10 @@ class _DumpPickerSheetState extends State<DumpPickerSheet> {
                 child: TextField(
                   key: const ValueKey('dump-picker-search'),
                   controller: _search,
-                  decoration: const InputDecoration(
-                    hintText: 'Search recordings…',
-                    prefixIcon: Icon(Icons.search),
-                    border: OutlineInputBorder(),
+                  decoration: InputDecoration(
+                    hintText: 'Search ${widget.noun}…',
+                    prefixIcon: const Icon(Icons.search),
+                    border: const OutlineInputBorder(),
                     isDense: true,
                   ),
                   onChanged: (value) => setState(() => _query = value),
