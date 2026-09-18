@@ -14,6 +14,8 @@ const _notebookColumns = [
   'updated_at',
   'doc_json',
   'ink_json',
+  // v7: folders are metadata, so filing a notebook is a column, not a move.
+  'folder_id',
 ];
 
 const _insertNotebook =
@@ -24,7 +26,7 @@ List<Object?> _columnNames(Database db, String table) =>
     db.select('PRAGMA table_info($table)').map((r) => r['name']).toList();
 
 void main() {
-  test('a fresh database is created at schema v6 with the notebooks table',
+  test('a fresh database is created at the current schema with notebooks',
       () async {
     final sql = sqlite3.openInMemory();
     final db = LocalDb.forTesting(NativeDatabase.opened(sql));
@@ -32,8 +34,8 @@ void main() {
 
     await db.listDumps();
 
-    expect(db.schemaVersion, 6);
-    expect(sql.userVersion, 6);
+    expect(db.schemaVersion, 7);
+    expect(sql.userVersion, 7);
     expect(_columnNames(sql, 'notebooks'), _notebookColumns);
     expect(
       sql.select('PRAGMA foreign_key_list(notebooks)'),
@@ -59,7 +61,7 @@ void main() {
 
     await db.listDumps();
 
-    expect(sql.userVersion, 6);
+    expect(sql.userVersion, 7);
     expect(_columnNames(sql, 'notebooks'), _notebookColumns);
     expect(sqlRows(sql, 'dumps'), before);
     expect(sqlRows(sql, 'sync_queue'), queue);
@@ -97,7 +99,7 @@ void main() {
 
     sql = sqlite3.open(file.path);
     addTearDown(sql.dispose);
-    expect(sql.userVersion, 6);
+    expect(sql.userVersion, 7);
     expect(_columnNames(sql, 'notebooks'), _notebookColumns);
     expect(sqlRows(sql, 'dumps'), before);
     expect(sqlRows(sql, 'sync_queue'), queue);

@@ -60,6 +60,24 @@ class SyncQueue extends Table {
 /// Deliberately has no relationship to [Dumps]. A notebook may embed a dump as
 /// a card, but embedding never moves, copies, deletes or cascades a recording;
 /// a missing dump renders as a placeholder instead.
+/// A folder is a label, not a directory.
+///
+/// Tangent publishes notebooks and recordings to durable storage (SAF on
+/// Android). Making folders physical would mean moving published files on
+/// every reorganise, and a half-failed move leaves orphans — the exact class
+/// of defect the storage catalog exists to prevent. A nullable id on the row
+/// moves nothing on disk and carries cleanly through sync.
+@DataClassName('Folder')
+class Folders extends Table {
+  @override
+  String get tableName => 'folders';
+  TextColumn get id => text()();
+  TextColumn get name => text()();
+  IntColumn get createdAt => integer()();
+  @override
+  Set<Column> get primaryKey => {id};
+}
+
 @DataClassName('NotebookRow')
 class Notebooks extends Table {
   @override
@@ -73,6 +91,10 @@ class Notebooks extends Table {
   IntColumn get updatedAt => integer()();
   TextColumn get docJson => text()();
   TextColumn get inkJson => text()();
+
+  /// Null means unfiled. Deliberately NOT a foreign key with cascade: a
+  /// deleted folder must unfile its notebooks, never delete them.
+  TextColumn get folderId => text().nullable()();
   @override
   Set<Column> get primaryKey => {id};
 }
@@ -80,6 +102,7 @@ class Notebooks extends Table {
 @DriftDatabase(
   tables: [
     Dumps,
+    Folders,
     SyncQueue,
     StorageLocations,
     StorageCatalogStates,
@@ -96,7 +119,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   LocalDb.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 6;
+  int get schemaVersion => 7;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -149,8 +172,71 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
             // no existing row is touched.
             await m.createTable(notebooks);
           }
+          if (from < 7) {
+            // Folders arrive empty and every existing notebook stays unfiled,
+            // so nothing a user already has can move or disappear.
+            await m.createTable(folders);
+            // The v6 step above calls createTable(notebooks), and createTable
+            // builds from the CURRENT definition — which already carries
+            // folder_id. Only a database that genuinely arrived here with a
+            // v6-shaped notebooks table needs the column added; adding it to a
+            // table just created would throw "duplicate column name" and leave
+            // the app unable to open its own database.
+            if (from >= 6) {
+              await m.addColumn(notebooks, notebooks.folderId);
+            }
+          }
         },
       );
+
+  // ---- folders -----------------------------------------------------------
+
+  /// Creates a folder and returns its id.
+  Future<String> createFolder({required String name, String? id}) async {
+    final String folderId =
+        id ?? 'folder-\${DateTime.now().microsecondsSinceEpoch}';
+    await into(folders).insert(
+      FoldersCompanion.insert(
+        id: folderId,
+        name: name,
+        createdAt: DateTime.now().millisecondsSinceEpoch,
+      ),
+    );
+    return folderId;
+  }
+
+  Stream<List<Folder>> watchFolders() =>
+      (select(folders)..orderBy([(t) => OrderingTerm.asc(t.name)])).watch();
+
+  Future<void> renameFolder({
+    required String folderId,
+    required String name,
+  }) async {
+    await (update(folders)..where((t) => t.id.equals(folderId)))
+        .write(FoldersCompanion(name: Value<String>(name)));
+  }
+
+  /// Files a notebook, or unfiles it when [folderId] is null.
+  Future<void> moveNotebookToFolder({
+    required String notebookId,
+    required String? folderId,
+  }) async {
+    await (update(notebooks)..where((t) => t.id.equals(notebookId))).write(
+      NotebooksCompanion(folderId: Value<String?>(folderId)),
+    );
+  }
+
+  /// Deletes a folder and unfiles everything inside it.
+  ///
+  /// The contents are never deleted: a folder is a label, and removing a label
+  /// must not destroy the work it was attached to.
+  Future<void> deleteFolder(String folderId) async {
+    await transaction(() async {
+      await (update(notebooks)..where((t) => t.folderId.equals(folderId)))
+          .write(const NotebooksCompanion(folderId: Value<String?>(null)));
+      await (delete(folders)..where((t) => t.id.equals(folderId))).go();
+    });
+  }
 
   Future<void> _createStorageCatalog(Migrator m) async {
     await m.createTable(storageLocations);

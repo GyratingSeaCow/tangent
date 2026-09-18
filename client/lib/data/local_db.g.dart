@@ -1067,6 +1067,231 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
   }
 }
 
+class $FoldersTable extends Folders with TableInfo<$FoldersTable, Folder> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $FoldersTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<String> id = GeneratedColumn<String>(
+      'id', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _nameMeta = const VerificationMeta('name');
+  @override
+  late final GeneratedColumn<String> name = GeneratedColumn<String>(
+      'name', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _createdAtMeta =
+      const VerificationMeta('createdAt');
+  @override
+  late final GeneratedColumn<int> createdAt = GeneratedColumn<int>(
+      'created_at', aliasedName, false,
+      type: DriftSqlType.int, requiredDuringInsert: true);
+  @override
+  List<GeneratedColumn> get $columns => [id, name, createdAt];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'folders';
+  @override
+  VerificationContext validateIntegrity(Insertable<Folder> instance,
+      {bool isInserting = false}) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    } else if (isInserting) {
+      context.missing(_idMeta);
+    }
+    if (data.containsKey('name')) {
+      context.handle(
+          _nameMeta, name.isAcceptableOrUnknown(data['name']!, _nameMeta));
+    } else if (isInserting) {
+      context.missing(_nameMeta);
+    }
+    if (data.containsKey('created_at')) {
+      context.handle(_createdAtMeta,
+          createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta));
+    } else if (isInserting) {
+      context.missing(_createdAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  Folder map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return Folder(
+      id: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}id'])!,
+      name: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}name'])!,
+      createdAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}created_at'])!,
+    );
+  }
+
+  @override
+  $FoldersTable createAlias(String alias) {
+    return $FoldersTable(attachedDatabase, alias);
+  }
+}
+
+class Folder extends DataClass implements Insertable<Folder> {
+  final String id;
+  final String name;
+  final int createdAt;
+  const Folder({required this.id, required this.name, required this.createdAt});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<String>(id);
+    map['name'] = Variable<String>(name);
+    map['created_at'] = Variable<int>(createdAt);
+    return map;
+  }
+
+  FoldersCompanion toCompanion(bool nullToAbsent) {
+    return FoldersCompanion(
+      id: Value(id),
+      name: Value(name),
+      createdAt: Value(createdAt),
+    );
+  }
+
+  factory Folder.fromJson(Map<String, dynamic> json,
+      {ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return Folder(
+      id: serializer.fromJson<String>(json['id']),
+      name: serializer.fromJson<String>(json['name']),
+      createdAt: serializer.fromJson<int>(json['createdAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<String>(id),
+      'name': serializer.toJson<String>(name),
+      'createdAt': serializer.toJson<int>(createdAt),
+    };
+  }
+
+  Folder copyWith({String? id, String? name, int? createdAt}) => Folder(
+        id: id ?? this.id,
+        name: name ?? this.name,
+        createdAt: createdAt ?? this.createdAt,
+      );
+  Folder copyWithCompanion(FoldersCompanion data) {
+    return Folder(
+      id: data.id.present ? data.id.value : this.id,
+      name: data.name.present ? data.name.value : this.name,
+      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('Folder(')
+          ..write('id: $id, ')
+          ..write('name: $name, ')
+          ..write('createdAt: $createdAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(id, name, createdAt);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is Folder &&
+          other.id == this.id &&
+          other.name == this.name &&
+          other.createdAt == this.createdAt);
+}
+
+class FoldersCompanion extends UpdateCompanion<Folder> {
+  final Value<String> id;
+  final Value<String> name;
+  final Value<int> createdAt;
+  final Value<int> rowid;
+  const FoldersCompanion({
+    this.id = const Value.absent(),
+    this.name = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  FoldersCompanion.insert({
+    required String id,
+    required String name,
+    required int createdAt,
+    this.rowid = const Value.absent(),
+  })  : id = Value(id),
+        name = Value(name),
+        createdAt = Value(createdAt);
+  static Insertable<Folder> custom({
+    Expression<String>? id,
+    Expression<String>? name,
+    Expression<int>? createdAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (name != null) 'name': name,
+      if (createdAt != null) 'created_at': createdAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  FoldersCompanion copyWith(
+      {Value<String>? id,
+      Value<String>? name,
+      Value<int>? createdAt,
+      Value<int>? rowid}) {
+    return FoldersCompanion(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      createdAt: createdAt ?? this.createdAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<String>(id.value);
+    }
+    if (name.present) {
+      map['name'] = Variable<String>(name.value);
+    }
+    if (createdAt.present) {
+      map['created_at'] = Variable<int>(createdAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('FoldersCompanion(')
+          ..write('id: $id, ')
+          ..write('name: $name, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 class $SyncQueueTable extends SyncQueue
     with TableInfo<$SyncQueueTable, SyncQueueRow> {
   @override
@@ -3749,9 +3974,15 @@ class $NotebooksTable extends Notebooks
   late final GeneratedColumn<String> inkJson = GeneratedColumn<String>(
       'ink_json', aliasedName, false,
       type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _folderIdMeta =
+      const VerificationMeta('folderId');
+  @override
+  late final GeneratedColumn<String> folderId = GeneratedColumn<String>(
+      'folder_id', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
   @override
   List<GeneratedColumn> get $columns =>
-      [id, title, createdAt, updatedAt, docJson, inkJson];
+      [id, title, createdAt, updatedAt, docJson, inkJson, folderId];
   @override
   String get aliasedName => _alias ?? actualTableName;
   @override
@@ -3797,6 +4028,10 @@ class $NotebooksTable extends Notebooks
     } else if (isInserting) {
       context.missing(_inkJsonMeta);
     }
+    if (data.containsKey('folder_id')) {
+      context.handle(_folderIdMeta,
+          folderId.isAcceptableOrUnknown(data['folder_id']!, _folderIdMeta));
+    }
     return context;
   }
 
@@ -3818,6 +4053,8 @@ class $NotebooksTable extends Notebooks
           .read(DriftSqlType.string, data['${effectivePrefix}doc_json'])!,
       inkJson: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}ink_json'])!,
+      folderId: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}folder_id']),
     );
   }
 
@@ -3837,13 +4074,18 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
   final int updatedAt;
   final String docJson;
   final String inkJson;
+
+  /// Null means unfiled. Deliberately NOT a foreign key with cascade: a
+  /// deleted folder must unfile its notebooks, never delete them.
+  final String? folderId;
   const NotebookRow(
       {required this.id,
       required this.title,
       required this.createdAt,
       required this.updatedAt,
       required this.docJson,
-      required this.inkJson});
+      required this.inkJson,
+      this.folderId});
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -3853,6 +4095,9 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
     map['updated_at'] = Variable<int>(updatedAt);
     map['doc_json'] = Variable<String>(docJson);
     map['ink_json'] = Variable<String>(inkJson);
+    if (!nullToAbsent || folderId != null) {
+      map['folder_id'] = Variable<String>(folderId);
+    }
     return map;
   }
 
@@ -3864,6 +4109,9 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
       updatedAt: Value(updatedAt),
       docJson: Value(docJson),
       inkJson: Value(inkJson),
+      folderId: folderId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(folderId),
     );
   }
 
@@ -3877,6 +4125,7 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
       updatedAt: serializer.fromJson<int>(json['updatedAt']),
       docJson: serializer.fromJson<String>(json['docJson']),
       inkJson: serializer.fromJson<String>(json['inkJson']),
+      folderId: serializer.fromJson<String?>(json['folderId']),
     );
   }
   @override
@@ -3889,6 +4138,7 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
       'updatedAt': serializer.toJson<int>(updatedAt),
       'docJson': serializer.toJson<String>(docJson),
       'inkJson': serializer.toJson<String>(inkJson),
+      'folderId': serializer.toJson<String?>(folderId),
     };
   }
 
@@ -3898,7 +4148,8 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
           int? createdAt,
           int? updatedAt,
           String? docJson,
-          String? inkJson}) =>
+          String? inkJson,
+          Value<String?> folderId = const Value.absent()}) =>
       NotebookRow(
         id: id ?? this.id,
         title: title ?? this.title,
@@ -3906,6 +4157,7 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
         updatedAt: updatedAt ?? this.updatedAt,
         docJson: docJson ?? this.docJson,
         inkJson: inkJson ?? this.inkJson,
+        folderId: folderId.present ? folderId.value : this.folderId,
       );
   NotebookRow copyWithCompanion(NotebooksCompanion data) {
     return NotebookRow(
@@ -3915,6 +4167,7 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
       updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
       docJson: data.docJson.present ? data.docJson.value : this.docJson,
       inkJson: data.inkJson.present ? data.inkJson.value : this.inkJson,
+      folderId: data.folderId.present ? data.folderId.value : this.folderId,
     );
   }
 
@@ -3926,14 +4179,15 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt, ')
           ..write('docJson: $docJson, ')
-          ..write('inkJson: $inkJson')
+          ..write('inkJson: $inkJson, ')
+          ..write('folderId: $folderId')
           ..write(')'))
         .toString();
   }
 
   @override
   int get hashCode =>
-      Object.hash(id, title, createdAt, updatedAt, docJson, inkJson);
+      Object.hash(id, title, createdAt, updatedAt, docJson, inkJson, folderId);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -3943,7 +4197,8 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
           other.createdAt == this.createdAt &&
           other.updatedAt == this.updatedAt &&
           other.docJson == this.docJson &&
-          other.inkJson == this.inkJson);
+          other.inkJson == this.inkJson &&
+          other.folderId == this.folderId);
 }
 
 class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
@@ -3953,6 +4208,7 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
   final Value<int> updatedAt;
   final Value<String> docJson;
   final Value<String> inkJson;
+  final Value<String?> folderId;
   final Value<int> rowid;
   const NotebooksCompanion({
     this.id = const Value.absent(),
@@ -3961,6 +4217,7 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
     this.updatedAt = const Value.absent(),
     this.docJson = const Value.absent(),
     this.inkJson = const Value.absent(),
+    this.folderId = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   NotebooksCompanion.insert({
@@ -3970,6 +4227,7 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
     required int updatedAt,
     required String docJson,
     required String inkJson,
+    this.folderId = const Value.absent(),
     this.rowid = const Value.absent(),
   })  : id = Value(id),
         title = Value(title),
@@ -3984,6 +4242,7 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
     Expression<int>? updatedAt,
     Expression<String>? docJson,
     Expression<String>? inkJson,
+    Expression<String>? folderId,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -3993,6 +4252,7 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
       if (updatedAt != null) 'updated_at': updatedAt,
       if (docJson != null) 'doc_json': docJson,
       if (inkJson != null) 'ink_json': inkJson,
+      if (folderId != null) 'folder_id': folderId,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -4004,6 +4264,7 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
       Value<int>? updatedAt,
       Value<String>? docJson,
       Value<String>? inkJson,
+      Value<String?>? folderId,
       Value<int>? rowid}) {
     return NotebooksCompanion(
       id: id ?? this.id,
@@ -4012,6 +4273,7 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
       updatedAt: updatedAt ?? this.updatedAt,
       docJson: docJson ?? this.docJson,
       inkJson: inkJson ?? this.inkJson,
+      folderId: folderId ?? this.folderId,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -4037,6 +4299,9 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
     if (inkJson.present) {
       map['ink_json'] = Variable<String>(inkJson.value);
     }
+    if (folderId.present) {
+      map['folder_id'] = Variable<String>(folderId.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -4052,6 +4317,7 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
           ..write('updatedAt: $updatedAt, ')
           ..write('docJson: $docJson, ')
           ..write('inkJson: $inkJson, ')
+          ..write('folderId: $folderId, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -4062,6 +4328,7 @@ abstract class _$LocalDb extends GeneratedDatabase {
   _$LocalDb(QueryExecutor e) : super(e);
   $LocalDbManager get managers => $LocalDbManager(this);
   late final $DumpsTable dumps = $DumpsTable(this);
+  late final $FoldersTable folders = $FoldersTable(this);
   late final $SyncQueueTable syncQueue = $SyncQueueTable(this);
   late final $StorageLocationsTable storageLocations =
       $StorageLocationsTable(this);
@@ -4082,6 +4349,7 @@ abstract class _$LocalDb extends GeneratedDatabase {
   @override
   List<DatabaseSchemaEntity> get allSchemaEntities => [
         dumps,
+        folders,
         syncQueue,
         storageLocations,
         storageCatalogStates,
@@ -4614,6 +4882,140 @@ typedef $$DumpsTableProcessedTableManager = ProcessedTableManager<
     (DumpRow, $$DumpsTableReferences),
     DumpRow,
     PrefetchHooks Function({bool syncQueueRefs})>;
+typedef $$FoldersTableCreateCompanionBuilder = FoldersCompanion Function({
+  required String id,
+  required String name,
+  required int createdAt,
+  Value<int> rowid,
+});
+typedef $$FoldersTableUpdateCompanionBuilder = FoldersCompanion Function({
+  Value<String> id,
+  Value<String> name,
+  Value<int> createdAt,
+  Value<int> rowid,
+});
+
+class $$FoldersTableFilterComposer extends Composer<_$LocalDb, $FoldersTable> {
+  $$FoldersTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get id => $composableBuilder(
+      column: $table.id, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get name => $composableBuilder(
+      column: $table.name, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get createdAt => $composableBuilder(
+      column: $table.createdAt, builder: (column) => ColumnFilters(column));
+}
+
+class $$FoldersTableOrderingComposer
+    extends Composer<_$LocalDb, $FoldersTable> {
+  $$FoldersTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get id => $composableBuilder(
+      column: $table.id, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get name => $composableBuilder(
+      column: $table.name, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get createdAt => $composableBuilder(
+      column: $table.createdAt, builder: (column) => ColumnOrderings(column));
+}
+
+class $$FoldersTableAnnotationComposer
+    extends Composer<_$LocalDb, $FoldersTable> {
+  $$FoldersTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<String> get name =>
+      $composableBuilder(column: $table.name, builder: (column) => column);
+
+  GeneratedColumn<int> get createdAt =>
+      $composableBuilder(column: $table.createdAt, builder: (column) => column);
+}
+
+class $$FoldersTableTableManager extends RootTableManager<
+    _$LocalDb,
+    $FoldersTable,
+    Folder,
+    $$FoldersTableFilterComposer,
+    $$FoldersTableOrderingComposer,
+    $$FoldersTableAnnotationComposer,
+    $$FoldersTableCreateCompanionBuilder,
+    $$FoldersTableUpdateCompanionBuilder,
+    (Folder, BaseReferences<_$LocalDb, $FoldersTable, Folder>),
+    Folder,
+    PrefetchHooks Function()> {
+  $$FoldersTableTableManager(_$LocalDb db, $FoldersTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$FoldersTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$FoldersTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$FoldersTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback: ({
+            Value<String> id = const Value.absent(),
+            Value<String> name = const Value.absent(),
+            Value<int> createdAt = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              FoldersCompanion(
+            id: id,
+            name: name,
+            createdAt: createdAt,
+            rowid: rowid,
+          ),
+          createCompanionCallback: ({
+            required String id,
+            required String name,
+            required int createdAt,
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              FoldersCompanion.insert(
+            id: id,
+            name: name,
+            createdAt: createdAt,
+            rowid: rowid,
+          ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ));
+}
+
+typedef $$FoldersTableProcessedTableManager = ProcessedTableManager<
+    _$LocalDb,
+    $FoldersTable,
+    Folder,
+    $$FoldersTableFilterComposer,
+    $$FoldersTableOrderingComposer,
+    $$FoldersTableAnnotationComposer,
+    $$FoldersTableCreateCompanionBuilder,
+    $$FoldersTableUpdateCompanionBuilder,
+    (Folder, BaseReferences<_$LocalDb, $FoldersTable, Folder>),
+    Folder,
+    PrefetchHooks Function()>;
 typedef $$SyncQueueTableCreateCompanionBuilder = SyncQueueCompanion Function({
   Value<int> id,
   required String dumpId,
@@ -6098,6 +6500,7 @@ typedef $$NotebooksTableCreateCompanionBuilder = NotebooksCompanion Function({
   required int updatedAt,
   required String docJson,
   required String inkJson,
+  Value<String?> folderId,
   Value<int> rowid,
 });
 typedef $$NotebooksTableUpdateCompanionBuilder = NotebooksCompanion Function({
@@ -6107,6 +6510,7 @@ typedef $$NotebooksTableUpdateCompanionBuilder = NotebooksCompanion Function({
   Value<int> updatedAt,
   Value<String> docJson,
   Value<String> inkJson,
+  Value<String?> folderId,
   Value<int> rowid,
 });
 
@@ -6136,6 +6540,9 @@ class $$NotebooksTableFilterComposer
 
   ColumnFilters<String> get inkJson => $composableBuilder(
       column: $table.inkJson, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get folderId => $composableBuilder(
+      column: $table.folderId, builder: (column) => ColumnFilters(column));
 }
 
 class $$NotebooksTableOrderingComposer
@@ -6164,6 +6571,9 @@ class $$NotebooksTableOrderingComposer
 
   ColumnOrderings<String> get inkJson => $composableBuilder(
       column: $table.inkJson, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get folderId => $composableBuilder(
+      column: $table.folderId, builder: (column) => ColumnOrderings(column));
 }
 
 class $$NotebooksTableAnnotationComposer
@@ -6192,6 +6602,9 @@ class $$NotebooksTableAnnotationComposer
 
   GeneratedColumn<String> get inkJson =>
       $composableBuilder(column: $table.inkJson, builder: (column) => column);
+
+  GeneratedColumn<String> get folderId =>
+      $composableBuilder(column: $table.folderId, builder: (column) => column);
 }
 
 class $$NotebooksTableTableManager extends RootTableManager<
@@ -6223,6 +6636,7 @@ class $$NotebooksTableTableManager extends RootTableManager<
             Value<int> updatedAt = const Value.absent(),
             Value<String> docJson = const Value.absent(),
             Value<String> inkJson = const Value.absent(),
+            Value<String?> folderId = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               NotebooksCompanion(
@@ -6232,6 +6646,7 @@ class $$NotebooksTableTableManager extends RootTableManager<
             updatedAt: updatedAt,
             docJson: docJson,
             inkJson: inkJson,
+            folderId: folderId,
             rowid: rowid,
           ),
           createCompanionCallback: ({
@@ -6241,6 +6656,7 @@ class $$NotebooksTableTableManager extends RootTableManager<
             required int updatedAt,
             required String docJson,
             required String inkJson,
+            Value<String?> folderId = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               NotebooksCompanion.insert(
@@ -6250,6 +6666,7 @@ class $$NotebooksTableTableManager extends RootTableManager<
             updatedAt: updatedAt,
             docJson: docJson,
             inkJson: inkJson,
+            folderId: folderId,
             rowid: rowid,
           ),
           withReferenceMapper: (p0) => p0
@@ -6277,6 +6694,8 @@ class $LocalDbManager {
   $LocalDbManager(this._db);
   $$DumpsTableTableManager get dumps =>
       $$DumpsTableTableManager(_db, _db.dumps);
+  $$FoldersTableTableManager get folders =>
+      $$FoldersTableTableManager(_db, _db.folders);
   $$SyncQueueTableTableManager get syncQueue =>
       $$SyncQueueTableTableManager(_db, _db.syncQueue);
   $$StorageLocationsTableTableManager get storageLocations =>
