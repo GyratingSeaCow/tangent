@@ -124,6 +124,9 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
     for (final TextEditingController controller in _controllers.values) {
       controller.dispose();
     }
+    for (final FocusNode node in _focusNodes.values) {
+      node.dispose();
+    }
     super.dispose();
   }
 
@@ -176,6 +179,14 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
         return controller;
       });
 
+  /// Focus nodes live beside the controllers so a newly inserted list item
+  /// can take the caret immediately. Created lazily and disposed with the
+  /// block, exactly like its controller.
+  final Map<String, FocusNode> _focusNodes = <String, FocusNode>{};
+
+  FocusNode _focusFor(String id) =>
+      _focusNodes.putIfAbsent(id, () => FocusNode());
+
   void _markDirty() {
     if (_hydrating || _dirty) return;
     setState(() => _dirty = true);
@@ -209,6 +220,42 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
     });
   }
 
+  /// Starts a new checkbox item below [source], as Enter does in any list
+  /// editor.
+  ///
+  /// Jeff: "when you are in the text area of a checkbox item, you can hit
+  /// enter and it will go into another checkbox list item, not expand the
+  /// box." A multi-line field is right for prose but wrong for a list, where
+  /// Enter means "next item".
+  ///
+  /// Enter on an ALREADY EMPTY item ends the list instead — the universal
+  /// escape hatch, and without it there is no way to stop adding items.
+  void _splitCheckboxBlock(NotebookCheckboxBlock source) {
+    final int index =
+        _blocks.indexWhere((NotebookBlock block) => block.id == source.id);
+    if (index < 0) return;
+
+    if (_controllerFor(source.id, source.text).text.isEmpty) {
+      _removeBlock(source.id);
+      return;
+    }
+
+    final String id = _uuid.v4();
+    _controllerFor(id, '');
+    setState(() {
+      _blocks = <NotebookBlock>[
+        ..._blocks.take(index + 1),
+        // Unplaced (x/y null) so it flows directly beneath its source rather
+        // than landing on top of it at identical coordinates.
+        NotebookCheckboxBlock(id: id, text: ''),
+        ..._blocks.skip(index + 1),
+      ];
+      _dirty = true;
+    });
+    // Move the caret into the new item so typing continues uninterrupted.
+    _focusFor(id).requestFocus();
+  }
+
   void _toggleChecked(NotebookCheckboxBlock block, bool checked) {
     setState(() {
       _blocks = <NotebookBlock>[
@@ -230,6 +277,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
       _dirty = true;
     });
     _controllers.remove(id)?.dispose();
+    _focusNodes.remove(id)?.dispose();
   }
 
   /// The card reports interim pan positions AND the settled one through the
@@ -475,11 +523,13 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                         child: _BackspaceDeletes(
                           controller: _controllerFor(c.id, c.text),
                           onDeleteLine: () => _removeBlock(c.id),
+                          onSplitLine: () => _splitCheckboxBlock(c),
                           child: TextField(
                             key: ValueKey<String>(
                               'notebook-checkbox-block-${c.id}',
                             ),
                             controller: _controllerFor(c.id, c.text),
+                            focusNode: _focusFor(c.id),
                             maxLines: null,
                             style: _pageTextStyle,
                             cursorColor: NotebookInkCanvas.inkColor,
@@ -890,22 +940,39 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
 /// The key event is intercepted ABOVE the field: a TextField with an empty
 /// value swallows backspace itself and reports nothing, so there is no
 /// callback to hang this off.
+/// Keyboard behaviour for a list line: backspace deletes an empty one, and
+/// (for checkbox items) enter starts the next one.
 class _BackspaceDeletes extends StatelessWidget {
   const _BackspaceDeletes({
     required this.controller,
     required this.onDeleteLine,
     required this.child,
+    this.onSplitLine,
   });
 
   final TextEditingController controller;
   final VoidCallback onDeleteLine;
+
+  /// Non-null only for checkbox items. A plain text block leaves this null so
+  /// enter keeps inserting newlines — a paragraph is meant to be multi-line.
+  final VoidCallback? onSplitLine;
   final Widget child;
 
   @override
   Widget build(BuildContext context) => Focus(
         onKeyEvent: (FocusNode node, KeyEvent event) {
-          if (event is! KeyDownEvent ||
-              event.logicalKey != LogicalKeyboardKey.backspace) {
+          if (event is! KeyDownEvent) return KeyEventResult.ignored;
+
+          if (event.logicalKey == LogicalKeyboardKey.enter) {
+            final VoidCallback? split = onSplitLine;
+            if (split == null) return KeyEventResult.ignored;
+            // Handled BEFORE the field sees it, so no newline is inserted and
+            // the box never grows.
+            split();
+            return KeyEventResult.handled;
+          }
+
+          if (event.logicalKey != LogicalKeyboardKey.backspace) {
             return KeyEventResult.ignored;
           }
           // Only when the line is genuinely empty: otherwise backspace must

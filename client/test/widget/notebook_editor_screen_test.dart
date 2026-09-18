@@ -666,6 +666,162 @@ void main() {
     await unmount(tester);
   });
 
+  testWidgets('enter on a checkbox line starts the next checkbox item',
+      (tester) async {
+    // Jeff: "when you are in the text area of a checkbox item, you can hit
+    // enter and it will go into another checkbox list item, not expand the
+    // box."
+    await mountEditor(
+      tester,
+      notebook: testNotebook(
+        id: 'nb-1',
+        blocks: const <NotebookBlock>[
+          NotebookCheckboxBlock(id: 'b1', text: 'milk', x: 20, y: 40),
+        ],
+      ),
+    );
+
+    expect(checkboxBlocks(), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('notebook-checkbox-block-b1')));
+    await tester.pumpAndSettle();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
+
+    expect(
+      checkboxBlocks(),
+      findsNWidgets(2),
+      reason: 'enter must start a new checkbox item, not grow the field',
+    );
+    // The original line keeps its text: enter splits nothing, it appends.
+    expect(
+      tester
+          .widget<TextField>(
+            find.byKey(const ValueKey('notebook-checkbox-block-b1')),
+          )
+          .controller!
+          .text,
+      'milk',
+      reason: 'the line being left must keep its own text',
+    );
+  });
+
+  testWidgets('the new checkbox item is inserted directly after its source',
+      (tester) async {
+    // Appending to the end of the document would scatter a list being typed
+    // top-to-bottom, so the new item must land next to the one it came from.
+    await mountEditor(
+      tester,
+      notebook: testNotebook(
+        id: 'nb-1',
+        blocks: const <NotebookBlock>[
+          NotebookCheckboxBlock(id: 'b1', text: 'milk', x: 20, y: 40),
+          NotebookTextBlock(id: 'b2', text: 'trailing note', x: 20, y: 160),
+        ],
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('notebook-checkbox-block-b1')));
+    await tester.pumpAndSettle();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
+
+    // Assert on what is RENDERED, in layout order: the new item must sit
+    // between its source and the block that followed it. Match Positioned
+    // exactly — 'notebook-block-grip-' and '-remove-' share the prefix.
+    final RegExp blockKey = RegExp(r'^notebook-block-[^-]');
+    final List<String> keysInOrder = tester
+        .widgetList<Positioned>(
+          find.byWidgetPredicate(
+            (Widget w) =>
+                w is Positioned &&
+                w.key is ValueKey<String> &&
+                blockKey.hasMatch((w.key! as ValueKey<String>).value),
+          ),
+        )
+        .map((Positioned w) => (w.key! as ValueKey<String>).value)
+        .toList();
+
+    expect(
+      keysInOrder.first,
+      'notebook-block-b1',
+      reason: 'the source item stays first',
+    );
+    expect(
+      keysInOrder.last,
+      'notebook-block-b2',
+      reason: 'the following text block stays last, so the new item is between',
+    );
+    expect(
+      keysInOrder.length,
+      3,
+      reason: 'exactly one new block was inserted',
+    );
+  });
+
+  testWidgets('enter on a plain text line still inserts a newline',
+      (tester) async {
+    // The checkbox behaviour must not leak into ordinary prose blocks, where
+    // a multi-line paragraph is the whole point.
+    await mountEditor(
+      tester,
+      notebook: testNotebook(
+        id: 'nb-1',
+        blocks: const <NotebookBlock>[
+          NotebookTextBlock(id: 'b1', text: 'para', x: 20, y: 40),
+        ],
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('notebook-text-block-b1')));
+    await tester.pumpAndSettle();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
+
+    expect(
+      checkboxBlocks(),
+      findsNothing,
+      reason: 'a text block must never spawn a checkbox on enter',
+    );
+    expect(
+      find.byKey(const ValueKey('notebook-block-b1')),
+      findsOneWidget,
+      reason: 'the text block must survive and keep taking newlines',
+    );
+  });
+
+  testWidgets('enter on an empty checkbox item ends the list instead',
+      (tester) async {
+    // Standard list behaviour everywhere else: enter on a blank item exits
+    // the list rather than producing an endless run of empty checkboxes.
+    await mountEditor(
+      tester,
+      notebook: testNotebook(
+        id: 'nb-1',
+        blocks: const <NotebookBlock>[
+          NotebookCheckboxBlock(id: 'b1', text: 'milk', x: 20, y: 40),
+          NotebookCheckboxBlock(id: 'b2', text: '', x: 20, y: 160),
+        ],
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('notebook-checkbox-block-b2')));
+    await tester.pumpAndSettle();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
+
+    expect(
+      checkboxBlocks(),
+      findsOneWidget,
+      reason: 'enter on a blank item must end the list, not extend it',
+    );
+    expect(
+      find.byKey(const ValueKey('notebook-block-b1')),
+      findsOneWidget,
+      reason: 'the filled item above must survive',
+    );
+  });
+
   testWidgets('backspace with text on the line only deletes a character',
       (tester) async {
     await mountEditor(
