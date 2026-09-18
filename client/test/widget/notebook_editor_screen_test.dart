@@ -477,6 +477,13 @@ void main() {
       <String>['t1'],
       reason: 'the text-note import must offer text notes only',
     );
+    // A sheet full of text notes headed "Add recordings" reads as the wrong
+    // list having opened.
+    expect(
+      find.text('Add text notes'),
+      findsOneWidget,
+      reason: 'the sheet must name the kind it is actually offering',
+    );
 
     await unmount(tester);
   });

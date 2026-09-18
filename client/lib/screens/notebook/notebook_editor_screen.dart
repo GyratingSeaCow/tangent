@@ -242,12 +242,19 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
   /// Each import entry filters the picker to its own kind: with 60 recordings
   /// on the device, an unfiltered list buries the three text notes Jeff was
   /// actually looking for.
-  Future<void> _importDumps(List<Dump> dumps, DumpMode mode) =>
-      _addRecordings(
+  Future<void> _importDumps(List<Dump> dumps, DumpMode mode) => _addRecordings(
         dumps.where((Dump d) => d.mode == mode).toList(growable: false),
+        noun: switch (mode) {
+          DumpMode.brainDump => 'dumps',
+          DumpMode.meeting => 'meetings',
+          DumpMode.textNote => 'text notes',
+        },
       );
 
-  Future<void> _addRecordings(List<Dump> dumps) async {
+  Future<void> _addRecordings(
+    List<Dump> dumps, {
+    String noun = 'recordings',
+  }) async {
     final Set<String> embedded = <String>{
       for (final NotebookBlock block in _blocks)
         if (block is NotebookDumpCardBlock) block.dumpId,
@@ -256,6 +263,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
       context,
       dumps: dumps,
       initiallySelected: embedded,
+      noun: noun,
     );
     if (picked == null || !mounted) return;
     // Append only: unchecking an already-embedded recording in the picker is
