@@ -5,6 +5,7 @@ import 'package:uuid/uuid.dart';
 import '../../screens/home/home_screen.dart' show localDbProvider;
 import '../../screens/recording/recording_controller.dart'
     show recordingServiceProvider;
+import '../../screens/settings/settings_screen.dart' show settingsStoreProvider;
 import '../../services/recording_coordinator.dart';
 import '../audio_storage.dart';
 import 'filesystem_storage_backend.dart';
@@ -163,5 +164,8 @@ final recordingCoordinatorProvider = Provider<RecordingCoordinator>(
     mutations: ref.watch(recordingMutationCoordinatorProvider),
     recorder: ref.watch(recordingServiceProvider),
     now: DateTime.now,
+    // Same store the recorder reads, so the staging extension and the capture
+    // path always agree about whether this recording is amplified.
+    micGain: () => ref.read(settingsStoreProvider).micGain,
   ),
 );

@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/settings_store.dart';
 import '../server/server_connection_screen.dart';
 import 'input_device_section.dart';
+import 'mic_gain_section.dart';
 import 'storage_settings_section.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
@@ -122,6 +123,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           const StorageSettingsSection(),
           const Divider(),
           const InputDeviceSection(),
+          const MicGainSection(),
           const Divider(),
           if (!_loaded)
             const ListTile(title: Text('Loading settings…'))

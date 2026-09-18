@@ -48,8 +48,22 @@ double clampMicGain(double? value) {
 /// gain must really apply, or the setting would silently do nothing.
 String captureExtensionForGain(String mode, double gain) {
   if (mode == 'text_note') return 'md';
-  return clampMicGain(gain) == defaultMicGain ? 'opus' : 'wav';
+  return usesAmplifiedCapture(gain) ? 'wav' : 'opus';
 }
+
+/// Whether [gain] requires the raw-PCM capture path.
+///
+/// THE single source of truth for that decision. The recorder branches on it
+/// to choose stream-vs-file capture, and the reservation branches on it to
+/// name the staging file. If those two ever disagreed, samples would be
+/// streamed into a file named `.opus` -- a recording no player or transcriber
+/// could read.
+///
+/// Any departure from unity qualifies, including attenuation: the multiplier
+/// can only be applied on the PCM path, so treating 0.5x as "close enough to
+/// unity" would leave the slider visibly moved while doing nothing.
+bool usesAmplifiedCapture(double gain) =>
+    clampMicGain(gain) != defaultMicGain;
 
 /// Multiplies every 16-bit sample in [bytes] by [gain], saturating at the
 /// rails.

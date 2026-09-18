@@ -333,7 +333,7 @@ class AndroidDocumentsPort(context: Context) : DocumentsIoPort, CaptureDocuments
             // Same row shape as listRecordingsAt, decoded by the same Dart
             // helper, so a single read can never disagree with the listing.
             val dumpId = text(args["dumpId"]); literal(dumpId)
-            val contentSuffixes = listOf(".opus", ".md")
+            val contentSuffixes = listOf(".opus", ".wav", ".md")
             fun readOne(dir:NativeDirectory):Map<String,Any?>? {
                 for (suffix in contentSuffixes) {
                     val name = "$dumpId$suffix"
@@ -359,7 +359,7 @@ class AndroidDocumentsPort(context: Context) : DocumentsIoPort, CaptureDocuments
             // publish .md. Both enumerate as importable pairs. Text notes
             // publish inside the 'Tangent Text Notes' child; legacy root-level
             // .md pairs still enumerate (tolerance, no migration).
-            val contentSuffixes = listOf(".opus", ".md")
+            val contentSuffixes = listOf(".opus", ".wav", ".md")
             fun scan(dir:NativeDirectory):List<Map<String,Any?>> {
                 val nodes = children(dir)
                 return nodes.mapNotNull { node ->
@@ -388,7 +388,8 @@ class AndroidDocumentsPort(context: Context) : DocumentsIoPort, CaptureDocuments
         if (b["metadataName"] != "$id.meta.json") fault("invalid","Wrong metadata component")
         val expected = audioId(b,d)
         // Durable-pair primary content mirrors the shared Dart mode helper
-        // (contentExtensionForMode): audio modes publish .opus, text notes .md.
+        // (captureExtensionForGain): audio publishes .opus at unity gain and
+        // .wav when amplified, text notes .md.
         // SAF document IDs are provider-opaque, so NEVER parse them for a
         // filename — resolve by constant-name lookup exactly as before, with
         // the .md fallback. ownedNode validates name+docId together, so a
@@ -400,6 +401,10 @@ class AndroidDocumentsPort(context: Context) : DocumentsIoPort, CaptureDocuments
         val note = noteDirectory(d)
         fun ownedContent():Pair<NativeDirectory,NativeNode>? {
             policy.ownedNode(d,"$id.opus",expected)?.let { return d to it }
+            // Amplified captures publish .wav (see the Dart helper
+            // captureExtensionForGain). Without this the audio exists on disk
+            // but is invisible to playback, read and delete.
+            policy.ownedNode(d,"$id.wav",expected)?.let { return d to it }
             policy.ownedNode(d,"$id.md",expected)?.let { return d to it }
             note?.let { n -> policy.ownedNode(n,"$id.md",expected)?.let { return n to it } }
             return null

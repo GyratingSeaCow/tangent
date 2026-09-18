@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import 'dart:typed_data';
 import '../local_db.dart';
+import '../../services/audio_gain.dart';
 import '../../services/recording_playback.dart';
 
 enum ProblemCode {
@@ -49,6 +50,26 @@ final class StorageFault implements Exception {
 /// markdown; every audio mode publishes opus.
 String contentExtensionForMode(String mode) =>
     mode == 'text_note' ? 'md' : 'opus';
+
+/// Extension a capture should be staged and published under.
+///
+/// Extends [contentExtensionForMode] with the microphone gain, because an
+/// amplified capture is raw PCM in a WAV container rather than Opus --
+/// package:record only exposes samples on its stream API. The mode alone is no
+/// longer enough to name the file, so anything deriving a capture filename
+/// must use this instead.
+///
+/// The Kotlin SAF port mirrors the resulting suffix set; see
+/// [publishableContentSuffixes].
+String stagingExtension({required String mode, required double gain}) =>
+    captureExtensionForGain(mode, gain);
+
+/// Every content suffix the app can publish.
+///
+/// Mirrored verbatim in Kotlin (`AndroidDocumentsPort`, `CapturePublication`).
+/// A suffix missing on either side is a recording that cannot be published:
+/// the SAF port rejects the staging path and the save leaves no row behind.
+const List<String> publishableContentSuffixes = <String>['.opus', '.wav', '.md'];
 
 /// Child directory of the user-chosen storage folder that owns published
 /// text notes (`<id>.md` + `<id>.meta.json`). Audio modes keep publishing at
@@ -460,7 +481,10 @@ abstract interface class StorageCatalog {
     required int expectedRevision,
   });
   Future<Outcome<BoundRecording>> resolveRecording(String dumpId);
-  Future<Outcome<CaptureReservation>> reserveCapture({required String mode});
+  Future<Outcome<CaptureReservation>> reserveCapture({
+    required String mode,
+    double gain,
+  });
 }
 
 abstract interface class RecordingAccess {

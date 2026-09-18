@@ -142,6 +142,11 @@ final recordingServiceProvider = Provider<RecordingService>((ref) {
     initialDevice: id == null
         ? null
         : InputDevice(id: id, label: settings.preferredInputDeviceLabel ?? id),
+    // Read per recording rather than captured once, so changing the slider
+    // applies to the next recording without rebuilding the service. The
+    // coordinator reserves the staging path from this SAME store, so the
+    // container and the capture path cannot disagree.
+    micGain: () => settings.micGain,
   );
 });
 

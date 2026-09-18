@@ -193,6 +193,34 @@ class CapturePublicationTest {
         CaptureWire.metadata(fixture.metadata, fixture.reservation)
     }
 
+    // An amplified capture (microphone gain above unity) is raw PCM in a WAV
+    // container, not Opus. The suffix therefore comes from the reservation's
+    // own staging path: recomputing it from the mode here would reject a valid
+    // reservation as "Invalid reservation staging path" and lose a finished
+    // recording at save time.
+    @Test fun amplifiedCaptureAcceptsWavStagingPath() {
+        val f=CapturePublicationFixture()
+        val reservation=f.reservation + mapOf("stagingPath" to "/fixture/fixture-reservation.wav")
+        CaptureWire.reservation(reservation)
+        assertEquals(".wav",CaptureWire.contentSuffix("brain_dump","/fixture/fixture-reservation.wav"))
+    }
+
+    @Test fun unityGainStillUsesOpus() {
+        assertEquals(".opus",CaptureWire.contentSuffix("brain_dump","/fixture/fixture-reservation.opus"))
+    }
+
+    @Test fun textNoteIgnoresAudioSuffixes() {
+        assertEquals(".md",CaptureWire.contentSuffix("text_note","/fixture/fixture-reservation.md"))
+    }
+
+    // A staging path with an extension nothing can publish must fault rather
+    // than silently publishing a file the SAF port can never find again.
+    @Test fun unknownAudioSuffixIsRejected() {
+        val f=CapturePublicationFixture()
+        val reservation=f.reservation + mapOf("stagingPath" to "/fixture/fixture-reservation.mp3")
+        assertThrows(NativeStorageException::class.java) { CaptureWire.reservation(reservation) }
+    }
+
     private fun noteArgs(f:CapturePublicationFixture):Map<String,Any?> {
         val reservation=f.reservation + mapOf("mode" to "text_note","stagingPath" to "/fixture/fixture-reservation.md")
         val metadata="{ \"schemaVersion\": 2, \"id\": \"fixture-dump\", \"mode\": \"text_note\", \"title\": \"café 🧪\", \"transcript\": \"body\" }"

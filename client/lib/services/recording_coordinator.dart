@@ -5,6 +5,7 @@ import 'package:drift/native.dart' show SqliteException;
 import 'package:flutter/services.dart';
 import '../data/local_db.dart';
 import '../data/storage/storage_contract.dart';
+import 'audio_gain.dart';
 import 'recording_service.dart';
 import 'recording_persistence.dart';
 
@@ -16,11 +17,15 @@ class DefaultRecordingCoordinator implements RecordingCoordinator {
     required RecordingMutationCoordinator mutations,
     required RecordingService recorder,
     required DateTime Function() now,
+    double Function()? micGain,
   })  : _db = db,
         _catalog = catalog,
         _mutations = mutations,
         _recorder = recorder,
         _now = now,
+        // Defaults to unity so every existing construction site (and test)
+        // keeps reserving .opus exactly as before.
+        _micGain = micGain ?? (() => defaultMicGain),
         _persistence = RecordingPersistence(
           db: db,
           backend: backend,
@@ -31,6 +36,10 @@ class DefaultRecordingCoordinator implements RecordingCoordinator {
   final RecordingMutationCoordinator _mutations;
   final RecordingService _recorder;
   final DateTime Function() _now;
+
+  /// The user's microphone gain, read at reservation time so a change in
+  /// Settings applies to the next recording.
+  final double Function() _micGain;
   final RecordingPersistence _persistence;
   final _changes = StreamController<RecordingLifecycleState>.broadcast();
   RecordingLifecycleState _state =
@@ -107,7 +116,12 @@ class DefaultRecordingCoordinator implements RecordingCoordinator {
     }
     _busy = true;
     try {
-      final r = _value(await _catalog.reserveCapture(mode: mode));
+      // The staging file's extension follows the gain: an amplified capture
+      // is PCM in a WAV container, not Opus. Reserving the wrong name here
+      // makes the native port reject the publish and lose the recording.
+      final r = _value(
+        await _catalog.reserveCapture(mode: mode, gain: _micGain()),
+      );
       _active = r;
       _emit(CapturePhase.reserved);
       _lease = _value(

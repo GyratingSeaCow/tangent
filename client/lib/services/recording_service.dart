@@ -322,7 +322,7 @@ class DefaultRecordingService implements RecordingService {
       );
     }
     final double gain = clampMicGain(_micGain());
-    if (gain == defaultMicGain) {
+    if (!usesAmplifiedCapture(gain)) {
       // Unchanged encoded path: same encoder, same bitrate, same container.
       await recorder.start(
         RecordConfig(

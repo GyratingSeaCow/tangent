@@ -124,13 +124,26 @@ object CaptureWire {
         val id=literal(r["id"]); key(r["key"]); directory(r["location"]); integer(r["startedAtMs"])
         val path=text(r["stagingPath"])
         if (text(r["mode"]) !in setOf("meeting","brain_dump","text_note")) fault("invalid","Invalid capture mode")
-        val suffix=contentSuffix(text(r["mode"]))
+        val suffix=contentSuffix(text(r["mode"]),path)
         if (!path.startsWith('/') || path.contains('\u0000') || path.split('/').any { it == "." || it == ".." } || path.substringAfterLast('/') != "$id$suffix") fault("invalid","Invalid reservation staging path")
         return r
     }
     fun key(x:Any?):Map<String,Any?> = obj(x,setOf("dumpId","incarnation")).also { literal(it["dumpId"]); literal(it["incarnation"]) }
-    // Mirrors the shared Dart helper contentExtensionForMode: text notes publish .md, audio modes .opus.
-    fun contentSuffix(mode:String):String = if (mode == "text_note") ".md" else ".opus"
+    // Mirrors the shared Dart helper captureExtensionForGain. The MODE alone
+    // no longer determines the extension: an amplified capture is raw PCM in
+    // a WAV container, so audio is .opus at unity gain and .wav above it.
+    // Text notes are always .md.
+    //
+    // Derived from the reservation's own staging path rather than recomputed,
+    // because Dart owns the gain and this side must not guess at it. A guess
+    // that disagreed would reject a valid reservation with "Invalid
+    // reservation staging path" and lose a finished recording.
+    val AUDIO_SUFFIXES = listOf(".opus",".wav")
+    fun contentSuffix(mode:String, stagingPath:String):String {
+        if (mode == "text_note") return ".md"
+        return AUDIO_SUFFIXES.firstOrNull { stagingPath.endsWith(it) }
+            ?: fault("invalid","Invalid reservation staging path")
+    }
     // Mirrors the shared Dart constant textNoteSubdirectoryName: text notes
     // publish inside this child of the chosen folder; audio modes stay at the
     // root. DIRECTORY_MIME is DocumentsContract.Document.MIME_TYPE_DIR spelled
@@ -147,7 +160,7 @@ object CaptureWire {
     }
     fun claim(x:Any?, component:String, r:Map<String,Any?>):Map<String,Any?> {
         val c=obj(x,setOf("component","name","locator","identity")); val d=directory(r["location"])
-        val expected="${key(r["key"])["dumpId"]}" + if(component == "audio") contentSuffix(text(r["mode"])) else ".meta.json"
+        val expected="${key(r["key"])["dumpId"]}" + if(component == "audio") contentSuffix(text(r["mode"]),text(r["stagingPath"])) else ".meta.json"
         if (c["component"] != component || c["name"] != expected) fault("invalid","Wrong capture component")
         val l=obj(c["locator"],setOf("kind","value")); if(l["kind"] != "saf") fault("invalid","Wrong capture locator kind")
         val id=identity(c["identity"]); val u=uri(text(l["value"]))
@@ -232,7 +245,7 @@ class CapturePublication(private val port:CaptureDocumentsPort) {
             val pub=contentDirectory(d,r,true)!!
             val id=CaptureWire.key(r["key"])["dumpId"] as String
             val before=inventory(pub).map { it.id }.toSet()
-            val suffix=CaptureWire.contentSuffix(CaptureWire.text(r["mode"]))
+            val suffix=CaptureWire.contentSuffix(CaptureWire.text(r["mode"]),CaptureWire.text(r["stagingPath"]))
             policy.requireAvailableNames(pub,setOf("$id$suffix","$id.meta.json"))
             prepared=linkedMapOf("version" to 1,"publicationId" to r["id"],"reservationId" to r["id"],"key" to r["key"],"location" to r["location"],"stagingPath" to r["stagingPath"],"sourceIdentity" to source.identity,"rootIdentity" to root,"audioSizeBytes" to source.bytes.size,"audioSha256" to digest,"metadataJson" to metadata,"audio" to null,"metadata" to null)
             for(component in listOf("audio","metadata")) {

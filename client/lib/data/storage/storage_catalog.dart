@@ -2,6 +2,7 @@
 import 'dart:convert';
 import 'package:drift/drift.dart';
 import 'package:drift/native.dart' show SqliteException;
+import '../../services/audio_gain.dart';
 import '../local_db.dart';
 import 'storage_codec.dart';
 import 'storage_contract.dart';
@@ -454,7 +455,10 @@ class SqliteStorageCatalog implements StorageCatalog {
         });
       });
   @override
-  Future<Outcome<CaptureReservation>> reserveCapture({required String mode}) =>
+  Future<Outcome<CaptureReservation>> reserveCapture({
+    required String mode,
+    double gain = defaultMicGain,
+  }) =>
       _guard(() async {
         await _ready();
         if (!['brain_dump', 'meeting', 'text_note'].contains(mode)) {
@@ -511,7 +515,7 @@ class SqliteStorageCatalog implements StorageCatalog {
             final reservationId = '${_mutations.processEpoch}-$id';
             final startedAt = _now();
             final stagingPath =
-                '$_stagingDirectory${_stagingDirectory.endsWith('/') || _stagingDirectory.endsWith('\\') ? '' : '/'}$reservationId.${contentExtensionForMode(mode)}';
+                '$_stagingDirectory${_stagingDirectory.endsWith('/') || _stagingDirectory.endsWith('\\') ? '' : '/'}$reservationId.${stagingExtension(mode: mode, gain: gain)}';
             await _db.into(_db.captureReservations).insert(
                   CaptureReservationsCompanion.insert(
                     reservationId: reservationId,
