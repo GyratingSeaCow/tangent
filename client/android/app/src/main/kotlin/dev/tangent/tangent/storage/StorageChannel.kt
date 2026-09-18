@@ -86,6 +86,6 @@ class StorageChannel(private val supervisor: NativeIoSupervisor,
     companion object {
         val captureMethods = setOf("prepareCaptureAt","inspectPreparedCaptureAt","publishPreparedCaptureAt")
         val documentMethods = setOf("publishDocumentAt","listDocumentsAt","deleteDocumentAt")
-        val methods = setOf("inspectLegacyStorage","validateCandidate","probeLocationAt","readAudioAt","playbackSourceAt","writeMetadataAt","deleteComponentAt","listRecordingsAt") + captureMethods + documentMethods
+        val methods = setOf("inspectLegacyStorage","validateCandidate","probeLocationAt","readAudioAt","playbackSourceAt","writeMetadataAt","deleteComponentAt","listRecordingsAt","readRecordingAt") + captureMethods + documentMethods
     }
 }

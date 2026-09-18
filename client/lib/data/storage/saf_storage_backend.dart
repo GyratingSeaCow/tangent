@@ -640,41 +640,67 @@ class SafStorageBackend implements StorageBackend {
       _start(
         'listRecordingsAt',
         {'location': _wire(StorageCodec.encodeLocation(location))},
-        (value) => (value as List).map((dynamic raw) {
-          final map = raw as Map;
-          Map<String, dynamic>? metadata;
-          StorageProblem? problem =
-              map['problem'] == null ? null : _problem(map['problem']);
-          try {
-            if (map['metadataJson'] != null) {
-              final decoded = jsonDecode(map['metadataJson'] as String);
-              if (decoded is! Map<String, dynamic> ||
-                  decoded['id'] != map['id'] ||
-                  !const [1, 2].contains(decoded['schemaVersion'])) {
-                throw const FormatException(
-                  'Metadata identity/schema mismatch',
-                );
-              }
-              metadata = decoded;
-            }
-          } on FormatException {
-            problem =
-                (code: ProblemCode.invalid, message: 'Malformed metadata');
-          }
-          return (
-            id: map['id'] as String,
-            source: location,
-            audio: StorageCodec.decodeAudio(jsonEncode(map['audio'])),
-            sizeBytes: (map['sizeBytes'] as num).toInt(),
-            modifiedAt: DateTime.fromMillisecondsSinceEpoch(
-              (map['modifiedAt'] as num).toInt(),
-              isUtc: true,
-            ),
-            metadata: metadata,
-            problem: problem
-          );
-        }).toList(),
+        (value) => (value as List)
+            .map((dynamic raw) => _decodeEntry(raw as Map, location))
+            .toList(),
       );
+
+  /// Decodes one native recording row. Shared by [listRecordingsAt] and
+  /// [readRecordingAt] so a single-entry read can never disagree with the
+  /// listing about what an entry means.
+  ImportedEntry _decodeEntry(Map<dynamic, dynamic> map, StorageLocation location) {
+    Map<String, dynamic>? metadata;
+    StorageProblem? problem =
+        map['problem'] == null ? null : _problem(map['problem']);
+    try {
+      if (map['metadataJson'] != null) {
+        final decoded = jsonDecode(map['metadataJson'] as String);
+        if (decoded is! Map<String, dynamic> ||
+            decoded['id'] != map['id'] ||
+            !const [1, 2].contains(decoded['schemaVersion'])) {
+          throw const FormatException('Metadata identity/schema mismatch');
+        }
+        metadata = decoded;
+      }
+    } on FormatException {
+      problem = (code: ProblemCode.invalid, message: 'Malformed metadata');
+    }
+    return (
+      id: map['id'] as String,
+      source: location,
+      audio: StorageCodec.decodeAudio(jsonEncode(map['audio'])),
+      sizeBytes: (map['sizeBytes'] as num).toInt(),
+      modifiedAt: DateTime.fromMillisecondsSinceEpoch(
+        (map['modifiedAt'] as num).toInt(),
+        isUtc: true,
+      ),
+      metadata: metadata,
+      problem: problem
+    );
+  }
+
+  /// Reads one published entry by id instead of enumerating the folder (T8).
+  ///
+  /// Publication proves its receipt by re-reading what it just wrote; doing
+  /// that through [listRecordingsAt] parsed every recording's metadata and
+  /// cost 4.4s of a 5.9s stop with 56 recordings. The native side reads only
+  /// this dump's two documents. Nothing is cached, so the proof is unchanged.
+  @override
+  IoOperation<Outcome<ImportedEntry?>>? readRecordingAt(
+    StorageLocation location,
+    String dumpId,
+  ) =>
+      _start(
+        'readRecordingAt',
+        {
+          'location': _wire(StorageCodec.encodeLocation(location)),
+          'dumpId': dumpId,
+        },
+        (value) => value == null
+            ? null
+            : _decodeEntry(value as Map<dynamic, dynamic>, location),
+      );
+
   @override
   Future<void> drain() async {
     while (_pending.isNotEmpty) {

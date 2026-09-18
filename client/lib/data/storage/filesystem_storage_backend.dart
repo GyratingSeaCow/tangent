@@ -481,6 +481,18 @@ class FilesystemStorageBackend implements StorageBackend {
         }),
       );
   @override
+  /// Not specialised here: a local directory listing is a single cheap
+  /// syscall, unlike SAF where every child costs a provider round trip.
+  /// Returning null keeps this backend on the shared listing path, so its
+  /// behaviour is byte-for-byte what it was before [readRecordingAt] existed.
+  @override
+  IoOperation<Outcome<ImportedEntry?>>? readRecordingAt(
+    StorageLocation location,
+    String dumpId,
+  ) =>
+      null;
+
+  @override
   IoOperation<Outcome<List<ImportedEntry>>> listRecordingsAt(
     StorageLocation location,
   ) =>

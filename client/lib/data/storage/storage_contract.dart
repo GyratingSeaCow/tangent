@@ -385,6 +385,21 @@ abstract interface class StorageBackend {
     StorageLocation location,
   );
 
+  /// Reads the single published entry for [dumpId], or null when it is absent.
+  ///
+  /// Publication proves its receipt by re-reading the entry it just wrote.
+  /// Doing that via [listRecordingsAt] enumerated and parsed every recording
+  /// in the folder — 4.4 seconds of a 5.9-second stop with 56 recordings (T8),
+  /// the same defect as the record-start path (31645e8).
+  ///
+  /// Returns null when the backend cannot answer for one entry, so callers
+  /// fall back to the full listing and no implementation is forced to change.
+  IoOperation<Outcome<ImportedEntry?>>? readRecordingAt(
+    StorageLocation location,
+    String dumpId,
+  ) =>
+      null;
+
   /// Publishes one sidecar-free durable document called [name] into the
   /// [directoryName] child of [location], creating that child idempotently.
   /// Replaces an existing same-name document atomically. A same-name
