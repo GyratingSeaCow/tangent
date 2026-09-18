@@ -87,7 +87,7 @@ abstract final class FilesystemCaptureIo {
     CapturePublicationCodec.digest(digest);
     if (r.location.directory.kind != 'file' ||
         p.basename(r.stagingPath) !=
-            '${r.id}.${contentExtensionForMode(r.mode)}' ||
+            '${r.id}.${contentExtensionForReservation(r.mode, r.stagingPath)}' ||
         CapturePublicationCodec.metadata(metadata, r.key.dumpId)['mode'] !=
             r.mode) {
       captureIoFault(
@@ -188,7 +188,8 @@ abstract final class FilesystemCaptureIo {
       parent = _contentParent(root, r, create: true);
       source.verifyAssociation();
       final contentName =
-          '${r.key.dumpId}.${contentExtensionForMode(r.mode)}';
+          '${r.key.dumpId}.'
+          '${contentExtensionForReservation(r.mode, r.stagingPath)}';
       _available(parent, {contentName, '${r.key.dumpId}.meta.json'});
       final sourceIdentity = source.identity;
       final rootIdentity = root.identity;

@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:path/path.dart' as p;
+import '../../services/audio_gain.dart' show amplifiedContentExtension;
 import 'storage_codec.dart';
 import 'storage_contract.dart';
 import 'capture_publication_codec.dart';
@@ -208,11 +209,14 @@ class FilesystemStorageBackend implements StorageBackend {
     StorageCodec.encodeBinding(binding);
     final root = await _root(binding.location);
     final id = binding.key.dumpId;
-    // Owned content names derive from the ONE shared mode helper; a binding
-    // carries no mode, so exactly the mode-derived names are acceptable.
+    // A binding carries neither mode nor gain, so every name a capture may
+    // legitimately hold is acceptable here. Amplified audio is PCM in a WAV
+    // container, so '.wav' belongs alongside the mode-derived names — omitting
+    // it made an amplified recording unrecognisable as its own content.
     final contentNames = {
       for (final mode in const ['brain_dump', 'meeting', 'text_note'])
         '$id.${contentExtensionForMode(mode)}',
+      '$id.$amplifiedContentExtension',
     };
     // The binding locator is authoritative for the parent: audio modes (and
     // legacy notes) live at the root, published text notes live inside the
@@ -508,6 +512,7 @@ class FilesystemStorageBackend implements StorageBackend {
           final contentSuffixes = {
             for (final mode in const ['brain_dump', 'meeting', 'text_note'])
               '.${contentExtensionForMode(mode)}',
+            '.$amplifiedContentExtension',
           };
           Future<void> scan(String directory) async {
             final entries =

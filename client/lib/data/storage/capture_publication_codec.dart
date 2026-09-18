@@ -222,8 +222,8 @@ abstract final class CapturePublicationCodec {
     digest(hash);
     final json = _text(m, 'metadataJson');
     final modeRaw = metadata(json, key.dumpId)['mode'];
-    final contentName =
-        '${key.dumpId}.${contentExtensionForMode(modeRaw is String ? modeRaw : '')}';
+    final contentName = '${key.dumpId}.'
+        '${contentExtensionForReservation(modeRaw is String ? modeRaw : '', staging)}';
     final audio = m['audio'] == null ? null : _claim(m['audio']);
     final meta = m['metadata'] == null ? null : _claim(m['metadata']);
     for (final entry in [

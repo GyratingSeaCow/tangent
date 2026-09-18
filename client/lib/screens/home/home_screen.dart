@@ -14,6 +14,7 @@ import '../notebook/notebook_list_screen.dart';
 import '../recording/recording_controller.dart';
 import '../recording/recording_waveform.dart';
 import '../settings/settings_screen.dart';
+import '../../theme/tangent_tokens.dart';
 import 'home_providers.dart';
 import 'record_button_palette.dart';
 
@@ -23,6 +24,14 @@ final localDbProvider = Provider<LocalDb>((ref) {
 
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
+
+  /// The spinner shown while the app is working — starting a capture, or
+  /// finalising one after stop. Without it a slow save is indistinguishable
+  /// from a button that did nothing.
+  static const Key busyIndicatorKey = Key('home-busy-indicator');
+
+  /// The record/stop key itself.
+  static const Key recordButtonKey = Key('home-record-button');
 
   @override
   ConsumerState<HomeScreen> createState() => _HomeScreenState();
@@ -167,6 +176,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   Widget build(BuildContext context) {
     final state = ref.watch(recordingControllerProvider);
     final isRecording = state == RecordingState.recording;
+    // Starting a capture and finalising one are both real work with no visible
+    // output of their own. Reported from the device: after stop, the screen
+    // looked idle while the save ran, so a slow finalise was indistinguishable
+    // from a dead button.
+    final isBusy =
+        state == RecordingState.starting || state == RecordingState.saving;
     final isNoteMode = _mode == DumpMode.textNote;
     // Read the current elapsed seconds. Watching recordingTickProvider
     // makes this build re-run every second while recording so the timer
@@ -243,10 +258,30 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 ),
               ),
               const SizedBox(height: 12),
+            ] else if (isBusy) ...[
+              const SizedBox(height: 12),
+              // Grey, not red or lime: red means capture and lime means live,
+              // and a save is neither.
+              const SizedBox(
+                key: HomeScreen.busyIndicatorKey,
+                width: 28,
+                height: 28,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2.5,
+                  color: TangentColors.textDim,
+                ),
+              ),
+              const SizedBox(height: 12),
             ] else
               const SizedBox(height: 32),
             GestureDetector(
-              onTap: isNoteMode ? _openNoteCompose : _toggleRecording,
+              key: HomeScreen.recordButtonKey,
+              // Taps are refused while busy: tapping through a finalising save
+              // starts a second capture before the first has committed, which
+              // is how orphaned staging files appeared on device.
+              onTap: isBusy
+                  ? null
+                  : (isNoteMode ? _openNoteCompose : _toggleRecording),
               child: Container(
                 width: 120,
                 height: 120,

@@ -48,8 +48,16 @@ double clampMicGain(double? value) {
 /// gain must really apply, or the setting would silently do nothing.
 String captureExtensionForGain(String mode, double gain) {
   if (mode == 'text_note') return 'md';
-  return usesAmplifiedCapture(gain) ? 'wav' : 'opus';
+  return usesAmplifiedCapture(gain) ? amplifiedContentExtension : 'opus';
 }
+
+/// Container an amplified capture is written to.
+///
+/// Named rather than spelled inline because the recorder is not the only thing
+/// that has to know it: every owned-name allow-list and import scan must accept
+/// it too. On device, a list that knew only about opus made a perfectly good
+/// amplified recording unrecognisable as the app's own content.
+const String amplifiedContentExtension = 'wav';
 
 /// Whether [gain] requires the raw-PCM capture path.
 ///

@@ -95,7 +95,7 @@ class RecordingPersistence {
     StorageCodec.encodeAudio((kind: 'file', value: r.stagingPath));
     final file = File(r.stagingPath);
     var valid = p.basename(r.stagingPath) ==
-            '${r.id}.${contentExtensionForMode(r.mode)}' &&
+            '${r.id}.${contentExtensionForReservation(r.mode, r.stagingPath)}' &&
         await FileSystemEntity.type(r.stagingPath, followLinks: false) ==
             FileSystemEntityType.file &&
         size > 0;
@@ -963,7 +963,7 @@ class RecordingPersistence {
       // under followLinks:false and is rejected before resolution runs.
       final owned = type == FileSystemEntityType.file &&
           p.basename(r.stagingPath) ==
-              '${r.id}.${contentExtensionForMode(r.mode)}' &&
+              '${r.id}.${contentExtensionForReservation(r.mode, r.stagingPath)}' &&
           await _resolvesUnderOwnedParent(r.stagingPath);
       if (!owned) {
         _fault(ProblemCode.invalid, 'Staging cleanup source is not owned');
