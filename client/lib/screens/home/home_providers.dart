@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/local_db.dart';
 import '../../data/storage/storage_providers.dart';
 import '../../services/connectivity_service.dart';
+import '../../services/note_persistence.dart';
 import '../../services/recording_playback.dart';
 import '../../services/server_transcription_service.dart';
 import '../../services/sync_engine.dart';
@@ -119,6 +120,17 @@ class _DurableRecoverySignals {
 final recordingPlaybackEngineFactoryProvider =
     Provider<RecordingPlaybackEngine Function()>((ref) {
   return JustAudioRecordingPlaybackEngine.new;
+});
+
+/// Note persistence bound to the app-owned storage pipeline, mirroring the
+/// wiring shape of `recordingControllerProvider`'s coordinator dependencies.
+final notePersistenceProvider = Provider<NotePersistence>((ref) {
+  return NotePersistence(
+    db: ref.watch(localDbProvider),
+    backend: ref.watch(storageBackendProvider),
+    mutations: ref.watch(recordingMutationsProvider),
+    catalog: ref.watch(storageCatalogProvider),
+  );
 });
 
 /// Sync engine instance.

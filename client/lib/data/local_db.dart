@@ -55,6 +55,28 @@ class SyncQueue extends Table {
   DateTimeColumn get queuedAt => dateTime()();
 }
 
+/// One row per notebook: the whole document and ink layer save atomically.
+///
+/// Deliberately has no relationship to [Dumps]. A notebook may embed a dump as
+/// a card, but embedding never moves, copies, deletes or cascades a recording;
+/// a missing dump renders as a placeholder instead.
+@DataClassName('NotebookRow')
+class Notebooks extends Table {
+  @override
+  String get tableName => 'notebooks';
+  TextColumn get id => text()();
+  TextColumn get title => text()();
+
+  /// Epoch milliseconds, stored as integers so the JSON payload columns and the
+  /// timestamps read identically from raw SQL.
+  IntColumn get createdAt => integer()();
+  IntColumn get updatedAt => integer()();
+  TextColumn get docJson => text()();
+  TextColumn get inkJson => text()();
+  @override
+  Set<Column> get primaryKey => {id};
+}
+
 @DriftDatabase(
   tables: [
     Dumps,
@@ -65,6 +87,7 @@ class SyncQueue extends Table {
     CaptureReservations,
     LocalDeletionBatches,
     LocalDeletionTickets,
+    Notebooks,
   ],
 )
 class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
@@ -73,7 +96,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   LocalDb.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 5;
+  int get schemaVersion => 6;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -120,6 +143,11 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
           }
           if (from < 5) {
             await _createStorageCatalog(m);
+          }
+          if (from < 6) {
+            // Notebooks are purely additive: no existing table is altered and
+            // no existing row is touched.
+            await m.createTable(notebooks);
           }
         },
       );
@@ -204,6 +232,20 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
             legacyAnchorJson: Value(anchorJson),
           ),
         );
+      });
+
+  /// Spend a storage location's one-shot legacy-restore authorization.
+  ///
+  /// Legacy restore adopts files that pre-date this build's catalog. It is a
+  /// migration, not a steady state: once a location's adoption sweep has
+  /// completed with nothing left unsettled, the flag must come down or the
+  /// sweep re-enumerates the user's folder on every single launch forever.
+  /// Callers must only reach here after a fully settled sweep — a partial
+  /// success has to stay authorized so the next launch retries.
+  Future<void> completeLegacyRestore(String locationId) =>
+      transaction(() async {
+        await (update(storageLocations)..where((l) => l.id.equals(locationId)))
+            .write(const StorageLocationsCompanion(legacyRestore: Value(false)));
       });
 
   /// Resolve only persisted original ownership, never a current default.
@@ -411,7 +453,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
             ),
           );
         }
-        if (!['not_transcribed', 'completed', 'failed']
+        if (!['not_transcribed', 'completed', 'failed', 'not_applicable']
                 .contains(row.transcriptionStatus) ||
             row.syncStatus == 'syncing' ||
             (row.transcriptionError?.startsWith('sidecar_sync_pending:') ??
@@ -729,6 +771,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
                     d.transcriptionStatus.isIn([
                       TranscriptionStatus.completed.wireValue,
                       TranscriptionStatus.failed.wireValue,
+                      // Text notes never transcribe; their body edits go
+                      // through the same guarded manual-edit path.
+                      TranscriptionStatus.notApplicable.wireValue,
                     ]) &
                     d.transcript.equals(expectedTranscript) &
                     d.transcriptionAttempt.equals(
@@ -780,6 +825,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
       if (current == null) throw StateError('Dump not found: $id');
       final currentStatus =
           TranscriptionStatus.fromWire(current.transcriptionStatus);
+      if (currentStatus == TranscriptionStatus.notApplicable) {
+        throw StateError('Transcription is not applicable: $id');
+      }
       final sidecarPending = currentStatus.isTerminal &&
           (current.transcriptionError?.startsWith('sidecar_sync_pending:') ??
               false);
@@ -820,7 +868,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
         await _requireMutationKey(id, storageKey);
         final timestamp = now.toUtc();
         final allowedSourceStatuses = switch (status) {
-          TranscriptionStatus.notTranscribed => const <String>['__never__'],
+          TranscriptionStatus.notTranscribed ||
+          TranscriptionStatus.notApplicable =>
+            const <String>['__never__'],
           TranscriptionStatus.uploading => <String>[
               TranscriptionStatus.uploading.wireValue,
             ],
@@ -935,7 +985,8 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
                     (requestId == null
                         ? d.transcriptionRequestId.isNull()
                         : d.transcriptionRequestId.equals(requestId)) &
-                    d.transcriptionStatus.isIn(['completed', 'failed']) &
+                    d.transcriptionStatus
+                        .isIn(['completed', 'failed', 'not_applicable']) &
                     (expectedTranscript == null
                         ? const Constant(true)
                         : d.transcript.equals(expectedTranscript)) &
@@ -970,7 +1021,8 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
               TranscriptionStatus.queued.wireValue,
               TranscriptionStatus.running.wireValue,
             ]) |
-            (d.transcriptionStatus.isIn(['completed', 'failed']) &
+            (d.transcriptionStatus
+                    .isIn(['completed', 'failed', 'not_applicable']) &
                 d.transcriptionError.like('sidecar_sync_pending:%')),
       )
       ..orderBy([(d) => OrderingTerm.asc(d.transcriptionStartedAt)]));

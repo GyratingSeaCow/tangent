@@ -8,7 +8,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-DumpMode = Literal["brain_dump", "meeting"]
+DumpMode = Literal["brain_dump", "meeting", "text_note"]
 JobStatus = Literal["queued", "running", "completed", "failed"]
 
 

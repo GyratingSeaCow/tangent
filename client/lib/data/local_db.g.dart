@@ -3709,6 +3709,355 @@ class LocalDeletionTicketsCompanion
   }
 }
 
+class $NotebooksTable extends Notebooks
+    with TableInfo<$NotebooksTable, NotebookRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $NotebooksTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<String> id = GeneratedColumn<String>(
+      'id', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _titleMeta = const VerificationMeta('title');
+  @override
+  late final GeneratedColumn<String> title = GeneratedColumn<String>(
+      'title', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _createdAtMeta =
+      const VerificationMeta('createdAt');
+  @override
+  late final GeneratedColumn<int> createdAt = GeneratedColumn<int>(
+      'created_at', aliasedName, false,
+      type: DriftSqlType.int, requiredDuringInsert: true);
+  static const VerificationMeta _updatedAtMeta =
+      const VerificationMeta('updatedAt');
+  @override
+  late final GeneratedColumn<int> updatedAt = GeneratedColumn<int>(
+      'updated_at', aliasedName, false,
+      type: DriftSqlType.int, requiredDuringInsert: true);
+  static const VerificationMeta _docJsonMeta =
+      const VerificationMeta('docJson');
+  @override
+  late final GeneratedColumn<String> docJson = GeneratedColumn<String>(
+      'doc_json', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _inkJsonMeta =
+      const VerificationMeta('inkJson');
+  @override
+  late final GeneratedColumn<String> inkJson = GeneratedColumn<String>(
+      'ink_json', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  @override
+  List<GeneratedColumn> get $columns =>
+      [id, title, createdAt, updatedAt, docJson, inkJson];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'notebooks';
+  @override
+  VerificationContext validateIntegrity(Insertable<NotebookRow> instance,
+      {bool isInserting = false}) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    } else if (isInserting) {
+      context.missing(_idMeta);
+    }
+    if (data.containsKey('title')) {
+      context.handle(
+          _titleMeta, title.isAcceptableOrUnknown(data['title']!, _titleMeta));
+    } else if (isInserting) {
+      context.missing(_titleMeta);
+    }
+    if (data.containsKey('created_at')) {
+      context.handle(_createdAtMeta,
+          createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta));
+    } else if (isInserting) {
+      context.missing(_createdAtMeta);
+    }
+    if (data.containsKey('updated_at')) {
+      context.handle(_updatedAtMeta,
+          updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta));
+    } else if (isInserting) {
+      context.missing(_updatedAtMeta);
+    }
+    if (data.containsKey('doc_json')) {
+      context.handle(_docJsonMeta,
+          docJson.isAcceptableOrUnknown(data['doc_json']!, _docJsonMeta));
+    } else if (isInserting) {
+      context.missing(_docJsonMeta);
+    }
+    if (data.containsKey('ink_json')) {
+      context.handle(_inkJsonMeta,
+          inkJson.isAcceptableOrUnknown(data['ink_json']!, _inkJsonMeta));
+    } else if (isInserting) {
+      context.missing(_inkJsonMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  NotebookRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return NotebookRow(
+      id: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}id'])!,
+      title: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}title'])!,
+      createdAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}created_at'])!,
+      updatedAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}updated_at'])!,
+      docJson: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}doc_json'])!,
+      inkJson: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}ink_json'])!,
+    );
+  }
+
+  @override
+  $NotebooksTable createAlias(String alias) {
+    return $NotebooksTable(attachedDatabase, alias);
+  }
+}
+
+class NotebookRow extends DataClass implements Insertable<NotebookRow> {
+  final String id;
+  final String title;
+
+  /// Epoch milliseconds, stored as integers so the JSON payload columns and the
+  /// timestamps read identically from raw SQL.
+  final int createdAt;
+  final int updatedAt;
+  final String docJson;
+  final String inkJson;
+  const NotebookRow(
+      {required this.id,
+      required this.title,
+      required this.createdAt,
+      required this.updatedAt,
+      required this.docJson,
+      required this.inkJson});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<String>(id);
+    map['title'] = Variable<String>(title);
+    map['created_at'] = Variable<int>(createdAt);
+    map['updated_at'] = Variable<int>(updatedAt);
+    map['doc_json'] = Variable<String>(docJson);
+    map['ink_json'] = Variable<String>(inkJson);
+    return map;
+  }
+
+  NotebooksCompanion toCompanion(bool nullToAbsent) {
+    return NotebooksCompanion(
+      id: Value(id),
+      title: Value(title),
+      createdAt: Value(createdAt),
+      updatedAt: Value(updatedAt),
+      docJson: Value(docJson),
+      inkJson: Value(inkJson),
+    );
+  }
+
+  factory NotebookRow.fromJson(Map<String, dynamic> json,
+      {ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return NotebookRow(
+      id: serializer.fromJson<String>(json['id']),
+      title: serializer.fromJson<String>(json['title']),
+      createdAt: serializer.fromJson<int>(json['createdAt']),
+      updatedAt: serializer.fromJson<int>(json['updatedAt']),
+      docJson: serializer.fromJson<String>(json['docJson']),
+      inkJson: serializer.fromJson<String>(json['inkJson']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<String>(id),
+      'title': serializer.toJson<String>(title),
+      'createdAt': serializer.toJson<int>(createdAt),
+      'updatedAt': serializer.toJson<int>(updatedAt),
+      'docJson': serializer.toJson<String>(docJson),
+      'inkJson': serializer.toJson<String>(inkJson),
+    };
+  }
+
+  NotebookRow copyWith(
+          {String? id,
+          String? title,
+          int? createdAt,
+          int? updatedAt,
+          String? docJson,
+          String? inkJson}) =>
+      NotebookRow(
+        id: id ?? this.id,
+        title: title ?? this.title,
+        createdAt: createdAt ?? this.createdAt,
+        updatedAt: updatedAt ?? this.updatedAt,
+        docJson: docJson ?? this.docJson,
+        inkJson: inkJson ?? this.inkJson,
+      );
+  NotebookRow copyWithCompanion(NotebooksCompanion data) {
+    return NotebookRow(
+      id: data.id.present ? data.id.value : this.id,
+      title: data.title.present ? data.title.value : this.title,
+      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+      docJson: data.docJson.present ? data.docJson.value : this.docJson,
+      inkJson: data.inkJson.present ? data.inkJson.value : this.inkJson,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('NotebookRow(')
+          ..write('id: $id, ')
+          ..write('title: $title, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('docJson: $docJson, ')
+          ..write('inkJson: $inkJson')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode =>
+      Object.hash(id, title, createdAt, updatedAt, docJson, inkJson);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is NotebookRow &&
+          other.id == this.id &&
+          other.title == this.title &&
+          other.createdAt == this.createdAt &&
+          other.updatedAt == this.updatedAt &&
+          other.docJson == this.docJson &&
+          other.inkJson == this.inkJson);
+}
+
+class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
+  final Value<String> id;
+  final Value<String> title;
+  final Value<int> createdAt;
+  final Value<int> updatedAt;
+  final Value<String> docJson;
+  final Value<String> inkJson;
+  final Value<int> rowid;
+  const NotebooksCompanion({
+    this.id = const Value.absent(),
+    this.title = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+    this.docJson = const Value.absent(),
+    this.inkJson = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  NotebooksCompanion.insert({
+    required String id,
+    required String title,
+    required int createdAt,
+    required int updatedAt,
+    required String docJson,
+    required String inkJson,
+    this.rowid = const Value.absent(),
+  })  : id = Value(id),
+        title = Value(title),
+        createdAt = Value(createdAt),
+        updatedAt = Value(updatedAt),
+        docJson = Value(docJson),
+        inkJson = Value(inkJson);
+  static Insertable<NotebookRow> custom({
+    Expression<String>? id,
+    Expression<String>? title,
+    Expression<int>? createdAt,
+    Expression<int>? updatedAt,
+    Expression<String>? docJson,
+    Expression<String>? inkJson,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (title != null) 'title': title,
+      if (createdAt != null) 'created_at': createdAt,
+      if (updatedAt != null) 'updated_at': updatedAt,
+      if (docJson != null) 'doc_json': docJson,
+      if (inkJson != null) 'ink_json': inkJson,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  NotebooksCompanion copyWith(
+      {Value<String>? id,
+      Value<String>? title,
+      Value<int>? createdAt,
+      Value<int>? updatedAt,
+      Value<String>? docJson,
+      Value<String>? inkJson,
+      Value<int>? rowid}) {
+    return NotebooksCompanion(
+      id: id ?? this.id,
+      title: title ?? this.title,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+      docJson: docJson ?? this.docJson,
+      inkJson: inkJson ?? this.inkJson,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<String>(id.value);
+    }
+    if (title.present) {
+      map['title'] = Variable<String>(title.value);
+    }
+    if (createdAt.present) {
+      map['created_at'] = Variable<int>(createdAt.value);
+    }
+    if (updatedAt.present) {
+      map['updated_at'] = Variable<int>(updatedAt.value);
+    }
+    if (docJson.present) {
+      map['doc_json'] = Variable<String>(docJson.value);
+    }
+    if (inkJson.present) {
+      map['ink_json'] = Variable<String>(inkJson.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('NotebooksCompanion(')
+          ..write('id: $id, ')
+          ..write('title: $title, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('docJson: $docJson, ')
+          ..write('inkJson: $inkJson, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$LocalDb extends GeneratedDatabase {
   _$LocalDb(QueryExecutor e) : super(e);
   $LocalDbManager get managers => $LocalDbManager(this);
@@ -3726,6 +4075,7 @@ abstract class _$LocalDb extends GeneratedDatabase {
       $LocalDeletionBatchesTable(this);
   late final $LocalDeletionTicketsTable localDeletionTickets =
       $LocalDeletionTicketsTable(this);
+  late final $NotebooksTable notebooks = $NotebooksTable(this);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -3738,7 +4088,8 @@ abstract class _$LocalDb extends GeneratedDatabase {
         recordingBindings,
         captureReservations,
         localDeletionBatches,
-        localDeletionTickets
+        localDeletionTickets,
+        notebooks
       ];
   @override
   StreamQueryUpdateRules get streamUpdateRules => const StreamQueryUpdateRules(
@@ -5740,6 +6091,186 @@ typedef $$LocalDeletionTicketsTableProcessedTableManager
         ),
         LocalDeletionTicketRow,
         PrefetchHooks Function()>;
+typedef $$NotebooksTableCreateCompanionBuilder = NotebooksCompanion Function({
+  required String id,
+  required String title,
+  required int createdAt,
+  required int updatedAt,
+  required String docJson,
+  required String inkJson,
+  Value<int> rowid,
+});
+typedef $$NotebooksTableUpdateCompanionBuilder = NotebooksCompanion Function({
+  Value<String> id,
+  Value<String> title,
+  Value<int> createdAt,
+  Value<int> updatedAt,
+  Value<String> docJson,
+  Value<String> inkJson,
+  Value<int> rowid,
+});
+
+class $$NotebooksTableFilterComposer
+    extends Composer<_$LocalDb, $NotebooksTable> {
+  $$NotebooksTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get id => $composableBuilder(
+      column: $table.id, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get title => $composableBuilder(
+      column: $table.title, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get createdAt => $composableBuilder(
+      column: $table.createdAt, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get updatedAt => $composableBuilder(
+      column: $table.updatedAt, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get docJson => $composableBuilder(
+      column: $table.docJson, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get inkJson => $composableBuilder(
+      column: $table.inkJson, builder: (column) => ColumnFilters(column));
+}
+
+class $$NotebooksTableOrderingComposer
+    extends Composer<_$LocalDb, $NotebooksTable> {
+  $$NotebooksTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get id => $composableBuilder(
+      column: $table.id, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get title => $composableBuilder(
+      column: $table.title, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get createdAt => $composableBuilder(
+      column: $table.createdAt, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get updatedAt => $composableBuilder(
+      column: $table.updatedAt, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get docJson => $composableBuilder(
+      column: $table.docJson, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get inkJson => $composableBuilder(
+      column: $table.inkJson, builder: (column) => ColumnOrderings(column));
+}
+
+class $$NotebooksTableAnnotationComposer
+    extends Composer<_$LocalDb, $NotebooksTable> {
+  $$NotebooksTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<String> get title =>
+      $composableBuilder(column: $table.title, builder: (column) => column);
+
+  GeneratedColumn<int> get createdAt =>
+      $composableBuilder(column: $table.createdAt, builder: (column) => column);
+
+  GeneratedColumn<int> get updatedAt =>
+      $composableBuilder(column: $table.updatedAt, builder: (column) => column);
+
+  GeneratedColumn<String> get docJson =>
+      $composableBuilder(column: $table.docJson, builder: (column) => column);
+
+  GeneratedColumn<String> get inkJson =>
+      $composableBuilder(column: $table.inkJson, builder: (column) => column);
+}
+
+class $$NotebooksTableTableManager extends RootTableManager<
+    _$LocalDb,
+    $NotebooksTable,
+    NotebookRow,
+    $$NotebooksTableFilterComposer,
+    $$NotebooksTableOrderingComposer,
+    $$NotebooksTableAnnotationComposer,
+    $$NotebooksTableCreateCompanionBuilder,
+    $$NotebooksTableUpdateCompanionBuilder,
+    (NotebookRow, BaseReferences<_$LocalDb, $NotebooksTable, NotebookRow>),
+    NotebookRow,
+    PrefetchHooks Function()> {
+  $$NotebooksTableTableManager(_$LocalDb db, $NotebooksTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$NotebooksTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$NotebooksTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$NotebooksTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback: ({
+            Value<String> id = const Value.absent(),
+            Value<String> title = const Value.absent(),
+            Value<int> createdAt = const Value.absent(),
+            Value<int> updatedAt = const Value.absent(),
+            Value<String> docJson = const Value.absent(),
+            Value<String> inkJson = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              NotebooksCompanion(
+            id: id,
+            title: title,
+            createdAt: createdAt,
+            updatedAt: updatedAt,
+            docJson: docJson,
+            inkJson: inkJson,
+            rowid: rowid,
+          ),
+          createCompanionCallback: ({
+            required String id,
+            required String title,
+            required int createdAt,
+            required int updatedAt,
+            required String docJson,
+            required String inkJson,
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              NotebooksCompanion.insert(
+            id: id,
+            title: title,
+            createdAt: createdAt,
+            updatedAt: updatedAt,
+            docJson: docJson,
+            inkJson: inkJson,
+            rowid: rowid,
+          ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ));
+}
+
+typedef $$NotebooksTableProcessedTableManager = ProcessedTableManager<
+    _$LocalDb,
+    $NotebooksTable,
+    NotebookRow,
+    $$NotebooksTableFilterComposer,
+    $$NotebooksTableOrderingComposer,
+    $$NotebooksTableAnnotationComposer,
+    $$NotebooksTableCreateCompanionBuilder,
+    $$NotebooksTableUpdateCompanionBuilder,
+    (NotebookRow, BaseReferences<_$LocalDb, $NotebooksTable, NotebookRow>),
+    NotebookRow,
+    PrefetchHooks Function()>;
 
 class $LocalDbManager {
   final _$LocalDb _db;
@@ -5760,4 +6291,6 @@ class $LocalDbManager {
       $$LocalDeletionBatchesTableTableManager(_db, _db.localDeletionBatches);
   $$LocalDeletionTicketsTableTableManager get localDeletionTickets =>
       $$LocalDeletionTicketsTableTableManager(_db, _db.localDeletionTickets);
+  $$NotebooksTableTableManager get notebooks =>
+      $$NotebooksTableTableManager(_db, _db.notebooks);
 }

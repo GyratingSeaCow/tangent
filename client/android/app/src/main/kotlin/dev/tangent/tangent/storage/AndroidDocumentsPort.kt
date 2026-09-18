@@ -15,12 +15,13 @@ import java.io.FileDescriptor
 import java.io.ByteArrayOutputStream
 
 /** Sole ContentResolver adapter. Never consults a current-default preference. */
-class AndroidDocumentsPort(context: Context) : DocumentsIoPort, CaptureDocumentsPort {
+class AndroidDocumentsPort(context: Context) : DocumentsIoPort, CaptureDocumentsPort, DurableDocumentsPort {
     private val app = context.applicationContext
     private val resolver = app.contentResolver
     private val policy = SafPolicy(this)
     private val probeReceipts = ProbeReceipts()
     private val capture = CapturePublication(this)
+    private val documents = DocumentPublication(this)
     private fun <T> captureIo(action:()->T):T = try { action() }
         catch(e:ErrnoException) { fault(if(e.errno == OsConstants.EACCES || e.errno == OsConstants.EPERM) "denied" else if(e.errno == OsConstants.ENOENT) "absent" else "io","Capture descriptor operation failed") }
     private fun statIdentity(fd:FileDescriptor):Map<String,Any?> = captureIo {
@@ -172,6 +173,19 @@ class AndroidDocumentsPort(context: Context) : DocumentsIoPort, CaptureDocuments
             node
         }
     }
+    /** Creates a child DIRECTORY (notebooks live in their own folder). Mirrors
+     *  create(), but asserts the provider handed back an actual directory. */
+    override fun createDirectory(directory:NativeDirectory,name:String):NativeNode {
+        policy.requireAvailableNames(directory, setOf(name))
+        grant(directory,true)
+        val created = DC.createDocument(resolver,document(directory),DC.Document.MIME_TYPE_DIR,name)
+            ?: fault("io","Provider refused directory create")
+        return probeReceipts.observe(created.toString()) {
+            val node = query(created).singleOrNull() ?: fault("io","Created directory not observable")
+            if (node.name != name || !node.directory || node.virtual) fault("conflict","Provider changed created identity")
+            node
+        }
+    }
     override fun rename(directory:NativeDirectory,node:NativeNode,name:String):NativeNode {
         policy.requireAvailableNames(directory, setOf(name), node.id)
         val target = DC.renameDocument(resolver,checked(directory,node,DC.Document.FLAG_SUPPORTS_RENAME),name) ?: fault("io","Provider refused rename")
@@ -215,7 +229,14 @@ class AndroidDocumentsPort(context: Context) : DocumentsIoPort, CaptureDocuments
     private fun publish(d:NativeDirectory,name:String,mime:String,bytes:ByteArray,replace:Boolean):NativeNode {
         val old = policy.ownedNode(d,name,null)
         if (!replace && old != null) fault("conflict","Capture target exists")
-        var temp = create(d,".$name-${UUID.randomUUID()}.partial",mime)
+        // AOSP FileSystemProvider appends a MIME-derived extension when the
+        // requested display name's extension does not match the MIME type,
+        // silently renaming the temp and tripping the created-identity check
+        // (observed on-device: '.x.partial' became '.x.partial.json'). Keep
+        // the temp's final extension MIME-coherent so the provider returns
+        // the exact requested name.
+        val tempExt = when(mime) { "application/json" -> ".json"; "text/markdown" -> ".md"; "audio/ogg" -> ".ogg"; else -> "" }
+        var temp = create(d,".$name-${UUID.randomUUID()}.partial$tempExt",mime)
         try {
             write(d,temp,bytes)
             if (!read(d,temp).contentEquals(bytes)) fault("io","Publication readback mismatch")
@@ -228,8 +249,18 @@ class AndroidDocumentsPort(context: Context) : DocumentsIoPort, CaptureDocuments
             throw e
         }
     }
+    /** The 'Tangent Text Notes' child of the owned root, if present as a real
+     * directory. Text notes publish there (see CapturePublication); bound
+     * note operations must follow. Never created on this read path. */
+    private fun noteDirectory(d:NativeDirectory):NativeDirectory? {
+        val matches = children(d).filter { it.name == CaptureWire.TEXT_NOTE_DIRECTORY }
+        val node = matches.singleOrNull() ?: return null
+        if (!node.directory || node.virtual) return null
+        return NativeDirectory(d.authority,d.treeUri,node.id)
+    }
     fun execute(method:String,args:Map<String,Any?>):Any? {
         if(method in setOf("prepareCaptureAt","inspectPreparedCaptureAt","publishPreparedCaptureAt")) return capture.execute(method,args)
+        if(method in setOf("publishDocumentAt","listDocumentsAt","deleteDocumentAt")) return documents.execute(method,args)
         if (method == "inspectLegacyStorage") {
             return LegacyStorageInspection(
                 { app.getSharedPreferences("tangent_storage",Context.MODE_PRIVATE).getString("recordings_tree_uri",null) },
@@ -244,43 +275,100 @@ class AndroidDocumentsPort(context: Context) : DocumentsIoPort, CaptureDocuments
         if (method == "validateCandidate") {
             return probeReceipts.capture { policy.probe(d,literal(args["token"])) }
         }
+        if (method == "probeLocationAt") {
+            // Reachability only: query the directory document itself instead of
+            // enumerating its children. inspectLocation used to route to
+            // listRecordingsAt, which parsed every recording in the folder and
+            // discarded the result — 5.8s on a real 81-file folder, paid on
+            // EVERY record tap before any audio work could begin.
+            val uri = DC.buildDocumentUriUsingTree(grant(d), d.documentId)
+            resolver.query(uri, arrayOf(DC.Document.COLUMN_DOCUMENT_ID, DC.Document.COLUMN_MIME_TYPE), null, null, null)?.use { cursor ->
+                if (!cursor.moveToFirst()) fault("absent","Recording folder is unavailable")
+                if (cursor.getString(1) != DC.Document.MIME_TYPE_DIR) fault("invalid","Recording folder is not a directory")
+                return null
+            } ?: fault("absent","Recording folder is unavailable")
+        }
         if (method == "listRecordingsAt") {
-            val nodes = children(d)
-            return nodes.filter { it.name.endsWith(".opus") }.map { node ->
-                val id = node.name.removeSuffix(".opus")
-                var problem:Map<String,Any?>? = null; var meta:String? = null; var size = 0L; var modified = 0L
-                try {
-                    literal(id); val owned = policy.ownedNode(d,node.name,node.id) ?: fault("absent","Audio disappeared")
-                    resolver.query(checked(d,owned),arrayOf(DC.Document.COLUMN_SIZE,DC.Document.COLUMN_LAST_MODIFIED),null,null,null)?.use {
-                        if (!it.moveToFirst() || it.isNull(0) || it.isNull(1)) fault("unavailable","Provider size/time unavailable")
-                        size = it.getLong(0); modified = it.getLong(1)
-                    } ?: fault("unavailable","Provider stat unavailable")
-                    val sidecar = policy.ownedNode(d,"$id.meta.json",null)
-                    if (sidecar != null) meta = read(d,sidecar).toString(Charsets.UTF_8)
-                } catch(e: Exception) { problem = mapOf("code" to (if(e is NativeStorageException) e.code else "io"),"message" to "Could not inspect recording") }
-                mapOf("id" to id,"audio" to mapOf("version" to 1,"kind" to "saf","value" to uri(d,node)),"sizeBytes" to size,"modifiedAt" to modified,"metadataJson" to meta,"problem" to problem)
+            // Durable-pair primary content mirrors the shared Dart mode helper
+            // (contentExtensionForMode): audio modes publish .opus, text notes
+            // publish .md. Both enumerate as importable pairs. Text notes
+            // publish inside the 'Tangent Text Notes' child; legacy root-level
+            // .md pairs still enumerate (tolerance, no migration).
+            val contentSuffixes = listOf(".opus", ".md")
+            fun scan(dir:NativeDirectory):List<Map<String,Any?>> {
+                val nodes = children(dir)
+                return nodes.mapNotNull { node ->
+                    val suffix = contentSuffixes.firstOrNull { node.name.endsWith(it) } ?: return@mapNotNull null
+                    val id = node.name.removeSuffix(suffix)
+                    var problem:Map<String,Any?>? = null; var meta:String? = null; var size = 0L; var modified = 0L
+                    try {
+                        literal(id); val owned = policy.ownedNode(dir,node.name,node.id) ?: fault("absent","Audio disappeared")
+                        resolver.query(checked(dir,owned),arrayOf(DC.Document.COLUMN_SIZE,DC.Document.COLUMN_LAST_MODIFIED),null,null,null)?.use {
+                            if (!it.moveToFirst() || it.isNull(0) || it.isNull(1)) fault("unavailable","Provider size/time unavailable")
+                            size = it.getLong(0); modified = it.getLong(1)
+                        } ?: fault("unavailable","Provider stat unavailable")
+                        val sidecar = policy.ownedNode(dir,"$id.meta.json",null)
+                        if (sidecar != null) meta = read(dir,sidecar).toString(Charsets.UTF_8)
+                    } catch(e: Exception) { problem = mapOf("code" to (if(e is NativeStorageException) e.code else "io"),"message" to "Could not inspect recording") }
+                    mapOf("id" to id,"audio" to mapOf("version" to 1,"kind" to "saf","value" to uri(dir,node)),"sizeBytes" to size,"modifiedAt" to modified,"metadataJson" to meta,"problem" to problem)
+                }
             }
+            val results = scan(d).toMutableList()
+            noteDirectory(d)?.let { results += scan(it) }
+            return results
         }
 
         val b = binding ?: fault("invalid","Missing binding")
         val key = map(b["key"]); val id = literal(key["dumpId"]); literal(key["incarnation"])
         if (b["metadataName"] != "$id.meta.json") fault("invalid","Wrong metadata component")
         val expected = audioId(b,d)
-        // If audio is present, even metadata-only work must reject a same-name
+        // Durable-pair primary content mirrors the shared Dart mode helper
+        // (contentExtensionForMode): audio modes publish .opus, text notes .md.
+        // SAF document IDs are provider-opaque, so NEVER parse them for a
+        // filename — resolve by constant-name lookup exactly as before, with
+        // the .md fallback. ownedNode validates name+docId together, so a
+        // foreign same-name document still faults. Text notes publish inside
+        // the 'Tangent Text Notes' child, so name resolution checks the root
+        // first (audio modes, legacy root notes) and then that child; the
+        // binding-derived docId keeps the lookup anchored to the exact
+        // published document either way.
+        val note = noteDirectory(d)
+        fun ownedContent():Pair<NativeDirectory,NativeNode>? {
+            policy.ownedNode(d,"$id.opus",expected)?.let { return d to it }
+            policy.ownedNode(d,"$id.md",expected)?.let { return d to it }
+            note?.let { n -> policy.ownedNode(n,"$id.md",expected)?.let { return n to it } }
+            return null
+        }
+        // If content is present, even metadata-only work must reject a same-name
         // foreign document. Absence remains valid for explicit deletion retry.
-        policy.ownedNode(d,"$id.opus",expected)
+        val present = ownedContent()
         return when(method) {
             "readAudioAt", "playbackSourceAt" -> {
-                val node = policy.ownedNode(d,"$id.opus",expected) ?: fault("absent","Audio absent")
-                if (method == "readAudioAt") read(d,node) else b["audio"]
+                val (dir,node) = present ?: fault("absent","Audio absent")
+                if (method == "readAudioAt") read(dir,node) else b["audio"]
             }
             "deleteComponentAt" -> {
                 val component = text(args["component"])
                 if (component != "audio" && component != "metadata") fault("invalid","Unknown component")
-                val result = policy.deleteComponent(d,if(component == "audio") "$id.opus" else "$id.meta.json",if(component == "audio") expected else null)
+                // Components live beside the resolved content. A metadata-only
+                // retry with no surviving content also checks the note child so
+                // subdir sidecars stay deletable after their .md is gone.
+                val dir = present?.first ?: d
+                val contentName = present?.second?.name ?: "$id.opus"
+                var result = policy.deleteComponent(dir,if(component == "audio") contentName else "$id.meta.json",if(component == "audio") expected else null)
+                if (component == "metadata" && result.state == "absent" && present == null && note != null) {
+                    result = policy.deleteComponent(note,"$id.meta.json",null)
+                }
                 mapOf("state" to result.state,"problem" to result.problem?.let { mapOf("code" to it.code,"message" to it.message) })
             }
-            "writeMetadataAt" -> { publish(d,"$id.meta.json","application/json",metadata(args,id),true); null }
+            "writeMetadataAt" -> {
+                // The sidecar publishes beside its content; with no surviving
+                // content, prefer wherever an owned sidecar already exists.
+                val target = present?.first
+                    ?: note?.takeIf { policy.ownedNode(it,"$id.meta.json",null) != null }
+                    ?: d
+                publish(target,"$id.meta.json","application/json",metadata(args,id),true); null
+            }
             else -> fault("unsupported","Unsupported native storage method")
         }
     }

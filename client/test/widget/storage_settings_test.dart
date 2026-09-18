@@ -184,6 +184,20 @@ class ObservedSettings extends SettingsStore {
 
 Future<void> mountHost(WidgetTester t, TestCatalog catalog, HeldClient client,
     ObservedSettings settings, SyntheticSecureStore secure,) async {
+  // The real Settings screen is ~1400 logical pixels of ListView content, far
+  // taller than the 800x600 default test surface. That matters for assertions,
+  // not just for looks: a SliverList reports children outside its *paint*
+  // extent as offstage (SliverMultiBoxAdaptorElement.debugVisitOnstageChildren
+  // only visits the visible band, never the cache band), and every find.* here
+  // skips offstage by default. Rows below the fold — Server, Transcription,
+  // the trigger radios, the sync switches — are then built but invisible to
+  // finders, and tap() derives centres below the bottom edge and misses.
+  // Give the host a surface that shows the whole screen so these tests assert
+  // against genuinely visible widgets instead of accidentally-in-viewport ones.
+  t.view.physicalSize = const Size(800, 2000);
+  t.view.devicePixelRatio = 1;
+  addTearDown(t.view.resetPhysicalSize);
+  addTearDown(t.view.resetDevicePixelRatio);
   addTearDown(() async {
     if (secure.urlGate != null && !secure.urlGate!.isCompleted) {
       secure.urlGate!.complete(SyntheticSecureStore.url);
@@ -413,14 +427,10 @@ void main() {
     expect(find.text('Chosen recordings'), findsOneWidget);
     expect(settings.saves, isEmpty);
     expect(secure.writes, 0);
-    await t.scrollUntilVisible(find.text('Tap to toggle'), 150);
     await t.tap(find.text('Tap to toggle'));
     await pumpStorage(t);
-    await t.scrollUntilVisible(find.text('Wi-Fi only sync'), 150);
-    await t.tap(find.text('Wi-Fi only sync'));
+    await t.tap(find.text('Upload recordings only on Wi-Fi'));
     await pumpStorage(t);
-    await t.scrollUntilVisible(
-        find.text('Keep screen awake while recording'), 150,);
     await t.tap(find.text('Keep screen awake while recording'));
     await pumpStorage(t);
     // Completing server info must not reset edits made while that read was held.

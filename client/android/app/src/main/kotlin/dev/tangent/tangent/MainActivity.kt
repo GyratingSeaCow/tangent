@@ -23,6 +23,8 @@ import java.nio.charset.StandardCharsets
 import dev.tangent.tangent.storage.AndroidDocumentsPort
 import dev.tangent.tangent.storage.NativeIoSupervisor
 import dev.tangent.tangent.storage.NativeStorageException
+import dev.tangent.tangent.audio.AndroidCommunicationDevices
+import dev.tangent.tangent.audio.CommunicationRouting
 import dev.tangent.tangent.storage.StorageChannel
 import dev.tangent.tangent.storage.CandidatePicker
 import dev.tangent.tangent.storage.StorageMethodRouter
@@ -33,6 +35,9 @@ class MainActivity : FlutterActivity() {
     private val audioChannelName = "dev.tangent.tangent/audio"
     private val requestTree = 7301
     private var storageOwner: StorageChannel? = null
+    private val communicationRouting by lazy {
+        CommunicationRouting(AndroidCommunicationDevices(this))
+    }
     private val documentsPort by lazy { AndroidDocumentsPort(applicationContext) }
     private val candidatePicker by lazy {
         CandidatePicker<Uri>(
@@ -81,6 +86,32 @@ class MainActivity : FlutterActivity() {
                             "outputPath",
                         )
                         decodeOpusToWav(inputPath, outputPath)
+                    }
+                    // Route capture to a Bluetooth headset mic. The `record`
+                    // plugin drives the deprecated startBluetoothSco() pair,
+                    // which does not bring SCO up on this hardware, so the
+                    // modern setCommunicationDevice() path lives here.
+                    //
+                    // Never throws to Dart: a headset that is off or refused
+                    // must not block a recording. The state string tells the
+                    // caller what happened so it can report honestly.
+                    "routeCommunicationDevice" -> {
+                        val deviceId = call.argument<Int>("deviceId")
+                        if (deviceId == null) {
+                            result.success(mapOf("state" to "notApplicable"))
+                        } else {
+                            val outcome = communicationRouting.route(deviceId)
+                            result.success(
+                                mapOf(
+                                    "state" to outcome.state.name.lowercase(),
+                                    "label" to outcome.device?.label,
+                                ),
+                            )
+                        }
+                    }
+                    "clearCommunicationDevice" -> {
+                        communicationRouting.clear()
+                        result.success(null)
                     }
                     else -> result.notImplemented()
                 }

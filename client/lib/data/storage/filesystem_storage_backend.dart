@@ -208,15 +208,32 @@ class FilesystemStorageBackend implements StorageBackend {
     StorageCodec.encodeBinding(binding);
     final root = await _root(binding.location);
     final id = binding.key.dumpId;
+    // Owned content names derive from the ONE shared mode helper; a binding
+    // carries no mode, so exactly the mode-derived names are acceptable.
+    final contentNames = {
+      for (final mode in const ['brain_dump', 'meeting', 'text_note'])
+        '$id.${contentExtensionForMode(mode)}',
+    };
+    // The binding locator is authoritative for the parent: audio modes (and
+    // legacy notes) live at the root, published text notes live inside the
+    // owned 'Tangent Text Notes' child. Only the note content name may bind
+    // through the subdirectory.
+    final parent = p.dirname(binding.audio.value);
+    final basename = p.basename(binding.audio.value);
+    final rootParent = p.equals(parent, root);
+    final noteParent =
+        p.equals(parent, p.join(root, textNoteSubdirectoryName)) &&
+            basename == '$id.${contentExtensionForMode('text_note')}';
     if (binding.metadataName != '$id.meta.json' ||
         binding.audio.kind != 'file' ||
-        !p.equals(p.dirname(binding.audio.value), root) ||
-        p.basename(binding.audio.value) != '$id.opus') {
+        (!rootParent && !noteParent) ||
+        !contentNames.contains(basename)) {
       _invalid('Binding does not identify exact owned components');
     }
+    // The sidecar always lives beside its content component.
     return p.join(
-      root,
-      component == RecordingComponent.audio ? '$id.opus' : binding.metadataName,
+      parent,
+      component == RecordingComponent.audio ? basename : binding.metadataName,
     );
   }
 
@@ -373,9 +390,14 @@ class FilesystemStorageBackend implements StorageBackend {
   @override
   IoOperation<Outcome<void>> inspectLocation(StorageLocation location) => _run(
         () => _outcome(() async {
-          await Directory(await _root(location))
-              .list(followLinks: false)
-              .toList();
+          // Reachability only — existence and directory-ness. Listing the whole
+          // folder here made every record tap pay for a full enumeration.
+          final root = Directory(await _root(location));
+          if (!await root.exists()) {
+            throw const StorageFault(
+              (code: ProblemCode.absent, message: 'Recording folder is unavailable'),
+            );
+          }
         }),
       );
   Future<File> _temporary(String root, String prefix) async {
@@ -466,55 +488,218 @@ class FilesystemStorageBackend implements StorageBackend {
         () => _outcome(() async {
           final root = await _root(location);
           final result = <ImportedEntry>[];
-          final entries =
-              await Directory(root).list(followLinks: false).toList();
-          for (final entry in entries) {
-            if (!entry.path.endsWith('.opus')) continue;
-            final id = p.basenameWithoutExtension(entry.path);
-            Map<String, dynamic>? metadata;
-            StorageProblem? problem;
-            var size = 0;
-            var modified = DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
-            try {
-              StorageCodec.validateLiteralId(id);
-              await _regular(entry.path);
-              final stat = await entry.stat();
-              size = stat.size;
-              modified = stat.modified;
-              final meta = File(p.join(root, '$id.meta.json'));
-              if (entries.any((e) => p.equals(e.path, meta.path))) {
-                await _regular(meta.path);
-                final decoded = jsonDecode(await meta.readAsString());
-                if (decoded is! Map<String, dynamic> ||
-                    decoded['id'] != id ||
-                    !const [1, 2].contains(decoded['schemaVersion'])) {
-                  _invalid('Metadata identity/schema mismatch');
+          // Owned primary-content names derive from the ONE shared mode
+          // helper (see _component): audio modes publish .opus, text notes
+          // publish .md. Both are enumerable durable-pair content. Text
+          // notes publish inside the 'Tangent Text Notes' child; legacy
+          // root-level .md pairs still import (tolerance, no migration).
+          final contentSuffixes = {
+            for (final mode in const ['brain_dump', 'meeting', 'text_note'])
+              '.${contentExtensionForMode(mode)}',
+          };
+          Future<void> scan(String directory) async {
+            final entries =
+                await Directory(directory).list(followLinks: false).toList();
+            for (final entry in entries) {
+              if (!contentSuffixes.any(entry.path.endsWith)) continue;
+              final id = p.basenameWithoutExtension(entry.path);
+              Map<String, dynamic>? metadata;
+              StorageProblem? problem;
+              var size = 0;
+              var modified =
+                  DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
+              try {
+                StorageCodec.validateLiteralId(id);
+                await _regular(entry.path);
+                final stat = await entry.stat();
+                size = stat.size;
+                modified = stat.modified;
+                final meta = File(p.join(directory, '$id.meta.json'));
+                if (entries.any((e) => p.equals(e.path, meta.path))) {
+                  await _regular(meta.path);
+                  final decoded = jsonDecode(await meta.readAsString());
+                  if (decoded is! Map<String, dynamic> ||
+                      decoded['id'] != id ||
+                      !const [1, 2].contains(decoded['schemaVersion'])) {
+                    _invalid('Metadata identity/schema mismatch');
+                  }
+                  metadata = decoded;
                 }
-                metadata = decoded;
+              } on StorageFault catch (e) {
+                problem = e.problem;
+              } on FileSystemException catch (e) {
+                problem = (code: ProblemCode.io, message: e.message);
+              } on FormatException {
+                problem =
+                    (code: ProblemCode.invalid, message: 'Malformed metadata');
               }
-            } on StorageFault catch (e) {
-              problem = e.problem;
-            } on FileSystemException catch (e) {
-              problem = (code: ProblemCode.io, message: e.message);
-            } on FormatException {
-              problem =
-                  (code: ProblemCode.invalid, message: 'Malformed metadata');
+              result.add(
+                (
+                  id: id,
+                  source: location,
+                  audio: (kind: 'file', value: entry.path),
+                  sizeBytes: size,
+                  modifiedAt: modified,
+                  metadata: metadata,
+                  problem: problem
+                ),
+              );
             }
+          }
+
+          await scan(root);
+          final noteDirectory = p.join(root, textNoteSubdirectoryName);
+          if (await FileSystemEntity.type(noteDirectory, followLinks: false) ==
+              FileSystemEntityType.directory) {
+            await scan(noteDirectory);
+          }
+          return result;
+        }),
+      );
+
+  /// Resolves the named child of an owned root. Idempotent: an existing real
+  /// directory is reused, a same-name non-directory is a conflict (never a
+  /// silent fall back to the root, which would scatter documents), and the
+  /// child is only created when [create] is set.
+  Future<String?> _childDirectory(
+    StorageLocation location,
+    String directoryName, {
+    required bool create,
+  }) async {
+    StorageCodec.validateLiteralId(directoryName);
+    final root = await _root(location);
+    final child = p.join(root, directoryName);
+    final type = await FileSystemEntity.type(child, followLinks: false);
+    if (type == FileSystemEntityType.directory) return child;
+    if (type != FileSystemEntityType.notFound) {
+      throw const StorageFault(
+        (
+          code: ProblemCode.conflict,
+          message: 'Document directory name is not a directory'
+        ),
+      );
+    }
+    if (!create) return null;
+    await Directory(child).create();
+    if (await FileSystemEntity.type(child, followLinks: false) !=
+        FileSystemEntityType.directory) {
+      throw const StorageFault(
+        (
+          code: ProblemCode.unavailable,
+          message: 'Created document directory is not observable'
+        ),
+      );
+    }
+    return child;
+  }
+
+  @override
+  IoOperation<Outcome<DurableDocument>> publishDocument(
+    StorageLocation location,
+    String directoryName,
+    String name,
+    String content,
+    String publicationId,
+  ) =>
+      _run(
+        () => _outcome(() async {
+          StorageCodec.validateLiteralId(publicationId);
+          StorageCodec.validateLiteralId(name);
+          final directory = (await _childDirectory(
+            location,
+            directoryName,
+            create: true,
+          ))!;
+          final target = p.join(directory, name);
+          final type = await FileSystemEntity.type(target, followLinks: false);
+          if (type != FileSystemEntityType.file &&
+              type != FileSystemEntityType.notFound) {
+            _invalid('Not an owned document file');
+          }
+          // Write-then-rename: a torn write never replaces the last good copy.
+          final tmp = await _temporary(directory, publicationId);
+          try {
+            await tmp.writeAsString(content, flush: true);
+            await tmp.rename(target);
+          } finally {
+            if (await tmp.exists()) await tmp.delete();
+          }
+          return (
+            name: name,
+            locator: (kind: 'file', value: target),
+            content: content
+          );
+        }),
+      );
+
+  @override
+  IoOperation<Outcome<List<DurableDocument>>> listDocuments(
+    StorageLocation location,
+    String directoryName,
+    String suffix,
+  ) =>
+      _run(
+        () => _outcome(() async {
+          final directory =
+              await _childDirectory(location, directoryName, create: false);
+          if (directory == null) return <DurableDocument>[];
+          final result = <DurableDocument>[];
+          final entries =
+              await Directory(directory).list(followLinks: false).toList();
+          for (final entry in entries) {
+            final name = p.basename(entry.path);
+            if (!name.endsWith(suffix) || name.length == suffix.length) {
+              continue;
+            }
+            await _regular(entry.path);
             result.add(
               (
-                id: id,
-                source: location,
-                audio: (kind: 'file', value: entry.path),
-                sizeBytes: size,
-                modifiedAt: modified,
-                metadata: metadata,
-                problem: problem
+                name: name,
+                locator: (kind: 'file', value: entry.path),
+                content: await File(entry.path).readAsString()
               ),
             );
           }
           return result;
         }),
       );
+
+  @override
+  IoOperation<ComponentResult> deleteDocument(
+    StorageLocation location,
+    String directoryName,
+    String name,
+    AudioLocator locator,
+    String operationId,
+  ) =>
+      _run(() async {
+        try {
+          StorageCodec.validateLiteralId(operationId);
+          StorageCodec.validateLiteralId(name);
+          StorageCodec.encodeAudio(locator);
+          final directory =
+              await _childDirectory(location, directoryName, create: false);
+          if (directory == null) {
+            return (state: ComponentState.absent, problem: null);
+          }
+          // The stored locator is authoritative for identity, but it must
+          // still resolve inside the owned child under the expected name:
+          // a foreign locator is refused rather than followed.
+          if (locator.kind != 'file' ||
+              !p.equals(p.dirname(locator.value), directory) ||
+              p.basename(locator.value) != name) {
+            _invalid('Locator does not identify an owned document');
+          }
+          return await _remove(locator.value);
+        } on StorageFault catch (e) {
+          return (state: ComponentState.failed, problem: e.problem);
+        } on FileSystemException catch (e) {
+          return (
+            state: ComponentState.failed,
+            problem: (code: ProblemCode.io, message: e.message)
+          );
+        }
+      });
 }
 
 class _FileOperation<T> implements IoOperation<T> {

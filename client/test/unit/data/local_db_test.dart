@@ -3,6 +3,8 @@ import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqlite3/sqlite3.dart';
 import 'package:tangent/data/local_db.dart';
+import 'package:tangent/data/storage/recording_mutation_coordinator.dart';
+import 'package:tangent/data/storage/storage_contract.dart';
 import 'package:tangent/models/transcription_status.dart';
 import '../../support/bound_row_fixture.dart';
 
@@ -18,6 +20,10 @@ void main() {
       expect(TranscriptionStatus.running.isInProgress, isTrue);
       expect(TranscriptionStatus.completed.isTerminal, isTrue);
       expect(TranscriptionStatus.failed.isTerminal, isTrue);
+      // not_applicable is the terminal state for text notes, which are
+      // never transcribed (spec: 2026-09-17-text-note-design data model).
+      expect(TranscriptionStatus.notApplicable.isTerminal, isTrue);
+      expect(TranscriptionStatus.notApplicable.isInProgress, isFalse);
       expect(
         TranscriptionStatus.values.map((status) => status.wireValue),
         [
@@ -27,6 +33,7 @@ void main() {
           'running',
           'completed',
           'failed',
+          'not_applicable',
         ],
       );
     });
@@ -186,7 +193,7 @@ void main() {
           )
           .single['sql'] as String;
       expect(trigger, contains("VALUES ('delete'"));
-      expect(sqlite.userVersion, 5);
+      expect(sqlite.userVersion, 6);
     });
 
     test('migrates v2 by adding meeting notes without changing transcript',
@@ -224,7 +231,7 @@ void main() {
 
       final row = await migrated.getDump('meeting-1');
 
-      expect(sqlite.userVersion, 5);
+      expect(sqlite.userVersion, 6);
       expect(row!.transcript, 'Raw legacy transcript');
       expect(row.meetingNotes, isNull);
       expect(row.syncStatus, 'local_only');
@@ -338,7 +345,7 @@ void main() {
       final blank = await migrated.getDump('blank');
       final done = await migrated.getDump('done');
 
-      expect(sqlite.userVersion, 5);
+      expect(sqlite.userVersion, 6);
       expect(blank!.transcriptionStatus, 'not_transcribed');
       expect(blank.transcriptionAttempt, 0);
       expect(blank.transcriptionCompletedAt, isNull);
@@ -780,6 +787,89 @@ void main() {
       );
     });
 
+    test('note body edit succeeds against the not_applicable revision gate',
+        () async {
+      final now = DateTime.utc(2026, 9, 17, 9);
+      final original = DumpRow(
+        id: 'note-edit',
+        createdAt: now,
+        updatedAt: now,
+        mode: 'text_note',
+        durationSeconds: 0,
+        title: 'Note 2026-09-17 09-00-00',
+        transcript: 'First draft',
+        audioPath: '/note-edit.md',
+        audioSizeBytes: 11,
+        syncStatus: 'pending',
+        syncAttempts: 0,
+        transcriptionStatus: 'not_applicable',
+        transcriptionAttempt: 0,
+      );
+      await seedFileFixtureRow(db, original);
+
+      final saved = await db.updateDumpTranscript(
+        original.id,
+        storageKey: fileFixtureKey(original.id),
+        expectedTranscript: original.transcript!,
+        expectedTranscriptionAttempt: 0,
+        expectedTranscriptionRequestId: null,
+        transcript: 'Edited note body',
+        now: now.add(const Duration(minutes: 1)),
+      );
+
+      expect(saved.transcript, 'Edited note body');
+      expect(saved.mode, 'text_note');
+      expect(saved.transcriptionStatus, 'not_applicable');
+      expect(
+        saved.transcriptionError,
+        startsWith('sidecar_sync_pending: manual_edit:'),
+      );
+    });
+
+    test('note deletion claim and eligibility treat not_applicable as terminal',
+        () async {
+      final now = DateTime.utc(2026, 9, 17, 9, 30);
+      final note = DumpRow(
+        id: 'note-delete',
+        createdAt: now,
+        updatedAt: now,
+        mode: 'text_note',
+        durationSeconds: 0,
+        title: 'Note 2026-09-17 09-30-00',
+        transcript: 'Delete me',
+        audioPath: '/note-delete.md',
+        audioSizeBytes: 9,
+        syncStatus: 'local_only',
+        syncAttempts: 0,
+        transcriptionStatus: 'not_applicable',
+        transcriptionAttempt: 0,
+      );
+      final binding = await seedFileFixtureRow(db, note);
+      final coordinator = DefaultRecordingMutationCoordinator(db: db);
+      addTearDown(coordinator.drain);
+      await coordinator.restoreFences();
+
+      expect(
+        (await coordinator.watchEligibility().first)[note.id],
+        Eligibility.eligible,
+      );
+      final admission = await coordinator.acquire(note.id, UseKind.deletion);
+      expect(admission, isA<Ok<UseLease>>());
+      await (admission as Ok<UseLease>).value.close();
+
+      final claimed = await db.claimLocalDeletion(
+        'note-delete-op',
+        (
+          id: note.id,
+          binding: binding,
+          title: note.title,
+          eligibility: Eligibility.eligible,
+          retryTicketId: null,
+        ),
+      );
+      expect(claimed, isA<Ok<DeletionTicket>>());
+    });
+
     test(
         'fix round stale sidecar acknowledgement cannot clear a newer identical edit',
         () async {
@@ -983,6 +1073,46 @@ void main() {
       expect(saved.transcriptionStatus, 'running');
       expect(saved.transcriptionJobId, 'job-monotonic');
       expect(saved.transcriptionError, isNull);
+    });
+
+    test('beginTranscriptionAttempt rejects not_applicable note rows',
+        () async {
+      final now = DateTime.utc(2026, 9, 17, 12);
+      await seedFileFixtureRow(
+        db,
+        DumpRow(
+          id: 'note-na',
+          createdAt: now,
+          updatedAt: now,
+          mode: 'text_note',
+          durationSeconds: 0,
+          title: 'Note',
+          audioPath: '/note-na.md',
+          audioSizeBytes: 4,
+          transcript: 'body',
+          syncStatus: 'pending',
+          syncAttempts: 0,
+          transcriptionStatus: 'not_applicable',
+          transcriptionAttempt: 0,
+        ),
+      );
+
+      await expectLater(
+        db.beginTranscriptionAttempt(
+          'note-na',
+          storageKey: fileFixtureKey('note-na'),
+          requestId: 'request-note',
+          now: now,
+        ),
+        throwsA(isA<StateError>().having(
+          (e) => e.message,
+          'message',
+          contains('not applicable'),
+        ),),
+      );
+      final after = (await db.getDump('note-na'))!;
+      expect(after.transcriptionStatus, 'not_applicable');
+      expect(after.transcriptionAttempt, 0);
     });
   });
 }

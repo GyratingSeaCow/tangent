@@ -13,6 +13,11 @@ import '../../models/transcription_status.dart';
 import 'dump_detail_screen.dart';
 import 'dumps_providers.dart';
 
+/// What the `+` FAB on the dumps list asks the home screen to create.
+/// The list pops itself with one of these; home switches mode and either
+/// opens note compose or starts recording immediately.
+enum DumpsCreateAction { textNote, brainDump, meeting }
+
 class DumpsListScreen extends ConsumerStatefulWidget {
   const DumpsListScreen({super.key, this.onOpenDump});
   final void Function(BuildContext, DumpRow)? onOpenDump;
@@ -121,6 +126,52 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
 
   void _change(VoidCallback action) => setState(action);
 
+  /// Blue `+` FAB: an active mode chip picks the creation directly; under
+  /// the All filter a bottom sheet asks which kind to create. Either way
+  /// the screen pops with the [DumpsCreateAction] for home to act on.
+  Future<void> _onCreatePressed() async {
+    final direct = switch (ref.read(dumpModeFilterProvider)) {
+      DumpModeFilter.textNote => DumpsCreateAction.textNote,
+      DumpModeFilter.brainDump => DumpsCreateAction.brainDump,
+      DumpModeFilter.meeting => DumpsCreateAction.meeting,
+      DumpModeFilter.all => null,
+    };
+    final action = direct ??
+        await showModalBottomSheet<DumpsCreateAction>(
+          context: context,
+          builder: (sheetContext) => SafeArea(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ListTile(
+                  key: const ValueKey('create-option-textNote'),
+                  leading: const Icon(Icons.sticky_note_2),
+                  title: const Text('Text Note'),
+                  onTap: () => Navigator.of(sheetContext)
+                      .pop(DumpsCreateAction.textNote),
+                ),
+                ListTile(
+                  key: const ValueKey('create-option-brainDump'),
+                  leading: const Icon(Icons.psychology),
+                  title: const Text('Brain Dump'),
+                  onTap: () => Navigator.of(sheetContext)
+                      .pop(DumpsCreateAction.brainDump),
+                ),
+                ListTile(
+                  key: const ValueKey('create-option-meeting'),
+                  leading: const Icon(Icons.groups),
+                  title: const Text('Meeting'),
+                  onTap: () => Navigator.of(sheetContext)
+                      .pop(DumpsCreateAction.meeting),
+                ),
+              ],
+            ),
+          ),
+        );
+    if (action == null || !mounted) return;
+    Navigator.of(context).pop(action);
+  }
+
   @override
   void dispose() {
     _searchController.dispose();
@@ -180,6 +231,13 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
         if (!didPop && selection.active) _change(_selection.cancel);
       },
       child: Scaffold(
+        floatingActionButton: FloatingActionButton(
+          tooltip: 'Add',
+          backgroundColor: Theme.of(context).colorScheme.primary,
+          foregroundColor: Theme.of(context).colorScheme.onPrimary,
+          onPressed: _onCreatePressed,
+          child: const Icon(Icons.add),
+        ),
         appBar: AppBar(
           title: _searching
               ? TextField(
@@ -421,11 +479,20 @@ class _DumpList extends StatelessWidget {
             final compact = constraints.maxWidth < 500 ||
                 MediaQuery.textScalerOf(context).scale(14) > 21;
             final reason = _eligibilityReason(eligibility[dump.id]);
+            final isNote = dump.mode == 'text_note';
             final pill = _TranscriptionStatusPill(
                 dumpId: dump.id, status: transcription,);
             final subtitle = Row(children: [
               _SyncBadge(status: sync),
               const SizedBox(width: 6),
+              if (isNote) ...[
+                Icon(
+                  Icons.edit_note,
+                  key: ValueKey('note-row-icon-${dump.id}'),
+                  size: 16,
+                ),
+                const SizedBox(width: 6),
+              ],
               Expanded(
                   child: Text(_subtitleFor(dump),
                       maxLines: 2, overflow: TextOverflow.ellipsis,),),
@@ -504,10 +571,11 @@ class _DumpList extends StatelessWidget {
       };
 
   String _subtitleFor(DumpRow dump) {
+    final date = dump.createdAt.toLocal().toString().split('.').first;
+    if (dump.mode == 'text_note') return date;
     final mins = (dump.durationSeconds / 60).floor();
     final secs = dump.durationSeconds % 60;
     final duration = mins > 0 ? '${mins}m ${secs}s' : '${secs}s';
-    final date = dump.createdAt.toLocal().toString().split('.').first;
     return '$duration · $date';
   }
 }
@@ -567,6 +635,13 @@ class _TranscriptionStatusPill extends StatelessWidget {
           colors.onErrorContainer,
           colors.errorContainer,
           colors.error,
+        ),
+      TranscriptionStatus.notApplicable => (
+          'Note',
+          Icons.edit_note,
+          colors.onSurfaceVariant,
+          colors.surfaceContainerHighest,
+          colors.outline,
         ),
     };
     return Container(

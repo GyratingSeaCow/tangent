@@ -22,6 +22,7 @@ import 'package:tangent/data/storage/storage_catalog.dart';
 import 'package:tangent/main.dart';
 import 'package:tangent/screens/home/home_providers.dart';
 import 'package:tangent/screens/home/home_screen.dart';
+import 'package:tangent/screens/note/note_compose_screen.dart';
 import 'package:tangent/screens/recording/recording_controller.dart';
 import 'package:tangent/screens/recording/recording_waveform.dart';
 import 'package:tangent/screens/server/server_connection_screen.dart'
@@ -117,7 +118,8 @@ void main() {
               WidgetRecordingCoordinator(ref.watch(recordingServiceProvider)),),
           settingsStoreProvider.overrideWithValue(SettingsStore()),
           screenAwakeProvider.overrideWithValue(_NoopScreenAwake()),
-          storageBootstrapProvider.overrideWith((ref) async {}),
+          captureReadyProvider.overrideWith((ref) async {}),
+          catalogSyncProvider.overrideWith((ref) async {}),
         ],
         child: const TangentApp(),
       ),
@@ -187,7 +189,8 @@ void main() {
               WidgetRecordingCoordinator(ref.watch(recordingServiceProvider)),),
           settingsStoreProvider.overrideWithValue(SettingsStore()),
           screenAwakeProvider.overrideWithValue(_NoopScreenAwake()),
-          storageBootstrapProvider.overrideWith((ref) async {}),
+          captureReadyProvider.overrideWith((ref) async {}),
+          catalogSyncProvider.overrideWith((ref) async {}),
         ],
         child: const TangentApp(),
       ),
@@ -317,7 +320,8 @@ void main() {
             (ref) =>
                 WidgetRecordingCoordinator(ref.watch(recordingServiceProvider)),
           ),
-          storageBootstrapProvider.overrideWith((ref) async {}),
+          captureReadyProvider.overrideWith((ref) async {}),
+          catalogSyncProvider.overrideWith((ref) async {}),
           settingsStoreProvider.overrideWithValue(SettingsStore()),
           screenAwakeProvider.overrideWithValue(_NoopScreenAwake()),
         ],
@@ -346,7 +350,8 @@ void main() {
             (ref) =>
                 WidgetRecordingCoordinator(ref.watch(recordingServiceProvider)),
           ),
-          storageBootstrapProvider.overrideWith((ref) async {}),
+          captureReadyProvider.overrideWith((ref) async {}),
+          catalogSyncProvider.overrideWith((ref) async {}),
           settingsStoreProvider.overrideWithValue(SettingsStore()),
           screenAwakeProvider.overrideWithValue(_NoopScreenAwake()),
         ],
@@ -380,7 +385,8 @@ void main() {
             (ref) =>
                 WidgetRecordingCoordinator(ref.watch(recordingServiceProvider)),
           ),
-          storageBootstrapProvider.overrideWith((ref) async {}),
+          captureReadyProvider.overrideWith((ref) async {}),
+          catalogSyncProvider.overrideWith((ref) async {}),
           settingsStoreProvider.overrideWithValue(SettingsStore()),
           screenAwakeProvider.overrideWithValue(_NoopScreenAwake()),
         ],
@@ -397,5 +403,144 @@ void main() {
 
     await tester.pumpWidget(const SizedBox.shrink());
     await db.close();
+  });
+
+  // ---------------------------------------------------------------------
+  // Task 8: Text Note mode — third segment and compose entry.
+  // ---------------------------------------------------------------------
+
+  /// Mounts the home screen at the target handset viewport (1080x2340 @3x)
+  /// with the standard stub overrides. Returns the db for teardown.
+  Future<LocalDb> mountHome(
+    WidgetTester tester, {
+    StubRecordingService? recorder,
+  }) async {
+    tester.view.physicalSize = const Size(1080, 2340);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final db = LocalDb.forTesting(NativeDatabase.memory());
+    final service = recorder ?? StubRecordingService();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          localDbProvider.overrideWithValue(db),
+          transcriptionClientProvider.overrideWith((ref) => _StubClient()),
+          recordingServiceProvider.overrideWithValue(service),
+          recordingCoordinatorProvider.overrideWith(
+            (ref) =>
+                WidgetRecordingCoordinator(ref.watch(recordingServiceProvider)),
+          ),
+          captureReadyProvider.overrideWith((ref) async {}),
+          catalogSyncProvider.overrideWith((ref) async {}),
+          settingsStoreProvider.overrideWithValue(SettingsStore()),
+          screenAwakeProvider.overrideWithValue(_NoopScreenAwake()),
+        ],
+        child: const MaterialApp(home: HomeScreen()),
+      ),
+    );
+    return db;
+  }
+
+  /// Unmount the tree, flush any stream-close timers, then close the db
+  /// (same teardown ordering as note_compose_test.dart).
+  Future<void> unmountHome(WidgetTester tester, LocalDb db) async {
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(milliseconds: 1));
+    await db.close();
+  }
+
+  testWidgets('mode selector renders Brain Dump, Meeting, and Text Note',
+      (tester) async {
+    final db = await mountHome(tester);
+
+    expect(find.text('Brain Dump'), findsOneWidget);
+    expect(find.text('Meeting'), findsOneWidget);
+    expect(find.text('Text Note'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await unmountHome(tester, db);
+  });
+
+  testWidgets(
+      'Text Note mode swaps the center button to edit_note with Tap to write '
+      'and hides the audio-only timer', (tester) async {
+    final db = await mountHome(tester);
+
+    // Audio default: mic, record caption, timer.
+    expect(find.byIcon(Icons.mic), findsOneWidget);
+    expect(find.text('Tap to record'), findsOneWidget);
+    expect(find.text('00:00'), findsOneWidget);
+
+    await tester.tap(find.text('Text Note'));
+    await tester.pump();
+
+    expect(find.byIcon(Icons.edit_note), findsOneWidget);
+    expect(find.text('Tap to write'), findsOneWidget);
+    expect(find.byIcon(Icons.mic), findsNothing);
+    expect(find.text('Tap to record'), findsNothing);
+    expect(
+      find.text('00:00'),
+      findsNothing,
+      reason: 'the recording timer is an audio-mode affordance',
+    );
+    expect(find.byType(RecordingWaveform), findsNothing);
+    expect(tester.takeException(), isNull);
+
+    await unmountHome(tester, db);
+  });
+
+  testWidgets(
+      'tapping the center button in Text Note mode pushes compose and never '
+      'touches the recording state machine', (tester) async {
+    EditableText.debugDeterministicCursor = true;
+    addTearDown(() => EditableText.debugDeterministicCursor = false);
+    final stub = StubRecordingService();
+    final db = await mountHome(tester, recorder: stub);
+
+    await tester.tap(find.text('Text Note'));
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.edit_note));
+    // Bounded pumps: let the route transition finish without pumpAndSettle
+    // (the compose screen autofocuses a text field).
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(find.byType(NoteComposeScreen), findsOneWidget);
+    expect(
+      stub.events,
+      isEmpty,
+      reason: 'controller.start must be unreachable in Text Note mode',
+    );
+    expect(find.byType(RecordingWaveform), findsNothing);
+    expect(tester.takeException(), isNull);
+
+    await unmountHome(tester, db);
+  });
+
+  testWidgets('Brain Dump still starts recording after visiting Text Note',
+      (tester) async {
+    final stub = StubRecordingService();
+    final db = await mountHome(tester, recorder: stub);
+
+    await tester.tap(find.text('Text Note'));
+    await tester.pump();
+    await tester.tap(find.text('Brain Dump'));
+    await tester.pump();
+
+    expect(find.byIcon(Icons.mic), findsOneWidget);
+    expect(find.text('Tap to record'), findsOneWidget);
+    expect(find.text('00:00'), findsOneWidget);
+
+    await tester.tap(find.byIcon(Icons.mic));
+    await tester.pump();
+
+    expect(stub.events, contains('start'));
+    expect(find.byType(RecordingWaveform), findsOneWidget);
+    expect(find.byIcon(Icons.stop), findsOneWidget);
+    expect(find.byType(NoteComposeScreen), findsNothing);
+    expect(tester.takeException(), isNull);
+
+    await unmountHome(tester, db);
   });
 }

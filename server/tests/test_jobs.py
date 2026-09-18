@@ -4,6 +4,7 @@
 import json
 import sqlite3
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -290,6 +291,32 @@ def test_enqueue_for_unknown_dump_returns_404(authed_client_with_dump):
         headers=_auth(token),
     )
     assert resp.status_code == 404
+
+
+def test_transcribe_text_note_returns_422_with_exact_detail(authed_client_with_dump):
+    """A text_note dump can never be transcribed: 422 with the exact detail,
+    not the missing-audio detail it would otherwise fall through to."""
+    client, token, _ = authed_client_with_dump
+    create = client.post(
+        "/v1/dumps",
+        json={
+            "id": "note-dump-0001-uuid",
+            "mode": "text_note",
+            "duration_seconds": 0,
+            "title": "A typed note",
+            "created_at": datetime.now(UTC).isoformat(),
+        },
+        headers=_auth(token),
+    )
+    assert create.status_code == 201
+
+    resp = client.post(
+        "/v1/dumps/note-dump-0001-uuid/transcribe",
+        json={"model": "large-v3", "request_id": "request-note-reject-001"},
+        headers=_auth(token),
+    )
+    assert resp.status_code == 422
+    assert resp.json()["detail"] == "Text notes cannot be transcribed"
 
 
 def test_get_unknown_job_returns_404(authed_client_with_dump):

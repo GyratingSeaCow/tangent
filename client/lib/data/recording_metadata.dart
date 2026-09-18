@@ -52,13 +52,25 @@ void validateImportedMetadata(String id, Map<String, dynamic>? metadata) {
     }
   }
   if (metadata['mode'] != null &&
-      !const ['brain_dump', 'meeting'].contains(metadata['mode'])) {
+      !const ['brain_dump', 'meeting', 'text_note']
+          .contains(metadata['mode'])) {
     invalid();
   }
   if (metadata['transcriptionStatus'] != null &&
       !TranscriptionStatus.values
           .any((s) => s.wireValue == metadata['transcriptionStatus'])) {
     invalid();
+  }
+  // Mode and status must cohere: not_applicable belongs to text notes
+  // exclusively. An audio-mode sidecar claiming not_applicable would arm a
+  // live Transcribe button past the terminal-status invariant; a note
+  // claiming an audio status could never save body edits again.
+  final mode = metadata['mode'];
+  final status = metadata['transcriptionStatus'];
+  if (mode != null && status != null) {
+    final isNoteStatus =
+        status == TranscriptionStatus.notApplicable.wireValue;
+    if ((mode == 'text_note') != isNoteStatus) invalid();
   }
 }
 
@@ -68,6 +80,13 @@ String generatedRecordingTitle(DateTime createdAt) {
   final local = createdAt.toLocal();
   String two(int value) => value.toString().padLeft(2, '0');
   return 'Recording ${local.year}-${two(local.month)}-${two(local.day)} '
+      '${two(local.hour)}-${two(local.minute)}-${two(local.second)}';
+}
+
+String generatedNoteTitle(DateTime createdAt) {
+  final local = createdAt.toLocal();
+  String two(int value) => value.toString().padLeft(2, '0');
+  return 'Note ${local.year}-${two(local.month)}-${two(local.day)} '
       '${two(local.hour)}-${two(local.minute)}-${two(local.second)}';
 }
 
@@ -137,9 +156,16 @@ DumpRow importedDumpRow({
   final restoredTitle = text('title', '').trim();
   final transcript = metadata?['transcript'] as String?;
   final schemaVersion = number('schemaVersion', 1);
-  final legacyStatus = transcript != null && transcript.trim().isNotEmpty
-      ? 'completed'
-      : 'not_transcribed';
+  final mode = text('mode', 'brain_dump');
+  // A restored note is never transcribable: absent/degraded sidecar status
+  // must fall back to the terminal note status, and an untitled note gets a
+  // Note title, not a Recording title.
+  final isNote = mode == 'text_note';
+  final legacyStatus = isNote
+      ? 'not_applicable'
+      : transcript != null && transcript.trim().isNotEmpty
+          ? 'completed'
+          : 'not_transcribed';
   final importedStatus = nullableText('transcriptionStatus');
   final validImportedStatus = TranscriptionStatus.values.any(
     (status) => status.wireValue == importedStatus,
@@ -148,10 +174,12 @@ DumpRow importedDumpRow({
     id: id,
     createdAt: createdAt,
     updatedAt: date('updatedAt', modifiedUtc),
-    mode: text('mode', 'brain_dump'),
+    mode: mode,
     durationSeconds: number('durationSeconds', 0),
     title: restoredTitle.isEmpty
-        ? generatedRecordingTitle(createdAt)
+        ? isNote
+            ? generatedNoteTitle(createdAt)
+            : generatedRecordingTitle(createdAt)
         : restoredTitle,
     transcript: transcript,
     meetingNotes: metadata?['meetingNotes'] as String?,

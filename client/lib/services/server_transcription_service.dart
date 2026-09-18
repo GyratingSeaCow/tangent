@@ -15,6 +15,7 @@ import '../data/recording_metadata.dart';
 import '../models/api_exception.dart';
 import '../models/transcription_status.dart';
 import 'meeting_notes_processor.dart';
+import 'meeting_transcript_formatter.dart';
 import 'transcription_client.dart';
 
 /// Durable coordinator for server-side transcription.
@@ -389,7 +390,11 @@ class ServerTranscriptionService extends ChangeNotifier {
             );
             _throwIfDisposed();
           } else {
-            await _persistRecoveredCompletion(use, row, transcript);
+            await _persistRecoveredCompletion(
+              use,
+              row,
+              _presentedTranscript(row, transcript, snapshot.segments),
+            );
             _throwIfDisposed();
           }
           await _refreshDurableRow(row.id);
@@ -469,7 +474,11 @@ class ServerTranscriptionService extends ChangeNotifier {
         _throwIfDisposed();
         return null;
       }
-      await _persistRecoveredCompletion(use, row, transcript);
+      await _persistRecoveredCompletion(
+        use,
+        row,
+        _presentedTranscript(row, transcript, snapshot.segments),
+      );
       _throwIfDisposed();
     } on _ServiceDisposed {
       return null;
@@ -623,7 +632,15 @@ class ServerTranscriptionService extends ChangeNotifier {
               );
               await _refreshDurableRow(row.id);
             } else {
-              await _persistRecoveredCompletion(use, row, transcript);
+              await _persistRecoveredCompletion(
+                use,
+                row,
+                _presentedTranscript(
+                  row,
+                  transcript,
+                  parseTranscriptSegments(event.data['segments']),
+                ),
+              );
             }
             return;
           case 'failed':
@@ -709,6 +726,24 @@ class ServerTranscriptionService extends ChangeNotifier {
     _durableRows[row.id] = committed;
     await _repairCompletedSidecar(use, committed);
     _throwIfDisposed();
+  }
+
+  /// The transcript text a dump actually stores.
+  ///
+  /// Meeting dumps present diarised results as timestamped speaker blocks; the
+  /// formatted string IS the transcript, so editing, sidecar publication, and
+  /// notes generation all continue to work on one unchanged column. Every
+  /// other mode, and any meeting result the server sent without usable
+  /// segments, keeps the plain server text exactly as before.
+  String _presentedTranscript(
+    DumpRow row,
+    String transcript,
+    List<TranscriptSegment> segments,
+  ) {
+    if (row.mode != 'meeting' || segments.isEmpty) return transcript;
+    final formatted = formatMeetingTranscript(segments);
+    if (formatted == null || formatted.trim().isEmpty) return transcript;
+    return formatted;
   }
 
   String? _meetingNotesForCompletion(DumpRow row, String transcript) {
@@ -843,6 +878,15 @@ class ServerTranscriptionService extends ChangeNotifier {
         throw const LocalTranscriptionServerError('Dump not found');
       }
       if (job.recoveryOnly) return;
+      // Notes are terminally not_applicable: this service must never upload
+      // a text note's .md bytes as audio, regardless of how it was reached.
+      if (existing.mode == 'text_note' ||
+          existing.transcriptionStatus ==
+              TranscriptionStatus.notApplicable.wireValue) {
+        throw const LocalTranscriptionServerError(
+          'Text notes cannot be transcribed',
+        );
+      }
       if (TranscriptionStatus.fromWire(existing.transcriptionStatus)
           .isInProgress) {
         throw const _ExistingDurableTranscription();
@@ -951,6 +995,7 @@ class ServerTranscriptionService extends ChangeNotifier {
       _durableRows[row.id] = await _readCurrentAttempt(row);
       _throwIfDisposed();
       String? transcript;
+      var segments = const <TranscriptSegment>[];
       var sawCompleted = false;
       final activeStream =
           _OwnedJobEventStream(_client.streamJob(enqueuedJob.id));
@@ -978,6 +1023,7 @@ class ServerTranscriptionService extends ChangeNotifier {
             case 'completed':
               sawCompleted = true;
               transcript = event.data['transcript']?.toString().trim() ?? '';
+              segments = parseTranscriptSegments(event.data['segments']);
               break;
             case 'failed':
               throw LocalTranscriptionServerError(
@@ -1014,7 +1060,8 @@ class ServerTranscriptionService extends ChangeNotifier {
         );
       }
 
-      final meetingNotes = _meetingNotesForCompletion(row, transcript);
+      final stored = _presentedTranscript(row, transcript, segments);
+      final meetingNotes = _meetingNotesForCompletion(row, stored);
       bool completionWon;
       try {
         completionWon = await _db.completeTranscriptionAttempt(
@@ -1022,7 +1069,7 @@ class ServerTranscriptionService extends ChangeNotifier {
           storageKey: use.key,
           attempt: row.transcriptionAttempt,
           requestId: row.transcriptionRequestId!,
-          transcript: transcript,
+          transcript: stored,
           meetingNotes: meetingNotes,
           now: _now(),
           sidecarError: 'sidecar_sync_pending: write pending',

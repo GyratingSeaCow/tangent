@@ -45,6 +45,35 @@ final class StorageFault implements Exception {
   String toString() => '${problem.code.name}: ${problem.message}';
 }
 
+/// Primary-content file extension for a capture mode. Text notes publish
+/// markdown; every audio mode publishes opus.
+String contentExtensionForMode(String mode) =>
+    mode == 'text_note' ? 'md' : 'opus';
+
+/// Child directory of the user-chosen storage folder that owns published
+/// text notes (`<id>.md` + `<id>.meta.json`). Audio modes keep publishing at
+/// the folder root. The Kotlin SAF port mirrors this exact literal
+/// (CaptureWire.TEXT_NOTE_DIRECTORY).
+const String textNoteSubdirectoryName = 'Tangent Text Notes';
+
+/// Child directory of the user-chosen storage folder that owns published
+/// notebooks, a sibling of [textNoteSubdirectoryName]. The Kotlin SAF port
+/// mirrors this exact literal (DocumentWire.NOTEBOOK_DIRECTORY).
+const String notebookSubdirectoryName = 'Tangent Notebooks';
+
+/// Durable notebook filename suffix: one self-contained JSON document per
+/// notebook, `<id>.notebook.json`, with no sidecar.
+const String notebookFileSuffix = '.notebook.json';
+
+/// One published, sidecar-free durable document inside a named child of the
+/// owned tree. [locator] is the opaque, provider-issued identity of the exact
+/// published document; it is NEVER parsed as a path.
+typedef DurableDocument = ({
+  String name,
+  AudioLocator locator,
+  String content
+});
+
 typedef RecordingKey = ({String dumpId, String incarnation});
 typedef DirectoryRef = ({
   String kind,
@@ -354,6 +383,36 @@ abstract interface class StorageBackend {
   );
   IoOperation<Outcome<List<ImportedEntry>>> listRecordingsAt(
     StorageLocation location,
+  );
+
+  /// Publishes one sidecar-free durable document called [name] into the
+  /// [directoryName] child of [location], creating that child idempotently.
+  /// Replaces an existing same-name document atomically. A same-name
+  /// non-directory blocking the child is a conflict, never a root fallback.
+  IoOperation<Outcome<DurableDocument>> publishDocument(
+    StorageLocation location,
+    String directoryName,
+    String name,
+    String content,
+    String publicationId,
+  );
+
+  /// Enumerates durable documents whose name ends with [suffix] inside the
+  /// [directoryName] child. An absent child enumerates as empty.
+  IoOperation<Outcome<List<DurableDocument>>> listDocuments(
+    StorageLocation location,
+    String directoryName,
+    String suffix,
+  );
+
+  /// Deletes the exact document identified by [locator] (opaque, never parsed
+  /// as a path) from the [directoryName] child, verified by [name].
+  IoOperation<ComponentResult> deleteDocument(
+    StorageLocation location,
+    String directoryName,
+    String name,
+    AudioLocator locator,
+    String operationId,
   );
   Future<void> drain();
 }

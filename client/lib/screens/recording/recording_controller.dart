@@ -2,6 +2,7 @@
 import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:record/record.dart';
 
 import '../../services/recording_service.dart';
 import '../../data/local_db.dart';
@@ -130,7 +131,18 @@ class RecordingController extends StateNotifier<RecordingState> {
 
 final recordingServiceProvider = Provider<RecordingService>((ref) {
   final audio = ref.watch(audioStorageProvider);
-  return DefaultRecordingService(outputDir: audio.stagingDir);
+  final settings = ref.watch(settingsStoreProvider);
+  // Restore the user's chosen microphone so the preference survives a restart.
+  // A stored id whose device is no longer connected is NOT an error: the
+  // service re-resolves by id at start time and falls back to the system
+  // default, so recording still begins with the headset off or out of range.
+  final id = settings.preferredInputDeviceId;
+  return DefaultRecordingService(
+    outputDir: audio.stagingDir,
+    initialDevice: id == null
+        ? null
+        : InputDevice(id: id, label: settings.preferredInputDeviceLabel ?? id),
+  );
 });
 
 final recordingControllerProvider =
@@ -138,7 +150,7 @@ final recordingControllerProvider =
   return RecordingController(
     ref.watch(recordingServiceProvider),
     () => ref.read(recordingCoordinatorProvider),
-    () => ref.read(storageBootstrapProvider.future),
+    () => ref.read(captureReadyProvider.future),
     ref.watch(screenAwakeProvider),
     ref.watch(recordingTickProvider.notifier),
     ref.watch(waveformProvider.notifier),

@@ -40,6 +40,7 @@ Map<String, dynamic> _$$DumpImplToJson(_$DumpImpl instance) =>
 const _$DumpModeEnumMap = {
   DumpMode.brainDump: 'brain_dump',
   DumpMode.meeting: 'meeting',
+  DumpMode.textNote: 'text_note',
 };
 
 const _$SyncStatusEnumMap = {

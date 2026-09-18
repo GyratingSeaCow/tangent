@@ -87,7 +87,13 @@ void main() {
       mutations: mutations,
       client: client,
       connectivity: conn,
-      settings: SettingsStore(),
+      // These cases exercise the OPT-IN BACKUP path: they assert that
+      // syncNow actually uploads. keepRecordingsOnDeviceOnly defaults to
+      // true (recordings stay on the device unless the user opts in), so
+      // backup must be enabled explicitly here. Do not "fix" these by
+      // relaxing the upload assertions — they guard real transport
+      // behaviour, including failure and cancellation handling.
+      settings: SettingsStore(keepRecordingsOnDeviceOnly: false),
     );
     addTearDown(() async {
       if (!client.release.isCompleted) client.release.complete();

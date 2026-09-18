@@ -554,6 +554,49 @@ void main() {
     expect(settled, isTrue);
     await replacement.drain();
   });
+  test(
+      'restored operation the native side no longer retains settles as failed '
+      'instead of polling forever', () async {
+    // Regression: a reattached op whose ID the supervisor dropped (process
+    // killed mid-publication) threw 'unknown' on every operationState poll.
+    // The untyped decode path swallowed it and slept 50ms forever — a hot
+    // loop that pinned the restored capture fence, so every later save and
+    // record attempt was rejected busy while the process burned CPU until
+    // Android killed it (EXCESSIVE CPU USAGE). The op must settle instead.
+    const channel = MethodChannel('fixture/native-unretained');
+    const key = (dumpId: 'fixture-lost', incarnation: 'inc-lost');
+    var polls = 0;
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'activeOperations') {
+        return [
+          {
+            'operationId': 'op-lost',
+            'key': {'dumpId': key.dumpId, 'incarnation': key.incarnation},
+            'kind': 'capture',
+            'method': 'publishPreparedCaptureAt',
+          }
+        ];
+      }
+      if (call.method == 'operationState') {
+        polls++;
+        throw PlatformException(code: 'unknown');
+      }
+      throw PlatformException(code: 'unsupported');
+    });
+    final backend = SafStorageBackend(channel: channel);
+    addTearDown(() async {
+      await backend.drain();
+      messenger.setMockMethodCallHandler(channel, null);
+    });
+    final restored = await backend.unsettledUses();
+    expect(restored.single.key, key);
+    // Must settle promptly (releasing any fence pinned on settled) rather
+    // than looping. Before the fix this timeout fired with polls unbounded.
+    await restored.single.settled.timeout(const Duration(seconds: 3));
+    expect(polls, 1);
+  });
   test('publication keeps staging and refuses existing capture targets',
       () async {
     final f = StorageFixture.create();

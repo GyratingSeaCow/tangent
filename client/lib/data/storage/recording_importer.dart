@@ -117,14 +117,25 @@ class BoundRecordingImporter implements RecordingImporter {
       _guard(() async {
         StorageCodec.validateLiteralId(selection.operationId);
         final results = <ImportItemResult>[];
+        // Re-read each source ONCE per adoption, not once per entry. The
+        // freshness check below still compares every confirmed entry against
+        // what the folder holds now; it just stops paying for a full
+        // enumeration per file. Adopting 39 recordings used to trigger 39
+        // enumerations of a 65-file SAF directory (~2.5 min of native I/O on
+        // device) and re-ran every launch, starving the rest of bootstrap.
+        final freshBySource = <String, List<ImportedEntry>>{};
+        Future<List<ImportedEntry>> currentFor(StorageLocation source) async {
+          final key = StorageCodec.canonicalKey(source.directory);
+          return freshBySource[key] ??= _value(await preview(source)).entries;
+        }
+
         for (final selected in selection.entries) {
           try {
             final validated = _validated(selected);
             if (validated.problem != null) {
               throw StorageFault(validated.problem!);
             }
-            final current = _value(await preview(selected.source))
-                .entries
+            final current = (await currentFor(selected.source))
                 .where((e) => e.id == selected.id)
                 .toList();
             if (current.length != 1) {

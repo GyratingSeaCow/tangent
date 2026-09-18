@@ -62,9 +62,16 @@ class StorageMethodRouterTest {
     }
 
     @Test fun everySupportedMethodAndLifecycleRouteForwardsExactMethodAndPayload() {
-        val expected = setOf("inspectLegacyStorage", "validateCandidate", "readAudioAt", "playbackSourceAt",
+        val expected = setOf("inspectLegacyStorage", "validateCandidate",
+            // Cheap reachability probe: answers "is the folder still there?"
+            // without enumerating it. Routing that question to listRecordingsAt
+            // cost 5.8s per record tap on a real 81-file folder.
+            "probeLocationAt",
+            "readAudioAt", "playbackSourceAt",
             "writeMetadataAt", "deleteComponentAt", "listRecordingsAt", "prepareCaptureAt",
-            "inspectPreparedCaptureAt", "publishPreparedCaptureAt")
+            "inspectPreparedCaptureAt", "publishPreparedCaptureAt",
+            // Durable notebook documents publish through the same router.
+            "publishDocumentAt", "listDocumentsAt", "deleteDocumentAt")
         assertEquals(expected, StorageChannel.methods)
         var picker = 0; var awake = 0
         val calls = mutableListOf<Pair<String, Map<String, Any?>>>()
@@ -82,7 +89,8 @@ class StorageMethodRouterTest {
             assertSame(payload["binding"], calls.last().second["binding"])
             assertSame(payload["capturePayload"], calls.last().second["capturePayload"])
         }
-        assertEquals(13, calls.size); assertEquals(0, picker); assertEquals(0, awake)
+        // One forwarded call per supported method plus the three lifecycle routes.
+        assertEquals(expected.size + 3, calls.size); assertEquals(0, picker); assertEquals(0, awake)
     }
 
     @Test fun routerUsesLiveOwnerAndRealValidationSettlementAndAcknowledgement() {

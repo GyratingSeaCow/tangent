@@ -66,12 +66,18 @@ async def upload_audio(
     replaces the file.
     """
     row = db.execute(
-        "SELECT id FROM dumps WHERE id = ? AND deleted_at IS NULL", (dump_id,)
+        "SELECT id, mode FROM dumps WHERE id = ? AND deleted_at IS NULL",
+        (dump_id,),
     ).fetchone()
     if row is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Dump {dump_id!r} not found",
+        )
+    if row["mode"] == "text_note":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Text notes do not accept audio",
         )
 
     # Derive extension from content-type or filename; default to .opus.

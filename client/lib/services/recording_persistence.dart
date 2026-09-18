@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data' show BytesBuilder;
 import 'package:drift/drift.dart';
 import 'package:drift/native.dart' show SqliteException;
 import 'package:path/path.dart' as p;
@@ -93,7 +94,8 @@ class RecordingPersistence {
   Future<void> _staging(CaptureReservation r, int size) async {
     StorageCodec.encodeAudio((kind: 'file', value: r.stagingPath));
     final file = File(r.stagingPath);
-    var valid = p.basename(r.stagingPath) == '${r.id}.opus' &&
+    var valid = p.basename(r.stagingPath) ==
+            '${r.id}.${contentExtensionForMode(r.mode)}' &&
         await FileSystemEntity.type(r.stagingPath, followLinks: false) ==
             FileSystemEntityType.file &&
         size > 0;
@@ -556,10 +558,16 @@ class RecordingPersistence {
         (digests) => digestValue = digests.single,
       ),
     );
+    // A text note IS its staged bytes: the journal metadata must carry the
+    // body as transcript so recovery restores it. Notes are small; audio is
+    // never buffered.
+    final isNote = r.mode == 'text_note';
+    final noteBytes = isNote ? BytesBuilder(copy: false) : null;
     var sizeBytes = 0;
     await for (final chunk in File(r.stagingPath).openRead()) {
       sizeBytes += chunk.length;
       byteSink.add(chunk);
+      noteBytes?.add(chunk);
     }
     byteSink.close();
     if (sizeBytes < result.sizeBytes) {
@@ -572,12 +580,13 @@ class RecordingPersistence {
       updatedAt: now.toUtc(),
       mode: r.mode,
       durationSeconds: result.durationSeconds,
-      title: generatedRecordingTitle(now),
+      title: isNote ? generatedNoteTitle(now) : generatedRecordingTitle(now),
+      transcript: isNote ? utf8.decode(noteBytes!.takeBytes()) : null,
       audioPath: r.stagingPath,
       audioSizeBytes: sizeBytes,
       syncStatus: r.mode == 'meeting' ? 'local_only' : 'pending',
       syncAttempts: 0,
-      transcriptionStatus: 'not_transcribed',
+      transcriptionStatus: isNote ? 'not_applicable' : 'not_transcribed',
       transcriptionAttempt: 0,
     );
     final metadata = dumpMetadata(staged);
@@ -936,7 +945,8 @@ class RecordingPersistence {
       // _resolvesUnderOwnedParent. A symlink entry has type link (not file)
       // under followLinks:false and is rejected before resolution runs.
       final owned = type == FileSystemEntityType.file &&
-          p.basename(r.stagingPath) == '${r.id}.opus' &&
+          p.basename(r.stagingPath) ==
+              '${r.id}.${contentExtensionForMode(r.mode)}' &&
           await _resolvesUnderOwnedParent(r.stagingPath);
       if (!owned) {
         _fault(ProblemCode.invalid, 'Staging cleanup source is not owned');

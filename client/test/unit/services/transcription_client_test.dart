@@ -6,6 +6,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:tangent/models/api_exception.dart';
+import 'package:tangent/services/meeting_transcript_formatter.dart';
 import 'package:tangent/services/transcription_client.dart';
 
 class _MockDio extends Mock implements Dio {}
@@ -267,6 +268,51 @@ void main() {
       expect(snapshot.requestId, 'request-client-001');
       expect(snapshot.status, 'completed');
       expect(snapshot.transcript, 'poll result');
+      expect(snapshot.segments, isEmpty);
+    });
+
+    test('poll response maps result segments into typed snapshot', () async {
+      when(() => mock.get<dynamic>('/v1/jobs/job-seg')).thenAnswer(
+        (_) async => Response(
+          requestOptions: RequestOptions(path: '/v1/jobs/job-seg'),
+          statusCode: 200,
+          data: const {
+            'id': 'job-seg',
+            'request_id': 'request-client-seg',
+            'dump_id': 'dump-seg',
+            'status': 'completed',
+            'model': 'large-v3',
+            'result_transcript': 'Hello. Bye.',
+            'result_segments': [
+              {
+                'start': 0.0,
+                'end': 2.0,
+                'speaker': 'Speaker 1',
+                'text': 'Hello.',
+              },
+              {
+                'start': 65.0,
+                'end': 67.0,
+                'speaker': 'Speaker 2',
+                'text': 'Bye.',
+              },
+            ],
+            'error': null,
+          },
+        ),
+      );
+
+      final snapshot = await client.getJob('job-seg');
+
+      expect(snapshot.transcript, 'Hello. Bye.');
+      expect(snapshot.segments, hasLength(2));
+      expect(snapshot.segments.first.speaker, 'Speaker 1');
+      expect(snapshot.segments.first.text, 'Hello.');
+      expect(snapshot.segments.last.start, 65.0);
+      expect(
+        formatMeetingTranscript(snapshot.segments),
+        '00:00:00 Speaker 1\nHello.\n\n00:01:05 Speaker 2\nBye.',
+      );
     });
 
     test('terminal SSE ends promptly with one event and zero polls', () async {

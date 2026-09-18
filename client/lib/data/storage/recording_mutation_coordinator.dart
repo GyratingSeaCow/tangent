@@ -126,7 +126,7 @@ class DefaultRecordingMutationCoordinator
           if (row == null || await _db.boundRecording(dumpId) != binding) {
             throw _fault(ProblemCode.wrongIncarnation, 'Retry binding changed');
           }
-          if (!['not_transcribed', 'completed', 'failed']
+          if (!['not_transcribed', 'completed', 'failed', 'not_applicable']
                   .contains(row.transcriptionStatus) ||
               row.syncStatus == 'syncing' ||
               (row.transcriptionError?.startsWith('sidecar_sync_pending:') ??
@@ -178,7 +178,7 @@ class DefaultRecordingMutationCoordinator
           );
         }
         if (kind == UseKind.deletion || kind == UseKind.acceptance) {
-          if (!['not_transcribed', 'completed', 'failed']
+          if (!['not_transcribed', 'completed', 'failed', 'not_applicable']
                   .contains(row.transcriptionStatus) ||
               row.syncStatus == 'syncing' ||
               (row.transcriptionError?.startsWith('sidecar_sync_pending:') ??
@@ -299,8 +299,12 @@ class DefaultRecordingMutationCoordinator
                     : (_uses[row.id]?.isNotEmpty ?? false) ||
                             (_queued[row.id] ?? 0) > 0
                         ? Eligibility.busy
-                        : !['not_transcribed', 'completed', 'failed']
-                                .contains(row.transcriptionStatus)
+                        : !const [
+                            'not_transcribed',
+                            'completed',
+                            'failed',
+                            'not_applicable',
+                          ].contains(row.transcriptionStatus)
                             ? Eligibility.nonterminal
                             : row.syncStatus == 'syncing'
                                 ? Eligibility.syncing

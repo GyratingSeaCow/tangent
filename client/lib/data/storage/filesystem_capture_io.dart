@@ -86,7 +86,8 @@ abstract final class FilesystemCaptureIo {
     CapturePublicationCodec.reservationMap(r);
     CapturePublicationCodec.digest(digest);
     if (r.location.directory.kind != 'file' ||
-        p.basename(r.stagingPath) != '${r.id}.opus' ||
+        p.basename(r.stagingPath) !=
+            '${r.id}.${contentExtensionForMode(r.mode)}' ||
         CapturePublicationCodec.metadata(metadata, r.key.dumpId)['mode'] !=
             r.mode) {
       captureIoFault(
@@ -112,12 +113,45 @@ abstract final class FilesystemCaptureIo {
     root.verifyAssociation();
   }
 
+  /// Content parent for a reservation: text notes publish their `.md` +
+  /// sidecar pair inside the 'Tangent Text Notes' child of the reserved
+  /// root; audio modes publish at the root itself (zero behavior change).
+  /// Creation is idempotent: an existing child directory is reused, and a
+  /// same-name non-directory entry faults conflict inside openCaptureHandle.
+  /// The returned handle is root itself for audio modes; callers must close
+  /// it only when it differs from root.
+  static CaptureFileHandle _contentParent(
+    CaptureFileHandle root,
+    CaptureReservation r, {
+    required bool create,
+  }) {
+    if (r.mode != 'text_note') return root;
+    final path = p.join(root.path, textNoteSubdirectoryName);
+    if (create &&
+        FileSystemEntity.typeSync(path, followLinks: false) ==
+            FileSystemEntityType.notFound) {
+      Directory(path).createSync();
+    }
+    // directory:true validates the resolved entry IS a directory (a foreign
+    // regular file or reparse point named 'Tangent Text Notes' faults).
+    final parent = openCaptureHandle(path, directory: true);
+    try {
+      root.verifyAssociation();
+      parent.verifyAssociation();
+      return parent;
+    } catch (_) {
+      parent.close();
+      rethrow;
+    }
+  }
+
   static CapturePreparationResult prepare(
     CaptureReservation r,
     String metadata,
     String digest,
   ) {
     CaptureFileHandle? root;
+    CaptureFileHandle? parent;
     CaptureFileHandle? source;
     CaptureComponentClaim? audio;
     CaptureComponentClaim? meta;
@@ -149,18 +183,23 @@ abstract final class FilesystemCaptureIo {
         captureIoFault(ProblemCode.conflict, 'Frozen staging bytes changed');
       }
       root = openCaptureHandle(r.location.directory.path, directory: true);
+      // The reservation root stays the proof anchor; text notes create their
+      // pair inside the owned 'Tangent Text Notes' child instead of the root.
+      parent = _contentParent(root, r, create: true);
       source.verifyAssociation();
-      _available(root, {'${r.key.dumpId}.opus', '${r.key.dumpId}.meta.json'});
+      final contentName =
+          '${r.key.dumpId}.${contentExtensionForMode(r.mode)}';
+      _available(parent, {contentName, '${r.key.dumpId}.meta.json'});
       final sourceIdentity = source.identity;
       final rootIdentity = root.identity;
       snapshot();
       for (final component in RecordingComponent.values) {
         final name = component == RecordingComponent.audio
-            ? '${r.key.dumpId}.opus'
+            ? contentName
             : '${r.key.dumpId}.meta.json';
-        _available(root, {name});
+        _available(parent, {name});
         dispatched = true;
-        final target = root.openChild(
+        final target = parent.openChild(
           name,
           create: true,
           writable: true,
@@ -200,6 +239,7 @@ abstract final class FilesystemCaptureIo {
       }
       source.verifyAssociation();
       root.verifyAssociation();
+      parent.verifyAssociation();
       final result = (
         state: CapturePreparationState.prepared,
         preparation: preparation,
@@ -220,6 +260,7 @@ abstract final class FilesystemCaptureIo {
       );
     } finally {
       source?.close();
+      if (parent != null && !identical(parent, root)) parent.close();
       root?.close();
     }
   }
@@ -295,22 +336,34 @@ abstract final class FilesystemCaptureIo {
     CaptureComponentClaim claim, {
     bool writable = false,
   }) {
-    if (claim.locator.value != p.join(root.path, claim.name)) {
+    // A claim may live directly in the reserved root (audio modes, legacy
+    // notes) or inside the owned 'Tangent Text Notes' child (text notes).
+    final direct = claim.locator.value == p.join(root.path, claim.name);
+    final noteParentPath = p.join(root.path, textNoteSubdirectoryName);
+    final noted = claim.locator.value == p.join(noteParentPath, claim.name);
+    if (!direct && !noted) {
       captureIoFault(
         ProblemCode.conflict,
         'Capture claim is outside reserved root',
       );
     }
-    final handle = root.openChild(claim.name, writable: writable);
+    final parent =
+        direct ? root : openCaptureHandle(noteParentPath, directory: true);
+    CaptureFileHandle? handle;
     try {
+      handle = parent.openChild(claim.name, writable: writable);
       if (handle.identity != claim.identity) {
         captureIoFault(ProblemCode.conflict, 'Capture target was replaced');
       }
       handle.verifyAssociation();
       return handle;
     } catch (_) {
-      handle.close();
+      handle?.close();
       rethrow;
+    } finally {
+      // The child handle owns its own reopened ancestry; the lookup-only
+      // parent handle is released regardless of outcome.
+      if (!direct) parent.close();
     }
   }
 

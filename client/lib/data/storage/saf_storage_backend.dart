@@ -348,20 +348,29 @@ class SafStorageBackend implements StorageBackend {
             op.complete(failure(_problem(null)));
           }
         } on PlatformException catch (e) {
-          if (typedDecode &&
-              (e.code == 'unknown' ||
-                  (stateArgs != null && e.code == 'conflict'))) {
-            // Positive current-process lookup classification, not a transport timeout.
+          if (e.code == 'unknown' ||
+              (typedDecode && stateArgs != null && e.code == 'conflict')) {
+            // Positive current-process lookup classification, not a transport
+            // timeout. 'unknown' means the native supervisor does not retain
+            // this operation (e.g. the process that issued it was killed), so
+            // it can never settle: deliver the failure AND settle the
+            // operation, releasing any restored fence pinned on op.settled.
+            // Before this exit existed the untyped path fell through to the
+            // 50ms retry sleep forever — a hot loop that pinned the capture
+            // fence (freezing every later save/record) until Android killed
+            // the process for excessive CPU.
             op.complete(
               failure(
-                (
-                  code: e.code == 'unknown'
-                      ? ProblemCode.unresolved
-                      : ProblemCode.conflict,
-                  message: e.code == 'unknown'
-                      ? 'Preparation/worker is not retained'
-                      : 'Preparation payload differs'
-                ),
+                typedDecode
+                    ? (
+                        code: e.code == 'unknown'
+                            ? ProblemCode.unresolved
+                            : ProblemCode.conflict,
+                        message: e.code == 'unknown'
+                            ? 'Preparation/worker is not retained'
+                            : 'Preparation payload differs'
+                      )
+                    : _problem(null),
               ),
             );
             op.settlement.complete();
@@ -557,7 +566,11 @@ class SafStorageBackend implements StorageBackend {
   @override
   IoOperation<Outcome<void>> inspectLocation(StorageLocation location) =>
       _start<void>(
-        'listRecordingsAt',
+        // Reachability, not inventory. This used to invoke 'listRecordingsAt',
+        // enumerating and parsing every recording in the folder only to discard
+        // the result — 5.8 s on an 81-file folder, paid on EVERY record tap
+        // before the microphone was even touched.
+        'probeLocationAt',
         {'location': _wire(StorageCodec.encodeLocation(location))},
         (_) {},
       );
@@ -666,6 +679,145 @@ class SafStorageBackend implements StorageBackend {
   Future<void> drain() async {
     while (_pending.isNotEmpty) {
       await Future.wait(_pending.toList());
+    }
+  }
+
+  /// Decodes one native durable-document row. The locator stays the exact
+  /// provider-issued string; it is validated as a document capability and
+  /// never parsed into a path.
+  DurableDocument _document(Object? raw) {
+    if (raw is! Map ||
+        raw['name'] is! String ||
+        raw['content'] is! String ||
+        raw['locator'] == null) {
+      throw const StorageFault(
+        (code: ProblemCode.invalid, message: 'Malformed durable document'),
+      );
+    }
+    return (
+      name: raw['name']! as String,
+      locator: StorageCodec.decodeAudio(jsonEncode(raw['locator'])),
+      content: raw['content']! as String
+    );
+  }
+
+  Map<String, Object?> _documentArgs(
+    StorageLocation location,
+    String directoryName,
+  ) {
+    StorageCodec.validateLiteralId(directoryName);
+    return {
+      'location': _wire(StorageCodec.encodeLocation(location)),
+      'directoryName': directoryName,
+    };
+  }
+
+  @override
+  IoOperation<Outcome<DurableDocument>> publishDocument(
+    StorageLocation location,
+    String directoryName,
+    String name,
+    String content,
+    String publicationId,
+  ) {
+    final id = _id();
+    try {
+      StorageCodec.validateLiteralId(publicationId);
+      StorageCodec.validateLiteralId(name);
+      final args = {
+        ..._documentArgs(location, directoryName),
+        'name': name,
+        'content': content,
+        'publicationId': publicationId,
+      };
+      return _track(
+        id,
+        (value) => Ok(_document(value)),
+        (problem) => Fail<DurableDocument>(problem),
+        method: 'publishDocumentAt',
+        args: args,
+        typedDecode: true,
+      );
+    } on StorageFault catch (e) {
+      return _local(id, Fail<DurableDocument>(e.problem));
+    }
+  }
+
+  @override
+  IoOperation<Outcome<List<DurableDocument>>> listDocuments(
+    StorageLocation location,
+    String directoryName,
+    String suffix,
+  ) {
+    final id = _id();
+    try {
+      final args = {
+        ..._documentArgs(location, directoryName),
+        'suffix': suffix,
+      };
+      return _track(
+        id,
+        (value) {
+          if (value is! List) {
+            throw const StorageFault(
+              (
+                code: ProblemCode.invalid,
+                message: 'Malformed durable document listing'
+              ),
+            );
+          }
+          return Ok(value.map(_document).toList());
+        },
+        (problem) => Fail<List<DurableDocument>>(problem),
+        method: 'listDocumentsAt',
+        args: args,
+        typedDecode: true,
+      );
+    } on StorageFault catch (e) {
+      return _local(id, Fail<List<DurableDocument>>(e.problem));
+    }
+  }
+
+  @override
+  IoOperation<ComponentResult> deleteDocument(
+    StorageLocation location,
+    String directoryName,
+    String name,
+    AudioLocator locator,
+    String operationId,
+  ) {
+    final id = _id();
+    ComponentResult failure(StorageProblem problem) =>
+        (state: ComponentState.failed, problem: problem);
+    try {
+      StorageCodec.validateLiteralId(operationId);
+      StorageCodec.validateLiteralId(name);
+      final args = {
+        ..._documentArgs(location, directoryName),
+        'name': name,
+        'locator': _wire(StorageCodec.encodeAudio(locator)),
+        'deletionId': operationId,
+      };
+      return _track(
+        id,
+        (value) {
+          final map = value as Map;
+          final states =
+              ComponentState.values.where((s) => s.name == map['state']);
+          if (states.isEmpty) {
+            return (state: ComponentState.unknown, problem: _problem(null));
+          }
+          return (
+            state: states.first,
+            problem: map['problem'] == null ? null : _problem(map['problem'])
+          );
+        },
+        failure,
+        method: 'deleteDocumentAt',
+        args: args,
+      );
+    } on StorageFault catch (e) {
+      return _local(id, failure(e.problem));
     }
   }
 }

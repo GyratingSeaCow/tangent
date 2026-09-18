@@ -123,11 +123,20 @@ object CaptureWire {
         val r=obj(x,setOf("id","key","location","stagingPath","mode","startedAtMs"))
         val id=literal(r["id"]); key(r["key"]); directory(r["location"]); integer(r["startedAtMs"])
         val path=text(r["stagingPath"])
-        if (!path.startsWith('/') || path.contains('\u0000') || path.split('/').any { it == "." || it == ".." } || path.substringAfterLast('/') != "$id.opus") fault("invalid","Invalid reservation staging path")
-        if (text(r["mode"]) !in setOf("meeting","brain_dump")) fault("invalid","Invalid capture mode")
+        if (text(r["mode"]) !in setOf("meeting","brain_dump","text_note")) fault("invalid","Invalid capture mode")
+        val suffix=contentSuffix(text(r["mode"]))
+        if (!path.startsWith('/') || path.contains('\u0000') || path.split('/').any { it == "." || it == ".." } || path.substringAfterLast('/') != "$id$suffix") fault("invalid","Invalid reservation staging path")
         return r
     }
     fun key(x:Any?):Map<String,Any?> = obj(x,setOf("dumpId","incarnation")).also { literal(it["dumpId"]); literal(it["incarnation"]) }
+    // Mirrors the shared Dart helper contentExtensionForMode: text notes publish .md, audio modes .opus.
+    fun contentSuffix(mode:String):String = if (mode == "text_note") ".md" else ".opus"
+    // Mirrors the shared Dart constant textNoteSubdirectoryName: text notes
+    // publish inside this child of the chosen folder; audio modes stay at the
+    // root. DIRECTORY_MIME is DocumentsContract.Document.MIME_TYPE_DIR spelled
+    // literally so this JVM-tested file never imports Android classes.
+    const val TEXT_NOTE_DIRECTORY = "Tangent Text Notes"
+    const val DIRECTORY_MIME = "vnd.android.document/directory"
     fun digest(x:Any?):String = text(x).also { if (!Regex("[0-9a-f]{64}").matches(it)) fault("invalid","Invalid capture SHA-256") }
     fun sha(bytes:ByteArray):String = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
     fun metadata(json:String,r:Map<String,Any?>) {
@@ -138,7 +147,7 @@ object CaptureWire {
     }
     fun claim(x:Any?, component:String, r:Map<String,Any?>):Map<String,Any?> {
         val c=obj(x,setOf("component","name","locator","identity")); val d=directory(r["location"])
-        val expected="${key(r["key"])["dumpId"]}" + if(component == "audio") ".opus" else ".meta.json"
+        val expected="${key(r["key"])["dumpId"]}" + if(component == "audio") contentSuffix(text(r["mode"])) else ".meta.json"
         if (c["component"] != component || c["name"] != expected) fault("invalid","Wrong capture component")
         val l=obj(c["locator"],setOf("kind","value")); if(l["kind"] != "saf") fault("invalid","Wrong capture locator kind")
         val id=identity(c["identity"]); val u=uri(text(l["value"]))
@@ -180,6 +189,32 @@ class CapturePublication(private val port:CaptureDocumentsPort) {
         if(queried != owned) CaptureWire.fault("conflict","Capture URI and membership differ")
         return owned
     }
+    /** Content parent for a reservation. Audio modes publish at the owned
+     * tree root; text notes publish inside the 'Tangent Text Notes' child.
+     * Idempotent: an existing child directory is reused; a same-name
+     * non-directory or duplicate is a conflict; a freshly created child must
+     * be observable as a directory under the owned tree before use. Returns
+     * null only when the child is absent and creation was not requested. */
+    private fun contentDirectory(d:NativeDirectory,r:Map<String,Any?>,create:Boolean):NativeDirectory? {
+        if(CaptureWire.text(r["mode"]) != "text_note") return d
+        fun resolve():NativeNode? {
+            val matches=inventory(d).filter { it.name == CaptureWire.TEXT_NOTE_DIRECTORY }
+            if(matches.size > 1) CaptureWire.fault("conflict","Ambiguous text-note directory")
+            val node=matches.singleOrNull() ?: return null
+            if(!node.directory || node.virtual) CaptureWire.fault("conflict","Text-note directory name is not a directory")
+            return node
+        }
+        var child=resolve()
+        if(child == null) {
+            if(!create) return null
+            val uri=port.captureCreate(d,CaptureWire.TEXT_NOTE_DIRECTORY,CaptureWire.DIRECTORY_MIME) {}
+            val decoded=CaptureWire.uri(uri)
+            if(decoded.first != d.authority || decoded.second == d.documentId) CaptureWire.fault("conflict","Returned text-note directory is not owned")
+            child=resolve() ?: CaptureWire.fault("unavailable","Created text-note directory is not observable")
+            if(child.id != decoded.second) CaptureWire.fault("conflict","Text-note directory identity differs")
+        }
+        return NativeDirectory(d.authority,d.treeUri,child.id)
+    }
     fun prepare(args:Map<String,Any?>):Map<String,Any?> {
         val raw=mutableListOf<String>(); var dispatched=false; var prepared:MutableMap<String,Any?>?=null
         try {
@@ -188,26 +223,31 @@ class CapturePublication(private val port:CaptureDocumentsPort) {
             val metadata=CaptureWire.text(args["metadataJson"]); CaptureWire.metadata(metadata,r)
             val digest=CaptureWire.digest(args["audioSha256"]); val source=source(r,digest)
             val root=port.captureRoot(d); if(root != CaptureWire.safIdentity(d,d.documentId)) CaptureWire.fault("conflict","Capture root differs")
+            // Text notes publish their pair inside the 'Tangent Text Notes'
+            // child; audio modes keep publishing at the tree root. The root
+            // identity proof stays anchored to the tree root either way.
+            val pub=contentDirectory(d,r,true)!!
             val id=CaptureWire.key(r["key"])["dumpId"] as String
-            val before=inventory(d).map { it.id }.toSet()
-            policy.requireAvailableNames(d,setOf("$id.opus","$id.meta.json"))
+            val before=inventory(pub).map { it.id }.toSet()
+            val suffix=CaptureWire.contentSuffix(CaptureWire.text(r["mode"]))
+            policy.requireAvailableNames(pub,setOf("$id$suffix","$id.meta.json"))
             prepared=linkedMapOf("version" to 1,"publicationId" to r["id"],"reservationId" to r["id"],"key" to r["key"],"location" to r["location"],"stagingPath" to r["stagingPath"],"sourceIdentity" to source.identity,"rootIdentity" to root,"audioSizeBytes" to source.bytes.size,"audioSha256" to digest,"metadataJson" to metadata,"audio" to null,"metadata" to null)
             for(component in listOf("audio","metadata")) {
-                val name=if(component == "audio") "$id.opus" else "$id.meta.json"
+                val name=if(component == "audio") "$id$suffix" else "$id.meta.json"
                 if(port.captureRoot(d) != root) CaptureWire.fault("conflict","Capture root changed")
-                val prior=inventory(d).map { it.id }.toSet()
-                policy.requireAvailableNames(d,setOf(name))
+                val prior=inventory(pub).map { it.id }.toSet()
+                policy.requireAvailableNames(pub,setOf(name))
                 dispatched=true
-                val uri=port.captureCreate(d,name,if(component == "audio") "audio/ogg" else "application/json") { raw.add(it) }
+                val uri=port.captureCreate(pub,name,if(component == "audio") (if (suffix == ".md") "text/markdown" else "audio/ogg") else "application/json") { raw.add(it) }
                 if(raw.lastOrNull() != uri) CaptureWire.fault("invalid","Missing raw capture creation receipt")
                 val decoded=CaptureWire.uri(uri)
-                if(decoded.first != d.authority || decoded.second in before || decoded.second in prior || decoded.second == d.documentId) CaptureWire.fault("conflict","Returned capture ID was not newly created")
+                if(decoded.first != d.authority || decoded.second in before || decoded.second in prior || decoded.second == d.documentId || decoded.second == pub.documentId) CaptureWire.fault("conflict","Returned capture ID was not newly created")
                 val claim=mapOf("version" to 1,"component" to component,"name" to name,"locator" to mapOf("version" to 1,"kind" to "saf","value" to uri),"identity" to CaptureWire.safIdentity(d,decoded.second))
                 CaptureWire.claim(claim,component,r)
-                if(observe(d,claim) == null) CaptureWire.fault("unavailable","Created capture is not observable")
+                if(observe(pub,claim) == null) CaptureWire.fault("unavailable","Created capture is not observable")
                 prepared[component]=claim
-                port.captureOpen(d,uri,false).use { if(it.read().isNotEmpty()) CaptureWire.fault("conflict","Created capture is not empty") }
-                if(observe(d,claim) == null) CaptureWire.fault("unavailable","Created capture disappeared")
+                port.captureOpen(pub,uri,false).use { if(it.read().isNotEmpty()) CaptureWire.fault("conflict","Created capture is not empty") }
+                if(observe(pub,claim) == null) CaptureWire.fault("unavailable","Created capture disappeared")
             }
             CaptureWire.preparation(prepared,r)
             val again=source(r,digest)
@@ -239,7 +279,12 @@ class CapturePublication(private val port:CaptureDocumentsPort) {
         val r=CaptureWire.reservation(args["reservation"]); val p=CaptureWire.preparation(args["preparation"],r); val source=proof(r,p)
         val d=CaptureWire.directory(r["location"])
         val a=CaptureWire.claim(p["audio"],"audio",r); val m=CaptureWire.claim(p["metadata"],"metadata",r)
-        val result=mapOf("version" to 1,"audio" to inspectOne(d,a,source.bytes),"metadata" to inspectOne(d,m,CaptureWire.text(p["metadataJson"]).toByteArray(Charsets.UTF_8)))
+        // A missing 'Tangent Text Notes' child means both note components are
+        // absent; never recreate the directory on the inspect/publish path.
+        val pub=contentDirectory(d,r,false)
+        val absent=mapOf("version" to 1,"state" to "absent","problem" to null)
+        val result=if(pub == null) mapOf("version" to 1,"audio" to absent,"metadata" to absent)
+            else mapOf("version" to 1,"audio" to inspectOne(pub,a,source.bytes),"metadata" to inspectOne(pub,m,CaptureWire.text(p["metadataJson"]).toByteArray(Charsets.UTF_8)))
         proof(r,p); return result
     }
     fun publish(args:Map<String,Any?>):Map<String,Any?> {
@@ -247,18 +292,19 @@ class CapturePublication(private val port:CaptureDocumentsPort) {
         val d=CaptureWire.directory(r["location"]); val a=CaptureWire.claim(p["audio"],"audio",r); val m=CaptureWire.claim(p["metadata"],"metadata",r)
         val inspection=inspect(args)
         for(c in listOf("audio","metadata")) if((inspection[c] as Map<*,*>)["state"] !in setOf("empty","complete")) CaptureWire.fault("unresolved","Capture component is not safe to initialize")
+        val pub=contentDirectory(d,r,false) ?: CaptureWire.fault("unavailable","Capture directory disappeared")
         val metadata=CaptureWire.text(p["metadataJson"]).toByteArray(Charsets.UTF_8)
         val au=CaptureWire.text((a["locator"] as Map<*,*>)["value"]); val mu=CaptureWire.text((m["locator"] as Map<*,*>)["value"])
-        if(observe(d,a) == null || observe(d,m) == null) CaptureWire.fault("unavailable","Capture component disappeared")
-        port.captureOpen(d,au,(inspection["audio"] as Map<*,*>)["state"] == "empty").use { audio ->
-          port.captureOpen(d,mu,(inspection["metadata"] as Map<*,*>)["state"] == "empty").use { meta ->
+        if(observe(pub,a) == null || observe(pub,m) == null) CaptureWire.fault("unavailable","Capture component disappeared")
+        port.captureOpen(pub,au,(inspection["audio"] as Map<*,*>)["state"] == "empty").use { audio ->
+          port.captureOpen(pub,mu,(inspection["metadata"] as Map<*,*>)["state"] == "empty").use { meta ->
             val as_=state(audio.read(),source.bytes); val ms=state(meta.read(),metadata)
             if(as_ == "partial" || ms == "partial") CaptureWire.fault("unresolved","Capture content became partial")
-            if(observe(d,a) == null || observe(d,m) == null) CaptureWire.fault("unavailable","Capture membership changed")
+            if(observe(pub,a) == null || observe(pub,m) == null) CaptureWire.fault("unavailable","Capture membership changed")
             if(as_ == "empty") audio.initializeEmpty(source.bytes)
-            if(!audio.read().contentEquals(source.bytes) || observe(d,a) == null) CaptureWire.fault("io","Capture audio readback failed")
+            if(!audio.read().contentEquals(source.bytes) || observe(pub,a) == null) CaptureWire.fault("io","Capture audio readback failed")
             if(ms == "empty") meta.initializeEmpty(metadata)
-            if(!meta.read().contentEquals(metadata) || observe(d,m) == null) CaptureWire.fault("io","Capture metadata readback failed")
+            if(!meta.read().contentEquals(metadata) || observe(pub,m) == null) CaptureWire.fault("io","Capture metadata readback failed")
         } }
         val verified=inspect(args)
         for(c in listOf("audio","metadata")) if((verified[c] as Map<*,*>)["state"] != "complete") CaptureWire.fault("unresolved","Capture pair is not complete")
