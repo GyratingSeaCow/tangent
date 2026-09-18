@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 import '../../data/storage/storage_providers.dart';
 import 'local_deletion_presentation.dart';
+import 'sync_status_presentation.dart';
 
 import '../../data/local_db.dart';
 import '../../data/storage/storage_contract.dart';
@@ -877,13 +878,7 @@ class _SyncBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = switch (status) {
-      SyncStatus.synced => Colors.green,
-      SyncStatus.syncing => Colors.blue,
-      SyncStatus.pending => Colors.orange,
-      SyncStatus.failed => Colors.red,
-      SyncStatus.localOnly => Colors.grey,
-    };
+    final color = syncStatusColor(status);
     final icon = switch (status) {
       SyncStatus.synced => Icons.cloud_done,
       SyncStatus.syncing => Icons.cloud_sync,

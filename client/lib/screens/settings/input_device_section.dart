@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import 'package:flutter/material.dart';
+
+import '../../theme/tangent_tokens.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:record/record.dart';
 
@@ -213,7 +215,7 @@ class _InputDeviceSectionState extends ConsumerState<InputDeviceSection> {
             'recording, so offering one would silently record from the phone '
             'instead. If a chosen microphone is unavailable, recording still '
             'starts on the system default.',
-            style: TextStyle(fontSize: 12, color: Colors.grey),
+            style: TextStyle(fontSize: 12, color: TangentColors.textDim),
           ),
         ),
       ],

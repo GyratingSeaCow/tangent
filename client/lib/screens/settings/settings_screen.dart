@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import 'package:flutter/material.dart';
+
+import '../../theme/tangent_tokens.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/settings_store.dart';
@@ -164,7 +166,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               'faster-whisper and streams the result back. Recordings taken '
               'without connectivity will be queued and transcribed when you '
               'next open the app with network access.',
-              style: TextStyle(fontSize: 12, color: Colors.grey),
+              style: TextStyle(fontSize: 12, color: TangentColors.textDim),
             ),
           ),
           const Divider(),
@@ -225,7 +227,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             child: Text(
               'Tangent v1.0.0 — AGPL-3.0',
               textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.grey),
+              style: TextStyle(color: TangentColors.textDim),
             ),
           ),
           ],

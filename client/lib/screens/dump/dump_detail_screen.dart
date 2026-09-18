@@ -16,6 +16,7 @@ import '../../models/transcription_status.dart';
 import '../../services/meeting_notes_processor.dart';
 import '../../services/recording_playback.dart';
 import 'local_deletion_presentation.dart';
+import 'sync_status_presentation.dart';
 import '../home/home_screen.dart' show localDbProvider;
 import '../home/home_providers.dart'
     show
@@ -870,13 +871,7 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
     );
   }
 
-  Color? _syncColor(SyncStatus s) => switch (s) {
-        SyncStatus.synced => Colors.green,
-        SyncStatus.syncing => Colors.blue,
-        SyncStatus.pending => Colors.orange,
-        SyncStatus.failed => Colors.red,
-        SyncStatus.localOnly => Colors.grey,
-      };
+  Color? _syncColor(SyncStatus s) => syncStatusColor(s);
 }
 
 class _RecordingPlaybackPanel extends StatelessWidget {

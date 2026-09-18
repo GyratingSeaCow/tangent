@@ -12,6 +12,8 @@
 // screen decides which actions apply and what they do.
 import 'package:flutter/material.dart';
 
+import '../theme/tangent_tokens.dart';
+
 /// An action a list item can offer on long-press.
 ///
 /// Screens pass the subset that applies to them. The sheet owns the label and
@@ -106,7 +108,7 @@ class ItemActionSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
-    final Color danger = Colors.red.shade400;
+    final Color danger = TangentColors.record;
 
     final List<ItemAction> ordered = <ItemAction>[
       for (final ItemAction candidate in _canonicalOrder)

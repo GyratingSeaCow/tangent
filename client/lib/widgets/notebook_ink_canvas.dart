@@ -18,6 +18,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+
+import '../theme/tangent_tokens.dart';
 import 'package:uuid/uuid.dart';
 
 import '../models/notebook.dart';
@@ -71,11 +73,13 @@ class NotebookInkCanvas extends StatefulWidget {
     required this.penWidth,
   });
 
-  /// Phase 1 has no colour picker: ink is always white.
-  static const Color inkColor = Colors.white;
+  /// Handwriting. White, never the lime signal colour: lime ink competes
+  /// with the transcript and tires the eye over a page of notes.
+  static const Color inkColor = TangentColors.ink;
 
-  /// Phase 1 canvas is always black.
-  static const Color backgroundColor = Colors.black;
+  /// The page. The deepest chassis tone rather than pure black, so the page
+  /// sits in the same material as the bars and docks around it.
+  static const Color backgroundColor = TangentColors.sunken;
 
   static const Key backgroundKey = Key('notebook-ink-canvas-background');
 

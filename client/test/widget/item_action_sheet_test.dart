@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:tangent/theme/tangent_tokens.dart';
 import 'package:tangent/widgets/item_action_sheet.dart';
 
 // One long-press menu for every list in the app.
@@ -138,7 +139,7 @@ void main() {
       );
       expect(
         deleteLabel.style?.color,
-        Colors.red.shade400,
+        TangentColors.record,
         reason: 'destructive actions must read as destructive',
       );
 

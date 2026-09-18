@@ -5,6 +5,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tangent/models/notebook.dart';
+import 'package:tangent/theme/tangent_tokens.dart';
 import 'package:tangent/widgets/notebook_ink_canvas.dart';
 
 /// Test harness that owns the mutable inputs of [NotebookInkCanvas] so a test
@@ -120,17 +121,20 @@ void main() {
   });
 
   group('NotebookInkCanvas', () {
-    testWidgets('paints white ink on a black background', (tester) async {
+    testWidgets('paints white ink on the darkest chassis tone', (tester) async {
       final _CanvasHarness harness = _CanvasHarness();
       await harness.pump(tester);
 
-      expect(NotebookInkCanvas.inkColor, Colors.white);
-      expect(NotebookInkCanvas.backgroundColor, Colors.black);
+      // Ink is white, never the lime signal colour: lime ink competes with the
+      // transcript and tires the eye over a page of notes.
+      expect(NotebookInkCanvas.inkColor, TangentColors.ink);
+      expect(NotebookInkCanvas.inkColor, isNot(TangentColors.signal));
+      expect(NotebookInkCanvas.backgroundColor, TangentColors.sunken);
 
       final ColoredBox background = tester.widget<ColoredBox>(
         find.byKey(NotebookInkCanvas.backgroundKey),
       );
-      expect(background.color, Colors.black);
+      expect(background.color, TangentColors.sunken);
 
       final CustomPaint paint = tester.widget<CustomPaint>(
         find.descendant(
@@ -488,7 +492,13 @@ void main() {
       expect(paint.strokeJoin, StrokeJoin.round);
       expect(paint.style, PaintingStyle.stroke);
       expect(paint.strokeWidth, 5.0);
-      expect(paint.color, NotebookInkCanvas.inkColor);
+      // Paint.color round-trips through float channels, so `==` fails even
+      // for an identical colour. Compare channels instead.
+      const Color expected = NotebookInkCanvas.inkColor;
+      expect(paint.color.r, closeTo(expected.r, 0.001));
+      expect(paint.color.g, closeTo(expected.g, 0.001));
+      expect(paint.color.b, closeTo(expected.b, 0.001));
+      expect(paint.color.a, closeTo(expected.a, 0.001));
     });
 
     test('shouldRepaint is false for identical content, true on revision bump',
