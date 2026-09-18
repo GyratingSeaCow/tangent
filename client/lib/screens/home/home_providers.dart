@@ -4,7 +4,10 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/local_db.dart';
+import '../../data/storage/storage_contract.dart';
 import '../../data/storage/storage_providers.dart';
+import '../../services/audio_file_picker.dart';
+import '../../services/audio_import.dart';
 import '../../services/connectivity_service.dart';
 import '../../services/note_persistence.dart';
 import '../../services/recording_playback.dart';
@@ -20,6 +23,52 @@ final audioStorageProvider = storageAudioStorageProvider;
 
 final connectivityServiceProvider = Provider<ConnectivityService>((ref) {
   return ConnectivityService();
+});
+
+/// Opens the system picker for an audio file to import.
+final audioFilePickerProvider = Provider<AudioFilePicker>((ref) {
+  return AudioFilePicker();
+});
+
+/// Runs an import. Narrow on purpose: the UI only needs "import this path",
+/// so tests can substitute it without standing up the whole catalog.
+abstract class AudioImportRunner {
+  Future<Outcome<String>> run({
+    required String sourcePath,
+    required String mode,
+    String? title,
+  });
+}
+
+class _CatalogImportRunner implements AudioImportRunner {
+  _CatalogImportRunner(this._ref);
+
+  final Ref _ref;
+
+  @override
+  Future<Outcome<String>> run({
+    required String sourcePath,
+    required String mode,
+    String? title,
+  }) {
+    final importer = AudioImporter(
+      catalog: _ref.read(storageCatalogProvider),
+      backend: _ref.read(storageBackendProvider),
+      db: _ref.read(localDbProvider),
+      mutations: _ref.read(recordingMutationsProvider),
+      durationOf: probeAudioDuration,
+    );
+    return importer.import(
+      sourcePath: sourcePath,
+      mode: mode,
+      title: title,
+    );
+  }
+}
+
+/// Imports an audio file into the catalog.
+final audioImportRunnerProvider = Provider<AudioImportRunner>((ref) {
+  return _CatalogImportRunner(ref);
 });
 
 /// Server-backed transcription service. There is no on-device Whisper;

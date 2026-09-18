@@ -34,6 +34,7 @@ class MainActivity : FlutterActivity() {
     private val channelName = "dev.tangent.tangent/storage"
     private val audioChannelName = "dev.tangent.tangent/audio"
     private val requestTree = 7301
+    private val requestAudioFile = 7302
     private var storageOwner: StorageChannel? = null
     private val communicationRouting by lazy {
         CommunicationRouting(AndroidCommunicationDevices(this))
@@ -45,6 +46,19 @@ class MainActivity : FlutterActivity() {
             takeGrant = { selected, flags -> contentResolver.takePersistableUriPermission(selected, flags) },
             candidate = { selected -> documentsPort.picked(selected) },
             grantMask = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+        )
+    }
+    /// Picks one audio file and copies it into app-private cache.
+    ///
+    /// The import copies from cache rather than reading the content:// URI
+    /// directly, so the file is fully ours before anything is catalogued and
+    /// a transient permission grant cannot vanish mid-import.
+    private val audioFilePicker by lazy {
+        CandidatePicker<Uri>(
+            launch = ::pickAudioFile,
+            takeGrant = { _, _ -> },
+            candidate = { selected -> copyIntoCache(selected) },
+            grantMask = Intent.FLAG_GRANT_READ_URI_PERMISSION,
         )
     }
     private val storageRouter by lazy {
@@ -76,6 +90,11 @@ class MainActivity : FlutterActivity() {
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, audioChannelName)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
+                    "pickAudioFile" -> audioFilePicker.start(object : StorageReply {
+                        override fun success(value: Any?) = result.success(value)
+                        override fun error(code: String, message: String?) = result.error(code, message, null)
+                        override fun notImplemented() = result.notImplemented()
+                    })
                     "decodeOpusToWav" -> runIo(result, "audio_decode") {
                         val inputPath = requiredArgument(
                             call.argument<String>("inputPath"),
@@ -118,6 +137,41 @@ class MainActivity : FlutterActivity() {
             }
     }
 
+    private fun pickAudioFile() {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "audio/*"
+            putExtra(
+                Intent.EXTRA_MIME_TYPES,
+                arrayOf("audio/*", "video/mp4", "application/ogg"),
+            )
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        startActivityForResult(intent, requestAudioFile)
+    }
+
+    /// Copies the picked document into cache and reports its path and name.
+    private fun copyIntoCache(uri: Uri): Map<String, Any> {
+        val name = contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+            val index = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+            if (index >= 0 && cursor.moveToFirst()) cursor.getString(index) else null
+        } ?: "imported-audio"
+
+        val staging = File(cacheDir, "TangentImport").apply { mkdirs() }
+        // Distinct per import: two files with the same name must not collide.
+        val target = File(staging, "${System.currentTimeMillis()}-${name.replace(File.separatorChar, '_')}")
+
+        contentResolver.openInputStream(uri).use { input ->
+            if (input == null) throw IllegalStateException("Cannot read the selected file")
+            target.outputStream().use { output -> input.copyTo(output) }
+        }
+        if (target.length() <= 0L) {
+            target.delete()
+            throw IllegalStateException("The selected file is empty")
+        }
+        return mapOf("path" to target.absolutePath, "name" to name)
+    }
+
     private fun pickDirectory() {
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
             addFlags(
@@ -140,6 +194,7 @@ class MainActivity : FlutterActivity() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         candidatePicker.complete(requestCode == requestTree, resultCode == Activity.RESULT_OK, data?.data, data?.flags ?: 0)
+        audioFilePicker.complete(requestCode == requestAudioFile, resultCode == Activity.RESULT_OK, data?.data, data?.flags ?: 0)
     }
 
     private fun decodeOpusToWav(inputPath: String, outputPath: String): Map<String, Any> {
@@ -338,6 +393,7 @@ class MainActivity : FlutterActivity() {
         storageOwner = null
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         candidatePicker.interrupt()
+        audioFilePicker.interrupt()
         super.onDestroy()
     }
 
