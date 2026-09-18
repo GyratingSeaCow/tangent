@@ -40,6 +40,15 @@ abstract class RecordingService {
   /// Chooses the microphone to record with. Passing null returns the recorder
   /// to the system default input.
   Future<void> selectInputDevice(InputDevice? device) async {}
+
+  /// Re-applies the remembered headset route, if any.
+  ///
+  /// Call when the app returns to the foreground so a Bluetooth headset is
+  /// routed before the user taps record. No-op when nothing is selected.
+  Future<void> warmRoute() async {}
+
+  /// Releases the headset route unless a recording is in flight.
+  Future<void> releaseRouteIfIdle() async {}
 }
 
 /// Default no-op input-device behaviour for services that do not select a
@@ -50,6 +59,12 @@ mixin NoInputDeviceSelection implements RecordingService {
 
   @override
   Future<void> selectInputDevice(InputDevice? device) async {}
+
+  @override
+  Future<void> warmRoute() async {}
+
+  @override
+  Future<void> releaseRouteIfIdle() async {}
 }
 
 /// The slice of `package:record`'s [AudioRecorder] this app depends on.
@@ -125,6 +140,13 @@ class DefaultRecordingService implements RecordingService {
   /// this project's target hardware.
   final CommunicationRouting _routing;
 
+  /// Device id the communication route is currently applied to, if any.
+  ///
+  /// Lets [start] skip a redundant round trip when selection already warmed
+  /// the route, while still re-asserting it after a clear (backgrounding, or
+  /// the end of a previous recording).
+  String? _routedDeviceId;
+
   InputAwareAudioRecorder get _ensureRecorder =>
       _recorder ??= PlatformAudioRecorder();
 
@@ -168,6 +190,49 @@ class DefaultRecordingService implements RecordingService {
     _selectedDevice = device;
     // A device handed to us by the picker was, by construction, just listed.
     _selectedDeviceAvailable = device == null ? null : true;
+    // Warm the route NOW rather than at record time. Device evidence: firing
+    // it on the record tap was too late — the applied device reached
+    // role:output type:bt_sco, but capture still read `source client=MIC`
+    // because the recorder bound its input stream before the asynchronous
+    // route landed. Warming at selection gets SCO up ahead of the tap without
+    // putting any delay on the tap itself. Choosing the default releases it so
+    // the phone does not sit in call-audio mode.
+    if (device == null) {
+      _routedDeviceId = null;
+      await _routing.clear().catchError((_) {});
+    } else {
+      _routedDeviceId = device.id;
+      await _routing.route(device.id).catchError(
+            (_) => CommunicationRoute.unavailable,
+          );
+    }
+  }
+
+  /// Re-applies the remembered headset route.
+  ///
+  /// Called when the app returns to the foreground so SCO is live again by the
+  /// time the user reaches for record. Safe to call with no selection.
+  @override
+  Future<void> warmRoute() async {
+    final selected = _selectedDevice;
+    if (selected == null) return;
+    _routedDeviceId = selected.id;
+    await _routing.route(selected.id).catchError(
+          (_) => CommunicationRoute.unavailable,
+        );
+  }
+
+  /// Releases the route unless a recording is in flight.
+  ///
+  /// Backgrounding the app must not yank the microphone out from under an
+  /// active capture, but an idle app should not pin the phone into call-audio
+  /// mode either — that degrades the user's music playback and holds the
+  /// headset in its low-quality SCO profile.
+  @override
+  Future<void> releaseRouteIfIdle() async {
+    if (_isRecording) return;
+    _routedDeviceId = null;
+    await _routing.clear().catchError((_) {});
   }
 
   /// Drops the cached availability verdict so the next [start] re-checks.
@@ -215,7 +280,14 @@ class DefaultRecordingService implements RecordingService {
     // and this app just had a 5.8s stall removed from the record tap. Capture
     // starts immediately; the route lands a moment later. Errors are swallowed
     // by CommunicationRouting, so a dead headset can never block a recording.
-    if (device != null) {
+    // Normally the route was already warmed when the device was chosen (or on
+    // resume), so this is a no-op. It still re-asserts after a clear — for
+    // example the app was backgrounded, or a previous recording released it.
+    //
+    // Deliberately NOT awaited: bringing up an SCO link takes hundreds of ms
+    // to over a second, and T6 removed a 5.8s stall from this exact path.
+    if (device != null && _routedDeviceId != device.id) {
+      _routedDeviceId = device.id;
       unawaited(
         _routing.route(device.id).catchError(
           // Belt and braces: CommunicationRouting already swallows platform
@@ -256,6 +328,7 @@ class DefaultRecordingService implements RecordingService {
       // call-audio mode, which degrades music playback and pins the headset to
       // its low-quality SCO profile. In the finally block so it happens even
       // when the recorder throws on stop.
+      _routedDeviceId = null;
       unawaited(_routing.clear().catchError((_) {}));
     }
     if (path == null || startedAt == null) return null;

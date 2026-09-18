@@ -227,6 +227,9 @@ void main() {
 
       await service.start(stagingPath: staged('r1.opus'));
 
+      // Warmed at selection, so start() does not re-route an already-applied
+      // device. What matters is that the headset id reached the router and was
+      // not asked for twice.
       expect(router.routed, ['bt-17']);
     });
 
@@ -239,9 +242,11 @@ void main() {
       final service = DefaultRecordingService(
         outputDir: dir,
         recorder: recorder,
+        // Remembered from settings and never warmed, so start() is the first
+        // thing to touch the router — the worst case for tap latency.
+        initialDevice: buds,
         routing: router,
       );
-      await service.selectInputDevice(buds);
 
       await service.start(stagingPath: staged('r2.opus')).timeout(
             const Duration(seconds: 2),
@@ -305,6 +310,128 @@ void main() {
       await service.stop();
 
       expect(router.cleared, 1);
+    });
+  });
+  group('route warming', () {
+    // Device evidence (Fold + AirPods Pro): firing the route at record time is
+    // too late. The applied device showed role:output type:bt_sco, but capture
+    // still read `source client=MIC` because the recorder bound its input
+    // stream before the asynchronous route landed. Warming at SELECTION time
+    // gets SCO up before the tap, without putting any delay on the tap itself.
+    test('choosing a headset warms the route immediately', () async {
+      final recorder = FakeAudioRecorder(devices: const [builtIn, buds]);
+      final router = FakeRouter();
+      final service = DefaultRecordingService(
+        outputDir: dir,
+        recorder: recorder,
+        routing: router,
+      );
+
+      await service.selectInputDevice(buds);
+
+      expect(router.routed, ['bt-17']);
+    });
+
+    test('choosing the system default releases the route', () async {
+      // Otherwise the phone stays pinned in call-audio mode after the user
+      // deliberately went back to the built-in mic.
+      final recorder = FakeAudioRecorder(devices: const [builtIn, buds]);
+      final router = FakeRouter();
+      final service = DefaultRecordingService(
+        outputDir: dir,
+        recorder: recorder,
+        routing: router,
+      );
+      await service.selectInputDevice(buds);
+
+      await service.selectInputDevice(null);
+
+      expect(router.cleared, 1);
+    });
+
+    test('warming failure never breaks selection', () async {
+      final recorder = FakeAudioRecorder(devices: const [builtIn, buds]);
+      final router = FakeRouter(failure: StateError('synthetic warm fault'));
+      final service = DefaultRecordingService(
+        outputDir: dir,
+        recorder: recorder,
+        routing: router,
+      );
+
+      await service.selectInputDevice(buds);
+
+      expect(service.selectedDevice, buds);
+    });
+
+    test('warmRoute re-applies the remembered headset', () async {
+      // Called when the app returns to the foreground so the route is live
+      // again by the time the user reaches for record.
+      final recorder = FakeAudioRecorder(devices: const [builtIn, buds]);
+      final router = FakeRouter();
+      final service = DefaultRecordingService(
+        outputDir: dir,
+        recorder: recorder,
+        initialDevice: buds,
+        routing: router,
+      );
+
+      await service.warmRoute();
+
+      expect(router.routed, ['bt-17']);
+    });
+
+    test('warmRoute does nothing without a selection', () async {
+      final recorder = FakeAudioRecorder(devices: const [builtIn, buds]);
+      final router = FakeRouter();
+      final service = DefaultRecordingService(
+        outputDir: dir,
+        recorder: recorder,
+        routing: router,
+      );
+
+      await service.warmRoute();
+
+      expect(router.routed, isEmpty);
+    });
+
+    test('releaseRouteIfIdle frees the route when not recording', () async {
+      // Leaving call-audio mode applied while the app sits in the background
+      // would degrade the user's music playback.
+      final recorder = FakeAudioRecorder(devices: const [builtIn, buds]);
+      final router = FakeRouter();
+      final service = DefaultRecordingService(
+        outputDir: dir,
+        recorder: recorder,
+        routing: router,
+      );
+      await service.selectInputDevice(buds);
+
+      await service.releaseRouteIfIdle();
+
+      expect(router.cleared, 1);
+    });
+
+    test('releaseRouteIfIdle NEVER clears during an active recording',
+        () async {
+      // Backgrounding the app mid-recording must not yank the microphone out
+      // from under a capture that is still running.
+      final recorder = FakeAudioRecorder(devices: const [builtIn, buds]);
+      final router = FakeRouter();
+      final service = DefaultRecordingService(
+        outputDir: dir,
+        recorder: recorder,
+        routing: router,
+      );
+      await service.selectInputDevice(buds);
+      await service.start(stagingPath: staged('w1.opus'));
+
+      await service.releaseRouteIfIdle();
+
+      expect(
+        router.cleared,
+        0,
+        reason: 'an in-flight recording still needs the headset route',
+      );
     });
   });
 }

@@ -22,6 +22,7 @@ import 'data/secure_storage.dart';
 import 'data/settings_store.dart';
 import 'screens/home/home_providers.dart';
 import 'screens/home/home_screen.dart';
+import 'screens/recording/recording_controller.dart';
 import 'screens/server/server_connection_screen.dart';
 import 'screens/settings/settings_screen.dart';
 import 'services/transcription_client.dart';
@@ -158,6 +159,16 @@ class _TranscriptionLifecycleHostState
       unawaited(
         ref.read(serverTranscriptionServiceProvider).reconcilePending(),
       );
+      // Re-apply the Bluetooth headset route so SCO is up before the user
+      // reaches for record. Routing at record time proved too late on device:
+      // the recorder binds its input stream before the asynchronous route
+      // lands, so capture stayed on the built-in mic.
+      unawaited(ref.read(recordingServiceProvider).warmRoute());
+    } else if (state == AppLifecycleState.paused) {
+      // Release it while idle so the phone does not sit in call-audio mode,
+      // which degrades music playback and pins the headset to its low-quality
+      // SCO profile. Never releases during an active recording.
+      unawaited(ref.read(recordingServiceProvider).releaseRouteIfIdle());
     }
   }
 
