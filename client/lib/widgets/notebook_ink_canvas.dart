@@ -7,8 +7,11 @@
 //   * Samsung Notes pen types are proprietary and not importable, so the
 //     authorised fallback is a single round pen whose width is adjustable from
 //     the notebook page's own toolbar via [PenSizeControl].
-//   * Strokes are accepted from stylus input, and from touch only while draw
-//     mode is active, so finger-scrolling a notebook never paints.
+//   * A PEN always writes, wherever it touches the page and with no mode
+//     toggle first -- requiring a toggle is the largest friction there is in a
+//     handwriting app on an active-pen device. Touch and mouse paint only
+//     while draw mode is active, so finger-scrolling a notebook never paints
+//     and the draw-mode button remains the backup for writing with a finger.
 //
 // This widget owns no persistence and knows nothing about screens or the
 // database. It reports completed strokes upward through `onStrokesChanged`.
@@ -303,7 +306,10 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
   bool _eraseAt(Offset position) => _eraseAlong(position, position);
 
   void _onPointerDown(PointerDownEvent event) {
-    if (!widget.drawingEnabled) return;
+    // No `drawingEnabled` check here: _acceptsDevice owns that decision, and
+    // it is per-kind. A blanket early return above this line is what made the
+    // stylus branch below dead code while its doc comment still advertised
+    // "stylus input is always honoured".
     if (!_acceptsDevice(event.kind)) return;
     if (_activePointer != null) return;
     if (_isErasing(event)) {
@@ -389,15 +395,51 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
     return Semantics(
       label: 'Handwriting canvas',
       child: RepaintBoundary(
-        child: IgnorePointer(
-          ignoring: !widget.drawingEnabled,
+        // IgnorePointer cannot express "pen only" -- it drops every pointer
+        // kind alike, which is why reaching the canvas used to require draw
+        // mode. Instead the layer is translucent to hit testing when draw mode
+        // is off, so a FINGER falls through to the blocks and the page scroll
+        // underneath, while a stylus is claimed eagerly by the recognizer
+        // below and never reaches them.
+        child: RawGestureDetector(
+          behavior: widget.drawingEnabled
+              ? HitTestBehavior.opaque
+              : HitTestBehavior.translucent,
+          gestures: <Type, GestureRecognizerFactory>{
+            // Claims the gesture arena for stylus pointers the moment one
+            // lands, so a pen stroke inks instead of being interpreted as a
+            // page scroll or a drag of whatever block lies beneath it. Scoped
+            // to stylus kinds: touch is left entirely alone so the widgets
+            // below keep their taps and drags.
+            EagerGestureRecognizer:
+                GestureRecognizerFactoryWithHandlers<EagerGestureRecognizer>(
+              () => EagerGestureRecognizer(
+                supportedDevices: const <PointerDeviceKind>{
+                  PointerDeviceKind.stylus,
+                  PointerDeviceKind.invertedStylus,
+                },
+              ),
+              (EagerGestureRecognizer instance) {},
+            ),
+          },
           child: Listener(
-            behavior: HitTestBehavior.opaque,
+            // Translucent lets the hit continue to the widgets BEHIND this
+            // layer after the Listener has seen it, which is what keeps a
+            // finger working on the blocks below; opaque claims it outright
+            // for the canvas while draw mode is on.
+            behavior: widget.drawingEnabled
+                ? HitTestBehavior.opaque
+                : HitTestBehavior.translucent,
             onPointerDown: _onPointerDown,
             onPointerMove: _onPointerMove,
             onPointerUp: _onPointerUp,
             onPointerCancel: _onPointerCancel,
-            child: ColoredBox(
+            // The painted surface takes no hits of its own. A ColoredBox plus
+            // an expanded child is hit-testable even when fully transparent,
+            // and it was absorbing the finger taps that must reach the blocks
+            // below; the Listener above still sees every event first.
+            child: IgnorePointer(
+              child: ColoredBox(
               key: NotebookInkCanvas.backgroundKey,
               // Transparent when the page already paints the backdrop, so the
               // caller does not have to punch the black back out with a
@@ -420,6 +462,7 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
                   revision: _revision,
                 ),
                 child: const SizedBox.expand(),
+              ),
               ),
             ),
           ),

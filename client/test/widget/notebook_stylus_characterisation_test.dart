@@ -59,19 +59,22 @@ void main() {
       expect(strokes, isNotEmpty);
     });
 
-    testWidgets('stylus with draw mode OFF — current behaviour', (tester) async {
+    testWidgets('stylus with draw mode OFF — writes', (tester) async {
       final strokes = await draw(
         tester,
         drawingEnabled: false,
         kind: PointerDeviceKind.stylus,
       );
-      // Recording reality: the pen is ignored unless draw mode is on, despite
-      // what _acceptsDevice's doc comment claims.
+      // This file characterised the pre-change behaviour and recorded that the
+      // pen was ignored without draw mode, flagging it as the thing to fix.
+      // The fix landed: _acceptsDevice's doc comment is now true, because the
+      // blanket `!drawingEnabled` early return that made its stylus branch
+      // dead code is gone.
       expect(
         strokes,
-        isEmpty,
-        reason: 'characterisation only — this is the behaviour we intend to '
-            'change so an EMR pen writes without toggling draw mode',
+        isNotEmpty,
+        reason: 'the pen writes with no mode toggle -- the change this file '
+            'was written to make visible',
       );
     });
 

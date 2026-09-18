@@ -204,8 +204,13 @@ void main() {
       expect(harness.reports, isEmpty);
     });
 
-    testWidgets('stylus drag produces NO stroke when drawingEnabled is false',
+    testWidgets('stylus DOES draw when drawingEnabled is false',
         (tester) async {
+      // Premise replaced, not weakened. This test previously asserted that a
+      // pen was ignored unless draw mode was on; that requirement is gone --
+      // a pen now writes wherever it touches the page, and the draw-mode
+      // button is the backup for writing with a finger. The finger half of
+      // the old contract is asserted immediately below and is unchanged.
       final _CanvasHarness harness = _CanvasHarness(drawingEnabled: false);
       await harness.pump(tester);
 
@@ -214,8 +219,12 @@ void main() {
         path: <Offset>[const Offset(10, 10), const Offset(60, 60)],
       );
 
-      expect(harness.state.strokes, isEmpty);
-      expect(harness.reports, isEmpty);
+      expect(
+        harness.state.strokes,
+        isNotEmpty,
+        reason: 'a pen writes with no mode toggle first',
+      );
+      expect(harness.reports, isNotEmpty);
     });
 
     testWidgets('disabled canvas lets content beneath receive the gesture',
