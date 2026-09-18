@@ -15,6 +15,7 @@ import '../../widgets/folder_picker.dart';
 import '../../data/local_db.dart';
 import '../home/home_screen.dart' show localDbProvider;
 import '../../widgets/item_action_sheet.dart';
+import 'notebook_grouping.dart';
 import 'notebook_editor_screen.dart';
 
 class NotebookListScreen extends ConsumerStatefulWidget {
@@ -88,8 +89,8 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
 
   Future<void> _move(Notebook notebook) async {
     final LocalDb db = ref.read(localDbProvider);
-    final List<Folder> folders = await db.watchFolders().first;
-    if (!mounted) return;
+    final List<Folder> folders =
+        ref.read(foldersProvider).valueOrNull ?? const <Folder>[];
 
     final FolderChoice? choice = await showFolderPicker(
       context,
@@ -235,35 +236,83 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
               ),
             );
           }
-          return ListView.separated(
-            itemCount: rows.length,
-            separatorBuilder: (_, __) => const Divider(height: 1),
-            itemBuilder: (BuildContext context, int index) {
-              final Notebook notebook = rows[index];
-              return ListTile(
-                key: ValueKey<String>('notebook-row-${notebook.id}'),
-                leading: const Icon(Icons.menu_book),
-                title: Text(
-                  notebook.title.isEmpty ? '(untitled)' : notebook.title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                subtitle: Text(formatNotebookUpdated(notebook.updatedAt)),
-                onTap: () => _openNotebook(notebook.id),
-                onLongPress: () => _showActions(notebook),
-                trailing: IconButton(
-                  key: ValueKey<String>('notebook-menu-${notebook.id}'),
-                  tooltip: 'Notebook actions',
-                  icon: const Icon(Icons.more_vert),
-                  onPressed: () => _showActions(notebook),
+          // Folders are watched via a provider (not the database directly) so
+          // the screen stays testable, and filing shows up immediately: move a
+          // notebook and the section it left collapses without a refresh.
+          final List<FolderSummary> folders = ref
+              .watch(foldersProvider)
+              .maybeWhen(
+                data: (List<Folder> rows) => rows
+                    .map((Folder f) => FolderSummary(id: f.id, name: f.name))
+                    .toList(growable: false),
+                orElse: () => const <FolderSummary>[],
+              );
+          final List<NotebookSection> sections = groupNotebooks(
+            notebooks: rows,
+            folders: folders,
+          );
+
+          // Flatten sections into a single list: a header, then its rows.
+          final List<Widget> children = <Widget>[];
+          for (final NotebookSection section in sections) {
+            if (section.title != null) {
+              children.add(
+                Padding(
+                  key: ValueKey<String>(
+                    'notebook-section-${section.folderId ?? 'unfiled'}',
+                  ),
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                  child: Text(
+                    section.title!,
+                    style: Theme.of(context)
+                        .textTheme
+                        .labelLarge
+                        ?.copyWith(color: colors.primary),
+                  ),
                 ),
               );
-            },
-          );
+            }
+            if (section.isEmpty && section.title != null) {
+              children.add(
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                  child: Text(
+                    'Empty',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+              );
+            }
+            for (final Notebook notebook in section.notebooks) {
+              children.add(_notebookTile(notebook));
+              children.add(const Divider(height: 1));
+            }
+          }
+
+          return ListView(children: children);
         },
       ),
     );
   }
+
+  Widget _notebookTile(Notebook notebook) => ListTile(
+        key: ValueKey<String>('notebook-row-${notebook.id}'),
+        leading: const Icon(Icons.menu_book),
+        title: Text(
+          notebook.title.isEmpty ? '(untitled)' : notebook.title,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        subtitle: Text(formatNotebookUpdated(notebook.updatedAt)),
+        onTap: () => _openNotebook(notebook.id),
+        onLongPress: () => _showActions(notebook),
+        trailing: IconButton(
+          key: ValueKey<String>('notebook-menu-${notebook.id}'),
+          tooltip: 'Notebook actions',
+          icon: const Icon(Icons.more_vert),
+          onPressed: () => _showActions(notebook),
+        ),
+      );
 }
 
 /// `Updated 2026-09-17 14:05` in local time.

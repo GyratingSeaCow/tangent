@@ -131,3 +131,13 @@ final notebookRepositoryProvider = Provider<NotebookRepository>(
 final notebooksProvider = StreamProvider<List<Notebook>>(
   (ref) => ref.watch(notebookRepositoryProvider).watchNotebooks(),
 );
+
+/// Live folder list for the notebooks screen.
+///
+/// A provider rather than a direct database read so the screen stays testable:
+/// reaching for localDbProvider inside build() makes every widget test need a
+/// real database, and the harness that only overrides notebooksProvider throws
+/// 'Override in main()'.
+final foldersProvider = StreamProvider<List<Folder>>(
+  (ref) => ref.watch(localDbProvider).watchFolders(),
+);

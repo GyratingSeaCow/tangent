@@ -50,6 +50,7 @@ void main() {
   Future<void> mountList(
     WidgetTester tester, {
     List<Notebook> seed = const <Notebook>[],
+    List<Folder> folders = const <Folder>[],
   }) async {
     tester.view.physicalSize = const Size(1080, 2340);
     tester.view.devicePixelRatio = 1.0;
@@ -67,10 +68,16 @@ void main() {
           dumpsProvider.overrideWith(
             (_) => Stream<List<DumpRow>>.value(const <DumpRow>[]),
           ),
+          foldersProvider.overrideWith(
+            (_) => Stream<List<Folder>>.value(folders),
+          ),
         ],
         child: const MaterialApp(home: NotebookListScreen()),
       ),
     );
+    await tester.pump();
+    // The folders StreamProvider needs a frame to deliver its first value;
+    // without this the screen groups against an empty folder list.
     await tester.pump();
   }
 
@@ -247,6 +254,67 @@ void main() {
     expect(repository.deleted, isEmpty);
     expect(tester.takeException(), isNull);
 
+    await unmount(tester);
+  });
+
+  // Grouping is unit-tested as a pure function; these prove the screen
+  // actually renders it. The pure-function tests all passed while the screen
+  // was throwing 'Override in main()', so rendering needs its own proof.
+  testWidgets('with no folders the list shows no folder headers',
+      (tester) async {
+    await mountList(
+      tester,
+      seed: <Notebook>[testNotebook(id: 'nb-7', title: 'Sprint ideas')],
+    );
+
+    expect(find.text('Sprint ideas'), findsOneWidget);
+    expect(
+      find.text('No folder'),
+      findsNothing,
+      reason: 'a user who never made a folder sees no folder chrome',
+    );
+    await unmount(tester);
+  });
+
+  testWidgets('notebooks appear under their folder header', (tester) async {
+    await mountList(
+      tester,
+      seed: <Notebook>[
+        testNotebook(id: 'nb-7', title: 'Sprint ideas', folderId: 'f-work'),
+        testNotebook(id: 'nb-8', title: 'Groceries'),
+      ],
+      folders: <Folder>[
+        Folder(id: 'f-work', name: 'Work', createdAt: 1),
+      ],
+    );
+
+    expect(find.text('Work'), findsOneWidget);
+    expect(find.text('No folder'), findsOneWidget);
+    expect(find.text('Sprint ideas'), findsOneWidget);
+    expect(find.text('Groceries'), findsOneWidget);
+
+    // The filed notebook sits under its header, the loose one under 'No folder'.
+    final double workHeaderY = tester.getCenter(find.text('Work')).dy;
+    final double filedY = tester.getCenter(find.text('Sprint ideas')).dy;
+    final double unfiledHeaderY = tester.getCenter(find.text('No folder')).dy;
+    expect(workHeaderY, lessThan(filedY));
+    expect(filedY, lessThan(unfiledHeaderY));
+
+    await unmount(tester);
+  });
+
+  testWidgets('an empty folder still shows so it can be filed into',
+      (tester) async {
+    await mountList(
+      tester,
+      seed: <Notebook>[testNotebook(id: 'nb-8', title: 'Groceries')],
+      folders: <Folder>[
+        Folder(id: 'f-work', name: 'Work', createdAt: 1),
+      ],
+    );
+
+    expect(find.text('Work'), findsOneWidget);
+    expect(find.text('Empty'), findsOneWidget);
     await unmount(tester);
   });
 

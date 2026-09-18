@@ -99,6 +99,7 @@ Notebook testNotebook({
   List<NotebookBlock> blocks = const <NotebookBlock>[],
   List<InkStroke> strokes = const <InkStroke>[],
   DateTime? updatedAt,
+  String? folderId,
 }) {
   final DateTime at = updatedAt ?? DateTime.utc(2026, 9, 17, 12);
   return Notebook(
@@ -108,5 +109,6 @@ Notebook testNotebook({
     updatedAt: at,
     document: NotebookDocument(blocks),
     ink: NotebookInk(strokes),
+    folderId: folderId,
   );
 }
