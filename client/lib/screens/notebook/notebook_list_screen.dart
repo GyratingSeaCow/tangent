@@ -11,6 +11,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/notebook_repository.dart';
 import '../../models/notebook.dart';
 import '../../services/notebook_persistence.dart';
+import '../../widgets/item_action_sheet.dart';
 import 'notebook_editor_screen.dart';
 
 class NotebookListScreen extends ConsumerStatefulWidget {
@@ -49,6 +50,82 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
       );
     } finally {
       if (mounted) setState(() => _creating = false);
+    }
+  }
+
+  /// Long-press opens the shared menu instead of deleting outright.
+  Future<void> _showActions(Notebook notebook) async {
+    final ItemAction? action = await showItemActionSheet(
+      context,
+      title: notebook.title.isEmpty ? '(untitled)' : notebook.title,
+      subtitle: formatNotebookUpdated(notebook.updatedAt),
+      actions: const <ItemAction>[
+        ItemAction.open,
+        ItemAction.rename,
+        ItemAction.delete,
+      ],
+    );
+    if (action == null || !mounted) return;
+    switch (action) {
+      case ItemAction.open:
+        await _openNotebook(notebook.id);
+      case ItemAction.rename:
+        await _rename(notebook);
+      case ItemAction.delete:
+        await _confirmDelete(notebook);
+      case ItemAction.move:
+      case ItemAction.duplicate:
+      case ItemAction.share:
+      case ItemAction.select:
+        break;
+    }
+  }
+
+  Future<void> _rename(Notebook notebook) async {
+    final TextEditingController controller =
+        TextEditingController(text: notebook.title);
+    final String? name = await showDialog<String>(
+      context: context,
+      builder: (BuildContext dialogContext) => AlertDialog(
+        title: const Text('Rename notebook'),
+        content: TextField(
+          key: const ValueKey<String>('notebook-rename-field'),
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: 'Name'),
+          onSubmitted: (String value) =>
+              Navigator.of(dialogContext).pop(value.trim()),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            key: const ValueKey<String>('notebook-rename-save'),
+            onPressed: () =>
+                Navigator.of(dialogContext).pop(controller.text.trim()),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    // The dialog's route is still animating out and its TextField still builds
+    // against this controller; disposing here throws "used after being
+    // disposed". Hand it to the next frame instead.
+    WidgetsBinding.instance.addPostFrameCallback((_) => controller.dispose());
+    if (name == null || name.isEmpty || !mounted) return;
+    try {
+      // Persistence rewrites the durable file too; the bare repository would
+      // leave the on-disk copy carrying the old title for the next import.
+      await ref
+          .read(notebookPersistenceProvider)
+          .saveNotebook(notebook.copyWith(title: name));
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not rename notebook: $error')),
+      );
     }
   }
 
@@ -135,20 +212,12 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
                 ),
                 subtitle: Text(formatNotebookUpdated(notebook.updatedAt)),
                 onTap: () => _openNotebook(notebook.id),
-                onLongPress: () => _confirmDelete(notebook),
-                trailing: PopupMenuButton<String>(
+                onLongPress: () => _showActions(notebook),
+                trailing: IconButton(
                   key: ValueKey<String>('notebook-menu-${notebook.id}'),
                   tooltip: 'Notebook actions',
-                  onSelected: (String choice) {
-                    if (choice == 'delete') _confirmDelete(notebook);
-                  },
-                  itemBuilder: (_) => <PopupMenuEntry<String>>[
-                    PopupMenuItem<String>(
-                      key: ValueKey<String>('notebook-delete-${notebook.id}'),
-                      value: 'delete',
-                      child: const Text('Delete notebook'),
-                    ),
-                  ],
+                  icon: const Icon(Icons.more_vert),
+                  onPressed: () => _showActions(notebook),
                 ),
               );
             },

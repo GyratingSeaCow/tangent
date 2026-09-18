@@ -174,7 +174,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('notebook-menu-nb-7')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
-    await tester.tap(find.byKey(const ValueKey('notebook-delete-nb-7')));
+    await tester.tap(find.byKey(const ValueKey('item-action-delete')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
 
@@ -208,7 +208,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('notebook-menu-nb-7')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
-    await tester.tap(find.byKey(const ValueKey('notebook-delete-nb-7')));
+    await tester.tap(find.byKey(const ValueKey('item-action-delete')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     await tester.tap(find.text('Delete'));
@@ -218,6 +218,65 @@ void main() {
     expect(repository.deleted, <String>['nb-7']);
     expect(find.text('Sprint ideas'), findsNothing);
     expect(find.text('Groceries'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await unmount(tester);
+  });
+
+  // The behaviour change: long-press used to delete outright. It now opens the
+  // shared menu, so the destructive path always has a menu in front of it and
+  // the gesture means the same thing as it does on every other list.
+  testWidgets('long-press opens the action menu instead of deleting',
+      (tester) async {
+    await mountList(
+      tester,
+      seed: <Notebook>[testNotebook(id: 'nb-7', title: 'Sprint ideas')],
+    );
+
+    await tester.longPress(find.byKey(const ValueKey('notebook-row-nb-7')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(find.byKey(const ValueKey('item-action-rename')), findsOneWidget);
+    expect(find.byKey(const ValueKey('item-action-delete')), findsOneWidget);
+    expect(
+      find.text('Delete notebook?'),
+      findsNothing,
+      reason: 'long-press must not jump straight to the destructive dialog',
+    );
+    expect(repository.deleted, isEmpty);
+    expect(tester.takeException(), isNull);
+
+    await unmount(tester);
+  });
+
+  testWidgets('rename from the menu saves the new title', (tester) async {
+    await mountList(
+      tester,
+      seed: <Notebook>[testNotebook(id: 'nb-7', title: 'Sprint ideas')],
+    );
+
+    await tester.longPress(find.byKey(const ValueKey('notebook-row-nb-7')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.tap(find.byKey(const ValueKey('item-action-rename')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    await tester.enterText(
+      find.byKey(const ValueKey('notebook-rename-field')),
+      'Q4 planning',
+    );
+    await tester.tap(find.byKey(const ValueKey('notebook-rename-save')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(
+      repository.saved.map((Notebook n) => n.title),
+      contains('Q4 planning'),
+      reason: 'rename must persist through the notebook persistence layer',
+    );
+    expect(repository.deleted, isEmpty);
     expect(tester.takeException(), isNull);
 
     await unmount(tester);
