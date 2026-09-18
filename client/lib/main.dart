@@ -4,6 +4,8 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import 'theme/tangent_theme.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 
@@ -103,17 +105,11 @@ class TangentApp extends StatelessWidget {
     return _TranscriptionLifecycleHost(
       child: MaterialApp(
         title: 'Tangent',
-        theme: ThemeData(
-          colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
-          useMaterial3: true,
-        ),
-        darkTheme: ThemeData(
-          colorScheme: ColorScheme.fromSeed(
-            seedColor: Colors.indigo,
-            brightness: Brightness.dark,
-          ),
-          useMaterial3: true,
-        ),
+        // Tangent ships one theme: an instrument does not restyle itself
+        // with the system setting.
+        theme: tangentTheme(),
+        darkTheme: tangentTheme(),
+        themeMode: ThemeMode.dark,
         home: const _Router(),
         routes: {'/home': (_) => const HomeScreen()},
       ),
