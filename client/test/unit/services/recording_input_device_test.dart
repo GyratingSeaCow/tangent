@@ -2,6 +2,8 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'dart:typed_data';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:record/record.dart';
@@ -44,6 +46,12 @@ final class FakeAudioRecorder implements InputAwareAudioRecorder {
     if (listDelay != null) await Future<void>.delayed(listDelay!);
     if (listFailure != null) throw listFailure!;
     return devices;
+  }
+
+  @override
+  Future<Stream<Uint8List>> startStream(RecordConfig config) async {
+    configs.add(config);
+    return const Stream<Uint8List>.empty();
   }
 
   @override

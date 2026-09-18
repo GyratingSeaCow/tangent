@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:record/record.dart';
 
+import 'audio_gain.dart';
 import 'communication_routing.dart';
 
 class RecordingResult {
@@ -74,6 +75,13 @@ abstract class InputAwareAudioRecorder {
   Future<bool> hasPermission();
   Future<List<InputDevice>> listInputDevices();
   Future<void> start(RecordConfig config, {required String path});
+
+  /// Raw PCM16 chunks, for the amplified capture path.
+  ///
+  /// Separate from [start] because the platform plugin cannot do both: stream
+  /// mode emits encoder output and writes no file of its own, so the caller
+  /// owns the container.
+  Future<Stream<Uint8List>> startStream(RecordConfig config);
   Future<String?> stop();
   Stream<Amplitude> onAmplitudeChanged(Duration interval);
   Future<void> dispose();
@@ -95,6 +103,10 @@ class PlatformAudioRecorder implements InputAwareAudioRecorder {
   @override
   Future<void> start(RecordConfig config, {required String path}) =>
       _inner.start(config, path: path);
+
+  @override
+  Future<Stream<Uint8List>> startStream(RecordConfig config) =>
+      _inner.startStream(config);
 
   @override
   Future<String?> stop() => _inner.stop();
@@ -124,13 +136,25 @@ class DefaultRecordingService implements RecordingService {
   /// null when the choice was restored from settings and never verified.
   bool? _selectedDeviceAvailable;
 
+  /// Reads the user's current gain. A callback rather than a value so a
+  /// change in Settings applies to the NEXT recording without rebuilding the
+  /// service.
+  final double Function() _micGain;
+
+  /// Open sink for an amplified capture, and its running payload size.
+  IOSink? _wavSink;
+  int _wavPayloadBytes = 0;
+  StreamSubscription<Uint8List>? _pcmSubscription;
+
   DefaultRecordingService({
     Directory? outputDir,
     InputAwareAudioRecorder? recorder,
     InputDevice? initialDevice,
     CommunicationRouting? routing,
+    double Function()? micGain,
   })  : _recorder = recorder,
         _routing = routing ?? CommunicationRouting(),
+        _micGain = micGain ?? (() => defaultMicGain),
         _selectedDevice = initialDevice,
         _outputDir = outputDir ??
             (throw ArgumentError('A staging output directory is required'));
@@ -297,29 +321,107 @@ class DefaultRecordingService implements RecordingService {
         ),
       );
     }
-    await recorder.start(
-      RecordConfig(
-        encoder: AudioEncoder.opus,
-        sampleRate: 16000,
-        numChannels: 1,
-        bitRate: 32000,
-        device: device,
-      ),
-      path: path,
-    );
+    final double gain = clampMicGain(_micGain());
+    if (gain == defaultMicGain) {
+      // Unchanged encoded path: same encoder, same bitrate, same container.
+      await recorder.start(
+        RecordConfig(
+          encoder: AudioEncoder.opus,
+          sampleRate: 16000,
+          numChannels: 1,
+          bitRate: 32000,
+          device: device,
+        ),
+        path: path,
+      );
+    } else {
+      // Amplified path. package:record only exposes samples through the
+      // stream API, and stream mode writes no file of its own, so this owns
+      // the WAV container: a placeholder header now, patched with the true
+      // lengths on stop.
+      final Stream<Uint8List> pcm = await recorder.startStream(
+        RecordConfig(
+          encoder: AudioEncoder.pcm16bits,
+          sampleRate: 16000,
+          numChannels: 1,
+          device: device,
+        ),
+      );
+      final IOSink sink = File(path).openWrite();
+      sink.add(wavHeader(sampleRate: 16000, numChannels: 1, dataBytes: 0));
+      _wavSink = sink;
+      _wavPayloadBytes = 0;
+      _pcmSubscription = pcm.listen(
+        (Uint8List chunk) {
+          final Uint8List amplified = applyGain(chunk, gain);
+          _wavPayloadBytes += amplified.length;
+          sink.add(amplified);
+        },
+        cancelOnError: false,
+      );
+    }
     _currentPath = path;
     _startedAt = DateTime.now();
     _isRecording = true;
     return path;
   }
 
+  /// Rewrites the two length fields of a finished WAV.
+  ///
+  /// The header is written before any audio exists, so both sizes start at
+  /// zero. Leaving them there is the classic streamed-WAV defect: the file is
+  /// complete on disk but every player reads it as a fraction of a second.
+  Future<void> _patchWavLengths(String path, int payloadBytes) async {
+    final RandomAccessFile handle =
+        await File(path).open(mode: FileMode.append);
+    try {
+      final ByteData riff = ByteData(4)
+        ..setUint32(0, 36 + payloadBytes, Endian.little);
+      await handle.setPosition(4);
+      await handle.writeFrom(riff.buffer.asUint8List());
+
+      final ByteData data = ByteData(4)
+        ..setUint32(0, payloadBytes, Endian.little);
+      await handle.setPosition(40);
+      await handle.writeFrom(data.buffer.asUint8List());
+    } finally {
+      await handle.close();
+    }
+  }
+
   @override
   Future<RecordingResult?> stop() async {
     if (!_isRecording) return null;
     final startedAt = _startedAt;
+    final String? streamedPath = _wavSink == null ? null : _currentPath;
     String? path;
     try {
-      path = await _ensureRecorder.stop();
+      if (streamedPath != null) {
+        // Close the stream and the file BEFORE patching the header: the
+        // lengths are only correct once every chunk has been flushed, and a
+        // half-written file would be published with a header describing
+        // audio that is not there.
+        // Let the stream drain rather than cancelling it: cancel() discards
+        // chunks the platform has already emitted but that have not been
+        // delivered yet, silently truncating the tail of the recording. The
+        // recorder is stopped first so the stream actually ends.
+        await _ensureRecorder.stop();
+        final StreamSubscription<Uint8List>? pending = _pcmSubscription;
+        _pcmSubscription = null;
+        if (pending != null) {
+          await pending.asFuture<void>().catchError((Object _) {});
+          await pending.cancel();
+        }
+        final IOSink sink = _wavSink!;
+        _wavSink = null;
+        await sink.flush();
+        await sink.close();
+        await _patchWavLengths(streamedPath, _wavPayloadBytes);
+        _wavPayloadBytes = 0;
+        path = streamedPath;
+      } else {
+        path = await _ensureRecorder.stop();
+      }
     } finally {
       _isRecording = false;
       _currentPath = null;
@@ -347,6 +449,18 @@ class DefaultRecordingService implements RecordingService {
 
   @override
   Future<void> dispose() async {
+    // An amplified capture owns a live subscription and an open file handle.
+    // Disposing without releasing them leaks the handle and can leave the
+    // staging file locked, which the next reservation then cannot replace.
+    await _pcmSubscription?.cancel();
+    _pcmSubscription = null;
+    final IOSink? sink = _wavSink;
+    _wavSink = null;
+    if (sink != null) {
+      await sink.flush();
+      await sink.close();
+    }
+    _wavPayloadBytes = 0;
     await _recorder?.dispose();
     _recorder = null;
     _isRecording = false;
