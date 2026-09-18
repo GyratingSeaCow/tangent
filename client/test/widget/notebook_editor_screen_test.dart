@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tangent/data/local_db.dart';
 import 'package:tangent/data/notebook_repository.dart';
+import 'package:tangent/models/dump.dart';
 import 'package:tangent/models/notebook.dart';
 import 'package:tangent/screens/dump/dumps_providers.dart';
 import 'package:tangent/screens/notebook/notebook_editor_screen.dart';
@@ -21,12 +22,13 @@ import '../support/fake_notebook_repository.dart';
 /// T4: the notebook editor — text/checkbox blocks over a draggable dump-card
 /// layer under an ink canvas, a page-local pen toolbar, and an explicit save.
 
-DumpRow _dumpRow(String id, String title) => DumpRow(
+DumpRow _dumpRow(String id, String title, {String mode = 'brain_dump'}) =>
+    DumpRow(
       id: id,
       createdAt: DateTime.utc(2026, 9, 17, 8),
       updatedAt: DateTime.utc(2026, 9, 17, 8),
-      mode: 'brain_dump',
-      durationSeconds: 95,
+      mode: mode,
+      durationSeconds: mode == 'text_note' ? 0 : 95,
       title: title,
       audioPath: '/audio/$id.m4a',
       audioSizeBytes: 2048,
@@ -315,15 +317,22 @@ void main() {
     await unmount(tester);
   });
 
-  testWidgets('Add text and Add checkbox append new blocks', (tester) async {
+  testWidgets('the insert menu appends new text and checkbox blocks',
+      (tester) async {
+    // Drives the bottom-left insert menu that replaced the button row; the
+    // assertions below are unchanged from when those buttons existed.
     await mountEditor(tester, notebook: testNotebook(id: 'nb-1'));
 
     expect(textBlocks(), findsNothing);
 
-    await tester.tap(find.text('Add text'));
-    await tester.pump();
-    await tester.tap(find.text('Add checkbox'));
-    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('notebook-insert-menu')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Text block'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('notebook-insert-menu')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Checkbox'));
+    await tester.pumpAndSettle();
 
     expect(textBlocks(), findsOneWidget);
     expect(checkboxBlocks(), findsOneWidget);
@@ -358,9 +367,10 @@ void main() {
       ],
     );
 
-    await tester.tap(find.text('Add recordings'));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 400));
+    await tester.tap(find.byKey(const ValueKey('notebook-insert-menu')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Dump'));
+    await tester.pumpAndSettle();
 
     expect(find.byType(DumpPickerSheet), findsOneWidget);
     expect(
@@ -397,6 +407,127 @@ void main() {
       reason: 'a new card must not land exactly on an existing one',
     );
     expect(tester.takeException(), isNull);
+
+    await unmount(tester);
+  });
+
+  testWidgets(
+    'the insert menu opens from the bottom-left and offers every insert',
+    (tester) async {
+      // Jeff asked for one burger-style menu in the bottom-left corner
+      // holding the insert actions, instead of a row of buttons.
+      await mountEditor(
+        tester,
+        notebook: testNotebook(id: 'nb-1'),
+        dumps: <DumpRow>[_dumpRow('d1', 'Morning ideas')],
+      );
+
+      expect(
+        find.byKey(const ValueKey('notebook-insert-menu')),
+        findsOneWidget,
+        reason: 'the insert menu must be reachable from the editor',
+      );
+      // The old always-on row is gone: the menu replaces it.
+      expect(find.text('Add checkbox'), findsNothing);
+
+      await tester.tap(find.byKey(const ValueKey('notebook-insert-menu')));
+      await tester.pumpAndSettle();
+
+      for (final String label in <String>[
+        'Text block',
+        'Checkbox',
+        'Dump',
+        'Meeting notes',
+        'Text note',
+      ]) {
+        expect(
+          find.text(label),
+          findsOneWidget,
+          reason: '"$label" must be offered in the insert menu',
+        );
+      }
+
+      await unmount(tester);
+    },
+  );
+
+  testWidgets('importing a text note offers only text notes', (tester) async {
+    // Picking "Text note" must not make Jeff scroll past 60 recordings to
+    // find the notes: each import entry filters the picker to its own kind.
+    await mountEditor(
+      tester,
+      notebook: testNotebook(id: 'nb-1'),
+      dumps: <DumpRow>[
+        _dumpRow('d1', 'Morning ideas'),
+        _dumpRow('m1', 'Standup', mode: 'meeting'),
+        _dumpRow('t1', 'Shopping list', mode: 'text_note'),
+      ],
+    );
+
+    await tester.tap(find.byKey(const ValueKey('notebook-insert-menu')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Text note'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(DumpPickerSheet), findsOneWidget);
+    final DumpPickerSheet sheet =
+        tester.widget<DumpPickerSheet>(find.byType(DumpPickerSheet));
+    expect(
+      sheet.dumps.map((Dump d) => d.id).toList(),
+      <String>['t1'],
+      reason: 'the text-note import must offer text notes only',
+    );
+
+    await unmount(tester);
+  });
+
+  testWidgets('importing a meeting embeds it as a card', (tester) async {
+    await mountEditor(
+      tester,
+      notebook: testNotebook(id: 'nb-1'),
+      dumps: <DumpRow>[
+        _dumpRow('d1', 'Morning ideas'),
+        _dumpRow('m1', 'Standup', mode: 'meeting'),
+      ],
+    );
+
+    await tester.tap(find.byKey(const ValueKey('notebook-insert-menu')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Meeting notes'));
+    await tester.pumpAndSettle();
+
+    final DumpPickerSheet sheet =
+        tester.widget<DumpPickerSheet>(find.byType(DumpPickerSheet));
+    expect(
+      sheet.dumps.map((Dump d) => d.id).toList(),
+      <String>['m1'],
+      reason: 'the meeting import must offer meetings only',
+    );
+
+    await tester.tap(find.byKey(const ValueKey('dump-pick-m1')));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('dump-picker-add')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byType(NotebookDumpCard),
+      findsOneWidget,
+      reason: 'an imported meeting lands as a draggable card',
+    );
+
+    await unmount(tester);
+  });
+
+  testWidgets('the insert menu still adds text and checkbox blocks',
+      (tester) async {
+    await mountEditor(tester, notebook: testNotebook(id: 'nb-1'));
+
+    await tester.tap(find.byKey(const ValueKey('notebook-insert-menu')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Checkbox'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(Checkbox), findsOneWidget);
 
     await unmount(tester);
   });

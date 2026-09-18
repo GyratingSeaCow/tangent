@@ -45,6 +45,9 @@ const ColorFilter kNotebookInkCutout = ColorFilter.matrix(<double>[
   0.2126, 0.7152, 0.0722, 0, 0, //
 ]);
 
+/// Insert actions offered by the editor's bottom-left menu.
+enum _InsertAction { text, checkbox, dump, meeting, textNote }
+
 class NotebookEditorScreen extends ConsumerStatefulWidget {
   const NotebookEditorScreen({super.key, required this.notebookId});
 
@@ -233,6 +236,16 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
   /// several additions never land on top of each other.
   Offset _nextCardPosition(int ordinal) =>
       Offset(16 + (ordinal % 4) * 12, 24 + ordinal * 72);
+
+  /// Imports recordings of one [mode] only.
+  ///
+  /// Each import entry filters the picker to its own kind: with 60 recordings
+  /// on the device, an unfiltered list buries the three text notes Jeff was
+  /// actually looking for.
+  Future<void> _importDumps(List<Dump> dumps, DumpMode mode) =>
+      _addRecordings(
+        dumps.where((Dump d) => d.mode == mode).toList(growable: false),
+      );
 
   Future<void> _addRecordings(List<Dump> dumps) async {
     final Set<String> embedded = <String>{
@@ -521,37 +534,81 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
         bottomNavigationBar: _notebook == null
             ? null
             : BottomAppBar(
+                // One menu in the bottom-left holds every insert action, so
+                // adding an import does not keep widening a row of buttons.
                 child: Row(
                   children: <Widget>[
-                    Expanded(
-                      child: TextButton.icon(
-                        onPressed: _addTextBlock,
-                        icon: const Icon(Icons.notes),
-                        label: const Text(
-                          'Add text',
-                          overflow: TextOverflow.ellipsis,
+                    PopupMenuButton<_InsertAction>(
+                      key: const ValueKey('notebook-insert-menu'),
+                      icon: const Icon(Icons.menu),
+                      tooltip: 'Insert',
+                      // Opens upward from the corner it lives in.
+                      position: PopupMenuPosition.over,
+                      onSelected: (_InsertAction action) {
+                        switch (action) {
+                          case _InsertAction.text:
+                            _addTextBlock();
+                          case _InsertAction.checkbox:
+                            _addCheckboxBlock();
+                          case _InsertAction.dump:
+                            unawaited(
+                              _importDumps(dumps, DumpMode.brainDump),
+                            );
+                          case _InsertAction.meeting:
+                            unawaited(_importDumps(dumps, DumpMode.meeting));
+                          case _InsertAction.textNote:
+                            unawaited(_importDumps(dumps, DumpMode.textNote));
+                        }
+                      },
+                      itemBuilder: (BuildContext context) =>
+                          <PopupMenuEntry<_InsertAction>>[
+                        const PopupMenuItem<_InsertAction>(
+                          value: _InsertAction.text,
+                          child: ListTile(
+                            leading: Icon(Icons.notes),
+                            title: Text('Text block'),
+                            contentPadding: EdgeInsets.zero,
+                          ),
                         ),
-                      ),
+                        const PopupMenuItem<_InsertAction>(
+                          value: _InsertAction.checkbox,
+                          child: ListTile(
+                            leading: Icon(Icons.check_box_outlined),
+                            title: Text('Checkbox'),
+                            contentPadding: EdgeInsets.zero,
+                          ),
+                        ),
+                        const PopupMenuDivider(),
+                        PopupMenuItem<_InsertAction>(
+                          value: _InsertAction.dump,
+                          child: ListTile(
+                            leading: Icon(dumpModeIcon(DumpMode.brainDump)),
+                            title: const Text('Dump'),
+                            contentPadding: EdgeInsets.zero,
+                          ),
+                        ),
+                        PopupMenuItem<_InsertAction>(
+                          value: _InsertAction.meeting,
+                          child: ListTile(
+                            leading: Icon(dumpModeIcon(DumpMode.meeting)),
+                            title: const Text('Meeting notes'),
+                            contentPadding: EdgeInsets.zero,
+                          ),
+                        ),
+                        PopupMenuItem<_InsertAction>(
+                          value: _InsertAction.textNote,
+                          child: ListTile(
+                            leading: Icon(dumpModeIcon(DumpMode.textNote)),
+                            title: const Text('Text note'),
+                            contentPadding: EdgeInsets.zero,
+                          ),
+                        ),
+                      ],
                     ),
-                    Expanded(
-                      child: TextButton.icon(
-                        onPressed: _addCheckboxBlock,
-                        icon: const Icon(Icons.check_box_outlined),
-                        label: const Text(
-                          'Add checkbox',
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                    ),
-                    Expanded(
-                      child: TextButton.icon(
-                        onPressed: () => unawaited(_addRecordings(dumps)),
-                        icon: const Icon(Icons.mic),
-                        label: const Text(
-                          'Add recordings',
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Insert',
+                      style: Theme.of(context).textTheme.bodyMedium,
                     ),
                   ],
                 ),
