@@ -15,6 +15,7 @@ import '../recording/recording_controller.dart';
 import '../recording/recording_waveform.dart';
 import '../settings/settings_screen.dart';
 import 'home_providers.dart';
+import 'record_button_palette.dart';
 
 final localDbProvider = Provider<LocalDb>((ref) {
   throw UnimplementedError('Override in main()');
@@ -251,9 +252,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 height: 120,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: isRecording
-                      ? Theme.of(context).colorScheme.error
-                      : Theme.of(context).colorScheme.primary,
+                  color: recordButtonColor(
+                    isNoteMode: isNoteMode,
+                    isRecording: isRecording,
+                  ),
                 ),
                 child: Icon(
                   isNoteMode
@@ -262,7 +264,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                           ? Icons.stop
                           : Icons.mic,
                   size: 64,
-                  color: Colors.white,
+                  color: recordButtonIconColor(isNoteMode: isNoteMode),
                 ),
               ),
             ),

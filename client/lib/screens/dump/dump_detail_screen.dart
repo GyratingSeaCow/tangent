@@ -1049,19 +1049,31 @@ class _ServerTranscriptionProgressPanelState
         : DateTime.now().difference(startedAt);
     final elapsed = rawElapsed.isNegative ? Duration.zero : rawElapsed;
 
+    final scheme = Theme.of(context).colorScheme;
+    // This panel is a FILLED lime surface, so its text must use the container's
+    // dark on-colour. The app text theme is light (correct on the near-black
+    // chassis) and is nearly invisible here if inherited.
+    final onPanel = scheme.onSecondaryContainer;
+
     return Semantics(
       liveRegion: true,
       label: title,
       child: Card(
-        color: Theme.of(context).colorScheme.secondaryContainer,
+        color: scheme.secondaryContainer,
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text(title, style: Theme.of(context).textTheme.titleMedium),
+              Text(
+                title,
+                style: Theme.of(context)
+                    .textTheme
+                    .titleMedium
+                    ?.copyWith(color: onPanel),
+              ),
               const SizedBox(height: 8),
-              Text(_detailText(status, elapsed)),
+              Text(_detailText(status, elapsed), style: TextStyle(color: onPanel)),
               if (status.isInProgress) ...[
                 const SizedBox(height: 12),
                 const LinearProgressIndicator(),
@@ -1070,8 +1082,10 @@ class _ServerTranscriptionProgressPanelState
                   widget.row.transcriptionError != null) ...[
                 const SizedBox(height: 8),
                 Text(
+                  // Deliberately still red: the error code is the one thing
+                  // that should stand out against the lime panel.
                   widget.row.transcriptionError!,
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                  style: TextStyle(color: scheme.error),
                 ),
               ],
             ],
