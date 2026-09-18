@@ -68,51 +68,58 @@ void main() {
     expect(find.textContaining('System default'), findsOneWidget);
   });
 
-  testWidgets('warns that a headset mic degrades transcription',
-      (tester) async {
+  testWidgets('explains why Bluetooth headsets are not listed', (tester) async {
+    // The absence needs a reason, or it reads as a missing feature. Device
+    // evidence: Android exposes no input-role device for the headset, so
+    // offering it would silently record from the phone's own mic.
     final service = FakeInputService(const [builtIn, buds]);
     await pump(tester, service: service, settings: SettingsStore());
 
     expect(
       find.textContaining(
-        RegExp('lower quality|worse|degrade', caseSensitive: false),
+        RegExp('bluetooth headsets are not listed', caseSensitive: false),
       ),
-      findsWidgets,
-      reason: 'the SCO quality trade-off must be stated, not hidden',
+      findsOneWidget,
+      reason: 'the omission must be explained, not silent',
     );
   });
 
-  testWidgets('choosing a headset persists it and tells the recorder',
+  testWidgets('choosing a built-in mic persists it and tells the recorder',
       (tester) async {
+    // Bluetooth headsets are deliberately not offered (see the hiding test
+    // below), so selection is exercised with a device that can actually be
+    // recorded from.
     final service = FakeInputService(const [builtIn, buds]);
     final settings = SettingsStore();
     await pump(tester, service: service, settings: settings);
 
     await tester.tap(find.text('Microphone'));
     await tester.pumpAndSettle();
-    await tester.tap(find.textContaining('Galaxy Buds').last);
+    await tester.tap(find.textContaining('Built-in').last);
     await tester.pumpAndSettle();
 
-    expect(settings.preferredInputDeviceId, 'bt-17');
-    expect(service.selected, buds);
+    expect(settings.preferredInputDeviceId, '3');
+    expect(service.selected, builtIn);
   });
 
-  testWidgets('a remembered headset that is gone shows as unavailable',
+  testWidgets('a remembered mic that is gone shows as unavailable',
       (tester) async {
-    // Chosen while connected, then the earbuds were switched off.
+    // Chosen while present, then that microphone disappeared.
     final service = FakeInputService(const [builtIn]);
     final settings = SettingsStore(
-      preferredInputDeviceId: 'bt-17',
-      preferredInputDeviceLabel: 'Galaxy Buds',
+      preferredInputDeviceId: 'usb-9',
+      preferredInputDeviceLabel: 'USB microphone',
     );
     await pump(tester, service: service, settings: settings);
 
-    expect(find.textContaining('Galaxy Buds'), findsOneWidget);
+    // Scoped to the Microphone row: the explanatory caveat paragraph also
+    // contains the word "unavailable".
+    final subtitle = find.textContaining('USB microphone');
+    expect(subtitle, findsOneWidget);
     expect(
-      find.textContaining(
-        RegExp('unavailable|not connected', caseSensitive: false),
-      ),
-      findsOneWidget,
+      tester.widget<Text>(subtitle).data,
+      contains('unavailable'),
+      reason: 'a vanished mic must say so rather than imply it is in use',
     );
   });
 
@@ -131,5 +138,44 @@ void main() {
 
     expect(settings.preferredInputDeviceId, isNull);
     expect(service.selected, isNull);
+  });
+  testWidgets('Bluetooth headsets are not offered as recording inputs',
+      (tester) async {
+    // Device verdict (Fold + AirPods Pro, 2026-09-17): the routing plumbing
+    // works — setCommunicationDevice() applies, the headset reaches
+    // mScoAudioState: SCO_STATE_ACTIVE_INTERNAL, and the route is released on
+    // stop. But capture STILL reads `source client=MIC` and Android reports no
+    // input-role devices, so the recorder never receives the headset mic.
+    //
+    // Offering the choice would be a lie: the row would read "AirPods Pro"
+    // while the phone quietly recorded from its own microphone. Hide SCO
+    // devices until a custom recorder can actually capture from them.
+    final service = FakeInputService(const [builtIn, buds]);
+    await pump(tester, service: service, settings: SettingsStore());
+
+    await tester.tap(find.text('Microphone'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.textContaining('Galaxy Buds'),
+      findsNothing,
+      reason: 'a Bluetooth headset mic cannot actually be recorded from yet',
+    );
+    expect(find.textContaining('Built-in'), findsOneWidget);
+    expect(find.text('System default'), findsOneWidget);
+  });
+
+  testWidgets('a remembered headset no longer claims to be in use',
+      (tester) async {
+    // Someone who chose earbuds on an earlier build must not keep seeing them
+    // presented as the active microphone.
+    final service = FakeInputService(const [builtIn, buds]);
+    final settings = SettingsStore(
+      preferredInputDeviceId: 'bt-17',
+      preferredInputDeviceLabel: 'Galaxy Buds',
+    );
+    await pump(tester, service: service, settings: settings);
+
+    expect(find.textContaining('Galaxy Buds'), findsNothing);
   });
 }

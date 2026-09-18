@@ -27,6 +27,11 @@ class _InputDeviceSectionState extends ConsumerState<InputDeviceSection> {
   bool _loading = false;
   bool _enumerated = false;
 
+  /// True when the remembered choice exists on the device but is deliberately
+  /// not offered (a Bluetooth headset). Distinct from "gone": a hidden device
+  /// will never come back, so it must not be shown as merely unavailable.
+  bool _selectionHidden = false;
+
   // Deliberately NOT enumerating unconditionally on mount. Touching
   // recordingServiceProvider would construct the recorder (and its storage
   // dependencies) merely because Settings was opened. The one case that does
@@ -40,6 +45,25 @@ class _InputDeviceSectionState extends ConsumerState<InputDeviceSection> {
     }
   }
 
+  /// Bluetooth headset mics are hidden, not offered-and-broken.
+  ///
+  /// Verified on device (Galaxy Z Fold + AirPods Pro, 2026-09-17): the routing
+  /// plumbing works — AudioManager.setCommunicationDevice() applies, the
+  /// headset reaches mScoAudioState: SCO_STATE_ACTIVE_INTERNAL before capture
+  /// opens, and the route is released on stop. Capture STILL reports
+  /// `source client=MIC` and Android exposes no input-role device, so the
+  /// recorder never receives the headset microphone.
+  ///
+  /// Listing it would be dishonest: the row would say "AirPods Pro" while the
+  /// phone quietly recorded from its own mic. Capturing from SCO needs a
+  /// custom Android recorder, which is not built. Until then these are hidden.
+  ///
+  /// See docs/superpowers/plans/2026-09-17-t5-bluetooth-status.md.
+  static bool _isRecordable(InputDevice device) {
+    final label = device.label.toLowerCase();
+    return !label.contains('bluetooth') && !label.contains('sco');
+  }
+
   Future<void> _refresh() async {
     if (!mounted) return;
     // No setState here: _refresh is also called from initState, before the
@@ -49,10 +73,15 @@ class _InputDeviceSectionState extends ConsumerState<InputDeviceSection> {
     final service = ref.read(recordingServiceProvider);
     final devices = await service.listInputDevices();
     if (!mounted) return;
+    final offered = devices.where(_isRecordable).toList(growable: false);
+    final chosen = ref.read(settingsStoreProvider).preferredInputDeviceId;
     setState(() {
-      _devices = devices;
+      _devices = offered;
       _loading = false;
       _enumerated = true;
+      _selectionHidden = chosen != null &&
+          devices.any((d) => d.id == chosen) &&
+          !offered.any((d) => d.id == chosen);
     });
   }
 
@@ -76,9 +105,25 @@ class _InputDeviceSectionState extends ConsumerState<InputDeviceSection> {
     final settings = ref.read(settingsStoreProvider);
     final id = settings.preferredInputDeviceId;
     if (id == null) return 'System default microphone';
-    final label = _selectedDevice?.label ??
+    final device = _selectedDevice;
+    // A choice saved on an earlier build may name a Bluetooth headset that is
+    // no longer offered. Never present it as the microphone in use — recording
+    // would come from the built-in mic regardless.
+    //
+    // Decided by ABSENCE from the filtered list rather than by sniffing the
+    // saved label: the stored label is whatever the picker showed at the time
+    // (e.g. plain "Galaxy Buds"), which need not contain "Bluetooth" at all.
+    // Note this deliberately also covers a device that simply went away, since
+    // in both cases recording will use the system default and saying anything
+    // else would be false.
+    if (_enumerated && _selectionHidden) {
+      return 'System default microphone';
+    }
+    final label = device?.label ??
         settings.preferredInputDeviceLabel ??
         'Selected microphone';
+    // A device that simply went away still reports honestly: the user's choice
+    // is not being honoured and recording falls back to the default.
     if (_selectionMissing) {
       return '$label — unavailable, recording will use the system default';
     }
@@ -163,11 +208,11 @@ class _InputDeviceSectionState extends ConsumerState<InputDeviceSection> {
         const Padding(
           padding: EdgeInsets.fromLTRB(16, 4, 16, 12),
           child: Text(
-            'A Bluetooth headset mic records over the phone-call audio path '
-            '(SCO/HFP): mono, 8–16 kHz and compressed. That is lower quality '
-            'than the built-in mic and transcribes less accurately, so Tangent '
-            'only uses a headset when you pick one here. If the headset is off '
-            'or out of range, recording still starts on the system default.',
+            'Choose which built-in microphone records. Bluetooth headsets are '
+            'not listed: Android does not expose a headset mic to this app for '
+            'recording, so offering one would silently record from the phone '
+            'instead. If a chosen microphone is unavailable, recording still '
+            'starts on the system default.',
             style: TextStyle(fontSize: 12, color: Colors.grey),
           ),
         ),
