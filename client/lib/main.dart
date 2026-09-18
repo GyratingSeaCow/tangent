@@ -146,6 +146,10 @@ class _TranscriptionLifecycleHostState
     }
     if (!mounted) return;
     ref.read(transcriptionRecoveryOwnerProvider);
+    // Subscribes the notification shade to transcription progress for the
+    // whole session. Without this read the notifier is never constructed and
+    // the feature silently does nothing while every test still passes.
+    ref.read(transcriptionNotificationOwnerProvider);
     unawaited(ref.read(serverTranscriptionServiceProvider).reconcilePending());
   }
 

@@ -15,6 +15,17 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
+    <!-- Required on Android 13+ (API 33) to show the "Transcribing" notice in
+         the shade while a recording is being transcribed. Without it the post
+         silently no-ops: no error, nothing in the shade. The permission is
+         requested at the moment the first notification would appear rather
+         than at launch, so the prompt arrives with its reason visible.
+
+         This is a plain dismissible notification, NOT a foreground service:
+         it reports work in progress, it does not keep that work alive, so no
+         FOREGROUND_SERVICE permission is declared. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <application
         android:label="tangent"
         android:name="${applicationName}"

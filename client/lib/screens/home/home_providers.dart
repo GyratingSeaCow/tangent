@@ -8,11 +8,13 @@ import '../../data/storage/storage_contract.dart';
 import '../../data/storage/storage_providers.dart';
 import '../../services/audio_file_picker.dart';
 import '../../services/audio_import.dart';
+import '../../services/android_transcription_notification_port.dart';
 import '../../services/connectivity_service.dart';
 import '../../services/note_persistence.dart';
 import '../../services/recording_playback.dart';
 import '../../services/server_transcription_service.dart';
 import '../../services/sync_engine.dart';
+import '../../services/transcription_notifications.dart';
 import '../server/server_connection_screen.dart'
     show transcriptionClientProvider;
 import '../settings/settings_screen.dart' show settingsStoreProvider;
@@ -84,6 +86,49 @@ final serverTranscriptionServiceProvider =
   );
   unawaited(service.reconcilePending());
   return service;
+});
+
+/// The platform sink for the "Transcribing" notice. Overridden in tests with
+/// a double, so no test ever reaches the real notification plugin.
+final transcriptionNotificationPortProvider =
+    Provider<TranscriptionNotificationPort>((ref) {
+  return AndroidTranscriptionNotificationPort();
+});
+
+/// Mirrors transcription progress into the notification shade.
+///
+/// Transcription runs off-screen — the user starts it and leaves — so without
+/// this the only evidence it is working lives on a screen they are no longer
+/// looking at. This listener is the SEAM: the notifier and its port are both
+/// individually correct and do nothing at all unless something subscribes to
+/// the service and drives them, which is exactly the failure mode this
+/// project keeps hitting.
+///
+/// Watched by the home screen so it lives for the whole session rather than
+/// for one route.
+final transcriptionNotificationOwnerProvider = Provider<void>((ref) {
+  final notifier = TranscriptionNotifier(
+    port: ref.watch(transcriptionNotificationPortProvider),
+  );
+
+  void sync() {
+    final service = ref.read(serverTranscriptionServiceProvider);
+    unawaited(
+      notifier.sync(
+        hasActive: service.isTranscribing,
+        queuedCount: service.queuedDumpIds.length,
+      ),
+    );
+  }
+
+  // fireImmediately so a job already running at subscription time (a recovery
+  // resumed at launch) is announced rather than waiting for its next event.
+  ref.listen(
+    serverTranscriptionServiceProvider,
+    (_, __) => sync(),
+    fireImmediately: true,
+  );
+  ref.onDispose(() => unawaited(notifier.dispose()));
 });
 
 // One subscription per app database, independent of the replaceable client and

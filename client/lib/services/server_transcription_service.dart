@@ -116,6 +116,16 @@ class ServerTranscriptionService extends ChangeNotifier {
   List<String> get queuedDumpIds =>
       List.unmodifiable(_queue.map((job) => job.dumpId));
 
+  /// The dump currently being transcribed, or null when nothing is running.
+  ///
+  /// Exposed so the notification layer can report progress without reaching
+  /// into the queue: "is anything running?" and "how many are waiting?" are
+  /// the only two questions the shade asks.
+  String? get activeDumpId => _activeJob?.dumpId;
+
+  /// True while a job is actually executing — not merely accepted.
+  bool get isTranscribing => _activeJob != null;
+
   bool _forceRecoveryScan = false;
 
   /// Durable commits are signals, never new attempts. The app-scoped observer

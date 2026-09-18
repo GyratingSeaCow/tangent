@@ -1,0 +1,113 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+import 'dart:io';
+
+import 'package:flutter/foundation.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+
+import 'transcription_notifications.dart';
+
+/// The real Android notification, behind [TranscriptionNotificationPort].
+///
+/// Kept deliberately thin: all of the "what should it say, and has it
+/// changed?" logic lives in the tested pure layer, because none of that is
+/// reachable from a widget test once it is entangled with the plugin.
+class AndroidTranscriptionNotificationPort
+    implements TranscriptionNotificationPort {
+  AndroidTranscriptionNotificationPort({
+    FlutterLocalNotificationsPlugin? plugin,
+  }) : _plugin = plugin ?? FlutterLocalNotificationsPlugin();
+
+  final FlutterLocalNotificationsPlugin _plugin;
+
+  /// One fixed id: the shade shows a single transcription notice that is
+  /// REPLACED as progress changes, never a stack of them.
+  static const int notificationId = 1001;
+
+  static const String _channelId = 'transcription_progress';
+  static const String _channelName = 'Transcription progress';
+  static const String _channelDescription =
+      'Shows when a recording is being transcribed.';
+
+  bool _initialised = false;
+  bool _permissionRequested = false;
+
+  /// Android 13+ silently DROPS posts without the runtime permission — no
+  /// error, nothing in the shade — so the request is made once, lazily, at
+  /// the moment the first notification would appear. Asking at launch would
+  /// put the prompt in front of a user with no idea what it is for.
+  Future<void> _ensureReady() async {
+    if (!_initialised) {
+      await _plugin.initialize(
+        const InitializationSettings(
+          android: AndroidInitializationSettings('@mipmap/ic_launcher'),
+        ),
+      );
+      _initialised = true;
+    }
+    if (_permissionRequested) return;
+    _permissionRequested = true;
+    final AndroidFlutterLocalNotificationsPlugin? android =
+        _plugin.resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>();
+    await android?.requestNotificationsPermission();
+  }
+
+  @override
+  Future<void> show(TranscriptionNotice notice) async {
+    if (!Platform.isAndroid) return;
+    try {
+      await _ensureReady();
+      await _plugin.show(
+        notificationId,
+        notice.title,
+        notice.body,
+        const NotificationDetails(
+          android: AndroidNotificationDetails(
+            _channelId,
+            _channelName,
+            channelDescription: _channelDescription,
+            // Progress, not an alert: it belongs in the shade without a sound
+            // or a heads-up card interrupting whatever the user is doing.
+            importance: Importance.low,
+            priority: Priority.low,
+            playSound: false,
+            enableVibration: false,
+            showWhen: false,
+            // Dismissible by design. This notification REPORTS work; it does
+            // not keep it alive, so pinning it in place would overstate what
+            // the app actually guarantees.
+            ongoing: false,
+            autoCancel: false,
+          ),
+        ),
+      );
+    } catch (error, stack) {
+      // A failed notification must never take down a transcription that is
+      // otherwise working.
+      _report('show', error, stack);
+    }
+  }
+
+  @override
+  Future<void> cancel() async {
+    if (!Platform.isAndroid) return;
+    try {
+      await _plugin.cancel(notificationId);
+    } catch (error, stack) {
+      _report('cancel', error, stack);
+    }
+  }
+
+  void _report(String operation, Object error, StackTrace stack) {
+    FlutterError.reportError(
+      FlutterErrorDetails(
+        exception: error,
+        stack: stack,
+        library: 'tangent',
+        context: ErrorDescription(
+          'while trying to $operation the transcription notification',
+        ),
+      ),
+    );
+  }
+}

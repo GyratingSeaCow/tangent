@@ -27,6 +27,22 @@ import 'package:tangent/models/transcription_status.dart';
 import 'package:tangent/services/meeting_transcript_formatter.dart';
 import 'package:tangent/services/server_transcription_service.dart';
 import 'package:tangent/services/transcription_client.dart';
+import 'package:tangent/services/transcription_notifications.dart';
+
+/// Captures what reached the notification platform, so the seam test asserts
+/// on the observable effect rather than on the notifier's internal state.
+class _RecordingNotificationPort implements TranscriptionNotificationPort {
+  _RecordingNotificationPort({required this.onShow, required this.onCancel});
+
+  final void Function(TranscriptionNotice) onShow;
+  final void Function() onCancel;
+
+  @override
+  Future<void> show(TranscriptionNotice notice) async => onShow(notice);
+
+  @override
+  Future<void> cancel() async => onCancel();
+}
 
 /// Test double that skips the network entirely. Returns canned
 /// `createDump` / `uploadAudio` / `enqueueTranscription` responses and
@@ -4780,6 +4796,90 @@ void main() {
       expect(await storage.readBytes(original.id), [1, 2, 3]);
     });
   }
+
+  test(
+      'the notification shade follows real transcription activity end to end',
+      () async {
+    // The SEAM test. The notifier and its port are each unit-tested, and both
+    // can be perfectly correct while nothing subscribes them to the service —
+    // the default outcome in this codebase. This drives the REAL service and
+    // asserts on what reached the platform.
+    await seedRow(row(id: 'notify-first'));
+    await seedRow(row(id: 'notify-second'));
+
+    final posted = <String>[];
+    var cancels = 0;
+    final port = _RecordingNotificationPort(
+      onShow: (notice) => posted.add(notice.body),
+      onCancel: () => cancels++,
+    );
+
+    final entered = Completer<void>();
+    final release = Completer<void>();
+    addTearDown(() {
+      if (!release.isCompleted) release.complete();
+    });
+    final client = _FakeTranscriptionClient(
+      completedTranscript: 'done',
+      onCreate: () async {
+        if (!entered.isCompleted) entered.complete();
+        await release.future;
+      },
+    );
+
+    final container = ProviderContainer(
+      overrides: [
+        localDbProvider.overrideWithValue(db),
+        audioStorageProvider.overrideWithValue(storage),
+        recordingAccessProvider.overrideWithValue(access),
+        recordingMutationsProvider.overrideWithValue(mutations),
+        transcriptionClientProvider.overrideWith((_) => client),
+        transcriptionNotificationPortProvider.overrideWithValue(port),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    // Exactly what main.dart does.
+    container.read(transcriptionNotificationOwnerProvider);
+    final service = container.read(serverTranscriptionServiceProvider);
+
+    expect(
+      posted,
+      isEmpty,
+      reason: 'an idle app must not put anything in the shade',
+    );
+
+    final first = service.transcribeDump('notify-first');
+    await entered.future;
+    await pumpEventQueue();
+
+    expect(
+      posted,
+      isNotEmpty,
+      reason: 'a running job must reach the notification shade',
+    );
+    expect(posted.first, '1 recording');
+
+    // A second recording queued behind the first must be counted.
+    final second = service.transcribeDump('notify-second');
+    await pumpEventQueue();
+    expect(
+      posted,
+      contains('1 of 2 recordings'),
+      reason: 'the backlog must be visible, not just the active job',
+    );
+
+    release.complete();
+    await first;
+    await second;
+    await pumpEventQueue();
+
+    expect(
+      cancels,
+      greaterThan(0),
+      reason: 'a drained queue must clear "Transcribing" from the shade',
+    );
+  });
 
   test(
       'fix round FIFO acceptance is durable before activation and provider recreation',
