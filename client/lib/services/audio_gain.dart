@@ -29,6 +29,28 @@ const double defaultMicGain = 1.0;
 const int _pcmMin = -32768;
 const int _pcmMax = 32767;
 
+/// Forces [value] into the supported range, treating null/NaN as unity.
+///
+/// Applied on READ as well as write: a preferences file can be hand-edited or
+/// carried back from a future build, and an out-of-range multiplier would
+/// wreck every recording made afterwards.
+double clampMicGain(double? value) {
+  if (value == null || value.isNaN) return defaultMicGain;
+  return value.clamp(minMicGain, maxMicGain).toDouble();
+}
+
+/// File extension a capture should use, given its mode and the chosen gain.
+///
+/// Text notes are always markdown. Audio keeps Opus at unity gain -- the
+/// default costs nothing extra -- and switches to WAV whenever gain is
+/// applied, because package:record only exposes raw samples on the PCM stream
+/// path. There is deliberately no dead band: if the slider moved at all, the
+/// gain must really apply, or the setting would silently do nothing.
+String captureExtensionForGain(String mode, double gain) {
+  if (mode == 'text_note') return 'md';
+  return clampMicGain(gain) == defaultMicGain ? 'opus' : 'wav';
+}
+
 /// Multiplies every 16-bit sample in [bytes] by [gain], saturating at the
 /// rails.
 ///

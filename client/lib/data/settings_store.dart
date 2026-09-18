@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../services/audio_gain.dart';
+
 enum TriggerMode {
   tap('tap'),
   hold('hold');
@@ -22,6 +24,7 @@ class SettingsStore {
   static const _deviceOnlyKey = 'keep_recordings_on_device_only';
   static const _inputDeviceIdKey = 'preferred_input_device_id';
   static const _inputDeviceLabelKey = 'preferred_input_device_label';
+  static const _micGainKey = 'microphone_gain';
 
   final SharedPreferences? _preferences;
 
@@ -53,6 +56,15 @@ class SettingsStore {
   /// name a headset that is currently switched off or out of range.
   String? preferredInputDeviceLabel;
 
+  /// Multiplier applied to every captured PCM sample.
+  ///
+  /// Unity is the default and leaves capture byte-identical to before this
+  /// setting existed, INCLUDING the container: package:record can only hand
+  /// Dart raw samples through its stream API, so amplified audio has to be
+  /// written as WAV. Keeping unity on Opus means the ~8x storage cost is paid
+  /// only by a user who actually asked for more sensitivity.
+  double micGain;
+
   SettingsStore({
     this.wifiOnlySync = true,
     this.autoSync = true,
@@ -61,6 +73,7 @@ class SettingsStore {
     this.keepRecordingsOnDeviceOnly = true,
     this.preferredInputDeviceId,
     this.preferredInputDeviceLabel,
+    this.micGain = defaultMicGain,
     SharedPreferences? preferences,
   }) : _preferences = preferences;
 
@@ -80,7 +93,17 @@ class SettingsStore {
           preferences.getBool(_deviceOnlyKey) ?? true,
       preferredInputDeviceId: preferences.getString(_inputDeviceIdKey),
       preferredInputDeviceLabel: preferences.getString(_inputDeviceLabelKey),
+      // Clamped on read as well as write: a preference file can be edited by
+      // hand or carried back from a future build, and a nonsense multiplier
+      // would wreck every recording made afterwards.
+      micGain: clampMicGain(preferences.getDouble(_micGainKey)),
     );
+  }
+
+  Future<void> setMicGain(double value) async {
+    final double clamped = clampMicGain(value);
+    micGain = clamped;
+    await _preferences?.setDouble(_micGainKey, clamped);
   }
 
   Future<void> setWifiOnlySync(bool v) async {
