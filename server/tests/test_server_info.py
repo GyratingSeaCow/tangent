@@ -13,6 +13,7 @@ from app.api.models import router as models_router
 from app.api.server_info import router as info_router
 from app.auth import generate_token, hash_token
 from app.db import init_db
+from app.version import __version__
 
 
 @pytest.fixture
@@ -45,7 +46,7 @@ def test_server_info_returns_version(client):
     resp = cli.get("/v1/server/info", headers=_auth(token))
     assert resp.status_code == 200
     body = resp.json()
-    assert body["version"] == "0.1.0"
+    assert body["version"] == __version__
     assert body["setup_complete"] is True
     assert body["default_model"] == "large-v3"
     assert isinstance(body["available_models"], list)

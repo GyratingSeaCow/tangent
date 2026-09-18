@@ -26,6 +26,7 @@ dev = [
     "pytest>=8.3.0,<9",
     "pytest-asyncio>=0.24.0,<1",
     "httpx>=0.28.1,<1",
+    "requests>=2.32.0,<3",
     "ruff>=0.7.0,<1",
     "mypy>=1.13.0,<2",
 ]
@@ -53,3 +54,9 @@ strict = true
 testpaths = ["tests"]
 addopts = "-v --strict-markers"
 asyncio_mode = "auto"
+# Pin the fixture loop scope explicitly. Left unset, pytest-asyncio's default
+# changed between releases, and because `dev` only constrains it to <1 a fresh
+# install could pick a version that shares one loop across tests — which made
+# tests/test_jobs.py and tests/test_job_segments.py fail in a full run while
+# passing alone ("Event is bound to a different event loop").
+asyncio_default_fixture_loop_scope = "function"

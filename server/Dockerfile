@@ -35,9 +35,10 @@ ENV TANGENT_PORT=8000
 
 EXPOSE 8000
 
-# Health check
+# Health check — /openapi.json is public; /v1/server/info requires bearer auth
+# after setup and would fail the probe with 401 once a token exists.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl -f http://localhost:8000/v1/server/info || exit 1
+    CMD curl -f http://localhost:8000/openapi.json || exit 1
 
 # Run server (use uvicorn factory so the lifespan event handler runs properly)
 CMD ["uvicorn", "app.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
