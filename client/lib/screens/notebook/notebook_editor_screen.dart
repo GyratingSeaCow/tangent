@@ -3,7 +3,6 @@
 // One notebook page: typed text, checkboxes, floating recording cards and a
 // handwriting layer, saved explicitly.
 //
-// Design contract: docs/superpowers/specs/2026-09-17-notebooks-design.md
 //   * The page is BLACK and ink is WHITE (phase 1 has no colour picker), so
 //     the typed content is rendered light-on-dark to match the ink layer.
 //   * The pen size lives in THIS page's toolbar only — never global settings.

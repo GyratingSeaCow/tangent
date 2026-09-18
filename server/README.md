@@ -10,17 +10,23 @@ docker compose up -d
 docker compose logs -f tangent-server
 ```
 
-The server prints a one-time setup URL on first run. Open it in a browser to generate your API token, then paste it into the Tangent app.
+The server prints a one-time setup URL on first run. **POST** to it to generate
+your API token, then paste that into the Tangent app — the endpoint is POST-only,
+so opening it in a browser returns `405 Method Not Allowed`.
 
-On startup, the server listens on `0.0.0.0:8000`. From the Tangent app on the same LAN, point the **Server URL** setting at `http://<your-lan-ip>:8000` (for example `http://192.168.1.42:8000`).
+**Ports:** the container always listens on `8000` internally, and
+`docker-compose.yml` publishes it on host port **8765**. So from your own
+machine use `http://localhost:8765`, and from the phone
+`http://<your-lan-ip>:8765` (for example `http://192.168.1.42:8765`). Change the
+left-hand number in the compose `ports:` entry if 8765 is taken.
 
 ### Where your data lives
 
 `./data` on the host is bind-mounted to `/data` in the container. The container writes:
 
-- `./data/tangent.sqlite` — the server's database (dumps, jobs, auth token)
+- `./data/tangent.db` — the server's database (dumps, jobs, auth token)
 - `./data/audio/<dump-id>.opus` — uploaded audio files
-- `~/.cache/huggingface/hub/` — faster-whisper model cache (HuggingFace default)
+- `./data/models/` — faster-whisper model cache (`download_root`, under the data dir)
 
 These survive container restarts and image rebuilds. If you ever want to wipe everything, stop the container and `rm -rf ./data`.
 
@@ -43,11 +49,18 @@ Save the returned token; it will not be shown again.
 ============================================================
 ```
 
-1. Open `http://<lan-ip>:8000/v1/setup` in a browser (or `curl` from your dev box).
-2. POST `{"display_name": "Your Name"}` and copy the returned `token`.
-3. In the Tangent app, open **Settings → Server** and paste the URL + token.
+The URL it prints is the *container's* view (port 8000). From outside, use the
+published host port **8765**:
 
-If you're on the same machine as the container, `http://localhost:8000` works. From the phone, use `http://<lan-ip>:8000`.
+```bash
+curl -X POST http://localhost:8765/v1/setup \
+  -H "Content-Type: application/json" \
+  -d '{"display_name": "Your Name"}'
+```
+
+1. Copy the returned `token` — it is not shown again.
+2. In the Tangent app, open **Settings → Server** and paste the URL + token.
+3. From the phone, use `http://<lan-ip>:8765` (not `localhost`).
 
 ## Configuration
 
@@ -60,20 +73,40 @@ All config via environment variables (set in `docker-compose.yml` or override pe
 | `TANGENT_HOST` | `0.0.0.0` | Bind host (`0.0.0.0` for LAN access) |
 | `TANGENT_PORT` | `8000` | Bind port |
 | `TANGENT_WHISPER_MODEL` | `large-v3` | Default model. Valid: `tiny`, `base`, `small`, `medium`, `large-v3`. |
+| `TANGENT_DIARIZATION` | _(unset)_ | Set to `1` with `HF_TOKEN` to enable speaker diarization. |
+| `HF_TOKEN` | _(unset)_ | HuggingFace token, required only for diarization. Put it in `server/.env` — never commit it. |
+
+### Speaker diarization (optional)
+
+Off by default. It needs the pyannote stack in the image *and* a HuggingFace
+token with access to the gated `pyannote/speaker-diarization` models:
+
+```bash
+echo 'TANGENT_DIARIZATION=1' >> .env
+echo 'HF_TOKEN=hf_your_token_here' >> .env
+TANGENT_WITH_DIARIZATION=1 docker compose up -d --build
+```
+
+`.env` is gitignored. Without both variables the server transcribes normally and
+simply omits speaker labels — it never invents them.
 
 ### Changing the model
 
-CPU-only boxes will find `large-v3` slow per clip. Drop to `small` (≈ 465 MB, fast) or `medium` (≈ 1.5 GB, balanced) by editing `docker-compose.yml` and setting `TANGENT_WHISPER_MODEL: small`, then `docker compose up -d --force-recreate`. faster-whisper downloads the model on first transcribe and caches it under `./data` so subsequent restarts are instant.
+CPU-only boxes will find `large-v3` slow per clip. Drop to `small` (≈ 465 MB, fast) or `medium` (≈ 1.5 GB, balanced) by editing `docker-compose.yml` and setting `TANGENT_WHISPER_MODEL: small`, then `docker compose up -d --force-recreate`. faster-whisper downloads the model on first transcribe and caches it under
+`./data/models` so subsequent restarts are instant. The first transcribe with
+`large-v3` pulls roughly 3 GB, so expect it to take a while.
 
 ### Customising network exposure
 
-By default `docker-compose.yml` publishes port 8000 on all interfaces. To bind only to a specific interface (e.g. a LAN-only NIC), create `docker-compose.override.yaml`:
+By default `docker-compose.yml` publishes host port 8765 on all interfaces. To
+bind only to a specific interface (e.g. a LAN-only NIC), create
+`docker-compose.override.yaml`:
 
 ```yaml
 services:
   tangent-server:
     ports:
-      - "192.168.1.42:8000:8000"
+      - "192.168.1.42:8765:8000"
 ```
 
 `docker compose` automatically merges `docker-compose.override.yaml` on top.
@@ -82,9 +115,25 @@ services:
 
 ```bash
 cd server
-uv sync --all-extras
-uv run pytest
-uv run uvicorn app.main:app --reload
+uv sync --extra dev        # lean: just the server + test tools
+uv run pytest                                             # 125 passed, 1 skipped
+uv run uvicorn app.main:create_app --factory --reload     # http://127.0.0.1:8000
+```
+
+Use `--all-extras` only if you want diarization: it pulls torch, torchaudio and
+pyannote (~1.3 GB).
+
+`app.main` exposes a `create_app()` factory rather than a module-level `app`,
+so the `--factory` flag is required — without it uvicorn exits with
+`Error loading ASGI app. Attribute "app" not found in module "app.main"`.
+
+Prefer plain `pip`? Use a virtualenv so you don't install into system Python:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+pip install -e ".[dev]"
+pytest
 ```
 
 ## License

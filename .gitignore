@@ -13,7 +13,6 @@
 .pub-cache/
 .pub/
 build/
-pubspec.lock
 *.iml
 *.ipr
 *.iws
@@ -119,3 +118,11 @@ $RECYCLE.BIN/
 
 # Local git worktrees used for isolated implementation branches
 .worktrees/
+
+# ── Internal working notes (not for the public repo) ──────────
+STATUS.md
+docs/superpowers/
+docs/recording-device-evidence.md
+docs/on-device-transcription-verification.md
+developer-mode-registry-backup.txt
+.superpowers/

@@ -5,6 +5,39 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Notebooks** — endless vertical scrolling page mixing handwriting, typed
+  text, checkboxes and embedded recordings. Blocks and imported cards are
+  draggable; tapping a recording card opens it for playback.
+- **Stroke eraser** on the pen toolbar, erasing for the whole gesture.
+- **Import audio** — bring an existing audio file into Tangent from the home
+  screen. The file is copied (never moved) through the same reserve → stage →
+  publish path a live recording uses.
+- **Text notes** — typed entries alongside voice dumps, with their own durable
+  `Tangent Text Notes/` directory.
+- **Bluetooth/external microphone selection** for capture.
+- Optional **speaker diarization** on the server (pyannote, off by default).
+- Segment timestamps in server job results.
+
+### Changed
+- **Transcription now runs on your own server, not on-device.** The Android
+  whisper.cpp path was replaced by the self-hosted FastAPI + faster-whisper
+  server. Recording, playback, notebooks and search remain fully offline.
+- Recordings stay on the device by default; syncing to a server is an explicit
+  choice, no longer conflated with transcription.
+
+### Fixed
+- **Stop latency ~10.4 s → ~1.8 s** (T8). The receipt proof was enumerating and
+  parsing the entire recordings folder after every capture; it now reads the one
+  entry it just wrote.
+- Notebook cards could not be dragged slowly — the page scroll won the gesture
+  arena before the card's threshold was reached. The page now yields on touch.
+- Card taps, per-block delete, and backspace-deletes-empty-line in notebooks.
+- Durable notebook files are re-adopted at startup and republished on save.
+- Several SAF publication defects around MIME-coherent names and text notes.
+
 ## [1.0.0] - 2026-09-13
 
 ### Added — Server
@@ -55,7 +88,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 - README rewritten — actual install + run instructions
-- STATUS.md tracks session-by-session progress
 - AGENTS.md + CONTRIBUTING.md for contributors
 
 ### Fixed

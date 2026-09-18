@@ -2,7 +2,6 @@
 //
 // Notebook library: every notebook, newest-edited first.
 //
-// Design contract: docs/superpowers/specs/2026-09-17-notebooks-design.md
 // The home screen's app-bar entry opens THIS list; the list opens or creates
 // individual notebooks. Deleting a notebook never touches the dumps its cards
 // referenced — the repository only drops the notebook row.
