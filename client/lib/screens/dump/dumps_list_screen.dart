@@ -13,6 +13,9 @@ import '../../models/transcription_status.dart';
 import 'dump_detail_screen.dart';
 import 'dumps_providers.dart';
 import '../../widgets/signal_bars.dart';
+import '../../widgets/item_action_sheet.dart';
+import '../../widgets/folder_picker.dart';
+import '../home/home_screen.dart' show localDbProvider;
 
 /// What the `+` FAB on the dumps list asks the home screen to create.
 /// The list pops itself with one of these; home switches mode and either
@@ -374,12 +377,149 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
                                   _change(() => _selection.enter(id)),
                               onToggle: (id) =>
                                   _change(() => _selection.toggle(id)),
+                              onLongPressItem: (context, dump) =>
+                                  _showItemActions(context, dump, eligibility),
                             ),
             ),
           ],
         ),
       ),
     );
+  }
+  /// Renames a recording or note.
+  ///
+  /// The controller is disposed a frame late: disposing it the moment
+  /// showDialog returns tears it down while the route is still animating out
+  /// and its TextField is still building, which throws "A TextEditingController
+  /// was used after being disposed".
+  Future<void> _renameDump(DumpRow dump) async {
+    final TextEditingController controller =
+        TextEditingController(text: dump.title);
+    final String? name = await showDialog<String>(
+      context: context,
+      builder: (BuildContext dialogContext) => AlertDialog(
+        title: const Text('Rename'),
+        content: TextField(
+          key: const ValueKey('dump-rename-field'),
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: 'Title'),
+          onSubmitted: (String value) =>
+              Navigator.of(dialogContext).pop(value.trim()),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            key: const ValueKey('dump-rename-save'),
+            onPressed: () =>
+                Navigator.of(dialogContext).pop(controller.text.trim()),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    WidgetsBinding.instance
+        .addPostFrameCallback((_) => controller.dispose());
+    if (!mounted || name == null || name.isEmpty) return;
+    try {
+      await ref.read(localDbProvider).renameDump(dumpId: dump.id, title: name);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _deleteError = 'Rename failed: $e');
+      }
+    }
+  }
+
+  /// Files a recording or note into a folder.
+  Future<void> _moveDump(DumpRow dump) async {
+    final LocalDb db = ref.read(localDbProvider);
+    final List<Folder> folders = await db.watchFolders().first;
+    if (!mounted) return;
+    final FolderChoice? choice = await showFolderPicker(
+      context,
+      folders: folders
+          .map((Folder f) => FolderOption(id: f.id, name: f.name))
+          .toList(growable: false),
+      currentFolderId: dump.folderId,
+    );
+    if (!mounted || choice == null) return;
+    try {
+      String? folderId = choice.folderId;
+      if (choice.isNewFolder && choice.newFolderName != null) {
+        folderId = await db.createFolder(name: choice.newFolderName!);
+      }
+      await db.moveDumpToFolder(dumpId: dump.id, folderId: folderId);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _deleteError = 'Move failed: $e');
+      }
+    }
+  }
+
+  /// The shared long-press menu for one recording or note.
+  ///
+  /// Delete deliberately does NOT call a deletion API here. It enters the
+  /// existing selection flow with just this row selected, so every local
+  /// deletion still goes through the one audited, eligibility-guarded,
+  /// retry-aware path in [_deleteSelected] rather than a second one that would
+  /// have to re-implement those rules correctly.
+  Future<void> _showItemActions(
+    BuildContext context,
+    DumpRow dump,
+    Map<String, Eligibility> eligibility,
+  ) async {
+    final Eligibility? state = eligibility[dump.id];
+    final bool deletable = state == Eligibility.eligible;
+    final ItemAction? action = await showItemActionSheet(
+      context,
+      title: dump.title.isEmpty ? '(untitled)' : dump.title,
+      subtitle: dumpSubtitle(dump),
+      actions: const <ItemAction>[
+        ItemAction.open,
+        ItemAction.rename,
+        ItemAction.move,
+        ItemAction.select,
+        ItemAction.delete,
+      ],
+      disabledActions: <ItemAction, String>{
+        if (!deletable) ItemAction.delete: eligibilityReason(state),
+      },
+    );
+    if (!mounted || action == null) return;
+
+    switch (action) {
+      case ItemAction.open:
+        if (!context.mounted) return;
+        if (widget.onOpenDump != null) {
+          widget.onOpenDump!(context, dump);
+        } else {
+          await Navigator.of(context).push<void>(
+            MaterialPageRoute<void>(
+              builder: (_) => DumpDetailScreen(
+                dumpId: dump.id,
+                audioPath: dump.audioPath,
+                durationSeconds: dump.durationSeconds,
+              ),
+            ),
+          );
+        }
+      case ItemAction.rename:
+        await _renameDump(dump);
+      case ItemAction.move:
+        await _moveDump(dump);
+      case ItemAction.select:
+        _change(() => _selection.enter(dump.id));
+      case ItemAction.delete:
+        // Select this row, then run the same bulk path the toolbar uses.
+        _change(() => _selection.enter(dump.id));
+        await _deleteSelected();
+      case ItemAction.duplicate:
+      case ItemAction.share:
+        break;
+    }
   }
 }
 
@@ -447,12 +587,21 @@ class _DumpList extends StatelessWidget {
       required this.eligibility,
       required this.enabled,
       required this.onEnter,
-      required this.onToggle,});
+      required this.onToggle,
+      this.onLongPressItem,});
   final void Function(BuildContext, DumpRow)? onOpen;
   final DumpSelectionState selection;
   final Map<String, Eligibility> eligibility;
   final bool enabled;
   final ValueChanged<String> onEnter, onToggle;
+
+  /// Opens the shared long-press menu for one row.
+  ///
+  /// Long-press here used to jump straight into multi-select. It still does
+  /// once a selection is active — that is the audited bulk-delete path — but
+  /// with no selection it opens the same sheet as every other list, which
+  /// offers Select as one of its actions.
+  final Future<void> Function(BuildContext, DumpRow)? onLongPressItem;
 
   final List<DumpRow> dumps;
   final String empty;
@@ -479,7 +628,7 @@ class _DumpList extends StatelessWidget {
           builder: (context, constraints) {
             final compact = constraints.maxWidth < 500 ||
                 MediaQuery.textScalerOf(context).scale(14) > 21;
-            final reason = _eligibilityReason(eligibility[dump.id]);
+            final reason = eligibilityReason(eligibility[dump.id]);
             final isNote = dump.mode == 'text_note';
             final pill = _TranscriptionStatusPill(
                 dumpId: dump.id, status: transcription,);
@@ -505,7 +654,7 @@ class _DumpList extends StatelessWidget {
                 const SizedBox(width: 8),
               ],
               Expanded(
-                  child: Text(_subtitleFor(dump),
+                  child: Text(dumpSubtitle(dump),
                       maxLines: 2, overflow: TextOverflow.ellipsis,),),
             ],);
             return ListTile(
@@ -539,7 +688,32 @@ class _DumpList extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [subtitle, const SizedBox(height: 4), pill],)
                   : subtitle,
-              trailing: compact ? null : pill,
+              // The ⋮ button carries per-item actions, so long-press can stay
+              // multi-select. Hidden during selection: a menu that mutates one
+              // row while several are selected is ambiguous, and the toolbar
+              // already owns bulk actions.
+              trailing: selection.active
+                  ? (compact ? null : pill)
+                  : Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        if (!compact) pill,
+                        IconButton(
+                          key: ValueKey<String>('dump-more-${dump.id}'),
+                          icon: const Icon(Icons.more_vert),
+                          tooltip: 'More actions',
+                          onPressed: !enabled || onLongPressItem == null
+                              ? null
+                              : () => onLongPressItem!(context, dump),
+                        ),
+                      ],
+                    ),
+              // Long-press stays multi-select here. It is the entry point to
+              // the audited bulk local-deletion flow, and 28 tests encode that
+              // contract deliberately ("long press selects; row and circular
+              // control never navigate"). Per-item actions get their own ⋮
+              // button instead — the same split Drive, Files and Samsung's
+              // own apps use, so the gesture is not overloaded.
               onLongPress:
                   enabled && eligibility[dump.id] == Eligibility.eligible
                       ? () => onEnter(dump.id)
@@ -566,29 +740,33 @@ class _DumpList extends StatelessWidget {
     );
   }
 
-  String _eligibilityReason(Eligibility? eligibility) => switch (eligibility) {
-        Eligibility.eligible => 'Available for local deletion',
-        Eligibility.nonterminal => 'Transcription in progress',
-        Eligibility.syncing => 'Sync in progress',
-        Eligibility.publicationPending => 'Saving transcript or metadata',
-        Eligibility.busy => 'Recording is in use',
-        Eligibility.retryOnly => 'Local deletion pending; open recording to retry',
-        Eligibility.deleting => 'Local deletion in progress',
-        Eligibility.denied => 'Storage permission denied',
-        Eligibility.unresolved => 'Original storage is unresolved',
-        Eligibility.retired => 'Recording already removed',
-        Eligibility.missing => 'Recording unavailable',
-        null => 'Checking availability',
-      };
 
-  String _subtitleFor(DumpRow dump) {
-    final date = dump.createdAt.toLocal().toString().split('.').first;
-    if (dump.mode == 'text_note') return date;
-    final mins = (dump.durationSeconds / 60).floor();
-    final secs = dump.durationSeconds % 60;
-    final duration = mins > 0 ? '${mins}m ${secs}s' : '${secs}s';
-    return '$duration · $date';
-  }
+}
+
+/// Shared by the list rows and the long-press sheet, so the wording a user
+/// sees for an ineligible recording is identical in both places.
+String eligibilityReason(Eligibility? eligibility) => switch (eligibility) {
+      Eligibility.eligible => 'Available for local deletion',
+      Eligibility.nonterminal => 'Transcription in progress',
+      Eligibility.syncing => 'Sync in progress',
+      Eligibility.publicationPending => 'Saving transcript or metadata',
+      Eligibility.busy => 'Recording is in use',
+      Eligibility.retryOnly => 'Local deletion pending; open recording to retry',
+      Eligibility.deleting => 'Local deletion in progress',
+      Eligibility.denied => 'Storage permission denied',
+      Eligibility.unresolved => 'Original storage is unresolved',
+      Eligibility.retired => 'Recording already removed',
+      Eligibility.missing => 'Recording unavailable',
+      null => 'Checking availability',
+    };
+
+String dumpSubtitle(DumpRow dump) {
+  final date = dump.createdAt.toLocal().toString().split('.').first;
+  if (dump.mode == 'text_note') return date;
+  final mins = (dump.durationSeconds / 60).floor();
+  final secs = dump.durationSeconds % 60;
+  final duration = mins > 0 ? '${mins}m ${secs}s' : '${secs}s';
+  return '$duration · $date';
 }
 
 class _TranscriptionStatusPill extends StatelessWidget {

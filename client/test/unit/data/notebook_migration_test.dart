@@ -34,8 +34,8 @@ void main() {
 
     await db.listDumps();
 
-    expect(db.schemaVersion, 7);
-    expect(sql.userVersion, 7);
+    expect(db.schemaVersion, 8);
+    expect(sql.userVersion, 8);
     expect(_columnNames(sql, 'notebooks'), _notebookColumns);
     expect(
       sql.select('PRAGMA foreign_key_list(notebooks)'),
@@ -61,9 +61,25 @@ void main() {
 
     await db.listDumps();
 
-    expect(sql.userVersion, 7);
+    expect(sql.userVersion, 8);
     expect(_columnNames(sql, 'notebooks'), _notebookColumns);
-    expect(sqlRows(sql, 'dumps'), before);
+    // v8 adds folder_id to dumps, so compare the columns the fixture had:
+    // this test is about existing rows surviving, not about the column list.
+    expect(
+      sqlRows(sql, 'dumps')
+          .map(
+            (Map<String, Object?> row) => <String, Object?>{
+              for (final String name in before.first.keys) name: row[name],
+            },
+          )
+          .toList(),
+      before,
+    );
+    expect(
+      sqlRows(sql, 'dumps').every((row) => row['folder_id'] == null),
+      isTrue,
+      reason: 'an upgraded recording must arrive unfiled',
+    );
     expect(sqlRows(sql, 'sync_queue'), queue);
     expect(sql.select('SELECT * FROM notebooks'), isEmpty);
     expect(sql.select('PRAGMA integrity_check').single.values.single, 'ok');
@@ -99,9 +115,25 @@ void main() {
 
     sql = sqlite3.open(file.path);
     addTearDown(sql.dispose);
-    expect(sql.userVersion, 7);
+    expect(sql.userVersion, 8);
     expect(_columnNames(sql, 'notebooks'), _notebookColumns);
-    expect(sqlRows(sql, 'dumps'), before);
+    // v8 adds folder_id to dumps, so compare the columns the fixture had:
+    // this test is about existing rows surviving, not about the column list.
+    expect(
+      sqlRows(sql, 'dumps')
+          .map(
+            (Map<String, Object?> row) => <String, Object?>{
+              for (final String name in before.first.keys) name: row[name],
+            },
+          )
+          .toList(),
+      before,
+    );
+    expect(
+      sqlRows(sql, 'dumps').every((row) => row['folder_id'] == null),
+      isTrue,
+      reason: 'an upgraded recording must arrive unfiled',
+    );
     expect(sqlRows(sql, 'sync_queue'), queue);
     expect(sqlRows(sql, 'storage_locations'), locations);
     expect(

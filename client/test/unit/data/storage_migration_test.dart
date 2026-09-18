@@ -144,7 +144,7 @@ void main() {
       expect(queue, hasLength(10));
       expect(sql.userVersion, version);
       await db.listDumps();
-      expect(sql.userVersion, 7);
+      expect(sql.userVersion, 8);
       final after = sqlRows(sql, 'dumps');
       expect(after, hasLength(before.length));
       for (var i = 0; i < before.length; i++) {
@@ -170,6 +170,8 @@ void main() {
             'transcription_started_at',
             'transcription_updated_at',
             'transcription_error',
+            // v8: an upgraded recording arrives unfiled.
+            'folder_id',
           ]) {
             expect(after[i][name], isNull);
           }
@@ -255,7 +257,7 @@ void main() {
           .data
           .values
           .single,
-      7,
+      8,
     );
     expect(
       (await db
@@ -266,9 +268,22 @@ void main() {
     );
     expect(
       (await db.customSelect('SELECT * FROM dumps ORDER BY id').get())
-          .map((r) => r.data)
+          .map(
+            // v8 adds folder_id. Compare only the columns the fixture had, so
+            // this stays an "existing data survived" assertion rather than a
+            // schema snapshot that must be edited for every new column.
+            (r) => <String, Object?>{
+              for (final String name in before.first.keys) name: r.data[name],
+            },
+          )
           .toList(),
       before,
+    );
+    expect(
+      (await db.customSelect('SELECT * FROM dumps ORDER BY id').get())
+          .every((r) => r.data['folder_id'] == null),
+      isTrue,
+      reason: 'an upgraded recording must arrive unfiled, not in some folder',
     );
     expect(
       (await db.customSelect('SELECT * FROM sync_queue ORDER BY id').get())

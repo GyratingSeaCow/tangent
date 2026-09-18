@@ -48,11 +48,19 @@ class ItemActionSheet extends StatelessWidget {
     required this.title,
     required this.actions,
     this.subtitle,
+    this.disabledActions = const <ItemAction, String>{},
   });
 
   final String title;
   final String? subtitle;
   final List<ItemAction> actions;
+
+  /// Actions that are shown but not selectable, mapped to the reason why.
+  ///
+  /// Deliberately not "omit the action": a recording that is syncing or
+  /// publishing cannot be deleted yet, and a Delete row that disappears reads
+  /// as a bug. A greyed row that says "Syncing" explains the app to the user.
+  final Map<ItemAction, String> disabledActions;
 
   /// Stable key per action, so tests and later restyling both survive.
   static Key keyFor(ItemAction action) => ValueKey<String>('item-action-${action.name}');
@@ -143,19 +151,27 @@ class ItemActionSheet extends StatelessWidget {
               padding: EdgeInsets.zero,
               children: <Widget>[
                 for (final ItemAction action in ordered)
-                  ListTile(
-                    key: keyFor(action),
-                    leading: Icon(
-                      iconFor(action),
-                      color: _destructive.contains(action) ? danger : null,
-                    ),
-                    title: Text(
-                      labelFor(action),
-                      style: _destructive.contains(action)
-                          ? TextStyle(color: danger)
-                          : null,
-                    ),
-                    onTap: () => Navigator.of(context).pop(action),
+                  Builder(
+                    builder: (BuildContext context) {
+                      final String? blocked = disabledActions[action];
+                      final bool isDisabled = blocked != null;
+                      final Color? tint = isDisabled
+                          ? theme.disabledColor
+                          : (_destructive.contains(action) ? danger : null);
+                      return ListTile(
+                        key: keyFor(action),
+                        enabled: !isDisabled,
+                        leading: Icon(iconFor(action), color: tint),
+                        title: Text(
+                          labelFor(action),
+                          style: tint == null ? null : TextStyle(color: tint),
+                        ),
+                        subtitle: blocked == null ? null : Text(blocked),
+                        onTap: isDisabled
+                            ? null
+                            : () => Navigator.of(context).pop(action),
+                      );
+                    },
                   ),
               ],
             ),
@@ -174,6 +190,7 @@ Future<ItemAction?> showItemActionSheet(
   required String title,
   required List<ItemAction> actions,
   String? subtitle,
+  Map<ItemAction, String> disabledActions = const <ItemAction, String>{},
 }) {
   return showModalBottomSheet<ItemAction>(
     context: context,
@@ -182,6 +199,7 @@ Future<ItemAction?> showItemActionSheet(
       title: title,
       subtitle: subtitle,
       actions: actions,
+      disabledActions: disabledActions,
     ),
   );
 }

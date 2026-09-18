@@ -18,7 +18,22 @@ void main() {
       () async {
     final sqlite3.Database raw = sqlite3.sqlite3.openInMemory();
 
-    // The v6 shape of the notebooks table: no folder_id.
+    // The v6 shape of the notebooks table: no folder_id. A real v6 database
+    // also has dumps, and the v8 step inspects it, so the fixture carries it.
+    raw.execute('''
+      CREATE TABLE dumps (
+        id TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        mode TEXT NOT NULL,
+        duration_seconds INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        audio_path TEXT NOT NULL,
+        audio_size_bytes INTEGER NOT NULL,
+        sync_status TEXT NOT NULL,
+        PRIMARY KEY (id)
+      );
+    ''');
     raw.execute('''
       CREATE TABLE notebooks (
         id TEXT NOT NULL,

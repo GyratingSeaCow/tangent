@@ -43,6 +43,10 @@ class Dumps extends Table {
   DateTimeColumn get transcriptionCompletedAt => dateTime().nullable()();
   TextColumn get transcriptionError => text().nullable()();
 
+  /// Which folder this recording or note is filed in, or null when unfiled.
+  /// Same metadata approach as notebooks: filing never moves the audio file.
+  TextColumn get folderId => text().nullable()();
+
   @override
   Set<Column> get primaryKey => {id};
 }
@@ -119,7 +123,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   LocalDb.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 7;
+  int get schemaVersion => 8;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -186,6 +190,29 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
               await m.addColumn(notebooks, notebooks.folderId);
             }
           }
+          if (from < 8) {
+            // dumps is created by onCreate/createAll for a brand new database
+            // and by nothing else, so on an upgrade path it may be absent
+            // entirely (a fixture older than the table) or already carry
+            // folder_id (created from the CURRENT definition during this same
+            // upgrade). Both throw: "no such table" and "duplicate column
+            // name". Ask the database what it actually has instead of
+            // inferring it from the version number.
+            final List<QueryRow> dumpsTable = await customSelect(
+              "SELECT name FROM sqlite_master WHERE type='table' "
+              "AND name='dumps'",
+            ).get();
+            if (dumpsTable.isNotEmpty) {
+              final List<QueryRow> columns =
+                  await customSelect('PRAGMA table_info(dumps)').get();
+              final bool hasFolderId = columns.any(
+                (QueryRow row) => row.data['name'] == 'folder_id',
+              );
+              if (!hasFolderId) {
+                await m.addColumn(dumps, dumps.folderId);
+              }
+            }
+          }
         },
       );
 
@@ -194,7 +221,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   /// Creates a folder and returns its id.
   Future<String> createFolder({required String name, String? id}) async {
     final String folderId =
-        id ?? 'folder-\${DateTime.now().microsecondsSinceEpoch}';
+        id ?? 'folder-${DateTime.now().microsecondsSinceEpoch}';
     await into(folders).insert(
       FoldersCompanion.insert(
         id: folderId,
@@ -226,6 +253,25 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     );
   }
 
+  /// Files a recording or note, or unfiles it when [folderId] is null.
+  Future<void> moveDumpToFolder({
+    required String dumpId,
+    required String? folderId,
+  }) async {
+    await (update(dumps)..where((t) => t.id.equals(dumpId)))
+        .write(DumpsCompanion(folderId: Value<String?>(folderId)));
+  }
+
+  /// Renames a recording or note. Deliberately writes only the title, so a
+  /// rename cannot disturb filing, sync state or transcription state.
+  Future<void> renameDump({
+    required String dumpId,
+    required String title,
+  }) async {
+    await (update(dumps)..where((t) => t.id.equals(dumpId)))
+        .write(DumpsCompanion(title: Value<String>(title)));
+  }
+
   /// Deletes a folder and unfiles everything inside it.
   ///
   /// The contents are never deleted: a folder is a label, and removing a label
@@ -234,6 +280,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     await transaction(() async {
       await (update(notebooks)..where((t) => t.folderId.equals(folderId)))
           .write(const NotebooksCompanion(folderId: Value<String?>(null)));
+      // One folder holds both kinds, so both must be unfiled together.
+      await (update(dumps)..where((t) => t.folderId.equals(folderId)))
+          .write(const DumpsCompanion(folderId: Value<String?>(null)));
       await (delete(folders)..where((t) => t.id.equals(folderId))).go();
     });
   }

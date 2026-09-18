@@ -146,6 +146,12 @@ class $DumpsTable extends Dumps with TableInfo<$DumpsTable, DumpRow> {
   late final GeneratedColumn<String> transcriptionError =
       GeneratedColumn<String>('transcription_error', aliasedName, true,
           type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _folderIdMeta =
+      const VerificationMeta('folderId');
+  @override
+  late final GeneratedColumn<String> folderId = GeneratedColumn<String>(
+      'folder_id', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
   @override
   List<GeneratedColumn> get $columns => [
         id,
@@ -168,7 +174,8 @@ class $DumpsTable extends Dumps with TableInfo<$DumpsTable, DumpRow> {
         transcriptionStartedAt,
         transcriptionUpdatedAt,
         transcriptionCompletedAt,
-        transcriptionError
+        transcriptionError,
+        folderId
       ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -312,6 +319,10 @@ class $DumpsTable extends Dumps with TableInfo<$DumpsTable, DumpRow> {
           transcriptionError.isAcceptableOrUnknown(
               data['transcription_error']!, _transcriptionErrorMeta));
     }
+    if (data.containsKey('folder_id')) {
+      context.handle(_folderIdMeta,
+          folderId.isAcceptableOrUnknown(data['folder_id']!, _folderIdMeta));
+    }
     return context;
   }
 
@@ -367,6 +378,8 @@ class $DumpsTable extends Dumps with TableInfo<$DumpsTable, DumpRow> {
           data['${effectivePrefix}transcription_completed_at']),
       transcriptionError: attachedDatabase.typeMapping.read(
           DriftSqlType.string, data['${effectivePrefix}transcription_error']),
+      folderId: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}folder_id']),
     );
   }
 
@@ -398,6 +411,10 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
   final DateTime? transcriptionUpdatedAt;
   final DateTime? transcriptionCompletedAt;
   final String? transcriptionError;
+
+  /// Which folder this recording or note is filed in, or null when unfiled.
+  /// Same metadata approach as notebooks: filing never moves the audio file.
+  final String? folderId;
   const DumpRow(
       {required this.id,
       required this.createdAt,
@@ -419,7 +436,8 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
       this.transcriptionStartedAt,
       this.transcriptionUpdatedAt,
       this.transcriptionCompletedAt,
-      this.transcriptionError});
+      this.transcriptionError,
+      this.folderId});
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -466,6 +484,9 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
     if (!nullToAbsent || transcriptionError != null) {
       map['transcription_error'] = Variable<String>(transcriptionError);
     }
+    if (!nullToAbsent || folderId != null) {
+      map['folder_id'] = Variable<String>(folderId);
+    }
     return map;
   }
 
@@ -510,6 +531,9 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
       transcriptionError: transcriptionError == null && nullToAbsent
           ? const Value.absent()
           : Value(transcriptionError),
+      folderId: folderId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(folderId),
     );
   }
 
@@ -546,6 +570,7 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
           serializer.fromJson<DateTime?>(json['transcriptionCompletedAt']),
       transcriptionError:
           serializer.fromJson<String?>(json['transcriptionError']),
+      folderId: serializer.fromJson<String?>(json['folderId']),
     );
   }
   @override
@@ -577,6 +602,7 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
       'transcriptionCompletedAt':
           serializer.toJson<DateTime?>(transcriptionCompletedAt),
       'transcriptionError': serializer.toJson<String?>(transcriptionError),
+      'folderId': serializer.toJson<String?>(folderId),
     };
   }
 
@@ -601,7 +627,8 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
           Value<DateTime?> transcriptionStartedAt = const Value.absent(),
           Value<DateTime?> transcriptionUpdatedAt = const Value.absent(),
           Value<DateTime?> transcriptionCompletedAt = const Value.absent(),
-          Value<String?> transcriptionError = const Value.absent()}) =>
+          Value<String?> transcriptionError = const Value.absent(),
+          Value<String?> folderId = const Value.absent()}) =>
       DumpRow(
         id: id ?? this.id,
         createdAt: createdAt ?? this.createdAt,
@@ -638,6 +665,7 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
         transcriptionError: transcriptionError.present
             ? transcriptionError.value
             : this.transcriptionError,
+        folderId: folderId.present ? folderId.value : this.folderId,
       );
   DumpRow copyWithCompanion(DumpsCompanion data) {
     return DumpRow(
@@ -690,6 +718,7 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
       transcriptionError: data.transcriptionError.present
           ? data.transcriptionError.value
           : this.transcriptionError,
+      folderId: data.folderId.present ? data.folderId.value : this.folderId,
     );
   }
 
@@ -716,7 +745,8 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
           ..write('transcriptionStartedAt: $transcriptionStartedAt, ')
           ..write('transcriptionUpdatedAt: $transcriptionUpdatedAt, ')
           ..write('transcriptionCompletedAt: $transcriptionCompletedAt, ')
-          ..write('transcriptionError: $transcriptionError')
+          ..write('transcriptionError: $transcriptionError, ')
+          ..write('folderId: $folderId')
           ..write(')'))
         .toString();
   }
@@ -743,7 +773,8 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
         transcriptionStartedAt,
         transcriptionUpdatedAt,
         transcriptionCompletedAt,
-        transcriptionError
+        transcriptionError,
+        folderId
       ]);
   @override
   bool operator ==(Object other) =>
@@ -769,7 +800,8 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
           other.transcriptionStartedAt == this.transcriptionStartedAt &&
           other.transcriptionUpdatedAt == this.transcriptionUpdatedAt &&
           other.transcriptionCompletedAt == this.transcriptionCompletedAt &&
-          other.transcriptionError == this.transcriptionError);
+          other.transcriptionError == this.transcriptionError &&
+          other.folderId == this.folderId);
 }
 
 class DumpsCompanion extends UpdateCompanion<DumpRow> {
@@ -794,6 +826,7 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
   final Value<DateTime?> transcriptionUpdatedAt;
   final Value<DateTime?> transcriptionCompletedAt;
   final Value<String?> transcriptionError;
+  final Value<String?> folderId;
   final Value<int> rowid;
   const DumpsCompanion({
     this.id = const Value.absent(),
@@ -817,6 +850,7 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
     this.transcriptionUpdatedAt = const Value.absent(),
     this.transcriptionCompletedAt = const Value.absent(),
     this.transcriptionError = const Value.absent(),
+    this.folderId = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   DumpsCompanion.insert({
@@ -841,6 +875,7 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
     this.transcriptionUpdatedAt = const Value.absent(),
     this.transcriptionCompletedAt = const Value.absent(),
     this.transcriptionError = const Value.absent(),
+    this.folderId = const Value.absent(),
     this.rowid = const Value.absent(),
   })  : id = Value(id),
         createdAt = Value(createdAt),
@@ -873,6 +908,7 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
     Expression<DateTime>? transcriptionUpdatedAt,
     Expression<DateTime>? transcriptionCompletedAt,
     Expression<String>? transcriptionError,
+    Expression<String>? folderId,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -904,6 +940,7 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
       if (transcriptionCompletedAt != null)
         'transcription_completed_at': transcriptionCompletedAt,
       if (transcriptionError != null) 'transcription_error': transcriptionError,
+      if (folderId != null) 'folder_id': folderId,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -930,6 +967,7 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
       Value<DateTime?>? transcriptionUpdatedAt,
       Value<DateTime?>? transcriptionCompletedAt,
       Value<String?>? transcriptionError,
+      Value<String?>? folderId,
       Value<int>? rowid}) {
     return DumpsCompanion(
       id: id ?? this.id,
@@ -957,6 +995,7 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
       transcriptionCompletedAt:
           transcriptionCompletedAt ?? this.transcriptionCompletedAt,
       transcriptionError: transcriptionError ?? this.transcriptionError,
+      folderId: folderId ?? this.folderId,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -1031,6 +1070,9 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
     if (transcriptionError.present) {
       map['transcription_error'] = Variable<String>(transcriptionError.value);
     }
+    if (folderId.present) {
+      map['folder_id'] = Variable<String>(folderId.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -1061,6 +1103,7 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
           ..write('transcriptionUpdatedAt: $transcriptionUpdatedAt, ')
           ..write('transcriptionCompletedAt: $transcriptionCompletedAt, ')
           ..write('transcriptionError: $transcriptionError, ')
+          ..write('folderId: $folderId, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -4395,6 +4438,7 @@ typedef $$DumpsTableCreateCompanionBuilder = DumpsCompanion Function({
   Value<DateTime?> transcriptionUpdatedAt,
   Value<DateTime?> transcriptionCompletedAt,
   Value<String?> transcriptionError,
+  Value<String?> folderId,
   Value<int> rowid,
 });
 typedef $$DumpsTableUpdateCompanionBuilder = DumpsCompanion Function({
@@ -4419,6 +4463,7 @@ typedef $$DumpsTableUpdateCompanionBuilder = DumpsCompanion Function({
   Value<DateTime?> transcriptionUpdatedAt,
   Value<DateTime?> transcriptionCompletedAt,
   Value<String?> transcriptionError,
+  Value<String?> folderId,
   Value<int> rowid,
 });
 
@@ -4521,6 +4566,9 @@ class $$DumpsTableFilterComposer extends Composer<_$LocalDb, $DumpsTable> {
   ColumnFilters<String> get transcriptionError => $composableBuilder(
       column: $table.transcriptionError,
       builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get folderId => $composableBuilder(
+      column: $table.folderId, builder: (column) => ColumnFilters(column));
 
   Expression<bool> syncQueueRefs(
       Expression<bool> Function($$SyncQueueTableFilterComposer f) f) {
@@ -4627,6 +4675,9 @@ class $$DumpsTableOrderingComposer extends Composer<_$LocalDb, $DumpsTable> {
   ColumnOrderings<String> get transcriptionError => $composableBuilder(
       column: $table.transcriptionError,
       builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get folderId => $composableBuilder(
+      column: $table.folderId, builder: (column) => ColumnOrderings(column));
 }
 
 class $$DumpsTableAnnotationComposer extends Composer<_$LocalDb, $DumpsTable> {
@@ -4700,6 +4751,9 @@ class $$DumpsTableAnnotationComposer extends Composer<_$LocalDb, $DumpsTable> {
   GeneratedColumn<String> get transcriptionError => $composableBuilder(
       column: $table.transcriptionError, builder: (column) => column);
 
+  GeneratedColumn<String> get folderId =>
+      $composableBuilder(column: $table.folderId, builder: (column) => column);
+
   Expression<T> syncQueueRefs<T extends Object>(
       Expression<T> Function($$SyncQueueTableAnnotationComposer a) f) {
     final $$SyncQueueTableAnnotationComposer composer = $composerBuilder(
@@ -4766,6 +4820,7 @@ class $$DumpsTableTableManager extends RootTableManager<
             Value<DateTime?> transcriptionUpdatedAt = const Value.absent(),
             Value<DateTime?> transcriptionCompletedAt = const Value.absent(),
             Value<String?> transcriptionError = const Value.absent(),
+            Value<String?> folderId = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               DumpsCompanion(
@@ -4790,6 +4845,7 @@ class $$DumpsTableTableManager extends RootTableManager<
             transcriptionUpdatedAt: transcriptionUpdatedAt,
             transcriptionCompletedAt: transcriptionCompletedAt,
             transcriptionError: transcriptionError,
+            folderId: folderId,
             rowid: rowid,
           ),
           createCompanionCallback: ({
@@ -4814,6 +4870,7 @@ class $$DumpsTableTableManager extends RootTableManager<
             Value<DateTime?> transcriptionUpdatedAt = const Value.absent(),
             Value<DateTime?> transcriptionCompletedAt = const Value.absent(),
             Value<String?> transcriptionError = const Value.absent(),
+            Value<String?> folderId = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               DumpsCompanion.insert(
@@ -4838,6 +4895,7 @@ class $$DumpsTableTableManager extends RootTableManager<
             transcriptionUpdatedAt: transcriptionUpdatedAt,
             transcriptionCompletedAt: transcriptionCompletedAt,
             transcriptionError: transcriptionError,
+            folderId: folderId,
             rowid: rowid,
           ),
           withReferenceMapper: (p0) => p0
