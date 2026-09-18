@@ -205,5 +205,66 @@ void main() {
         reason: 'one gesture is one undo step, not two',
       );
     });
+
+    testWidgets(
+      'a drag keeps erasing after the parent feeds the new strokes back',
+      (tester) async {
+        // The real editor is stateful: onStrokesChanged sets its own state and
+        // rebuilds the canvas with the NEW stroke list. That rebuild used to
+        // look like "a different document was handed in", cancelling the
+        // in-flight gesture, so on device the eraser died after its first
+        // line. The harness above never fed strokes back, which is exactly why
+        // this shipped green.
+        final GlobalKey<NotebookInkCanvasState> liveKey =
+            GlobalKey<NotebookInkCanvasState>();
+        List<InkStroke> current = <InkStroke>[
+          _horizontal('a', 60),
+          _horizontal('b', 100),
+          _horizontal('c', 140),
+          _horizontal('d', 180),
+        ];
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: StatefulBuilder(
+                builder: (BuildContext context, StateSetter setState) {
+                  return SizedBox(
+                    width: 300,
+                    height: 300,
+                    child: NotebookInkCanvas(
+                      key: liveKey,
+                      strokes: current,
+                      drawingEnabled: true,
+                      penWidth: 3,
+                      erasing: true,
+                      onStrokesChanged: (List<InkStroke> s) {
+                        setState(() => current = List<InkStroke>.of(s));
+                      },
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+        );
+
+        // One continuous sweep down the page across every line.
+        final gesture = await tester.startGesture(const Offset(100, 40));
+        for (final double y in <double>[60, 100, 140, 180]) {
+          await gesture.moveTo(Offset(100, y));
+          await tester.pump();
+        }
+        await gesture.up();
+        await tester.pumpAndSettle();
+
+        expect(
+          current,
+          isEmpty,
+          reason: 'one sweep must erase every line it crosses, not just the '
+              'first one before the parent rebuilt',
+        );
+      },
+    );
   });
 }

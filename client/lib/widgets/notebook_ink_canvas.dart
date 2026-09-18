@@ -111,6 +111,15 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
   void didUpdateWidget(covariant NotebookInkCanvas oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (!listEquals(oldWidget.strokes, widget.strokes)) {
+      // Our own edit echoing back through the parent is NOT a new document.
+      // The editor is stateful: onStrokesChanged sets its state and rebuilds
+      // this canvas with the list we just produced. Treating that as a fresh
+      // document cancelled the in-flight gesture, so on device the eraser
+      // stopped dead after its first line and a pen stroke could be cut short
+      // mid-draw.
+      if (_isOwnEcho(widget.strokes)) {
+        return;
+      }
       // A genuinely different document was handed in: re-seed.
       _cancelActiveStroke();
       _strokes
@@ -118,6 +127,19 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
         ..addAll(widget.strokes);
       _revision++;
     }
+  }
+
+  /// True when [incoming] is the list this canvas itself just published.
+  ///
+  /// Compared by identity of the strokes, not the list object: the parent
+  /// copies the list before storing it, so the container differs while the
+  /// strokes are the very same instances.
+  bool _isOwnEcho(List<InkStroke> incoming) {
+    if (incoming.length != _strokes.length) return false;
+    for (int i = 0; i < incoming.length; i++) {
+      if (!identical(incoming[i], _strokes[i])) return false;
+    }
+    return true;
   }
 
   /// Completed strokes, oldest first. Unmodifiable: mutate via the canvas.
