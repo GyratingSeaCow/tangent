@@ -89,6 +89,8 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
   /// Null when the last action was drawing, so undo falls through to removing
   /// the last stroke.
   List<InkStroke>? _eraseUndoSnapshot;
+  /// True while the CURRENT gesture is erasing (toggle or side button).
+  bool _erasingGesture = false;
 
   /// Last position touched by the active eraser gesture, so each move erases
   /// along the path travelled since the previous sample.
@@ -210,6 +212,22 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
     }
   }
 
+  /// True when this pointer should erase rather than draw.
+  ///
+  /// Either the eraser toggle is on, or the pen's side button is held. The
+  /// button is measured to be present on the down event, every move and the
+  /// up, so it is read per-event and needs no latching.
+  ///
+  /// Flip-to-erase is deliberately absent: flipping the pen on the target EMR
+  /// digitizer never produced `PointerDeviceKind.invertedStylus`, so a branch
+  /// on that value would be dead code.
+  bool _isErasing(PointerEvent event) {
+    if (widget.erasing) return true;
+    final bool isPen = event.kind == PointerDeviceKind.stylus ||
+        event.kind == PointerDeviceKind.invertedStylus;
+    return isPen && (event.buttons & kPrimaryStylusButton) != 0;
+  }
+
   void _cancelActiveStroke() {
     _activePoints = null;
     _activePointer = null;
@@ -288,7 +306,8 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
     if (!widget.drawingEnabled) return;
     if (!_acceptsDevice(event.kind)) return;
     if (_activePointer != null) return;
-    if (widget.erasing) {
+    if (_isErasing(event)) {
+      _erasingGesture = true;
       // One eraser gesture is one user action, so the pre-gesture ink is
       // snapshotted once and restored by a single undo.
       _eraseUndoSnapshot = List<InkStroke>.of(_strokes);
@@ -309,7 +328,7 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
   }
 
   void _onPointerMove(PointerMoveEvent event) {
-    if (widget.erasing) {
+    if (_erasingGesture || widget.erasing) {
       if (event.pointer != _activePointer) return;
       final Offset from = _lastErasePosition ?? event.localPosition;
       _lastErasePosition = event.localPosition;
@@ -326,7 +345,8 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
   }
 
   void _onPointerUp(PointerUpEvent event) {
-    if (widget.erasing) {
+    if (_erasingGesture || widget.erasing) {
+      _erasingGesture = false;
       if (event.pointer != _activePointer) return;
       final Offset from = _lastErasePosition ?? event.localPosition;
       final bool removed = _eraseAlong(from, event.localPosition);
