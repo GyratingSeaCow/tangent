@@ -37,6 +37,37 @@ class SafPolicy(private val port: DocumentsPort) {
         if (port.children(directory).any { it.name in names && it.id != exceptId })
             throw NativeStorageException("conflict", "Target exists")
     }
+    /** Verifies one KNOWN child (name + document id) without listing.
+     *
+     *  T8: ownedNode proves membership by enumerating the directory, and the
+     *  stop path asks ~20 times per save -- with 81 files that dominated a
+     *  10.4-second stop. When the caller already knows the document id, ask
+     *  the provider about that one document instead.
+     *
+     *  Falls back to the full listing when the provider cannot answer, so
+     *  behaviour is identical on providers that do not support it. Every read
+     *  stays fresh: nothing is cached, which is why this succeeds where a
+     *  cached snapshot caused stale-read publication faults. */
+    fun ownedChildById(
+        directory: NativeDirectory,
+        name: String,
+        documentId: String,
+    ): NativeNode? {
+        requireValidComponentName(name)
+        return when (val answer = port.membership(directory, name, documentId)) {
+            is Membership.Present -> answer.node
+            is Membership.Absent -> null
+            is Membership.Unsupported -> ownedNode(directory, name, documentId)
+        }
+    }
+
+    private fun requireValidComponentName(name: String) {
+        if (name.isEmpty() || name == "." || name == ".." ||
+            name.any { it == '/' || it == '\\' || it == '\u0000' }
+        )
+            throw NativeStorageException("invalid", "Invalid component name")
+    }
+
     fun ownedNode(directory: NativeDirectory, name: String, expectedDocumentId: String?): NativeNode? {
         if (name.isEmpty() || name == "." || name == ".." || name.any { it == '/' || it == '\\' || it == '\u0000' })
             throw NativeStorageException("invalid", "Invalid component name")
