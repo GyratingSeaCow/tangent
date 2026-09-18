@@ -64,6 +64,73 @@ CREATE TABLE IF NOT EXISTS events (
 
 CREATE INDEX IF NOT EXISTS idx_events_dump_id ON events(dump_id);
 CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at DESC);
+
+-- Multi-device sync ------------------------------------------------------
+--
+-- The server owns one monotonically increasing sequence. Every mutation it
+-- accepts is stamped with the next value, and a client asks "what changed
+-- after N?". This is a CHECKPOINT, not a clock: it is assigned by a single
+-- authority, so a device whose wall-clock is ten minutes fast is irrelevant.
+--
+-- Last-write-wins on updated_at was rejected on data-loss grounds — at
+-- whole-notebook granularity it silently destroys a page of handwriting when
+-- another device saves a title edit a second later.
+
+CREATE TABLE IF NOT EXISTS change_log (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    entity_type TEXT NOT NULL
+        CHECK (entity_type IN ('dump', 'notebook', 'note')),
+    entity_id TEXT NOT NULL,
+    op TEXT NOT NULL CHECK (op IN ('upsert', 'delete')),
+    -- Who authored it, so a client can skip the echo of its own push.
+    device_id TEXT NOT NULL,
+    -- Full entity for an upsert; NULL for a delete.
+    payload TEXT,
+    created_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_change_log_seq ON change_log(seq);
+CREATE INDEX IF NOT EXISTS idx_change_log_entity
+    ON change_log(entity_type, entity_id);
+
+CREATE TABLE IF NOT EXISTS devices (
+    device_id TEXT PRIMARY KEY,
+    display_name TEXT NOT NULL,
+    platform TEXT NOT NULL,
+    last_seen_seq INTEGER NOT NULL DEFAULT 0,
+    last_seen_at INTEGER
+);
+
+-- Notebooks and text notes: the things the user actually asked to sync.
+-- The document body travels as opaque JSON so the server never has to
+-- understand ink, and a client-side schema change does not require a server
+-- deploy. Merge happens on the client, per the design doc.
+
+CREATE TABLE IF NOT EXISTS notebooks (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    -- {"blocks": [...], "ink": {"strokes": [...], "deletedStrokeIds": [...]}}
+    doc TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    deleted_at INTEGER,
+    origin_device_id TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_notebooks_updated_at
+    ON notebooks(updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS notes (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    deleted_at INTEGER,
+    origin_device_id TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_notes_updated_at ON notes(updated_at DESC);
 """
 
 

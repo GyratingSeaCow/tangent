@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -107,3 +107,73 @@ class ServerInfo(BaseModel):
     available_models: list[str]
     storage_used_bytes: int
     dump_count: int
+
+
+# --- Multi-device sync ----------------------------------------------------
+
+
+class DeviceRegister(BaseModel):
+    """Registers a replica. Idempotent: re-running it updates the name.
+
+    ``device_id`` identifies the REPLICA; the existing bearer token still
+    identifies the user. Multi-device does not imply multi-user auth.
+    """
+
+    device_id: str = Field(min_length=8, max_length=64)
+    display_name: str = Field(min_length=1, max_length=200)
+    platform: str = Field(min_length=1, max_length=64)
+
+
+class DeviceResponse(BaseModel):
+    device_id: str
+    display_name: str
+    platform: str
+    last_seen_seq: int
+    last_seen_at: datetime | None
+
+
+class DeviceListResponse(BaseModel):
+    devices: list[DeviceResponse]
+
+
+class SyncChange(BaseModel):
+    """One mutation, as carried in either direction.
+
+    ``payload`` is the full entity for an upsert and null for a delete. The
+    server stores it opaquely: it never needs to understand ink, so a
+    client-side document change does not require a server deploy.
+    """
+
+    entity_type: Literal["dump", "notebook", "note"]
+    entity_id: str = Field(min_length=1, max_length=64)
+    op: Literal["upsert", "delete"]
+    payload: dict[str, Any] | None = None
+    #: Server-assigned. Ignored on push, populated on pull.
+    seq: int | None = None
+    device_id: str | None = None
+
+
+class SyncPullResponse(BaseModel):
+    changes: list[SyncChange]
+    #: The checkpoint to store once every change above has been applied.
+    head_seq: int
+    #: True when more changes remain past this page.
+    has_more: bool
+
+
+class SyncPushRequest(BaseModel):
+    device_id: str = Field(min_length=8, max_length=64)
+    changes: list[SyncChange]
+
+
+class SyncPushResult(BaseModel):
+    entity_id: str
+    entity_type: str
+    seq: int
+    status: Literal["applied", "rejected"]
+    reason: str | None = None
+
+
+class SyncPushResponse(BaseModel):
+    results: list[SyncPushResult]
+    head_seq: int

@@ -15,6 +15,7 @@ from app.api.jobs import router as jobs_router
 from app.api.models import router as models_router
 from app.api.server_info import router as info_router
 from app.api.setup import router as setup_router
+from app.api.sync import router as sync_router
 from app.config import get_settings
 from app.db import init_db
 from app.errors import register_exception_handlers
@@ -86,6 +87,7 @@ def create_app() -> FastAPI:
     app.include_router(jobs_router)   # /v1/dumps/{id}/transcribe, /v1/jobs
     app.include_router(models_router)  # /v1/models
     app.include_router(info_router)   # /v1/server/info
+    app.include_router(sync_router)   # /v1/devices, /v1/sync/pull, /v1/sync/push
 
     register_exception_handlers(app)
     return app
