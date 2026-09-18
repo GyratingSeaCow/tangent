@@ -12,6 +12,7 @@ import '../../models/sync_status.dart' show SyncStatus, SyncStatusX;
 import '../../models/transcription_status.dart';
 import 'dump_detail_screen.dart';
 import 'dumps_providers.dart';
+import '../../widgets/signal_bars.dart';
 
 /// What the `+` FAB on the dumps list asks the home screen to create.
 /// The list pops itself with one of these; home switches mode and either
@@ -492,6 +493,16 @@ class _DumpList extends StatelessWidget {
                   size: 16,
                 ),
                 const SizedBox(width: 6),
+              ] else ...[
+                // The waveform motif: audio always looks like audio. Idle rows
+                // stay dim and unglowed so a long list costs nothing extra.
+                SignalBars(
+                  key: ValueKey('dump-waveform-${dump.id}'),
+                  seed: dump.id,
+                  barCount: 14,
+                  height: 14,
+                ),
+                const SizedBox(width: 8),
               ],
               Expanded(
                   child: Text(_subtitleFor(dump),
