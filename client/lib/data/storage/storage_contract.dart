@@ -51,6 +51,28 @@ final class StorageFault implements Exception {
 String contentExtensionForMode(String mode) =>
     mode == 'text_note' ? 'md' : 'opus';
 
+/// Extension for a capture whose staging path is already known.
+///
+/// Prefer this over [contentExtensionForMode] anywhere a reservation exists.
+/// The mode alone stopped being sufficient when microphone gain arrived: an
+/// amplified capture is PCM in a WAV container, so mode-derived names expect
+/// `<id>.opus` while the recorder legitimately wrote `<id>.wav`.
+///
+/// Verified on hardware: with the mode-only helper, staging validation
+/// rejected every amplified recording, the record button appeared to do
+/// nothing, and the recorder was left wedged for subsequent recordings until
+/// the app was restarted.
+String contentExtensionForReservation(String mode, String stagingPath) {
+  if (mode == 'text_note') return 'md';
+  for (final String candidate in <String>['opus', 'wav']) {
+    if (stagingPath.endsWith('.$candidate')) return candidate;
+  }
+  // An unrecognised staging name is a programming error upstream; fall back to
+  // the mode so behaviour matches the pre-gain build rather than inventing an
+  // extension nothing can publish.
+  return contentExtensionForMode(mode);
+}
+
 /// Extension a capture should be staged and published under.
 ///
 /// Extends [contentExtensionForMode] with the microphone gain, because an
