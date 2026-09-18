@@ -6,6 +6,7 @@
 // individual notebooks. Deleting a notebook never touches the dumps its cards
 // referenced — the repository only drops the notebook row.
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/notebook_repository.dart';
@@ -28,6 +29,34 @@ class NotebookListScreen extends ConsumerStatefulWidget {
 class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
   /// Guards the create button so a double tap cannot spawn two notebooks.
   bool _creating = false;
+
+  /// Cover grid instead of the named list, like Samsung Notes' book view.
+  ///
+  /// Defaults to the list so an existing user's screen is unchanged until they
+  /// ask for covers, and persists so the choice survives a restart.
+  bool _covers = false;
+
+  static const String _viewPreferenceKey = 'notebooks.coverView';
+
+  @override
+  void initState() {
+    super.initState();
+    _restoreViewPreference();
+  }
+
+  Future<void> _restoreViewPreference() async {
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    final bool stored = prefs.getBool(_viewPreferenceKey) ?? false;
+    if (!mounted || stored == _covers) return;
+    setState(() => _covers = stored);
+  }
+
+  Future<void> _toggleView() async {
+    final bool next = !_covers;
+    setState(() => _covers = next);
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_viewPreferenceKey, next);
+  }
 
   Future<void> _openNotebook(String id) {
     return Navigator.of(context).push<void>(
@@ -208,7 +237,17 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
     final ColorScheme colors = Theme.of(context).colorScheme;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Notebooks')),
+      appBar: AppBar(
+        title: const Text('Notebooks'),
+        actions: <Widget>[
+          IconButton(
+            key: const ValueKey<String>('notebook-view-toggle'),
+            tooltip: _covers ? 'Show as list' : 'Show as covers',
+            icon: Icon(_covers ? Icons.view_list : Icons.grid_view),
+            onPressed: _toggleView,
+          ),
+        ],
+      ),
       floatingActionButton: FloatingActionButton(
         tooltip: 'New notebook',
         backgroundColor: colors.primary,
@@ -283,14 +322,88 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
                 ),
               );
             }
-            for (final Notebook notebook in section.notebooks) {
-              children.add(_notebookTile(notebook));
-              children.add(const Divider(height: 1));
+            if (_covers) {
+              // One grid per section, shrink-wrapped inside the outer list, so
+              // folder headers keep their place between grids.
+              children.add(
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
+                  child: GridView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    gridDelegate:
+                        const SliverGridDelegateWithMaxCrossAxisExtent(
+                      maxCrossAxisExtent: 180,
+                      childAspectRatio: 0.72,
+                      crossAxisSpacing: 12,
+                      mainAxisSpacing: 12,
+                    ),
+                    itemCount: section.notebooks.length,
+                    itemBuilder: (BuildContext _, int index) =>
+                        _notebookCover(section.notebooks[index]),
+                  ),
+                ),
+              );
+            } else {
+              for (final Notebook notebook in section.notebooks) {
+                children.add(_notebookTile(notebook));
+                children.add(const Divider(height: 1));
+              }
             }
           }
 
           return ListView(children: children);
         },
+      ),
+    );
+  }
+
+  /// Builds one cover for the grid view.
+  ///
+  /// The cover carries the SAME gestures as the row -- tap opens, long-press
+  /// opens the action sheet -- so switching view never costs the user an
+  /// affordance. The title is always drawn: a grid of identical covers with no
+  /// names cannot be navigated.
+  Widget _notebookCover(Notebook notebook) {
+    final ColorScheme colors = Theme.of(context).colorScheme;
+    return InkWell(
+      key: ValueKey<String>('notebook-cover-${notebook.id}'),
+      onTap: () => _openNotebook(notebook.id),
+      onLongPress: () => _showActions(notebook),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Expanded(
+            child: Container(
+              width: double.infinity,
+              decoration: BoxDecoration(
+                color: colors.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(7),
+                border: Border.all(color: colors.outlineVariant),
+              ),
+              child: Center(
+                child: Icon(
+                  Icons.menu_book,
+                  size: 40,
+                  color: colors.primary,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            notebook.title.isEmpty ? '(untitled)' : notebook.title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.bodyMedium,
+          ),
+          Text(
+            formatNotebookUpdated(notebook.updatedAt),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ],
       ),
     );
   }

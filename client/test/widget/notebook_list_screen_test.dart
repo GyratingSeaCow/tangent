@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:tangent/data/local_db.dart';
 import 'package:tangent/data/storage/storage_contract.dart';
 import 'package:tangent/data/notebook_repository.dart';
@@ -10,6 +11,7 @@ import 'package:tangent/screens/dump/dumps_providers.dart';
 import 'package:tangent/screens/notebook/notebook_editor_screen.dart';
 import 'package:tangent/screens/notebook/notebook_list_screen.dart';
 import 'package:tangent/services/notebook_persistence.dart';
+import 'package:tangent/widgets/item_action_sheet.dart';
 
 import '../support/fake_notebook_repository.dart';
 
@@ -348,5 +350,161 @@ void main() {
     expect(tester.takeException(), isNull);
 
     await unmount(tester);
+  });
+
+  testWidgets('a view toggle switches the list to a cover grid',
+      (tester) async {
+    await mountList(
+      tester,
+      seed: <Notebook>[
+        testNotebook(id: 'nb-1', title: 'Ideas'),
+        testNotebook(id: 'nb-2', title: 'Journal'),
+      ],
+    );
+
+    // List view is the default, so an existing user's screen is unchanged.
+    expect(find.byKey(const ValueKey('notebook-row-nb-1')), findsOneWidget);
+    expect(find.byKey(const ValueKey('notebook-cover-nb-1')), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('notebook-view-toggle')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('notebook-cover-nb-1')),
+      findsOneWidget,
+      reason: 'the toggle must switch to covers, like Samsung Notes book view',
+    );
+    expect(
+      find.byKey(const ValueKey('notebook-row-nb-1')),
+      findsNothing,
+      reason: 'one view at a time; both at once would duplicate every item',
+    );
+    expect(
+      find.text('Ideas'),
+      findsOneWidget,
+      reason: 'a cover still names its notebook -- an unlabelled grid of '
+          'identical covers cannot be navigated',
+    );
+
+    await tester.tap(find.byKey(const ValueKey('notebook-view-toggle')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('notebook-row-nb-1')), findsOneWidget);
+  });
+
+  testWidgets('covers keep their folder sections', (tester) async {
+    await mountList(
+      tester,
+      seed: <Notebook>[
+        testNotebook(id: 'nb-1', title: 'Filed', folderId: 'f-1'),
+        testNotebook(id: 'nb-2', title: 'Loose'),
+      ],
+      folders: <Folder>[
+        Folder(id: 'f-1', name: 'Work', createdAt: 1),
+      ],
+    );
+
+    await tester.tap(find.byKey(const ValueKey('notebook-view-toggle')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('notebook-section-f-1')),
+      findsOneWidget,
+      reason: 'filing must survive the view change, or covers lose folders',
+    );
+    expect(find.text('Work'), findsOneWidget);
+  });
+
+  testWidgets('a cover opens and offers the same actions as a row',
+      (tester) async {
+    await mountList(
+      tester,
+      seed: <Notebook>[testNotebook(id: 'nb-1', title: 'Ideas')],
+    );
+
+    await tester.tap(find.byKey(const ValueKey('notebook-view-toggle')));
+    await tester.pumpAndSettle();
+
+    await tester.longPress(find.byKey(const ValueKey('notebook-cover-nb-1')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(ItemActionSheet.keyFor(ItemAction.rename)),
+      findsOneWidget,
+      reason: 'the menu must not disappear just because the view changed',
+    );
+  });
+
+  testWidgets('the view choice survives a restart', (tester) async {
+    // A toggle that forgets is worse than no toggle. Two things must hold, and
+    // the earlier version of this test asserted neither: the choice is WRITTEN
+    // to storage, and a COLD start reads it back. Remounting alone proves
+    // nothing, because the widget keeps showing covers from its own in-memory
+    // field whether or not anything was persisted -- a sabotage that deleted
+    // both the write and the read still passed.
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    await mountList(
+      tester,
+      seed: <Notebook>[testNotebook(id: 'nb-1', title: 'Ideas')],
+    );
+
+    await tester.tap(find.byKey(const ValueKey('notebook-view-toggle')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('notebook-cover-nb-1')), findsOneWidget);
+
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    expect(
+      prefs.getBool('notebooks.coverView'),
+      isTrue,
+      reason: 'the choice must be written, not just held in memory',
+    );
+
+    // A cold start: tear the widget down entirely, then mount a fresh screen
+    // against the stored value.
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(milliseconds: 1));
+    await mountList(
+      tester,
+      seed: <Notebook>[testNotebook(id: 'nb-1', title: 'Ideas')],
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('notebook-cover-nb-1')),
+      findsOneWidget,
+      reason: 'a fresh screen must restore the stored view',
+    );
+  });
+
+  testWidgets('a fresh install opens in list view', (tester) async {
+    // The default must not drift: an existing user who never asked for covers
+    // should see exactly the screen they had.
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    await mountList(
+      tester,
+      seed: <Notebook>[testNotebook(id: 'nb-1', title: 'Ideas')],
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('notebook-row-nb-1')), findsOneWidget);
+    expect(find.byKey(const ValueKey('notebook-cover-nb-1')), findsNothing);
+  });
+
+  testWidgets('a stored cover preference opens in cover view',
+      (tester) async {
+    // The read path, proved independently of the write path.
+    SharedPreferences.setMockInitialValues(
+      <String, Object>{'notebooks.coverView': true},
+    );
+    await mountList(
+      tester,
+      seed: <Notebook>[testNotebook(id: 'nb-1', title: 'Ideas')],
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('notebook-cover-nb-1')),
+      findsOneWidget,
+      reason: 'a stored preference must be honoured on first build',
+    );
   });
 }
