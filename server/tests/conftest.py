@@ -20,6 +20,29 @@ def _reset_settings_cache():
     get_settings.cache_clear()
 
 
+@pytest.fixture(autouse=True)
+def _reset_sse_app_status():
+    """Drop sse-starlette's cached shutdown Event between tests.
+
+    `AppStatus.should_exit_event` is a module-level singleton created on first
+    use and never cleared. Each test runs in its own event loop, so the second
+    SSE test to run inherits an Event bound to the first test's (closed) loop
+    and dies with "is bound to a different event loop". This is only visible on
+    sse-starlette 2.x — the version a fresh `pip install` resolves from our
+    declared `<3` constraint — which is why the full suite could pass locally
+    while failing for anyone installing from scratch.
+    """
+    try:
+        from sse_starlette.sse import AppStatus
+    except ImportError:  # pragma: no cover - sse-starlette always installed
+        yield
+        return
+
+    AppStatus.should_exit_event = None
+    yield
+    AppStatus.should_exit_event = None
+
+
 @pytest.fixture
 def temp_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Generator[Path, None, None]:
     """Provide a temporary data dir, set as TANGENT_DATA_DIR."""
