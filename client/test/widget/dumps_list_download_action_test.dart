@@ -12,15 +12,19 @@
 // test while doing nothing at runtime — the default outcome for work split
 // across layers, and the reason the menu wiring gets its own proof.
 import 'package:drift/drift.dart' show Value;
+import 'package:drift/native.dart' show NativeDatabase;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tangent/data/local_db.dart';
+import 'package:tangent/data/storage/filesystem_storage_backend.dart';
 import 'package:tangent/screens/dump/dumps_providers.dart';
+import 'package:tangent/services/synced_audio_download.dart';
 import 'package:tangent/widgets/item_action_sheet.dart';
 
 import '../support/dump_selection_fixture.dart';
 import '../support/dump_view_fixture.dart';
+import '../support/storage_fixture.dart';
 
 /// A recording whose audio is on the server but not on this device.
 DumpRow remoteRow(String id) => viewRow(id).copyWith(
@@ -144,6 +148,59 @@ void main() {
       find.byKey(const ValueKey('dump-select-fixture-a')),
       findsOneWidget,
       reason: 'long-press must still enter selection mode',
+    );
+  });
+
+  testWidgets('tapping download with no usable folder says so, never silently',
+      (WidgetTester tester) async {
+    // The Fold's defect shape: the entry is ENABLED when the sheet opens
+    // (a downloader existed), but by tap time the folder state has dropped
+    // and _downloadAudio's ref.read returns null. The old code returned
+    // without a word, which is indistinguishable from a broken app.
+    final StateProvider<SyncedAudioDownloader?> downloaderFixture =
+        StateProvider<SyncedAudioDownloader?>(
+      (_) => SyncedAudioDownloader(
+        db: LocalDb.forTesting(NativeDatabase.memory()),
+        backend: FilesystemStorageBackend(),
+        location: fileLocation('fixture-folder', '/synthetic'),
+        fetch: (_) async => const <int>[],
+      ),
+    );
+    final ProviderContainer container = await mountSelection(
+      tester,
+      CountingDeletion(),
+      extraOverrides: <Override>[
+        syncedAudioDownloaderProvider
+            .overrideWith((ref) => ref.watch(downloaderFixture)),
+      ],
+    );
+    container.read(presentedFixture.notifier).state = AsyncData(
+      (
+        scopeKey: 'all',
+        generation: 2,
+        settled: true,
+        rows: <DumpRow>[remoteRow('fixture-a'), viewRow('fixture-b')],
+        limit: null,
+      ),
+    );
+    await pumpSelection(tester);
+
+    await tester.tap(find.byKey(const ValueKey('dump-more-fixture-a')));
+    await pumpSelection(tester);
+
+    // The folder becomes unavailable between sheet-open and tap.
+    container.read(downloaderFixture.notifier).state = null;
+
+    await tester.tap(find.byKey(ItemActionSheet.keyFor(ItemAction.download)));
+    await pumpSelection(tester);
+
+    expect(
+      find.descendant(
+        of: find.byType(SnackBar),
+        matching: find.text('Choose a storage folder first'),
+      ),
+      findsOneWidget,
+      reason: 'a tapped control must always report what happened',
     );
   });
 }

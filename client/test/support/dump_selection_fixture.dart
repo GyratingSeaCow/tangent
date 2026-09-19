@@ -102,7 +102,8 @@ Future<ProviderContainer> mountSelection(
     WidgetTester tester, CountingDeletion deletion,
     {void Function(BuildContext, dynamic)? onOpen,
     double textScale = 1,
-    bool nestedRoute = false,}) async {
+    bool nestedRoute = false,
+    List<Override> extraOverrides = const [],}) async {
   final container = ProviderContainer(
     overrides: [
       presentedDumpsProvider.overrideWith((ref) => ref.watch(presentedFixture)),
@@ -113,6 +114,7 @@ Future<ProviderContainer> mountSelection(
       filteredDumpsProvider.overrideWith(
           (ref) => ref.watch(presentedFixture).whenData((r) => r.rows),),
       searchResultsProvider.overrideWith((_) => const Stream.empty()),
+      ...extraOverrides,
     ],
   );
   addTearDown(() async {

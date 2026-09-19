@@ -694,9 +694,16 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
   Future<void> _downloadAudio(DumpRow dump) async {
     final SyncedAudioDownloader? downloader =
         ref.read(syncedAudioDownloaderProvider);
-    if (downloader == null) return;
-
     final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+    if (downloader == null) {
+      // Never fail silently: a tapped control that does nothing reads as a
+      // broken app. Say why.
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Choose a storage folder first')),
+      );
+      return;
+    }
+
     setState(() => _downloading.add(dump.id));
     Outcome<String> result;
     try {
