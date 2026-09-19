@@ -470,6 +470,23 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     );
   }
 
+  /// Re-emits every watcher whose table another CONNECTION may have written.
+  ///
+  /// The background sync isolate opens its own database handle, and drift
+  /// stream queries only observe writes made through their own connection —
+  /// a notebook pulled in the background is on disk but invisible to the
+  /// open app's screens. Called on app-resume and after foreground syncs;
+  /// it marks the synced tables dirty so their watchers re-read from disk.
+  /// Purely a notification: no rows change, so calling it spuriously is
+  /// harmless.
+  Future<void> refreshExternalWrites() async {
+    notifyUpdates({
+      for (final TableInfo<Table, dynamic> table in <TableInfo<Table,
+          dynamic>>[notebooks, dumps, folders, syncTombstones, syncStates])
+        TableUpdate.onTable(table),
+    });
+  }
+
   /// Notebooks with local edits the server has not confirmed.
   Future<List<NotebookRow>> notebooksNeedingPush() =>
       (select(notebooks)..where((t) => t.syncDirty.equals(true))).get();

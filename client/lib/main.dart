@@ -229,11 +229,26 @@ class _TranscriptionLifecycleHostState
     // the feature silently does nothing while every test still passes.
     ref.read(transcriptionNotificationOwnerProvider);
     unawaited(ref.read(serverTranscriptionServiceProvider).reconcilePending());
+    // The scheduler's registration comment promises "a foreground sync at
+    // startup" — this is it. Cold launch must not show yesterday's notebooks
+    // for up to 30 minutes while edits from the other device sit on the
+    // server.
+    unawaited(ref.read(documentSyncEngineProvider).syncNow());
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
+      // The background sync isolate writes through its own DB connection,
+      // which this connection's stream watchers cannot observe. Resume is
+      // the moment the user looks at the screen again — re-emit the synced
+      // tables so notebooks pulled while the app slept actually appear.
+      unawaited(ref.read(localDbProvider).refreshExternalWrites());
+      // Fresh eyes deserve fresh data: without this, an edit made on the
+      // other device inside the last half hour sits invisible until the
+      // 30-minute background task happens to fire. The engine refuses
+      // reentrancy, so colliding with a running cycle is a no-op.
+      unawaited(ref.read(documentSyncEngineProvider).syncNow());
       unawaited(
         ref.read(serverTranscriptionServiceProvider).reconcilePending(),
       );
