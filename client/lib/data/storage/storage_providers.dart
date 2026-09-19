@@ -80,6 +80,9 @@ final recordingImporterProvider = Provider<RecordingImporter>(
 final captureReadyProvider = FutureProvider<void>((ref) async {
   final backend = ref.watch(storageBackendProvider);
   final mutations = ref.watch(recordingMutationsProvider);
+  // Same heal as main(): this provider is the startup path in tests and on
+  // desktop, and a zombie receipt must not be admitted as a live fence.
+  await ref.watch(localDbProvider).repairResurrectedRetirements();
   await mutations.restoreFences(unsettled: await backend.unsettledUses());
   final audio = ref.watch(storageAudioStorageProvider);
   final result = await ref

@@ -298,4 +298,144 @@ void main() {
     );
     expect(await f.db.getDump(a.key.dumpId), isNull);
   });
+
+  test('server resurrection of a completed local deletion clears the receipt',
+      () async {
+    // Deleting locally while the server still holds the recording is the
+    // Fold's real history: sync later re-creates the row remote-only, but a
+    // completed retirement receipt left behind makes every download fail
+    // 'Recording identity is fenced' forever — 43 stuck recordings.
+    final f = StorageFixture.create();
+    addTearDown(f.close);
+    final a = await f.seed('fixture-resurrect', status: 'completed');
+    final t = requireOk(
+      await f.db.claimLocalDeletion('fixture-batch', target(a)),
+    );
+    await f.db.recordDeletionComponent(
+      t.id,
+      RecordingComponent.audio,
+      removed,
+    );
+    await f.db
+        .recordDeletionComponent(t.id, RecordingComponent.metadata, absent);
+    await f.db.finishLocalDeletion(t.id);
+    expect(await f.db.isRetired(a.key.dumpId), isTrue);
+    expect(await f.db.getDump(a.key.dumpId), isNull);
+
+    // The server still has it; the next sync pull re-creates the row.
+    await f.db.applyRemoteDump(
+      id: a.key.dumpId,
+      mode: 'brain_dump',
+      title: 'resurrected',
+      transcript: 'kept words',
+      meetingNotes: null,
+      durationSeconds: 3,
+      audioOnServer: true,
+      createdAt: DateTime.utc(2031),
+      updatedAt: DateTime.utc(2031),
+      seq: 99,
+    );
+
+    final DumpRow? resurrected = await f.db.getDump(a.key.dumpId);
+    expect(resurrected, isNotNull);
+    expect(resurrected!.remoteOnly, isTrue);
+    // The new incarnation is a fresh identity: the old completed receipt
+    // must not fence it.
+    expect(
+      await f.db.isRetired(a.key.dumpId),
+      isFalse,
+      reason: 'a resurrected row must be downloadable again',
+    );
+    expect(
+      await (f.db.select(f.db.localDeletionTickets)
+            ..where((t) => t.dumpId.equals(a.key.dumpId)))
+          .get(),
+      isEmpty,
+      reason: 'the stale receipt is superseded by the server row',
+    );
+  });
+
+  test('resurrection does not clear a pending (uncompleted) deletion fence',
+      () async {
+    // A pending ticket is live work, not history: sync must not un-fence a
+    // deletion that is still in flight.
+    final f = StorageFixture.create();
+    addTearDown(f.close);
+    final a = await f.seed('fixture-pending-fence', status: 'completed');
+    requireOk(await f.db.claimLocalDeletion('fixture-batch', target(a)));
+
+    await f.db.applyRemoteDump(
+      id: a.key.dumpId,
+      mode: 'brain_dump',
+      title: 'echo during deletion',
+      transcript: null,
+      meetingNotes: null,
+      durationSeconds: 3,
+      audioOnServer: true,
+      createdAt: DateTime.utc(2031),
+      updatedAt: DateTime.utc(2031),
+      seq: 100,
+    );
+
+    expect(
+      (await (f.db.select(f.db.localDeletionTickets)
+                ..where((t) => t.dumpId.equals(a.key.dumpId)))
+              .get())
+          .single
+          .state,
+      isNot('completed'),
+      reason: 'the in-flight fence must survive a sync echo',
+    );
+  });
+
+  test('startup repair clears completed receipts that shadow a live dump',
+      () async {
+    // The one-time heal for devices already carrying zombie rows (the
+    // Fold's 43): a completed receipt whose dump EXISTS is a resurrection
+    // the old apply-site never cleaned up. Receipts whose dump is gone are
+    // genuine retirement history and must stay.
+    final f = StorageFixture.create();
+    addTearDown(f.close);
+    final a = await f.seed('fixture-zombie', status: 'completed');
+    await f.db.customStatement(
+        'INSERT INTO local_deletion_tickets(dump_id,incarnation,ticket_id,operation_id,binding_json,audio_state,metadata_state,state) VALUES(?,?,?,?,?,?,?,?)',
+        [
+          a.key.dumpId,
+          a.key.incarnation,
+          'fixture-zombie-ticket',
+          'fixture-batch',
+          StorageCodec.encodeBinding(a),
+          'removed',
+          'removed',
+          'completed',
+        ]);
+    // A genuine retirement: completed receipt, dump long gone.
+    await f.db.customStatement(
+        'INSERT INTO local_deletion_tickets(dump_id,incarnation,ticket_id,operation_id,binding_json,audio_state,metadata_state,state) VALUES(?,?,?,?,?,?,?,?)',
+        [
+          'fixture-truly-gone',
+          'incarnation-gone',
+          'fixture-gone-ticket',
+          'fixture-batch',
+          StorageCodec.encodeBinding(a),
+          'removed',
+          'removed',
+          'completed',
+        ]);
+
+    final int healed = await f.db.repairResurrectedRetirements();
+    expect(healed, 1);
+    expect(
+      await f.db.isRetired(a.key.dumpId),
+      isFalse,
+      reason: 'zombie receipt healed: the live row is downloadable again',
+    );
+    expect(
+      await f.db.isRetired('fixture-truly-gone'),
+      isTrue,
+      reason: 'real retirement history is untouched',
+    );
+    // Idempotent: running again finds nothing.
+    expect(await f.db.repairResurrectedRetirements(), 0);
+  });
 }

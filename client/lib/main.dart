@@ -125,6 +125,10 @@ Future<void> main() async {
   final backend =
       Platform.isAndroid ? SafStorageBackend() : FilesystemStorageBackend();
   final mutations = DefaultRecordingMutationCoordinator(db: db);
+  // Heal receipts orphaned by server resurrection BEFORE fences restore:
+  // a zombie receipt admitted into the coordinator fences its live row for
+  // the whole session.
+  await db.repairResurrectedRetirements();
   await mutations.restoreFences(unsettled: await backend.unsettledUses());
   final access = BoundRecordingAccess(
     db: db,

@@ -572,6 +572,19 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   }) async {
     final DumpRow? existing = await getDumpRow(id);
     if (existing == null) {
+      // Re-creating a row the server still holds. If a COMPLETED local
+      // deletion receipt is parked on this id, the server's copy has
+      // outlived the local deletion — the user deleted here, the peer kept
+      // it. The receipt's job (fencing mutations against a half-deleted
+      // identity) ended when the deletion finished; left in place it makes
+      // the resurrected row permanently un-downloadable ('Recording
+      // identity is fenced' on all 43 of the Fold's stuck rows). Clear it
+      // and let the fresh remote-only row start with a clean identity.
+      // A NON-completed ticket is live in-flight work and stays: the fence
+      // must win that race, and the pull is skipped by the dirty-row guard.
+      await (delete(localDeletionTickets)
+            ..where((t) => t.dumpId.equals(id) & t.state.equals('completed')))
+          .go();
       await into(dumps).insert(
         DumpsCompanion.insert(
           id: id,
@@ -940,6 +953,35 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   Future<LocalDeletionTicketRow?> _deletionFence(String id) =>
       (select(localDeletionTickets)..where((t) => t.dumpId.equals(id)))
           .getSingleOrNull();
+
+  /// One-time heal for receipts orphaned by the resurrection bug.
+  ///
+  /// A COMPLETED deletion receipt is retirement history for an identity
+  /// that no longer exists locally. If a dump row with that id EXISTS, the
+  /// server resurrected the recording after the local deletion — before the
+  /// apply-site learned to clear the receipt, that left a zombie: a listed,
+  /// playable-looking row every download refuses with 'Recording identity
+  /// is fenced'. Deleting the stale receipt returns ownership to the live
+  /// row. Pending (non-completed) tickets are live work and are never
+  /// touched. Idempotent by construction; returns the number healed.
+  Future<int> repairResurrectedRetirements() => transaction(() async {
+        final stale = await customSelect(
+          'SELECT t.dump_id AS dump_id FROM local_deletion_tickets t '
+          "WHERE t.state = 'completed' "
+          'AND EXISTS (SELECT 1 FROM dumps d WHERE d.id = t.dump_id)',
+          readsFrom: {localDeletionTickets, dumps},
+        ).get();
+        for (final row in stale) {
+          await (delete(localDeletionTickets)
+                ..where(
+                  (t) =>
+                      t.dumpId.equals(row.data['dump_id'] as String) &
+                      t.state.equals('completed'),
+                ))
+              .go();
+        }
+        return stale.length;
+      });
   @override
   Future<bool> isRetired(String id) async =>
       (await _deletionFence(id))?.state == 'completed';
