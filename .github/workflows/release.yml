@@ -1,0 +1,109 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Release automation: pushing a v* tag builds the release APK, attaches it
+# to a GitHub Release, and publishes the server image to GHCR.
+#
+# Users then have two install paths that need no toolchain at all:
+#   - Android: download the APK from the Releases page and sideload it
+#   - Server:  docker run ghcr.io/<owner>/tangent-server:<version>
+#
+# Both jobs gate on the full test suites: a release that skips the gates
+# can ship a broken artifact with a green tag on it.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  apk:
+    name: Build + attach release APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.27.1"
+          channel: stable
+          cache: true
+
+      - name: Pub get
+        working-directory: client
+        run: flutter pub get
+
+      - name: Analyze
+        working-directory: client
+        run: flutter analyze
+
+      - name: Test
+        working-directory: client
+        run: flutter test
+
+      - name: Build release APK
+        working-directory: client
+        run: flutter build apk --release
+
+      - name: Rename APK to carry the version
+        run: |
+          cp client/build/app/outputs/flutter-apk/app-release.apk \
+             "tangent-${GITHUB_REF_NAME}.apk"
+
+      - name: Create release and attach APK
+        uses: softprops/action-gh-release@v2
+        with:
+          files: tangent-*.apk
+          generate_release_notes: true
+
+  server-image:
+    name: Publish server image to GHCR
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Test before publishing
+        working-directory: server
+        run: |
+          pip install -e ".[dev]"
+          python -m pytest -q
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image metadata (tags)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/tangent-server
+          tags: |
+            type=semver,pattern={{version}}
+            type=raw,value=latest
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: server
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

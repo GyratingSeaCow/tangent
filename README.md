@@ -65,7 +65,17 @@ by far the easiest way to run the server — it needs no Python setup at all.
 
 ### Optional sync server
 
-**Docker (recommended — no Python setup):**
+**Prebuilt image from GHCR (easiest — no clone, no build):**
+
+```bash
+docker run -d --name tangent-server \
+  -p 8765:8000 \
+  -v tangent-data:/data \
+  --restart unless-stopped \
+  ghcr.io/gyratingseacow/tangent-server:latest
+```
+
+**Docker Compose (builds locally, more knobs):**
 
 ```bash
 git clone https://github.com/GyratingSeaCow/tangent.git
@@ -109,9 +119,15 @@ the app under **Settings → Server**.
 > **8765** on the host. Change the left-hand number there if you want a
 > different host port.
 
-### Client (sideload APK on Android)
+### Client (Android)
 
-Build the APK:
+**Easiest: download the APK from [Releases](https://github.com/GyratingSeaCow/tangent/releases)**
+and sideload it (`adb install -r tangent-vX.Y.Z.apk`, or just open the file on
+the phone). No toolchain needed. Note: release APKs are currently
+debug-signed — Android will warn on install, and you must uninstall an
+existing debug build first.
+
+**Or build it yourself:**
 
 ```bash
 cd client
