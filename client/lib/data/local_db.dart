@@ -206,7 +206,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   LocalDb.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 11;
+  int get schemaVersion => 12;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -385,6 +385,57 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
             }
             if (!names.contains('audio_on_server')) {
               await m.addColumn(dumps, dumps.audioOnServer);
+            }
+          }
+
+          if (from < 12) {
+            // One-time repair, not a schema change.
+            //
+            // Before the apply-site fix, `applyRemoteDump` wrote a synced
+            // transcript but left `transcription_status` at its table
+            // default, so a recording carrying its full transcript still
+            // read "Not transcribed". Fixing the apply site does not heal
+            // those rows: their `synced_seq` is already current, so the
+            // change feed never replays them. On Jeff's devices this was 35
+            // rows on the tablet and 37 on the Fold.
+            //
+            // Ask the database for the column first. A very old install
+            // (v6, v9) runs every step in sequence and reaches this one
+            // before `transcription_status` has been added, where a bare
+            // UPDATE throws "no such column" and bricks app launch for the
+            // oldest installs — the exact upgrade-path hazard the v11
+            // PRAGMA checks above exist to avoid. Those databases have no
+            // synced transcripts to repair anyway.
+            final List<QueryRow> repairColumns =
+                await customSelect('PRAGMA table_info(dumps)').get();
+            final bool hasStatus = repairColumns.any(
+              (QueryRow row) => row.data['name'] == 'transcription_status',
+            );
+            final bool hasTranscript = repairColumns.any(
+              (QueryRow row) => row.data['name'] == 'transcript',
+            );
+
+            if (hasStatus && hasTranscript) {
+              // Deliberately narrow. It touches ONLY rows whose status is
+              // exactly 'not_transcribed' while holding non-blank transcript
+              // text — never 'failed' (which would hide a real failure from
+              // the retry path) and never 'not_applicable' (a typed note,
+              // whose transcript column legitimately holds the note body).
+              //
+              // It also leaves updated_at, sync_dirty and synced_seq alone: a
+              // local repair is not a user edit, and marking these dirty would
+              // push dozens of pointless changes per device into the feed.
+              //
+              // TRIM() in SQLite strips SPACES only — not newlines or tabs —
+              // so a transcript of "  \n " would pass a bare TRIM check and
+              // get flipped to completed. Name every whitespace character.
+              await customUpdate(
+                "UPDATE dumps SET transcription_status = 'completed' "
+                "WHERE transcription_status = 'not_transcribed' "
+                "AND COALESCE(TRIM(transcript, ' ' || char(9) || char(10) || "
+                "char(13)), '') <> ''",
+                updates: <TableInfo<Table, dynamic>>{dumps},
+              );
             }
           }
         },
