@@ -507,4 +507,125 @@ void main() {
       reason: 'a stored preference must be honoured on first build',
     );
   });
+
+  testWidgets('tapping a folder header collapses only that section (list)',
+      (tester) async {
+    // Folder names are tap targets: collapse hides the folder's notebooks so
+    // a long library can be skimmed. Other sections must not move state.
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    await mountList(
+      tester,
+      seed: <Notebook>[
+        testNotebook(id: 'nb-1', title: 'Filed', folderId: 'f-1'),
+        testNotebook(id: 'nb-2', title: 'Also filed', folderId: 'f-2'),
+      ],
+      folders: <Folder>[
+        Folder(id: 'f-1', name: 'Work', createdAt: 1),
+        Folder(id: 'f-2', name: 'Home', createdAt: 2),
+      ],
+    );
+
+    expect(find.byKey(const ValueKey('notebook-row-nb-1')), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('notebook-section-f-1')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('notebook-row-nb-1')),
+      findsNothing,
+      reason: 'a collapsed folder hides its notebooks',
+    );
+    expect(
+      find.byKey(const ValueKey('notebook-row-nb-2')),
+      findsOneWidget,
+      reason: "collapsing one folder must not touch another's rows",
+    );
+    expect(
+      find.text('Work'),
+      findsOneWidget,
+      reason: 'the header itself stays visible, or it cannot be re-expanded',
+    );
+
+    await tester.tap(find.byKey(const ValueKey('notebook-section-f-1')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('notebook-row-nb-1')),
+      findsOneWidget,
+      reason: 'a second tap restores the section',
+    );
+
+    await unmount(tester);
+  });
+
+  testWidgets('folder collapse works identically in the cover view',
+      (tester) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    await mountList(
+      tester,
+      seed: <Notebook>[
+        testNotebook(id: 'nb-1', title: 'Filed', folderId: 'f-1'),
+        testNotebook(id: 'nb-2', title: 'Loose'),
+      ],
+      folders: <Folder>[
+        Folder(id: 'f-1', name: 'Work', createdAt: 1),
+      ],
+    );
+
+    await tester.tap(find.byKey(const ValueKey('notebook-view-toggle')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('notebook-cover-nb-1')), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('notebook-section-f-1')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('notebook-cover-nb-1')),
+      findsNothing,
+      reason: 'the alternate view must collapse too, or the feature is a lie '
+          'for cover users',
+    );
+    expect(
+      find.byKey(const ValueKey('notebook-cover-nb-2')),
+      findsOneWidget,
+      reason: 'the unfiled section is untouched by another folder collapsing',
+    );
+
+    await tester.tap(find.byKey(const ValueKey('notebook-section-f-1')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('notebook-cover-nb-1')), findsOneWidget);
+
+    await unmount(tester);
+  });
+
+  testWidgets('collapse state survives switching views', (tester) async {
+    // The two views are one library. A folder collapsed in the list arriving
+    // expanded in covers would read as the toggle losing the user's place.
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    await mountList(
+      tester,
+      seed: <Notebook>[
+        testNotebook(id: 'nb-1', title: 'Filed', folderId: 'f-1'),
+      ],
+      folders: <Folder>[
+        Folder(id: 'f-1', name: 'Work', createdAt: 1),
+      ],
+    );
+
+    await tester.tap(find.byKey(const ValueKey('notebook-section-f-1')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('notebook-row-nb-1')), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('notebook-view-toggle')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('notebook-cover-nb-1')),
+      findsNothing,
+      reason: 'the collapse must carry across the view toggle',
+    );
+
+    await unmount(tester);
+  });
 }

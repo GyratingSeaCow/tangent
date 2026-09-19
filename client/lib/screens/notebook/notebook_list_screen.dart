@@ -40,6 +40,18 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
 
   static const String _viewPreferenceKey = 'notebooks.coverView';
 
+  /// Folder ids whose sections are currently collapsed. In-memory only:
+  /// collapse is a skimming aid, not a filing decision, so it resets on a
+  /// fresh screen. Shared by both views — the list and the cover grid are
+  /// one library, and a fold made in one must hold in the other.
+  final Set<String> _collapsed = <String>{};
+
+  void _toggleSection(String folderId) {
+    setState(() {
+      if (!_collapsed.remove(folderId)) _collapsed.add(folderId);
+    });
+  }
+
   @override
   void initState() {
     super.initState();
@@ -300,22 +312,51 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
           // Flatten sections into a single list: a header, then its rows.
           final List<Widget> children = <Widget>[];
           for (final NotebookSection section in sections) {
+            // The unfiled pseudo-folder collapses under this key too — its
+            // header is a name like any other, and a tap that works on
+            // 'Work' but not 'No folder' would read as a broken control.
+            final String sectionKey = section.folderId ?? 'unfiled';
+            final bool collapsed = _collapsed.contains(sectionKey);
             if (section.title != null) {
               children.add(
-                Padding(
-                  key: ValueKey<String>(
-                    'notebook-section-${section.folderId ?? 'unfiled'}',
-                  ),
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                  child: Text(
-                    section.title!,
-                    style: Theme.of(context)
-                        .textTheme
-                        .labelLarge
-                        ?.copyWith(color: colors.primary),
+                InkWell(
+                  key: ValueKey<String>('notebook-section-$sectionKey'),
+                  onTap: () => _toggleSection(sectionKey),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                    child: Row(
+                      children: <Widget>[
+                        Expanded(
+                          child: Text(
+                            section.title!,
+                            style: Theme.of(context)
+                                .textTheme
+                                .labelLarge
+                                ?.copyWith(color: colors.primary),
+                          ),
+                        ),
+                        // The affordance: a chevron that points down when
+                        // open and sideways when folded, so collapsibility
+                        // is discoverable without a tooltip.
+                        AnimatedRotation(
+                          turns: collapsed ? -0.25 : 0,
+                          duration: const Duration(milliseconds: 150),
+                          child: Icon(
+                            Icons.expand_more,
+                            size: 20,
+                            color: colors.primary,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               );
+            }
+            if (collapsed && section.title != null) {
+              // A folded section shows only its header. The items stay in
+              // the tree's data, not the tree itself.
+              continue;
             }
             if (section.isEmpty && section.title != null) {
               children.add(
