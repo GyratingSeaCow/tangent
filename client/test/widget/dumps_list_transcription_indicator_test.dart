@@ -73,27 +73,22 @@ void main() {
     _expectPill('done-b', 'completed', 'Transcribed');
     _expectPill('failed', 'failed', 'Failed');
 
-    final chips = tester
-        .widgetList<FilterChip>(find.byType(FilterChip))
-        .map((chip) => (chip.label as Text).data)
-        .toList();
-    expect(
-      chips,
-      [
-        'All',
-        'Brain Dump',
-        'Meeting',
-        'Text Note',
-        'All',
-        'Needs transcript',
-        'In progress',
-        'Transcribed',
-        'Failed',
-      ],
-    );
+    // One bar, two dropdowns; the full option set lives inside the menus
+    // (dumps_list_filter_bar_test proves the menu contents).
+    expect(find.text('Mode · All'), findsOneWidget);
+    expect(find.text('Transcript · All'), findsOneWidget);
 
+    // Filters are dropdowns now: open the menu, then tap the same key.
+    // Bounded pumps, not pumpAndSettle: the in-progress row's spinner
+    // animates forever and pumpAndSettle would time out.
+    await tester.tap(find.byKey(const ValueKey('mode-filter-menu')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
     await tester.tap(find.byKey(const ValueKey('mode-filter-meeting')));
     await _pumpData(tester);
+    await tester.tap(find.byKey(const ValueKey('transcript-filter-menu')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
     await tester.tap(
       find.byKey(const ValueKey('transcript-filter-needsTranscript')),
     );

@@ -316,30 +316,21 @@ void main() {
         _row('rec-1', 'Long recording'),
       ]);
 
-      final chips = tester
-          .widgetList<FilterChip>(find.byType(FilterChip))
-          .map((chip) => (chip.label as Text).data)
-          .toList();
-      expect(
-        chips,
-        [
-          'All',
-          'Brain Dump',
-          'Meeting',
-          'Text Note',
-          'All',
-          'Needs transcript',
-          'In progress',
-          'Transcribed',
-          'Failed',
-        ],
-      );
+      // One bar, two dropdowns; each closed anchor names its selection.
+      expect(find.text('Mode · All'), findsOneWidget);
+      expect(find.text('Transcript · All'), findsOneWidget);
 
+      // Filters are dropdowns now: open the menu, then tap the same key.
+      await tester.tap(find.byKey(const ValueKey('mode-filter-menu')));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('mode-filter-textNote')));
       await _pumpData(tester);
       expect(find.text('Sourdough note'), findsOneWidget);
       expect(find.text('Long recording'), findsNothing);
 
+      // Filters are dropdowns now: open the menu, then tap the same key.
+      await tester.tap(find.byKey(const ValueKey('transcript-filter-menu')));
+      await tester.pumpAndSettle();
       await tester.tap(
         find.byKey(const ValueKey('transcript-filter-needsTranscript')),
       );
@@ -351,10 +342,16 @@ void main() {
       );
       expect(find.text('No dumps yet — record one!'), findsOneWidget);
 
+      // Filters are dropdowns now: open the menu, then tap the same key.
+      await tester.tap(find.byKey(const ValueKey('transcript-filter-menu')));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('transcript-filter-all')));
       await _pumpData(tester);
       expect(find.text('Sourdough note'), findsOneWidget);
 
+      // Filters are dropdowns now: open the menu, then tap the same key.
+      await tester.tap(find.byKey(const ValueKey('mode-filter-menu')));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('mode-filter-all')));
       await _pumpData(tester);
       expect(find.text('Long recording'), findsOneWidget);

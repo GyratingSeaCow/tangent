@@ -132,6 +132,9 @@ void main() {
     _useTaskViewport(tester);
     final probe = await _pushList(tester);
 
+    // Filters are dropdowns now: open the menu, then tap the same key.
+    await tester.tap(find.byKey(const ValueKey('mode-filter-menu')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('mode-filter-textNote')));
     await _pumpData(tester);
     await tester.tap(find.byType(FloatingActionButton));
@@ -150,6 +153,9 @@ void main() {
     _useTaskViewport(tester);
     final probe = await _pushList(tester);
 
+    // Filters are dropdowns now: open the menu, then tap the same key.
+    await tester.tap(find.byKey(const ValueKey('mode-filter-menu')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('mode-filter-brainDump')));
     await _pumpData(tester);
     await tester.tap(find.byType(FloatingActionButton));

@@ -112,6 +112,9 @@ void main() {
     final db = await mountHome(tester);
 
     await openDumps(tester);
+    // Filters are dropdowns now: open the menu, then tap the same key.
+    await tester.tap(find.byKey(const ValueKey('mode-filter-menu')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('mode-filter-textNote')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
@@ -146,6 +149,9 @@ void main() {
     final db = await mountHome(tester);
 
     await openDumps(tester);
+    // Filters are dropdowns now: open the menu, then tap the same key.
+    await tester.tap(find.byKey(const ValueKey('mode-filter-menu')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('mode-filter-brainDump')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
@@ -171,6 +177,9 @@ void main() {
     final db = await mountHome(tester);
 
     await openDumps(tester);
+    // Filters are dropdowns now: open the menu, then tap the same key.
+    await tester.tap(find.byKey(const ValueKey('mode-filter-menu')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('mode-filter-meeting')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));

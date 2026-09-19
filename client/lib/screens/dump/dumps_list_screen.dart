@@ -366,23 +366,41 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
                     ),
                 ],
               ),
-            _FilterRow<DumpModeFilter>(
-              label: 'Mode',
-              values: DumpModeFilter.values,
-              selected: modeFilter,
-              keyFor: (choice) => ValueKey('mode-filter-${choice.name}'),
-              labelFor: (choice) => choice.label,
-              onSelected: (choice) =>
-                  ref.read(dumpModeFilterProvider.notifier).state = choice,
-            ),
-            _FilterRow<TranscriptFilter>(
-              label: 'Transcript',
-              values: TranscriptFilter.values,
-              selected: transcriptFilter,
-              keyFor: (choice) => ValueKey('transcript-filter-${choice.name}'),
-              labelFor: (choice) => choice.label,
-              onSelected: (choice) =>
-                  ref.read(transcriptFilterProvider.notifier).state = choice,
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: _FilterDropdown<DumpModeFilter>(
+                      menuKey: const ValueKey('mode-filter-menu'),
+                      label: 'Mode',
+                      values: DumpModeFilter.values,
+                      selected: modeFilter,
+                      keyFor: (choice) =>
+                          ValueKey('mode-filter-${choice.name}'),
+                      labelFor: (choice) => choice.label,
+                      onSelected: (choice) => ref
+                          .read(dumpModeFilterProvider.notifier)
+                          .state = choice,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _FilterDropdown<TranscriptFilter>(
+                      menuKey: const ValueKey('transcript-filter-menu'),
+                      label: 'Transcript',
+                      values: TranscriptFilter.values,
+                      selected: transcriptFilter,
+                      keyFor: (choice) =>
+                          ValueKey('transcript-filter-${choice.name}'),
+                      labelFor: (choice) => choice.label,
+                      onSelected: (choice) => ref
+                          .read(transcriptFilterProvider.notifier)
+                          .state = choice,
+                    ),
+                  ),
+                ],
+              ),
             ),
             if (_deleteError != null)
               Text(_deleteError!, textAlign: TextAlign.center),
@@ -704,8 +722,15 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
   }
 }
 
-class _FilterRow<T> extends StatelessWidget {
-  const _FilterRow({
+/// One filter as a dropdown: the closed anchor names the filter and its
+/// ACTIVE selection ("Mode · Text Note"), so state stays readable without
+/// opening anything. Menu items keep the chip-era keys
+/// (`mode-filter-<name>`) — four test files select by them, and a stable key
+/// makes this change mechanical for them: open the menu, then tap the same
+/// key as before.
+class _FilterDropdown<T> extends StatelessWidget {
+  const _FilterDropdown({
+    required this.menuKey,
     required this.label,
     required this.values,
     required this.selected,
@@ -714,6 +739,7 @@ class _FilterRow<T> extends StatelessWidget {
     required this.onSelected,
   });
 
+  final Key menuKey;
   final String label;
   final List<T> values;
   final T selected;
@@ -723,37 +749,41 @@ class _FilterRow<T> extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          SizedBox(
-            width: 72,
-            child: Text(
-              label,
-              style: Theme.of(context).textTheme.labelLarge,
-            ),
+    final ThemeData theme = Theme.of(context);
+    return MenuAnchor(
+      menuChildren: [
+        for (final choice in values)
+          MenuItemButton(
+            key: keyFor(choice),
+            leadingIcon: choice == selected
+                ? const Icon(Icons.check, size: 18)
+                : const SizedBox.square(dimension: 18),
+            onPressed: () => onSelected(choice),
+            child: Text(labelFor(choice)),
           ),
-          Expanded(
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: [
-                  for (final choice in values) ...[
-                    FilterChip(
-                      key: keyFor(choice),
-                      label: Text(labelFor(choice)),
-                      selected: selected == choice,
-                      onSelected: (_) => onSelected(choice),
-                    ),
-                    const SizedBox(width: 8),
-                  ],
-                ],
+      ],
+      builder: (context, controller, _) => OutlinedButton.icon(
+        key: menuKey,
+        onPressed: () =>
+            controller.isOpen ? controller.close() : controller.open(),
+        style: OutlinedButton.styleFrom(
+          alignment: Alignment.centerLeft,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        ),
+        icon: const Icon(Icons.arrow_drop_down),
+        iconAlignment: IconAlignment.end,
+        label: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Flexible(
+              child: Text(
+                '$label · ${labelFor(selected)}',
+                style: theme.textTheme.labelLarge,
+                overflow: TextOverflow.ellipsis,
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
