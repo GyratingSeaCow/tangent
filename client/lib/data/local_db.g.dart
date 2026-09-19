@@ -4023,9 +4023,34 @@ class $NotebooksTable extends Notebooks
   late final GeneratedColumn<String> folderId = GeneratedColumn<String>(
       'folder_id', aliasedName, true,
       type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _syncDirtyMeta =
+      const VerificationMeta('syncDirty');
   @override
-  List<GeneratedColumn> get $columns =>
-      [id, title, createdAt, updatedAt, docJson, inkJson, folderId];
+  late final GeneratedColumn<bool> syncDirty = GeneratedColumn<bool>(
+      'sync_dirty', aliasedName, false,
+      type: DriftSqlType.bool,
+      requiredDuringInsert: false,
+      defaultConstraints:
+          GeneratedColumn.constraintIsAlways('CHECK ("sync_dirty" IN (0, 1))'),
+      defaultValue: const Constant(true));
+  static const VerificationMeta _syncedSeqMeta =
+      const VerificationMeta('syncedSeq');
+  @override
+  late final GeneratedColumn<int> syncedSeq = GeneratedColumn<int>(
+      'synced_seq', aliasedName, true,
+      type: DriftSqlType.int, requiredDuringInsert: false);
+  @override
+  List<GeneratedColumn> get $columns => [
+        id,
+        title,
+        createdAt,
+        updatedAt,
+        docJson,
+        inkJson,
+        folderId,
+        syncDirty,
+        syncedSeq
+      ];
   @override
   String get aliasedName => _alias ?? actualTableName;
   @override
@@ -4075,6 +4100,14 @@ class $NotebooksTable extends Notebooks
       context.handle(_folderIdMeta,
           folderId.isAcceptableOrUnknown(data['folder_id']!, _folderIdMeta));
     }
+    if (data.containsKey('sync_dirty')) {
+      context.handle(_syncDirtyMeta,
+          syncDirty.isAcceptableOrUnknown(data['sync_dirty']!, _syncDirtyMeta));
+    }
+    if (data.containsKey('synced_seq')) {
+      context.handle(_syncedSeqMeta,
+          syncedSeq.isAcceptableOrUnknown(data['synced_seq']!, _syncedSeqMeta));
+    }
     return context;
   }
 
@@ -4098,6 +4131,10 @@ class $NotebooksTable extends Notebooks
           .read(DriftSqlType.string, data['${effectivePrefix}ink_json'])!,
       folderId: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}folder_id']),
+      syncDirty: attachedDatabase.typeMapping
+          .read(DriftSqlType.bool, data['${effectivePrefix}sync_dirty'])!,
+      syncedSeq: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}synced_seq']),
     );
   }
 
@@ -4121,6 +4158,18 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
   /// Null means unfiled. Deliberately NOT a foreign key with cascade: a
   /// deleted folder must unfile its notebooks, never delete them.
   final String? folderId;
+
+  /// True when this notebook has local edits the server has not accepted.
+  ///
+  /// Set on every local save and cleared only by a push the server confirmed.
+  /// Defaulting to TRUE matters: notebooks that already existed before sync
+  /// arrived have never been pushed, so treating them as clean would leave a
+  /// user's entire library invisible to their other devices forever.
+  final bool syncDirty;
+
+  /// The server sequence this row was last reconciled at, or null if never.
+  /// Diagnostic: it makes "did this actually sync?" answerable from the data.
+  final int? syncedSeq;
   const NotebookRow(
       {required this.id,
       required this.title,
@@ -4128,7 +4177,9 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
       required this.updatedAt,
       required this.docJson,
       required this.inkJson,
-      this.folderId});
+      this.folderId,
+      required this.syncDirty,
+      this.syncedSeq});
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -4140,6 +4191,10 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
     map['ink_json'] = Variable<String>(inkJson);
     if (!nullToAbsent || folderId != null) {
       map['folder_id'] = Variable<String>(folderId);
+    }
+    map['sync_dirty'] = Variable<bool>(syncDirty);
+    if (!nullToAbsent || syncedSeq != null) {
+      map['synced_seq'] = Variable<int>(syncedSeq);
     }
     return map;
   }
@@ -4155,6 +4210,10 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
       folderId: folderId == null && nullToAbsent
           ? const Value.absent()
           : Value(folderId),
+      syncDirty: Value(syncDirty),
+      syncedSeq: syncedSeq == null && nullToAbsent
+          ? const Value.absent()
+          : Value(syncedSeq),
     );
   }
 
@@ -4169,6 +4228,8 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
       docJson: serializer.fromJson<String>(json['docJson']),
       inkJson: serializer.fromJson<String>(json['inkJson']),
       folderId: serializer.fromJson<String?>(json['folderId']),
+      syncDirty: serializer.fromJson<bool>(json['syncDirty']),
+      syncedSeq: serializer.fromJson<int?>(json['syncedSeq']),
     );
   }
   @override
@@ -4182,6 +4243,8 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
       'docJson': serializer.toJson<String>(docJson),
       'inkJson': serializer.toJson<String>(inkJson),
       'folderId': serializer.toJson<String?>(folderId),
+      'syncDirty': serializer.toJson<bool>(syncDirty),
+      'syncedSeq': serializer.toJson<int?>(syncedSeq),
     };
   }
 
@@ -4192,7 +4255,9 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
           int? updatedAt,
           String? docJson,
           String? inkJson,
-          Value<String?> folderId = const Value.absent()}) =>
+          Value<String?> folderId = const Value.absent(),
+          bool? syncDirty,
+          Value<int?> syncedSeq = const Value.absent()}) =>
       NotebookRow(
         id: id ?? this.id,
         title: title ?? this.title,
@@ -4201,6 +4266,8 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
         docJson: docJson ?? this.docJson,
         inkJson: inkJson ?? this.inkJson,
         folderId: folderId.present ? folderId.value : this.folderId,
+        syncDirty: syncDirty ?? this.syncDirty,
+        syncedSeq: syncedSeq.present ? syncedSeq.value : this.syncedSeq,
       );
   NotebookRow copyWithCompanion(NotebooksCompanion data) {
     return NotebookRow(
@@ -4211,6 +4278,8 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
       docJson: data.docJson.present ? data.docJson.value : this.docJson,
       inkJson: data.inkJson.present ? data.inkJson.value : this.inkJson,
       folderId: data.folderId.present ? data.folderId.value : this.folderId,
+      syncDirty: data.syncDirty.present ? data.syncDirty.value : this.syncDirty,
+      syncedSeq: data.syncedSeq.present ? data.syncedSeq.value : this.syncedSeq,
     );
   }
 
@@ -4223,14 +4292,16 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
           ..write('updatedAt: $updatedAt, ')
           ..write('docJson: $docJson, ')
           ..write('inkJson: $inkJson, ')
-          ..write('folderId: $folderId')
+          ..write('folderId: $folderId, ')
+          ..write('syncDirty: $syncDirty, ')
+          ..write('syncedSeq: $syncedSeq')
           ..write(')'))
         .toString();
   }
 
   @override
-  int get hashCode =>
-      Object.hash(id, title, createdAt, updatedAt, docJson, inkJson, folderId);
+  int get hashCode => Object.hash(id, title, createdAt, updatedAt, docJson,
+      inkJson, folderId, syncDirty, syncedSeq);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -4241,7 +4312,9 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
           other.updatedAt == this.updatedAt &&
           other.docJson == this.docJson &&
           other.inkJson == this.inkJson &&
-          other.folderId == this.folderId);
+          other.folderId == this.folderId &&
+          other.syncDirty == this.syncDirty &&
+          other.syncedSeq == this.syncedSeq);
 }
 
 class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
@@ -4252,6 +4325,8 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
   final Value<String> docJson;
   final Value<String> inkJson;
   final Value<String?> folderId;
+  final Value<bool> syncDirty;
+  final Value<int?> syncedSeq;
   final Value<int> rowid;
   const NotebooksCompanion({
     this.id = const Value.absent(),
@@ -4261,6 +4336,8 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
     this.docJson = const Value.absent(),
     this.inkJson = const Value.absent(),
     this.folderId = const Value.absent(),
+    this.syncDirty = const Value.absent(),
+    this.syncedSeq = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   NotebooksCompanion.insert({
@@ -4271,6 +4348,8 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
     required String docJson,
     required String inkJson,
     this.folderId = const Value.absent(),
+    this.syncDirty = const Value.absent(),
+    this.syncedSeq = const Value.absent(),
     this.rowid = const Value.absent(),
   })  : id = Value(id),
         title = Value(title),
@@ -4286,6 +4365,8 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
     Expression<String>? docJson,
     Expression<String>? inkJson,
     Expression<String>? folderId,
+    Expression<bool>? syncDirty,
+    Expression<int>? syncedSeq,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -4296,6 +4377,8 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
       if (docJson != null) 'doc_json': docJson,
       if (inkJson != null) 'ink_json': inkJson,
       if (folderId != null) 'folder_id': folderId,
+      if (syncDirty != null) 'sync_dirty': syncDirty,
+      if (syncedSeq != null) 'synced_seq': syncedSeq,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -4308,6 +4391,8 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
       Value<String>? docJson,
       Value<String>? inkJson,
       Value<String?>? folderId,
+      Value<bool>? syncDirty,
+      Value<int?>? syncedSeq,
       Value<int>? rowid}) {
     return NotebooksCompanion(
       id: id ?? this.id,
@@ -4317,6 +4402,8 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
       docJson: docJson ?? this.docJson,
       inkJson: inkJson ?? this.inkJson,
       folderId: folderId ?? this.folderId,
+      syncDirty: syncDirty ?? this.syncDirty,
+      syncedSeq: syncedSeq ?? this.syncedSeq,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -4345,6 +4432,12 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
     if (folderId.present) {
       map['folder_id'] = Variable<String>(folderId.value);
     }
+    if (syncDirty.present) {
+      map['sync_dirty'] = Variable<bool>(syncDirty.value);
+    }
+    if (syncedSeq.present) {
+      map['synced_seq'] = Variable<int>(syncedSeq.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -4361,7 +4454,525 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
           ..write('docJson: $docJson, ')
           ..write('inkJson: $inkJson, ')
           ..write('folderId: $folderId, ')
+          ..write('syncDirty: $syncDirty, ')
+          ..write('syncedSeq: $syncedSeq, ')
           ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $SyncTombstonesTable extends SyncTombstones
+    with TableInfo<$SyncTombstonesTable, SyncTombstoneRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $SyncTombstonesTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _entityTypeMeta =
+      const VerificationMeta('entityType');
+  @override
+  late final GeneratedColumn<String> entityType = GeneratedColumn<String>(
+      'entity_type', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _entityIdMeta =
+      const VerificationMeta('entityId');
+  @override
+  late final GeneratedColumn<String> entityId = GeneratedColumn<String>(
+      'entity_id', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _deletedAtMeta =
+      const VerificationMeta('deletedAt');
+  @override
+  late final GeneratedColumn<int> deletedAt = GeneratedColumn<int>(
+      'deleted_at', aliasedName, false,
+      type: DriftSqlType.int, requiredDuringInsert: true);
+  @override
+  List<GeneratedColumn> get $columns => [entityType, entityId, deletedAt];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'sync_tombstones';
+  @override
+  VerificationContext validateIntegrity(Insertable<SyncTombstoneRow> instance,
+      {bool isInserting = false}) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('entity_type')) {
+      context.handle(
+          _entityTypeMeta,
+          entityType.isAcceptableOrUnknown(
+              data['entity_type']!, _entityTypeMeta));
+    } else if (isInserting) {
+      context.missing(_entityTypeMeta);
+    }
+    if (data.containsKey('entity_id')) {
+      context.handle(_entityIdMeta,
+          entityId.isAcceptableOrUnknown(data['entity_id']!, _entityIdMeta));
+    } else if (isInserting) {
+      context.missing(_entityIdMeta);
+    }
+    if (data.containsKey('deleted_at')) {
+      context.handle(_deletedAtMeta,
+          deletedAt.isAcceptableOrUnknown(data['deleted_at']!, _deletedAtMeta));
+    } else if (isInserting) {
+      context.missing(_deletedAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {entityType, entityId};
+  @override
+  SyncTombstoneRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return SyncTombstoneRow(
+      entityType: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}entity_type'])!,
+      entityId: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}entity_id'])!,
+      deletedAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}deleted_at'])!,
+    );
+  }
+
+  @override
+  $SyncTombstonesTable createAlias(String alias) {
+    return $SyncTombstonesTable(attachedDatabase, alias);
+  }
+}
+
+class SyncTombstoneRow extends DataClass
+    implements Insertable<SyncTombstoneRow> {
+  /// 'notebook' or 'note'. Not an enum column: the server validates the
+  /// vocabulary and a client that guesses wrong should fail loudly there.
+  final String entityType;
+  final String entityId;
+  final int deletedAt;
+  const SyncTombstoneRow(
+      {required this.entityType,
+      required this.entityId,
+      required this.deletedAt});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['entity_type'] = Variable<String>(entityType);
+    map['entity_id'] = Variable<String>(entityId);
+    map['deleted_at'] = Variable<int>(deletedAt);
+    return map;
+  }
+
+  SyncTombstonesCompanion toCompanion(bool nullToAbsent) {
+    return SyncTombstonesCompanion(
+      entityType: Value(entityType),
+      entityId: Value(entityId),
+      deletedAt: Value(deletedAt),
+    );
+  }
+
+  factory SyncTombstoneRow.fromJson(Map<String, dynamic> json,
+      {ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return SyncTombstoneRow(
+      entityType: serializer.fromJson<String>(json['entityType']),
+      entityId: serializer.fromJson<String>(json['entityId']),
+      deletedAt: serializer.fromJson<int>(json['deletedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'entityType': serializer.toJson<String>(entityType),
+      'entityId': serializer.toJson<String>(entityId),
+      'deletedAt': serializer.toJson<int>(deletedAt),
+    };
+  }
+
+  SyncTombstoneRow copyWith(
+          {String? entityType, String? entityId, int? deletedAt}) =>
+      SyncTombstoneRow(
+        entityType: entityType ?? this.entityType,
+        entityId: entityId ?? this.entityId,
+        deletedAt: deletedAt ?? this.deletedAt,
+      );
+  SyncTombstoneRow copyWithCompanion(SyncTombstonesCompanion data) {
+    return SyncTombstoneRow(
+      entityType:
+          data.entityType.present ? data.entityType.value : this.entityType,
+      entityId: data.entityId.present ? data.entityId.value : this.entityId,
+      deletedAt: data.deletedAt.present ? data.deletedAt.value : this.deletedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('SyncTombstoneRow(')
+          ..write('entityType: $entityType, ')
+          ..write('entityId: $entityId, ')
+          ..write('deletedAt: $deletedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(entityType, entityId, deletedAt);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is SyncTombstoneRow &&
+          other.entityType == this.entityType &&
+          other.entityId == this.entityId &&
+          other.deletedAt == this.deletedAt);
+}
+
+class SyncTombstonesCompanion extends UpdateCompanion<SyncTombstoneRow> {
+  final Value<String> entityType;
+  final Value<String> entityId;
+  final Value<int> deletedAt;
+  final Value<int> rowid;
+  const SyncTombstonesCompanion({
+    this.entityType = const Value.absent(),
+    this.entityId = const Value.absent(),
+    this.deletedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  SyncTombstonesCompanion.insert({
+    required String entityType,
+    required String entityId,
+    required int deletedAt,
+    this.rowid = const Value.absent(),
+  })  : entityType = Value(entityType),
+        entityId = Value(entityId),
+        deletedAt = Value(deletedAt);
+  static Insertable<SyncTombstoneRow> custom({
+    Expression<String>? entityType,
+    Expression<String>? entityId,
+    Expression<int>? deletedAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (entityType != null) 'entity_type': entityType,
+      if (entityId != null) 'entity_id': entityId,
+      if (deletedAt != null) 'deleted_at': deletedAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  SyncTombstonesCompanion copyWith(
+      {Value<String>? entityType,
+      Value<String>? entityId,
+      Value<int>? deletedAt,
+      Value<int>? rowid}) {
+    return SyncTombstonesCompanion(
+      entityType: entityType ?? this.entityType,
+      entityId: entityId ?? this.entityId,
+      deletedAt: deletedAt ?? this.deletedAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (entityType.present) {
+      map['entity_type'] = Variable<String>(entityType.value);
+    }
+    if (entityId.present) {
+      map['entity_id'] = Variable<String>(entityId.value);
+    }
+    if (deletedAt.present) {
+      map['deleted_at'] = Variable<int>(deletedAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('SyncTombstonesCompanion(')
+          ..write('entityType: $entityType, ')
+          ..write('entityId: $entityId, ')
+          ..write('deletedAt: $deletedAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $SyncStatesTable extends SyncStates
+    with TableInfo<$SyncStatesTable, SyncStateRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $SyncStatesTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<int> id = GeneratedColumn<int>(
+      'id', aliasedName, false,
+      type: DriftSqlType.int,
+      requiredDuringInsert: false,
+      defaultValue: const Constant(1));
+  static const VerificationMeta _deviceIdMeta =
+      const VerificationMeta('deviceId');
+  @override
+  late final GeneratedColumn<String> deviceId = GeneratedColumn<String>(
+      'device_id', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _lastPulledSeqMeta =
+      const VerificationMeta('lastPulledSeq');
+  @override
+  late final GeneratedColumn<int> lastPulledSeq = GeneratedColumn<int>(
+      'last_pulled_seq', aliasedName, false,
+      type: DriftSqlType.int,
+      requiredDuringInsert: false,
+      defaultValue: const Constant(0));
+  static const VerificationMeta _lastSyncedAtMeta =
+      const VerificationMeta('lastSyncedAt');
+  @override
+  late final GeneratedColumn<int> lastSyncedAt = GeneratedColumn<int>(
+      'last_synced_at', aliasedName, true,
+      type: DriftSqlType.int, requiredDuringInsert: false);
+  @override
+  List<GeneratedColumn> get $columns =>
+      [id, deviceId, lastPulledSeq, lastSyncedAt];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'sync_state';
+  @override
+  VerificationContext validateIntegrity(Insertable<SyncStateRow> instance,
+      {bool isInserting = false}) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    }
+    if (data.containsKey('device_id')) {
+      context.handle(_deviceIdMeta,
+          deviceId.isAcceptableOrUnknown(data['device_id']!, _deviceIdMeta));
+    } else if (isInserting) {
+      context.missing(_deviceIdMeta);
+    }
+    if (data.containsKey('last_pulled_seq')) {
+      context.handle(
+          _lastPulledSeqMeta,
+          lastPulledSeq.isAcceptableOrUnknown(
+              data['last_pulled_seq']!, _lastPulledSeqMeta));
+    }
+    if (data.containsKey('last_synced_at')) {
+      context.handle(
+          _lastSyncedAtMeta,
+          lastSyncedAt.isAcceptableOrUnknown(
+              data['last_synced_at']!, _lastSyncedAtMeta));
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  SyncStateRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return SyncStateRow(
+      id: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}id'])!,
+      deviceId: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}device_id'])!,
+      lastPulledSeq: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}last_pulled_seq'])!,
+      lastSyncedAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}last_synced_at']),
+    );
+  }
+
+  @override
+  $SyncStatesTable createAlias(String alias) {
+    return $SyncStatesTable(attachedDatabase, alias);
+  }
+}
+
+class SyncStateRow extends DataClass implements Insertable<SyncStateRow> {
+  final int id;
+
+  /// Stable per-install replica id. A reinstall is legitimately a new replica
+  /// and syncs from zero rather than inheriting a checkpoint it cannot honour.
+  final String deviceId;
+
+  /// Highest server sequence this device has applied IN FULL. Advanced only
+  /// after every change in a page lands, so a crash mid-page re-fetches that
+  /// page instead of skipping it.
+  final int lastPulledSeq;
+  final int? lastSyncedAt;
+  const SyncStateRow(
+      {required this.id,
+      required this.deviceId,
+      required this.lastPulledSeq,
+      this.lastSyncedAt});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<int>(id);
+    map['device_id'] = Variable<String>(deviceId);
+    map['last_pulled_seq'] = Variable<int>(lastPulledSeq);
+    if (!nullToAbsent || lastSyncedAt != null) {
+      map['last_synced_at'] = Variable<int>(lastSyncedAt);
+    }
+    return map;
+  }
+
+  SyncStatesCompanion toCompanion(bool nullToAbsent) {
+    return SyncStatesCompanion(
+      id: Value(id),
+      deviceId: Value(deviceId),
+      lastPulledSeq: Value(lastPulledSeq),
+      lastSyncedAt: lastSyncedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(lastSyncedAt),
+    );
+  }
+
+  factory SyncStateRow.fromJson(Map<String, dynamic> json,
+      {ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return SyncStateRow(
+      id: serializer.fromJson<int>(json['id']),
+      deviceId: serializer.fromJson<String>(json['deviceId']),
+      lastPulledSeq: serializer.fromJson<int>(json['lastPulledSeq']),
+      lastSyncedAt: serializer.fromJson<int?>(json['lastSyncedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<int>(id),
+      'deviceId': serializer.toJson<String>(deviceId),
+      'lastPulledSeq': serializer.toJson<int>(lastPulledSeq),
+      'lastSyncedAt': serializer.toJson<int?>(lastSyncedAt),
+    };
+  }
+
+  SyncStateRow copyWith(
+          {int? id,
+          String? deviceId,
+          int? lastPulledSeq,
+          Value<int?> lastSyncedAt = const Value.absent()}) =>
+      SyncStateRow(
+        id: id ?? this.id,
+        deviceId: deviceId ?? this.deviceId,
+        lastPulledSeq: lastPulledSeq ?? this.lastPulledSeq,
+        lastSyncedAt:
+            lastSyncedAt.present ? lastSyncedAt.value : this.lastSyncedAt,
+      );
+  SyncStateRow copyWithCompanion(SyncStatesCompanion data) {
+    return SyncStateRow(
+      id: data.id.present ? data.id.value : this.id,
+      deviceId: data.deviceId.present ? data.deviceId.value : this.deviceId,
+      lastPulledSeq: data.lastPulledSeq.present
+          ? data.lastPulledSeq.value
+          : this.lastPulledSeq,
+      lastSyncedAt: data.lastSyncedAt.present
+          ? data.lastSyncedAt.value
+          : this.lastSyncedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('SyncStateRow(')
+          ..write('id: $id, ')
+          ..write('deviceId: $deviceId, ')
+          ..write('lastPulledSeq: $lastPulledSeq, ')
+          ..write('lastSyncedAt: $lastSyncedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(id, deviceId, lastPulledSeq, lastSyncedAt);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is SyncStateRow &&
+          other.id == this.id &&
+          other.deviceId == this.deviceId &&
+          other.lastPulledSeq == this.lastPulledSeq &&
+          other.lastSyncedAt == this.lastSyncedAt);
+}
+
+class SyncStatesCompanion extends UpdateCompanion<SyncStateRow> {
+  final Value<int> id;
+  final Value<String> deviceId;
+  final Value<int> lastPulledSeq;
+  final Value<int?> lastSyncedAt;
+  const SyncStatesCompanion({
+    this.id = const Value.absent(),
+    this.deviceId = const Value.absent(),
+    this.lastPulledSeq = const Value.absent(),
+    this.lastSyncedAt = const Value.absent(),
+  });
+  SyncStatesCompanion.insert({
+    this.id = const Value.absent(),
+    required String deviceId,
+    this.lastPulledSeq = const Value.absent(),
+    this.lastSyncedAt = const Value.absent(),
+  }) : deviceId = Value(deviceId);
+  static Insertable<SyncStateRow> custom({
+    Expression<int>? id,
+    Expression<String>? deviceId,
+    Expression<int>? lastPulledSeq,
+    Expression<int>? lastSyncedAt,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (deviceId != null) 'device_id': deviceId,
+      if (lastPulledSeq != null) 'last_pulled_seq': lastPulledSeq,
+      if (lastSyncedAt != null) 'last_synced_at': lastSyncedAt,
+    });
+  }
+
+  SyncStatesCompanion copyWith(
+      {Value<int>? id,
+      Value<String>? deviceId,
+      Value<int>? lastPulledSeq,
+      Value<int?>? lastSyncedAt}) {
+    return SyncStatesCompanion(
+      id: id ?? this.id,
+      deviceId: deviceId ?? this.deviceId,
+      lastPulledSeq: lastPulledSeq ?? this.lastPulledSeq,
+      lastSyncedAt: lastSyncedAt ?? this.lastSyncedAt,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<int>(id.value);
+    }
+    if (deviceId.present) {
+      map['device_id'] = Variable<String>(deviceId.value);
+    }
+    if (lastPulledSeq.present) {
+      map['last_pulled_seq'] = Variable<int>(lastPulledSeq.value);
+    }
+    if (lastSyncedAt.present) {
+      map['last_synced_at'] = Variable<int>(lastSyncedAt.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('SyncStatesCompanion(')
+          ..write('id: $id, ')
+          ..write('deviceId: $deviceId, ')
+          ..write('lastPulledSeq: $lastPulledSeq, ')
+          ..write('lastSyncedAt: $lastSyncedAt')
           ..write(')'))
         .toString();
   }
@@ -4386,6 +4997,8 @@ abstract class _$LocalDb extends GeneratedDatabase {
   late final $LocalDeletionTicketsTable localDeletionTickets =
       $LocalDeletionTicketsTable(this);
   late final $NotebooksTable notebooks = $NotebooksTable(this);
+  late final $SyncTombstonesTable syncTombstones = $SyncTombstonesTable(this);
+  late final $SyncStatesTable syncStates = $SyncStatesTable(this);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -4400,7 +5013,9 @@ abstract class _$LocalDb extends GeneratedDatabase {
         captureReservations,
         localDeletionBatches,
         localDeletionTickets,
-        notebooks
+        notebooks,
+        syncTombstones,
+        syncStates
       ];
   @override
   StreamQueryUpdateRules get streamUpdateRules => const StreamQueryUpdateRules(
@@ -6559,6 +7174,8 @@ typedef $$NotebooksTableCreateCompanionBuilder = NotebooksCompanion Function({
   required String docJson,
   required String inkJson,
   Value<String?> folderId,
+  Value<bool> syncDirty,
+  Value<int?> syncedSeq,
   Value<int> rowid,
 });
 typedef $$NotebooksTableUpdateCompanionBuilder = NotebooksCompanion Function({
@@ -6569,6 +7186,8 @@ typedef $$NotebooksTableUpdateCompanionBuilder = NotebooksCompanion Function({
   Value<String> docJson,
   Value<String> inkJson,
   Value<String?> folderId,
+  Value<bool> syncDirty,
+  Value<int?> syncedSeq,
   Value<int> rowid,
 });
 
@@ -6601,6 +7220,12 @@ class $$NotebooksTableFilterComposer
 
   ColumnFilters<String> get folderId => $composableBuilder(
       column: $table.folderId, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<bool> get syncDirty => $composableBuilder(
+      column: $table.syncDirty, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get syncedSeq => $composableBuilder(
+      column: $table.syncedSeq, builder: (column) => ColumnFilters(column));
 }
 
 class $$NotebooksTableOrderingComposer
@@ -6632,6 +7257,12 @@ class $$NotebooksTableOrderingComposer
 
   ColumnOrderings<String> get folderId => $composableBuilder(
       column: $table.folderId, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<bool> get syncDirty => $composableBuilder(
+      column: $table.syncDirty, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get syncedSeq => $composableBuilder(
+      column: $table.syncedSeq, builder: (column) => ColumnOrderings(column));
 }
 
 class $$NotebooksTableAnnotationComposer
@@ -6663,6 +7294,12 @@ class $$NotebooksTableAnnotationComposer
 
   GeneratedColumn<String> get folderId =>
       $composableBuilder(column: $table.folderId, builder: (column) => column);
+
+  GeneratedColumn<bool> get syncDirty =>
+      $composableBuilder(column: $table.syncDirty, builder: (column) => column);
+
+  GeneratedColumn<int> get syncedSeq =>
+      $composableBuilder(column: $table.syncedSeq, builder: (column) => column);
 }
 
 class $$NotebooksTableTableManager extends RootTableManager<
@@ -6695,6 +7332,8 @@ class $$NotebooksTableTableManager extends RootTableManager<
             Value<String> docJson = const Value.absent(),
             Value<String> inkJson = const Value.absent(),
             Value<String?> folderId = const Value.absent(),
+            Value<bool> syncDirty = const Value.absent(),
+            Value<int?> syncedSeq = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               NotebooksCompanion(
@@ -6705,6 +7344,8 @@ class $$NotebooksTableTableManager extends RootTableManager<
             docJson: docJson,
             inkJson: inkJson,
             folderId: folderId,
+            syncDirty: syncDirty,
+            syncedSeq: syncedSeq,
             rowid: rowid,
           ),
           createCompanionCallback: ({
@@ -6715,6 +7356,8 @@ class $$NotebooksTableTableManager extends RootTableManager<
             required String docJson,
             required String inkJson,
             Value<String?> folderId = const Value.absent(),
+            Value<bool> syncDirty = const Value.absent(),
+            Value<int?> syncedSeq = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               NotebooksCompanion.insert(
@@ -6725,6 +7368,8 @@ class $$NotebooksTableTableManager extends RootTableManager<
             docJson: docJson,
             inkJson: inkJson,
             folderId: folderId,
+            syncDirty: syncDirty,
+            syncedSeq: syncedSeq,
             rowid: rowid,
           ),
           withReferenceMapper: (p0) => p0
@@ -6745,6 +7390,295 @@ typedef $$NotebooksTableProcessedTableManager = ProcessedTableManager<
     $$NotebooksTableUpdateCompanionBuilder,
     (NotebookRow, BaseReferences<_$LocalDb, $NotebooksTable, NotebookRow>),
     NotebookRow,
+    PrefetchHooks Function()>;
+typedef $$SyncTombstonesTableCreateCompanionBuilder = SyncTombstonesCompanion
+    Function({
+  required String entityType,
+  required String entityId,
+  required int deletedAt,
+  Value<int> rowid,
+});
+typedef $$SyncTombstonesTableUpdateCompanionBuilder = SyncTombstonesCompanion
+    Function({
+  Value<String> entityType,
+  Value<String> entityId,
+  Value<int> deletedAt,
+  Value<int> rowid,
+});
+
+class $$SyncTombstonesTableFilterComposer
+    extends Composer<_$LocalDb, $SyncTombstonesTable> {
+  $$SyncTombstonesTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get entityType => $composableBuilder(
+      column: $table.entityType, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get entityId => $composableBuilder(
+      column: $table.entityId, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get deletedAt => $composableBuilder(
+      column: $table.deletedAt, builder: (column) => ColumnFilters(column));
+}
+
+class $$SyncTombstonesTableOrderingComposer
+    extends Composer<_$LocalDb, $SyncTombstonesTable> {
+  $$SyncTombstonesTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get entityType => $composableBuilder(
+      column: $table.entityType, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get entityId => $composableBuilder(
+      column: $table.entityId, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get deletedAt => $composableBuilder(
+      column: $table.deletedAt, builder: (column) => ColumnOrderings(column));
+}
+
+class $$SyncTombstonesTableAnnotationComposer
+    extends Composer<_$LocalDb, $SyncTombstonesTable> {
+  $$SyncTombstonesTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get entityType => $composableBuilder(
+      column: $table.entityType, builder: (column) => column);
+
+  GeneratedColumn<String> get entityId =>
+      $composableBuilder(column: $table.entityId, builder: (column) => column);
+
+  GeneratedColumn<int> get deletedAt =>
+      $composableBuilder(column: $table.deletedAt, builder: (column) => column);
+}
+
+class $$SyncTombstonesTableTableManager extends RootTableManager<
+    _$LocalDb,
+    $SyncTombstonesTable,
+    SyncTombstoneRow,
+    $$SyncTombstonesTableFilterComposer,
+    $$SyncTombstonesTableOrderingComposer,
+    $$SyncTombstonesTableAnnotationComposer,
+    $$SyncTombstonesTableCreateCompanionBuilder,
+    $$SyncTombstonesTableUpdateCompanionBuilder,
+    (
+      SyncTombstoneRow,
+      BaseReferences<_$LocalDb, $SyncTombstonesTable, SyncTombstoneRow>
+    ),
+    SyncTombstoneRow,
+    PrefetchHooks Function()> {
+  $$SyncTombstonesTableTableManager(_$LocalDb db, $SyncTombstonesTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$SyncTombstonesTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$SyncTombstonesTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$SyncTombstonesTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback: ({
+            Value<String> entityType = const Value.absent(),
+            Value<String> entityId = const Value.absent(),
+            Value<int> deletedAt = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              SyncTombstonesCompanion(
+            entityType: entityType,
+            entityId: entityId,
+            deletedAt: deletedAt,
+            rowid: rowid,
+          ),
+          createCompanionCallback: ({
+            required String entityType,
+            required String entityId,
+            required int deletedAt,
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              SyncTombstonesCompanion.insert(
+            entityType: entityType,
+            entityId: entityId,
+            deletedAt: deletedAt,
+            rowid: rowid,
+          ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ));
+}
+
+typedef $$SyncTombstonesTableProcessedTableManager = ProcessedTableManager<
+    _$LocalDb,
+    $SyncTombstonesTable,
+    SyncTombstoneRow,
+    $$SyncTombstonesTableFilterComposer,
+    $$SyncTombstonesTableOrderingComposer,
+    $$SyncTombstonesTableAnnotationComposer,
+    $$SyncTombstonesTableCreateCompanionBuilder,
+    $$SyncTombstonesTableUpdateCompanionBuilder,
+    (
+      SyncTombstoneRow,
+      BaseReferences<_$LocalDb, $SyncTombstonesTable, SyncTombstoneRow>
+    ),
+    SyncTombstoneRow,
+    PrefetchHooks Function()>;
+typedef $$SyncStatesTableCreateCompanionBuilder = SyncStatesCompanion Function({
+  Value<int> id,
+  required String deviceId,
+  Value<int> lastPulledSeq,
+  Value<int?> lastSyncedAt,
+});
+typedef $$SyncStatesTableUpdateCompanionBuilder = SyncStatesCompanion Function({
+  Value<int> id,
+  Value<String> deviceId,
+  Value<int> lastPulledSeq,
+  Value<int?> lastSyncedAt,
+});
+
+class $$SyncStatesTableFilterComposer
+    extends Composer<_$LocalDb, $SyncStatesTable> {
+  $$SyncStatesTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get id => $composableBuilder(
+      column: $table.id, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get deviceId => $composableBuilder(
+      column: $table.deviceId, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get lastPulledSeq => $composableBuilder(
+      column: $table.lastPulledSeq, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get lastSyncedAt => $composableBuilder(
+      column: $table.lastSyncedAt, builder: (column) => ColumnFilters(column));
+}
+
+class $$SyncStatesTableOrderingComposer
+    extends Composer<_$LocalDb, $SyncStatesTable> {
+  $$SyncStatesTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get id => $composableBuilder(
+      column: $table.id, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get deviceId => $composableBuilder(
+      column: $table.deviceId, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get lastPulledSeq => $composableBuilder(
+      column: $table.lastPulledSeq,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get lastSyncedAt => $composableBuilder(
+      column: $table.lastSyncedAt,
+      builder: (column) => ColumnOrderings(column));
+}
+
+class $$SyncStatesTableAnnotationComposer
+    extends Composer<_$LocalDb, $SyncStatesTable> {
+  $$SyncStatesTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<String> get deviceId =>
+      $composableBuilder(column: $table.deviceId, builder: (column) => column);
+
+  GeneratedColumn<int> get lastPulledSeq => $composableBuilder(
+      column: $table.lastPulledSeq, builder: (column) => column);
+
+  GeneratedColumn<int> get lastSyncedAt => $composableBuilder(
+      column: $table.lastSyncedAt, builder: (column) => column);
+}
+
+class $$SyncStatesTableTableManager extends RootTableManager<
+    _$LocalDb,
+    $SyncStatesTable,
+    SyncStateRow,
+    $$SyncStatesTableFilterComposer,
+    $$SyncStatesTableOrderingComposer,
+    $$SyncStatesTableAnnotationComposer,
+    $$SyncStatesTableCreateCompanionBuilder,
+    $$SyncStatesTableUpdateCompanionBuilder,
+    (SyncStateRow, BaseReferences<_$LocalDb, $SyncStatesTable, SyncStateRow>),
+    SyncStateRow,
+    PrefetchHooks Function()> {
+  $$SyncStatesTableTableManager(_$LocalDb db, $SyncStatesTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$SyncStatesTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$SyncStatesTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$SyncStatesTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback: ({
+            Value<int> id = const Value.absent(),
+            Value<String> deviceId = const Value.absent(),
+            Value<int> lastPulledSeq = const Value.absent(),
+            Value<int?> lastSyncedAt = const Value.absent(),
+          }) =>
+              SyncStatesCompanion(
+            id: id,
+            deviceId: deviceId,
+            lastPulledSeq: lastPulledSeq,
+            lastSyncedAt: lastSyncedAt,
+          ),
+          createCompanionCallback: ({
+            Value<int> id = const Value.absent(),
+            required String deviceId,
+            Value<int> lastPulledSeq = const Value.absent(),
+            Value<int?> lastSyncedAt = const Value.absent(),
+          }) =>
+              SyncStatesCompanion.insert(
+            id: id,
+            deviceId: deviceId,
+            lastPulledSeq: lastPulledSeq,
+            lastSyncedAt: lastSyncedAt,
+          ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ));
+}
+
+typedef $$SyncStatesTableProcessedTableManager = ProcessedTableManager<
+    _$LocalDb,
+    $SyncStatesTable,
+    SyncStateRow,
+    $$SyncStatesTableFilterComposer,
+    $$SyncStatesTableOrderingComposer,
+    $$SyncStatesTableAnnotationComposer,
+    $$SyncStatesTableCreateCompanionBuilder,
+    $$SyncStatesTableUpdateCompanionBuilder,
+    (SyncStateRow, BaseReferences<_$LocalDb, $SyncStatesTable, SyncStateRow>),
+    SyncStateRow,
     PrefetchHooks Function()>;
 
 class $LocalDbManager {
@@ -6770,4 +7704,8 @@ class $LocalDbManager {
       $$LocalDeletionTicketsTableTableManager(_db, _db.localDeletionTickets);
   $$NotebooksTableTableManager get notebooks =>
       $$NotebooksTableTableManager(_db, _db.notebooks);
+  $$SyncTombstonesTableTableManager get syncTombstones =>
+      $$SyncTombstonesTableTableManager(_db, _db.syncTombstones);
+  $$SyncStatesTableTableManager get syncStates =>
+      $$SyncStatesTableTableManager(_db, _db.syncStates);
 }

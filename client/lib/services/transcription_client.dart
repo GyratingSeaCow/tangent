@@ -6,6 +6,7 @@ import 'dart:io';
 import 'package:dio/dio.dart';
 
 import '../models/api_exception.dart';
+import '../models/sync_change.dart';
 import '../models/server_info.dart';
 import 'meeting_transcript_formatter.dart';
 
@@ -396,6 +397,64 @@ class TranscriptionClient {
       };
     }
     return false;
+  }
+
+  // ---- multi-device sync ---------------------------------------------------
+
+  /// Registers this replica. Idempotent by device id.
+  Future<void> registerDevice({
+    required String deviceId,
+    required String displayName,
+    required String platform,
+  }) async {
+    await _fetch(
+      '/v1/devices',
+      method: 'POST',
+      data: <String, dynamic>{
+        'device_id': deviceId,
+        'display_name': displayName,
+        'platform': platform,
+      },
+    );
+  }
+
+  /// Changes after [sinceSeq], excluding this device's own echoes.
+  Future<SyncPullPage> pullChanges({
+    required String deviceId,
+    required int sinceSeq,
+  }) async {
+    final Map<String, dynamic> resp = await _fetch(
+      '/v1/sync/pull?device_id=$deviceId&since_seq=$sinceSeq',
+    );
+    final List<dynamic> raw =
+        (resp['changes'] as List<dynamic>?) ?? const <dynamic>[];
+    return SyncPullPage(
+      changes: raw
+          .whereType<Map<String, dynamic>>()
+          .map(RemoteChange.fromJson)
+          .toList(growable: false),
+      headSeq: (resp['head_seq'] as num?)?.toInt() ?? sinceSeq,
+      hasMore: resp['has_more'] == true,
+    );
+  }
+
+  /// Sends local changes. Results are per entity, so one rejection does not
+  /// discard the rest of the batch.
+  Future<List<PushResult>> pushChanges({
+    required String deviceId,
+    required List<Map<String, dynamic>> changes,
+  }) async {
+    final Map<String, dynamic> resp = await _fetch(
+      '/v1/sync/push',
+      method: 'POST',
+      data: <String, dynamic>{'device_id': deviceId, 'changes': changes},
+    );
+    final List<dynamic> raw =
+        (resp['results'] as List<dynamic>?) ?? const <dynamic>[];
+    return raw
+        .whereType<Map<String, dynamic>>()
+        .map(PushResult.fromJson)
+        .toList(growable: false);
   }
 
   Future<Map<String, dynamic>> _fetch(

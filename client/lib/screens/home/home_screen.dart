@@ -6,6 +6,8 @@ import '../../data/local_db.dart';
 
 import '../../data/storage/storage_contract.dart';
 import '../../models/dump_mode.dart';
+import '../../services/document_sync_engine.dart';
+import '../../widgets/sync_button.dart' show syncMessageFor;
 
 import '../dump/dump_detail_screen.dart';
 import '../dump/dumps_list_screen.dart';
@@ -124,10 +126,16 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   Future<void> _syncNow() async {
     setState(() => _syncing = true);
     try {
+      // Two different things share this button: audio backup (opt-in, Wi-Fi
+      // gated) and document sync (notebooks and notes, always allowed). A
+      // second app-bar button for the second kind would leave the user
+      // guessing which one they need, so one press does both.
       await ref.read(syncEngineProvider).syncNow();
+      final SyncReport report =
+          await ref.read(documentSyncEngineProvider).syncNow();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Sync complete')),
+          SnackBar(content: Text(syncMessageFor(report))),
         );
       }
     } catch (e) {

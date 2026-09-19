@@ -99,6 +99,58 @@ class Notebooks extends Table {
   /// Null means unfiled. Deliberately NOT a foreign key with cascade: a
   /// deleted folder must unfile its notebooks, never delete them.
   TextColumn get folderId => text().nullable()();
+
+  /// True when this notebook has local edits the server has not accepted.
+  ///
+  /// Set on every local save and cleared only by a push the server confirmed.
+  /// Defaulting to TRUE matters: notebooks that already existed before sync
+  /// arrived have never been pushed, so treating them as clean would leave a
+  /// user's entire library invisible to their other devices forever.
+  BoolColumn get syncDirty => boolean().withDefault(const Constant(true))();
+
+  /// The server sequence this row was last reconciled at, or null if never.
+  /// Diagnostic: it makes "did this actually sync?" answerable from the data.
+  IntColumn get syncedSeq => integer().nullable()();
+  @override
+  Set<Column> get primaryKey => {id};
+}
+
+/// Deletions waiting to be told to the server.
+///
+/// A local delete removes the row, which would otherwise make the deletion
+/// unpushable — the other device would never hear about it and would push the
+/// notebook straight back on its next sync. The tombstone outlives the row
+/// just long enough to be delivered.
+@DataClassName('SyncTombstoneRow')
+class SyncTombstones extends Table {
+  @override
+  String get tableName => 'sync_tombstones';
+
+  /// 'notebook' or 'note'. Not an enum column: the server validates the
+  /// vocabulary and a client that guesses wrong should fail loudly there.
+  TextColumn get entityType => text()();
+  TextColumn get entityId => text()();
+  IntColumn get deletedAt => integer()();
+  @override
+  Set<Column> get primaryKey => {entityType, entityId};
+}
+
+/// This device's sync identity and checkpoint. Exactly one row, id = 1.
+@DataClassName('SyncStateRow')
+class SyncStates extends Table {
+  @override
+  String get tableName => 'sync_state';
+  IntColumn get id => integer().withDefault(const Constant(1))();
+
+  /// Stable per-install replica id. A reinstall is legitimately a new replica
+  /// and syncs from zero rather than inheriting a checkpoint it cannot honour.
+  TextColumn get deviceId => text()();
+
+  /// Highest server sequence this device has applied IN FULL. Advanced only
+  /// after every change in a page lands, so a crash mid-page re-fetches that
+  /// page instead of skipping it.
+  IntColumn get lastPulledSeq => integer().withDefault(const Constant(0))();
+  IntColumn get lastSyncedAt => integer().nullable()();
   @override
   Set<Column> get primaryKey => {id};
 }
@@ -115,6 +167,8 @@ class Notebooks extends Table {
     LocalDeletionBatches,
     LocalDeletionTickets,
     Notebooks,
+    SyncTombstones,
+    SyncStates,
   ],
 )
 class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
@@ -123,7 +177,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   LocalDb.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 8;
+  int get schemaVersion => 9;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -213,8 +267,174 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
               }
             }
           }
+          if (from < 9) {
+            // Multi-device sync. Purely additive: two new tables, and two new
+            // columns on notebooks.
+            await m.createTable(syncTombstones);
+            await m.createTable(syncStates);
+            // As with v7/v8: createTable(notebooks) during an upgrade builds
+            // from the CURRENT definition, which already carries these
+            // columns. Only a database that genuinely arrived with an older
+            // notebooks table needs them added, and adding a column twice
+            // throws "duplicate column name" — which would leave the app
+            // unable to open its own database.
+            final List<QueryRow> notebookColumns =
+                await customSelect('PRAGMA table_info(notebooks)').get();
+            final Set<String> present = notebookColumns
+                .map((QueryRow row) => row.data['name'] as String)
+                .toSet();
+            if (notebookColumns.isEmpty) {
+              // No notebooks table at all. A genuine v8 database has one (v6
+              // created it), but the version number is not evidence — ask the
+              // database, the same way the v7 and v8 steps do. createTable
+              // builds from the current definition, so it arrives with both
+              // sync columns already on it.
+              await m.createTable(notebooks);
+            } else {
+              if (!present.contains('sync_dirty')) {
+                await m.addColumn(notebooks, notebooks.syncDirty);
+              }
+              if (!present.contains('synced_seq')) {
+                await m.addColumn(notebooks, notebooks.syncedSeq);
+              }
+              // Existing notebooks have never been pushed. addColumn backfills
+              // the default, so this covers any row that somehow arrived NULL:
+              // a notebook wrongly marked clean would stay invisible to the
+              // user's other devices permanently, with nothing on screen to
+              // reveal it.
+              await customStatement(
+                'UPDATE notebooks SET sync_dirty = 1 WHERE sync_dirty IS NULL',
+              );
+            }
+          }
         },
       );
+
+  // ---- multi-device sync -------------------------------------------------
+
+  /// This device's sync identity, created on first use.
+  ///
+  /// [newDeviceId] is supplied by the caller rather than generated here so the
+  /// id is testable and so identity generation lives with the rest of the sync
+  /// policy instead of in the data layer.
+  Future<SyncStateRow> syncState({required String newDeviceId}) async {
+    final SyncStateRow? existing =
+        await (select(syncStates)..where((t) => t.id.equals(1)))
+            .getSingleOrNull();
+    if (existing != null) return existing;
+    await into(syncStates).insert(
+      SyncStatesCompanion.insert(deviceId: newDeviceId),
+      mode: InsertMode.insertOrIgnore,
+    );
+    return (select(syncStates)..where((t) => t.id.equals(1))).getSingle();
+  }
+
+  /// Advances the pull checkpoint. Called only after a whole page is applied.
+  Future<void> recordPullCheckpoint(int seq) async {
+    await (update(syncStates)..where((t) => t.id.equals(1))).write(
+      SyncStatesCompanion(
+        lastPulledSeq: Value(seq),
+        lastSyncedAt: Value(DateTime.now().millisecondsSinceEpoch),
+      ),
+    );
+  }
+
+  /// Notebooks with local edits the server has not confirmed.
+  Future<List<NotebookRow>> notebooksNeedingPush() =>
+      (select(notebooks)..where((t) => t.syncDirty.equals(true))).get();
+
+  /// Marks a notebook as accepted by the server at [seq].
+  ///
+  /// Guarded on `updated_at`: if the notebook was edited again while the push
+  /// was in flight, the row is still dirty and clearing the flag here would
+  /// strand that newer edit, unsynced and invisible, until the next unrelated
+  /// save happened to touch it.
+  Future<void> markNotebookSynced(
+    String id, {
+    required int seq,
+    required int pushedUpdatedAt,
+  }) async {
+    await (update(notebooks)
+          ..where((t) => t.id.equals(id) & t.updatedAt.equals(pushedUpdatedAt)))
+        .write(
+      NotebooksCompanion(syncDirty: const Value(false), syncedSeq: Value(seq)),
+    );
+  }
+
+  /// Marks a notebook dirty. Every local save funnels through here.
+  Future<void> markNotebookDirty(String id) async {
+    await (update(notebooks)..where((t) => t.id.equals(id)))
+        .write(const NotebooksCompanion(syncDirty: Value(true)));
+  }
+
+  Future<void> recordTombstone({
+    required String entityType,
+    required String entityId,
+  }) async {
+    await into(syncTombstones).insert(
+      SyncTombstonesCompanion.insert(
+        entityType: entityType,
+        entityId: entityId,
+        deletedAt: DateTime.now().millisecondsSinceEpoch,
+      ),
+      mode: InsertMode.insertOrReplace,
+    );
+  }
+
+  Future<List<SyncTombstoneRow>> pendingTombstones() =>
+      select(syncTombstones).get();
+
+  /// One notebook row, or null. Used by merge to see what is already here.
+  Future<NotebookRow?> getNotebookRow(String id) =>
+      (select(notebooks)..where((t) => t.id.equals(id))).getSingleOrNull();
+
+  Future<void> clearTombstone({
+    required String entityType,
+    required String entityId,
+  }) async {
+    await (delete(syncTombstones)
+          ..where(
+            (t) => t.entityType.equals(entityType) & t.entityId.equals(entityId),
+          ))
+        .go();
+  }
+
+  /// Applies a notebook the server sent us.
+  ///
+  /// Marked clean, not dirty: this content CAME from the server, so pushing it
+  /// straight back would echo every pulled change into a new change_log entry
+  /// and the two devices would trade the same notebook forever.
+  Future<void> applyRemoteNotebook({
+    required String id,
+    required String title,
+    required int createdAt,
+    required int updatedAt,
+    required String docJson,
+    required String inkJson,
+    required int seq,
+  }) async {
+    await into(notebooks).insert(
+      NotebooksCompanion.insert(
+        id: id,
+        title: title,
+        createdAt: createdAt,
+        updatedAt: updatedAt,
+        docJson: docJson,
+        inkJson: inkJson,
+        syncDirty: const Value(false),
+        syncedSeq: Value(seq),
+      ),
+      mode: InsertMode.insertOrReplace,
+    );
+  }
+
+  /// Removes a notebook the server says was deleted elsewhere.
+  ///
+  /// No tombstone is written: this deletion is already in the server's log, and
+  /// recording it again would push it back as if it were local.
+  Future<void> applyRemoteNotebookDeletion(String id) async {
+    await (delete(notebooks)..where((t) => t.id.equals(id))).go();
+  }
 
   // ---- folders -----------------------------------------------------------
 

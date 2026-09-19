@@ -26,6 +26,7 @@ import 'package:tangent/models/sync_status.dart';
 import 'package:tangent/services/connectivity_service.dart';
 import 'package:tangent/services/server_transcription_service.dart';
 import 'package:tangent/services/sync_engine.dart';
+import 'package:tangent/models/sync_change.dart';
 import 'package:tangent/services/transcription_client.dart';
 import '../../support/bound_row_fixture.dart';
 
@@ -36,6 +37,32 @@ class _MockConnectivity extends Mock implements ConnectivityService {}
 /// by ServerTranscriptionService reaching the self-hosted server).
 class _RecordingClient implements TranscriptionClient {
   final List<String> calls = [];
+
+  // Multi-device sync is not part of what this fake exercises. Throwing
+  // rather than returning an empty result keeps an unexpected sync call
+  // visible instead of silently passing.
+  @override
+  Future<void> registerDevice({
+    required String deviceId,
+    required String displayName,
+    required String platform,
+  }) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<SyncPullPage> pullChanges({
+    required String deviceId,
+    required int sinceSeq,
+  }) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<List<PushResult>> pushChanges({
+    required String deviceId,
+    required List<Map<String, dynamic>> changes,
+  }) async =>
+      throw UnimplementedError();
+
   final List<List<int>> uploadedAudioBytes = [];
 
   @override

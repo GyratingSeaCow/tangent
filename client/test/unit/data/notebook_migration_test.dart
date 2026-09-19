@@ -16,6 +16,10 @@ const _notebookColumns = [
   'ink_json',
   // v7: folders are metadata, so filing a notebook is a column, not a move.
   'folder_id',
+  // v9: multi-device sync. sync_dirty tracks unsynced local edits; synced_seq
+  // records the server sequence the row was last reconciled at.
+  'sync_dirty',
+  'synced_seq',
 ];
 
 const _insertNotebook =
@@ -34,8 +38,8 @@ void main() {
 
     await db.listDumps();
 
-    expect(db.schemaVersion, 8);
-    expect(sql.userVersion, 8);
+    expect(db.schemaVersion, 9);
+    expect(sql.userVersion, 9);
     expect(_columnNames(sql, 'notebooks'), _notebookColumns);
     expect(
       sql.select('PRAGMA foreign_key_list(notebooks)'),
@@ -61,7 +65,7 @@ void main() {
 
     await db.listDumps();
 
-    expect(sql.userVersion, 8);
+    expect(sql.userVersion, 9);
     expect(_columnNames(sql, 'notebooks'), _notebookColumns);
     // v8 adds folder_id to dumps, so compare the columns the fixture had:
     // this test is about existing rows surviving, not about the column list.
@@ -115,7 +119,7 @@ void main() {
 
     sql = sqlite3.open(file.path);
     addTearDown(sql.dispose);
-    expect(sql.userVersion, 8);
+    expect(sql.userVersion, 9);
     expect(_columnNames(sql, 'notebooks'), _notebookColumns);
     // v8 adds folder_id to dumps, so compare the columns the fixture had:
     // this test is about existing rows surviving, not about the column list.

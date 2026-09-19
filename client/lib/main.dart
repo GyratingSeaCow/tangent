@@ -27,7 +27,59 @@ import 'screens/home/home_screen.dart';
 import 'screens/recording/recording_controller.dart';
 import 'screens/server/server_connection_screen.dart';
 import 'screens/settings/settings_screen.dart';
+import 'package:workmanager/workmanager.dart';
+
+import 'services/background_sync_scheduler.dart';
+import 'services/connectivity_service.dart';
+import 'services/document_sync_engine.dart';
 import 'services/transcription_client.dart';
+
+/// Entry point for WorkManager's background isolate.
+///
+/// This runs in a SEPARATE isolate with no access to the app's providers, so
+/// it builds its own database handle, client, and engine from scratch. That
+/// is the whole reason the sync engine takes its dependencies by injection.
+///
+/// Must be a top-level function annotated for tree-shaking, or the release
+/// build drops it and the task silently never fires.
+@pragma('vm:entry-point')
+void backgroundSyncDispatcher() {
+  Workmanager().executeTask((String task, Map<String, dynamic>? input) async {
+    if (task != kDocumentSyncTaskName) return true;
+    LocalDb? db;
+    try {
+      WidgetsFlutterBinding.ensureInitialized();
+      final SecureStore store = SecureStore();
+      final String? url = await store.getServerUrl();
+      final String? token = await store.getToken();
+      // Never paired, so there is nothing to sync with. Reporting success
+      // keeps the schedule alive for when the user does pair.
+      if (url == null || token == null) return true;
+
+      db = LocalDb();
+      final LocalDb handle = db;
+      final DocumentSyncEngine engine = DocumentSyncEngine(
+        db: () => handle,
+        client: () => TranscriptionClient(baseUrl: url, token: token),
+        connectivity: ConnectivityService(),
+        deviceLabel: 'Android device',
+        newDeviceId: const Uuid().v4(),
+      );
+      final SyncReport report = await engine.syncNow();
+      engine.dispose();
+      // Returning false asks Android to retry with backoff. A transient
+      // failure deserves that; being offline does not, since the network
+      // constraint will fire the task again anyway.
+      return report.outcome != SyncOutcome.failed;
+    } catch (_) {
+      // Never let a background failure crash the isolate: Android would treat
+      // repeated crashes as a reason to stop scheduling the task at all.
+      return false;
+    } finally {
+      await db?.close();
+    }
+  });
+}
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -48,6 +100,13 @@ Future<void> main() async {
   );
   final db = LocalDb();
   final settings = await SettingsStore.load();
+  // Periodic background sync. Registered before the UI so a user who opens
+  // the app once and never returns still gets background syncs.
+  if (Platform.isAndroid) {
+    final Workmanager workmanager = Workmanager();
+    await workmanager.initialize(backgroundSyncDispatcher);
+    await registerPeriodicDocumentSync(workmanager);
+  }
   final backend =
       Platform.isAndroid ? SafStorageBackend() : FilesystemStorageBackend();
   final mutations = DefaultRecordingMutationCoordinator(db: db);

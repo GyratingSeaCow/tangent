@@ -70,6 +70,11 @@ class NotebookRepository {
         updatedAt: Value(timestamp.millisecondsSinceEpoch),
         docJson: Value(notebook.document.encode()),
         inkJson: Value(notebook.ink.encode()),
+        // Every local edit is unsynced work until the server confirms it.
+        // Marked here, in the one place ordinary edits funnel through, rather
+        // than at each call site — a save that forgot this flag would be
+        // invisible to the user's other devices with nothing to reveal it.
+        syncDirty: const Value(true),
       ),
     );
   }
@@ -107,6 +112,10 @@ class NotebookRepository {
 
   /// Deleting a notebook never touches the dumps its cards referenced.
   Future<void> deleteNotebook(String id) async {
+    // Record the tombstone BEFORE the row goes. Deleting first would leave
+    // nothing to push, so the other device would never hear about the
+    // deletion and would push the notebook straight back on its next sync.
+    await _db.recordTombstone(entityType: 'notebook', entityId: id);
     await (_db.delete(_db.notebooks)..where((n) => n.id.equals(id))).go();
   }
 

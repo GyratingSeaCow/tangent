@@ -14,6 +14,8 @@ import '../../models/transcription_status.dart';
 import 'dump_detail_screen.dart';
 import 'dumps_providers.dart';
 import '../../widgets/signal_bars.dart';
+import '../../widgets/sync_button.dart';
+import '../home/home_providers.dart' show documentSyncEngineProvider;
 import '../../widgets/item_action_sheet.dart';
 import '../../widgets/folder_picker.dart';
 import '../home/home_screen.dart' show localDbProvider;
@@ -257,6 +259,8 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
                 )
               : const Text('Dumps'),
           actions: [
+            if (!_searching)
+              SyncButton(engineProvider: documentSyncEngineProvider),
             if (_searching)
               IconButton(
                 icon: const Icon(Icons.close),

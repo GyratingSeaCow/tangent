@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import 'dart:async';
+import 'dart:io' show Platform;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:uuid/uuid.dart';
 
 import '../../data/local_db.dart';
 import '../../data/storage/storage_contract.dart';
@@ -10,6 +12,7 @@ import '../../services/audio_file_picker.dart';
 import '../../services/audio_import.dart';
 import '../../services/android_transcription_notification_port.dart';
 import '../../services/connectivity_service.dart';
+import '../../services/document_sync_engine.dart';
 import '../../services/note_persistence.dart';
 import '../../services/recording_playback.dart';
 import '../../services/server_transcription_service.dart';
@@ -94,6 +97,36 @@ final transcriptionNotificationPortProvider =
     Provider<TranscriptionNotificationPort>((ref) {
   return AndroidTranscriptionNotificationPort();
 });
+
+/// Two-way document sync (notebooks and notes) against the user's server.
+///
+/// Distinct from the audio SyncEngine: that one is opt-in one-way backup
+/// gated on Wi-Fi, this one moves kilobytes of JSON and runs anywhere.
+final documentSyncEngineProvider = Provider<DocumentSyncEngine>((ref) {
+  final engine = DocumentSyncEngine(
+    // Lazy: building the engine must not open a database. A sync button is
+    // built on screens whose tests provide no database at all.
+    db: () => ref.read(localDbProvider),
+    // Read, not watched: re-pairing swaps the client, and a captured one
+    // would keep talking to the old server.
+    client: () => ref.read(transcriptionClientProvider),
+    connectivity: ref.watch(connectivityServiceProvider),
+    deviceLabel: _deviceLabel(),
+    newDeviceId: const Uuid().v4(),
+  );
+  ref.onDispose(engine.dispose);
+  return engine;
+});
+
+/// A human-readable name for this replica, shown in the server's device list.
+///
+/// Derived from the Android model so the list reads "SM-X520" rather than a
+/// UUID nobody can match to a physical device.
+String _deviceLabel() {
+  if (!Platform.isAndroid) return 'Tangent client';
+  final String model = Platform.environment['ANDROID_MODEL'] ?? '';
+  return model.isNotEmpty ? model : 'Android device';
+}
 
 /// Mirrors transcription progress into the notification shade.
 ///

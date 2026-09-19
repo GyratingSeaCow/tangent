@@ -13,8 +13,10 @@ import '../../data/notebook_repository.dart';
 import '../../models/notebook.dart';
 import '../../services/notebook_persistence.dart';
 import '../../widgets/folder_picker.dart';
+import '../../widgets/sync_button.dart';
 import '../../data/local_db.dart';
 import '../home/home_screen.dart' show localDbProvider;
+import '../home/home_providers.dart' show documentSyncEngineProvider;
 import '../../widgets/item_action_sheet.dart';
 import 'notebook_grouping.dart';
 import 'notebook_editor_screen.dart';
@@ -240,6 +242,7 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
       appBar: AppBar(
         title: const Text('Notebooks'),
         actions: <Widget>[
+          SyncButton(engineProvider: documentSyncEngineProvider),
           IconButton(
             key: const ValueKey<String>('notebook-view-toggle'),
             tooltip: _covers ? 'Show as list' : 'Show as covers',
