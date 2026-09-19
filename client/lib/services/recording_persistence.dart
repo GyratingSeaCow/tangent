@@ -589,6 +589,11 @@ class RecordingPersistence {
       audioSizeBytes: sizeBytes,
       syncStatus: r.mode == 'meeting' ? 'local_only' : 'pending',
       syncAttempts: 0,
+      // A new capture is metadata the peers have not seen. Meeting mode is
+      // deliberately private for AUDIO upload, but its metadata still syncs:
+      // Jeff's rule is that metadata always syncs and only audio fetch is
+      // restricted.
+      syncDirty: true,
       transcriptionStatus: isNote ? 'not_applicable' : 'not_transcribed',
       transcriptionAttempt: 0,
     );

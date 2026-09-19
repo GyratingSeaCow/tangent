@@ -152,6 +152,39 @@ class $DumpsTable extends Dumps with TableInfo<$DumpsTable, DumpRow> {
   late final GeneratedColumn<String> folderId = GeneratedColumn<String>(
       'folder_id', aliasedName, true,
       type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _syncDirtyMeta =
+      const VerificationMeta('syncDirty');
+  @override
+  late final GeneratedColumn<bool> syncDirty = GeneratedColumn<bool>(
+      'sync_dirty', aliasedName, true,
+      type: DriftSqlType.bool,
+      requiredDuringInsert: false,
+      defaultConstraints:
+          GeneratedColumn.constraintIsAlways('CHECK ("sync_dirty" IN (0, 1))'));
+  static const VerificationMeta _syncedSeqMeta =
+      const VerificationMeta('syncedSeq');
+  @override
+  late final GeneratedColumn<int> syncedSeq = GeneratedColumn<int>(
+      'synced_seq', aliasedName, true,
+      type: DriftSqlType.int, requiredDuringInsert: false);
+  static const VerificationMeta _remoteOnlyMeta =
+      const VerificationMeta('remoteOnly');
+  @override
+  late final GeneratedColumn<bool> remoteOnly = GeneratedColumn<bool>(
+      'remote_only', aliasedName, true,
+      type: DriftSqlType.bool,
+      requiredDuringInsert: false,
+      defaultConstraints: GeneratedColumn.constraintIsAlways(
+          'CHECK ("remote_only" IN (0, 1))'));
+  static const VerificationMeta _audioOnServerMeta =
+      const VerificationMeta('audioOnServer');
+  @override
+  late final GeneratedColumn<bool> audioOnServer = GeneratedColumn<bool>(
+      'audio_on_server', aliasedName, true,
+      type: DriftSqlType.bool,
+      requiredDuringInsert: false,
+      defaultConstraints: GeneratedColumn.constraintIsAlways(
+          'CHECK ("audio_on_server" IN (0, 1))'));
   @override
   List<GeneratedColumn> get $columns => [
         id,
@@ -175,7 +208,11 @@ class $DumpsTable extends Dumps with TableInfo<$DumpsTable, DumpRow> {
         transcriptionUpdatedAt,
         transcriptionCompletedAt,
         transcriptionError,
-        folderId
+        folderId,
+        syncDirty,
+        syncedSeq,
+        remoteOnly,
+        audioOnServer
       ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -323,6 +360,26 @@ class $DumpsTable extends Dumps with TableInfo<$DumpsTable, DumpRow> {
       context.handle(_folderIdMeta,
           folderId.isAcceptableOrUnknown(data['folder_id']!, _folderIdMeta));
     }
+    if (data.containsKey('sync_dirty')) {
+      context.handle(_syncDirtyMeta,
+          syncDirty.isAcceptableOrUnknown(data['sync_dirty']!, _syncDirtyMeta));
+    }
+    if (data.containsKey('synced_seq')) {
+      context.handle(_syncedSeqMeta,
+          syncedSeq.isAcceptableOrUnknown(data['synced_seq']!, _syncedSeqMeta));
+    }
+    if (data.containsKey('remote_only')) {
+      context.handle(
+          _remoteOnlyMeta,
+          remoteOnly.isAcceptableOrUnknown(
+              data['remote_only']!, _remoteOnlyMeta));
+    }
+    if (data.containsKey('audio_on_server')) {
+      context.handle(
+          _audioOnServerMeta,
+          audioOnServer.isAcceptableOrUnknown(
+              data['audio_on_server']!, _audioOnServerMeta));
+    }
     return context;
   }
 
@@ -380,6 +437,14 @@ class $DumpsTable extends Dumps with TableInfo<$DumpsTable, DumpRow> {
           DriftSqlType.string, data['${effectivePrefix}transcription_error']),
       folderId: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}folder_id']),
+      syncDirty: attachedDatabase.typeMapping
+          .read(DriftSqlType.bool, data['${effectivePrefix}sync_dirty']),
+      syncedSeq: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}synced_seq']),
+      remoteOnly: attachedDatabase.typeMapping
+          .read(DriftSqlType.bool, data['${effectivePrefix}remote_only']),
+      audioOnServer: attachedDatabase.typeMapping
+          .read(DriftSqlType.bool, data['${effectivePrefix}audio_on_server']),
     );
   }
 
@@ -415,6 +480,27 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
   /// Which folder this recording or note is filed in, or null when unfiled.
   /// Same metadata approach as notebooks: filing never moves the audio file.
   final String? folderId;
+
+  /// Sync state, mirroring the notebook columns. [syncDirty] means this row
+  /// has local metadata edits the server has not accepted yet; [syncedSeq]
+  /// is the change_log checkpoint the server assigned when it did.
+  /// Nullable so adding these columns does not force every existing
+  /// construction site (141 of them, nearly all tests) to name a value that
+  /// is only meaningful to the sync engine. Null reads as "not dirty",
+  /// exactly how every row behaved before recording sync existed.
+  final bool? syncDirty;
+  final int? syncedSeq;
+
+  /// True when this row arrived from another device and its audio (if any)
+  /// has not been downloaded here. The audio lives on the server; the user
+  /// fetches it explicitly. A remote row keeps [audioPath] empty rather than
+  /// naming a file this device does not have.
+  final bool? remoteOnly;
+
+  /// True when the SERVER holds this recording's audio, so a device without
+  /// the bytes can offer to download them. Comes from the peer's payload,
+  /// not from anything local.
+  final bool? audioOnServer;
   const DumpRow(
       {required this.id,
       required this.createdAt,
@@ -437,7 +523,11 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
       this.transcriptionUpdatedAt,
       this.transcriptionCompletedAt,
       this.transcriptionError,
-      this.folderId});
+      this.folderId,
+      this.syncDirty,
+      this.syncedSeq,
+      this.remoteOnly,
+      this.audioOnServer});
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -487,6 +577,18 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
     if (!nullToAbsent || folderId != null) {
       map['folder_id'] = Variable<String>(folderId);
     }
+    if (!nullToAbsent || syncDirty != null) {
+      map['sync_dirty'] = Variable<bool>(syncDirty);
+    }
+    if (!nullToAbsent || syncedSeq != null) {
+      map['synced_seq'] = Variable<int>(syncedSeq);
+    }
+    if (!nullToAbsent || remoteOnly != null) {
+      map['remote_only'] = Variable<bool>(remoteOnly);
+    }
+    if (!nullToAbsent || audioOnServer != null) {
+      map['audio_on_server'] = Variable<bool>(audioOnServer);
+    }
     return map;
   }
 
@@ -534,6 +636,18 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
       folderId: folderId == null && nullToAbsent
           ? const Value.absent()
           : Value(folderId),
+      syncDirty: syncDirty == null && nullToAbsent
+          ? const Value.absent()
+          : Value(syncDirty),
+      syncedSeq: syncedSeq == null && nullToAbsent
+          ? const Value.absent()
+          : Value(syncedSeq),
+      remoteOnly: remoteOnly == null && nullToAbsent
+          ? const Value.absent()
+          : Value(remoteOnly),
+      audioOnServer: audioOnServer == null && nullToAbsent
+          ? const Value.absent()
+          : Value(audioOnServer),
     );
   }
 
@@ -571,6 +685,10 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
       transcriptionError:
           serializer.fromJson<String?>(json['transcriptionError']),
       folderId: serializer.fromJson<String?>(json['folderId']),
+      syncDirty: serializer.fromJson<bool?>(json['syncDirty']),
+      syncedSeq: serializer.fromJson<int?>(json['syncedSeq']),
+      remoteOnly: serializer.fromJson<bool?>(json['remoteOnly']),
+      audioOnServer: serializer.fromJson<bool?>(json['audioOnServer']),
     );
   }
   @override
@@ -603,6 +721,10 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
           serializer.toJson<DateTime?>(transcriptionCompletedAt),
       'transcriptionError': serializer.toJson<String?>(transcriptionError),
       'folderId': serializer.toJson<String?>(folderId),
+      'syncDirty': serializer.toJson<bool?>(syncDirty),
+      'syncedSeq': serializer.toJson<int?>(syncedSeq),
+      'remoteOnly': serializer.toJson<bool?>(remoteOnly),
+      'audioOnServer': serializer.toJson<bool?>(audioOnServer),
     };
   }
 
@@ -628,7 +750,11 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
           Value<DateTime?> transcriptionUpdatedAt = const Value.absent(),
           Value<DateTime?> transcriptionCompletedAt = const Value.absent(),
           Value<String?> transcriptionError = const Value.absent(),
-          Value<String?> folderId = const Value.absent()}) =>
+          Value<String?> folderId = const Value.absent(),
+          Value<bool?> syncDirty = const Value.absent(),
+          Value<int?> syncedSeq = const Value.absent(),
+          Value<bool?> remoteOnly = const Value.absent(),
+          Value<bool?> audioOnServer = const Value.absent()}) =>
       DumpRow(
         id: id ?? this.id,
         createdAt: createdAt ?? this.createdAt,
@@ -666,6 +792,11 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
             ? transcriptionError.value
             : this.transcriptionError,
         folderId: folderId.present ? folderId.value : this.folderId,
+        syncDirty: syncDirty.present ? syncDirty.value : this.syncDirty,
+        syncedSeq: syncedSeq.present ? syncedSeq.value : this.syncedSeq,
+        remoteOnly: remoteOnly.present ? remoteOnly.value : this.remoteOnly,
+        audioOnServer:
+            audioOnServer.present ? audioOnServer.value : this.audioOnServer,
       );
   DumpRow copyWithCompanion(DumpsCompanion data) {
     return DumpRow(
@@ -719,6 +850,13 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
           ? data.transcriptionError.value
           : this.transcriptionError,
       folderId: data.folderId.present ? data.folderId.value : this.folderId,
+      syncDirty: data.syncDirty.present ? data.syncDirty.value : this.syncDirty,
+      syncedSeq: data.syncedSeq.present ? data.syncedSeq.value : this.syncedSeq,
+      remoteOnly:
+          data.remoteOnly.present ? data.remoteOnly.value : this.remoteOnly,
+      audioOnServer: data.audioOnServer.present
+          ? data.audioOnServer.value
+          : this.audioOnServer,
     );
   }
 
@@ -746,7 +884,11 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
           ..write('transcriptionUpdatedAt: $transcriptionUpdatedAt, ')
           ..write('transcriptionCompletedAt: $transcriptionCompletedAt, ')
           ..write('transcriptionError: $transcriptionError, ')
-          ..write('folderId: $folderId')
+          ..write('folderId: $folderId, ')
+          ..write('syncDirty: $syncDirty, ')
+          ..write('syncedSeq: $syncedSeq, ')
+          ..write('remoteOnly: $remoteOnly, ')
+          ..write('audioOnServer: $audioOnServer')
           ..write(')'))
         .toString();
   }
@@ -774,7 +916,11 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
         transcriptionUpdatedAt,
         transcriptionCompletedAt,
         transcriptionError,
-        folderId
+        folderId,
+        syncDirty,
+        syncedSeq,
+        remoteOnly,
+        audioOnServer
       ]);
   @override
   bool operator ==(Object other) =>
@@ -801,7 +947,11 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
           other.transcriptionUpdatedAt == this.transcriptionUpdatedAt &&
           other.transcriptionCompletedAt == this.transcriptionCompletedAt &&
           other.transcriptionError == this.transcriptionError &&
-          other.folderId == this.folderId);
+          other.folderId == this.folderId &&
+          other.syncDirty == this.syncDirty &&
+          other.syncedSeq == this.syncedSeq &&
+          other.remoteOnly == this.remoteOnly &&
+          other.audioOnServer == this.audioOnServer);
 }
 
 class DumpsCompanion extends UpdateCompanion<DumpRow> {
@@ -827,6 +977,10 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
   final Value<DateTime?> transcriptionCompletedAt;
   final Value<String?> transcriptionError;
   final Value<String?> folderId;
+  final Value<bool?> syncDirty;
+  final Value<int?> syncedSeq;
+  final Value<bool?> remoteOnly;
+  final Value<bool?> audioOnServer;
   final Value<int> rowid;
   const DumpsCompanion({
     this.id = const Value.absent(),
@@ -851,6 +1005,10 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
     this.transcriptionCompletedAt = const Value.absent(),
     this.transcriptionError = const Value.absent(),
     this.folderId = const Value.absent(),
+    this.syncDirty = const Value.absent(),
+    this.syncedSeq = const Value.absent(),
+    this.remoteOnly = const Value.absent(),
+    this.audioOnServer = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   DumpsCompanion.insert({
@@ -876,6 +1034,10 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
     this.transcriptionCompletedAt = const Value.absent(),
     this.transcriptionError = const Value.absent(),
     this.folderId = const Value.absent(),
+    this.syncDirty = const Value.absent(),
+    this.syncedSeq = const Value.absent(),
+    this.remoteOnly = const Value.absent(),
+    this.audioOnServer = const Value.absent(),
     this.rowid = const Value.absent(),
   })  : id = Value(id),
         createdAt = Value(createdAt),
@@ -909,6 +1071,10 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
     Expression<DateTime>? transcriptionCompletedAt,
     Expression<String>? transcriptionError,
     Expression<String>? folderId,
+    Expression<bool>? syncDirty,
+    Expression<int>? syncedSeq,
+    Expression<bool>? remoteOnly,
+    Expression<bool>? audioOnServer,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -941,6 +1107,10 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
         'transcription_completed_at': transcriptionCompletedAt,
       if (transcriptionError != null) 'transcription_error': transcriptionError,
       if (folderId != null) 'folder_id': folderId,
+      if (syncDirty != null) 'sync_dirty': syncDirty,
+      if (syncedSeq != null) 'synced_seq': syncedSeq,
+      if (remoteOnly != null) 'remote_only': remoteOnly,
+      if (audioOnServer != null) 'audio_on_server': audioOnServer,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -968,6 +1138,10 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
       Value<DateTime?>? transcriptionCompletedAt,
       Value<String?>? transcriptionError,
       Value<String?>? folderId,
+      Value<bool?>? syncDirty,
+      Value<int?>? syncedSeq,
+      Value<bool?>? remoteOnly,
+      Value<bool?>? audioOnServer,
       Value<int>? rowid}) {
     return DumpsCompanion(
       id: id ?? this.id,
@@ -996,6 +1170,10 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
           transcriptionCompletedAt ?? this.transcriptionCompletedAt,
       transcriptionError: transcriptionError ?? this.transcriptionError,
       folderId: folderId ?? this.folderId,
+      syncDirty: syncDirty ?? this.syncDirty,
+      syncedSeq: syncedSeq ?? this.syncedSeq,
+      remoteOnly: remoteOnly ?? this.remoteOnly,
+      audioOnServer: audioOnServer ?? this.audioOnServer,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -1073,6 +1251,18 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
     if (folderId.present) {
       map['folder_id'] = Variable<String>(folderId.value);
     }
+    if (syncDirty.present) {
+      map['sync_dirty'] = Variable<bool>(syncDirty.value);
+    }
+    if (syncedSeq.present) {
+      map['synced_seq'] = Variable<int>(syncedSeq.value);
+    }
+    if (remoteOnly.present) {
+      map['remote_only'] = Variable<bool>(remoteOnly.value);
+    }
+    if (audioOnServer.present) {
+      map['audio_on_server'] = Variable<bool>(audioOnServer.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -1104,6 +1294,10 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
           ..write('transcriptionCompletedAt: $transcriptionCompletedAt, ')
           ..write('transcriptionError: $transcriptionError, ')
           ..write('folderId: $folderId, ')
+          ..write('syncDirty: $syncDirty, ')
+          ..write('syncedSeq: $syncedSeq, ')
+          ..write('remoteOnly: $remoteOnly, ')
+          ..write('audioOnServer: $audioOnServer, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -5098,6 +5292,10 @@ typedef $$DumpsTableCreateCompanionBuilder = DumpsCompanion Function({
   Value<DateTime?> transcriptionCompletedAt,
   Value<String?> transcriptionError,
   Value<String?> folderId,
+  Value<bool?> syncDirty,
+  Value<int?> syncedSeq,
+  Value<bool?> remoteOnly,
+  Value<bool?> audioOnServer,
   Value<int> rowid,
 });
 typedef $$DumpsTableUpdateCompanionBuilder = DumpsCompanion Function({
@@ -5123,6 +5321,10 @@ typedef $$DumpsTableUpdateCompanionBuilder = DumpsCompanion Function({
   Value<DateTime?> transcriptionCompletedAt,
   Value<String?> transcriptionError,
   Value<String?> folderId,
+  Value<bool?> syncDirty,
+  Value<int?> syncedSeq,
+  Value<bool?> remoteOnly,
+  Value<bool?> audioOnServer,
   Value<int> rowid,
 });
 
@@ -5228,6 +5430,18 @@ class $$DumpsTableFilterComposer extends Composer<_$LocalDb, $DumpsTable> {
 
   ColumnFilters<String> get folderId => $composableBuilder(
       column: $table.folderId, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<bool> get syncDirty => $composableBuilder(
+      column: $table.syncDirty, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get syncedSeq => $composableBuilder(
+      column: $table.syncedSeq, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<bool> get remoteOnly => $composableBuilder(
+      column: $table.remoteOnly, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<bool> get audioOnServer => $composableBuilder(
+      column: $table.audioOnServer, builder: (column) => ColumnFilters(column));
 
   Expression<bool> syncQueueRefs(
       Expression<bool> Function($$SyncQueueTableFilterComposer f) f) {
@@ -5337,6 +5551,19 @@ class $$DumpsTableOrderingComposer extends Composer<_$LocalDb, $DumpsTable> {
 
   ColumnOrderings<String> get folderId => $composableBuilder(
       column: $table.folderId, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<bool> get syncDirty => $composableBuilder(
+      column: $table.syncDirty, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get syncedSeq => $composableBuilder(
+      column: $table.syncedSeq, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<bool> get remoteOnly => $composableBuilder(
+      column: $table.remoteOnly, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<bool> get audioOnServer => $composableBuilder(
+      column: $table.audioOnServer,
+      builder: (column) => ColumnOrderings(column));
 }
 
 class $$DumpsTableAnnotationComposer extends Composer<_$LocalDb, $DumpsTable> {
@@ -5413,6 +5640,18 @@ class $$DumpsTableAnnotationComposer extends Composer<_$LocalDb, $DumpsTable> {
   GeneratedColumn<String> get folderId =>
       $composableBuilder(column: $table.folderId, builder: (column) => column);
 
+  GeneratedColumn<bool> get syncDirty =>
+      $composableBuilder(column: $table.syncDirty, builder: (column) => column);
+
+  GeneratedColumn<int> get syncedSeq =>
+      $composableBuilder(column: $table.syncedSeq, builder: (column) => column);
+
+  GeneratedColumn<bool> get remoteOnly => $composableBuilder(
+      column: $table.remoteOnly, builder: (column) => column);
+
+  GeneratedColumn<bool> get audioOnServer => $composableBuilder(
+      column: $table.audioOnServer, builder: (column) => column);
+
   Expression<T> syncQueueRefs<T extends Object>(
       Expression<T> Function($$SyncQueueTableAnnotationComposer a) f) {
     final $$SyncQueueTableAnnotationComposer composer = $composerBuilder(
@@ -5480,6 +5719,10 @@ class $$DumpsTableTableManager extends RootTableManager<
             Value<DateTime?> transcriptionCompletedAt = const Value.absent(),
             Value<String?> transcriptionError = const Value.absent(),
             Value<String?> folderId = const Value.absent(),
+            Value<bool?> syncDirty = const Value.absent(),
+            Value<int?> syncedSeq = const Value.absent(),
+            Value<bool?> remoteOnly = const Value.absent(),
+            Value<bool?> audioOnServer = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               DumpsCompanion(
@@ -5505,6 +5748,10 @@ class $$DumpsTableTableManager extends RootTableManager<
             transcriptionCompletedAt: transcriptionCompletedAt,
             transcriptionError: transcriptionError,
             folderId: folderId,
+            syncDirty: syncDirty,
+            syncedSeq: syncedSeq,
+            remoteOnly: remoteOnly,
+            audioOnServer: audioOnServer,
             rowid: rowid,
           ),
           createCompanionCallback: ({
@@ -5530,6 +5777,10 @@ class $$DumpsTableTableManager extends RootTableManager<
             Value<DateTime?> transcriptionCompletedAt = const Value.absent(),
             Value<String?> transcriptionError = const Value.absent(),
             Value<String?> folderId = const Value.absent(),
+            Value<bool?> syncDirty = const Value.absent(),
+            Value<int?> syncedSeq = const Value.absent(),
+            Value<bool?> remoteOnly = const Value.absent(),
+            Value<bool?> audioOnServer = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               DumpsCompanion.insert(
@@ -5555,6 +5806,10 @@ class $$DumpsTableTableManager extends RootTableManager<
             transcriptionCompletedAt: transcriptionCompletedAt,
             transcriptionError: transcriptionError,
             folderId: folderId,
+            syncDirty: syncDirty,
+            syncedSeq: syncedSeq,
+            remoteOnly: remoteOnly,
+            audioOnServer: audioOnServer,
             rowid: rowid,
           ),
           withReferenceMapper: (p0) => p0

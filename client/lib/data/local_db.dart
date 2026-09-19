@@ -47,6 +47,27 @@ class Dumps extends Table {
   /// Same metadata approach as notebooks: filing never moves the audio file.
   TextColumn get folderId => text().nullable()();
 
+  /// Sync state, mirroring the notebook columns. [syncDirty] means this row
+  /// has local metadata edits the server has not accepted yet; [syncedSeq]
+  /// is the change_log checkpoint the server assigned when it did.
+  /// Nullable so adding these columns does not force every existing
+  /// construction site (141 of them, nearly all tests) to name a value that
+  /// is only meaningful to the sync engine. Null reads as "not dirty",
+  /// exactly how every row behaved before recording sync existed.
+  BoolColumn get syncDirty => boolean().nullable()();
+  IntColumn get syncedSeq => integer().nullable()();
+
+  /// True when this row arrived from another device and its audio (if any)
+  /// has not been downloaded here. The audio lives on the server; the user
+  /// fetches it explicitly. A remote row keeps [audioPath] empty rather than
+  /// naming a file this device does not have.
+  BoolColumn get remoteOnly => boolean().nullable()();
+
+  /// True when the SERVER holds this recording's audio, so a device without
+  /// the bytes can offer to download them. Comes from the peer's payload,
+  /// not from anything local.
+  BoolColumn get audioOnServer => boolean().nullable()();
+
   @override
   Set<Column> get primaryKey => {id};
 }
@@ -185,7 +206,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   LocalDb.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 10;
+  int get schemaVersion => 11;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -338,6 +359,34 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
               }
             }
           }
+
+          if (from < 11) {
+            // Recording sync. Four additive columns on dumps, each with a
+            // defaulted value, so existing rows keep their exact current
+            // meaning: not dirty, never synced, local (not remote-only),
+            // and no known server-side audio until a sync says otherwise.
+            final List<QueryRow> dumpColumns =
+                await customSelect('PRAGMA table_info(dumps)').get();
+            final Set<String> names = <String>{
+              for (final QueryRow row in dumpColumns)
+                row.data['name'] as String,
+            };
+            // Ask the database, never the version number: adding a column
+            // twice throws "duplicate column name" and bricks app launch for
+            // every existing install.
+            if (!names.contains('sync_dirty')) {
+              await m.addColumn(dumps, dumps.syncDirty);
+            }
+            if (!names.contains('synced_seq')) {
+              await m.addColumn(dumps, dumps.syncedSeq);
+            }
+            if (!names.contains('remote_only')) {
+              await m.addColumn(dumps, dumps.remoteOnly);
+            }
+            if (!names.contains('audio_on_server')) {
+              await m.addColumn(dumps, dumps.audioOnServer);
+            }
+          }
         },
       );
 
@@ -396,6 +445,154 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   Future<void> markNotebookDirty(String id) async {
     await (update(notebooks)..where((t) => t.id.equals(id)))
         .write(const NotebooksCompanion(syncDirty: Value(true)));
+  }
+
+  // ---- dump (recording) sync --------------------------------------------
+
+  /// Recordings whose metadata the server has not accepted yet.
+  ///
+  /// Remote-only rows are excluded: this device holds no authoritative copy
+  /// of them, so pushing one back would echo the peer's own change.
+  Future<List<DumpRow>> dumpsNeedingMetadataPush() => (select(dumps)
+        ..where(
+          // Null means "never touched by sync" => not dirty, not remote.
+          (d) =>
+              d.syncDirty.equals(true) &
+              (d.remoteOnly.equals(false) | d.remoteOnly.isNull()),
+        ))
+      .get();
+
+  /// Marks a recording's metadata as accepted by the server at [seq].
+  ///
+  /// Guarded on `updated_at` exactly like [markNotebookSynced]: an edit that
+  /// landed while the push was in flight must stay dirty, or it is stranded
+  /// unsynced until some unrelated save happens to touch the row again.
+  Future<void> markDumpSynced(
+    String id, {
+    required int seq,
+    required DateTime pushedUpdatedAt,
+  }) async {
+    await (update(dumps)
+          ..where(
+            (d) => d.id.equals(id) & d.updatedAt.equals(pushedUpdatedAt),
+          ))
+        .write(
+      DumpsCompanion(
+        syncDirty: const Value<bool?>(false),
+        syncedSeq: Value(seq),
+      ),
+    );
+  }
+
+  /// Marks a recording's metadata dirty. Every local metadata edit funnels
+  /// through here — a sync engine with no dirty-marking call sites passes
+  /// its whole suite while pushing nothing.
+  Future<void> markDumpDirty(String id) async {
+    await (update(dumps)..where((d) => d.id.equals(id)))
+        .write(const DumpsCompanion(syncDirty: Value<bool?>(true)));
+  }
+
+  /// One dump row, or null. Used by merge to see what is already here.
+  Future<DumpRow?> getDumpRow(String id) =>
+      (select(dumps)..where((d) => d.id.equals(id))).getSingleOrNull();
+
+  /// Applies a recording's metadata that the server sent us.
+  ///
+  /// Never touches [Dumps.audioPath] on a row that already exists: the local
+  /// file (or SAF locator) is this device's own property and a peer has no
+  /// business renaming it. A row that does not exist yet is created
+  /// remote-only with an EMPTY audio path — naming a file this device does
+  /// not have would produce a playback error instead of an honest
+  /// "download from server" affordance.
+  ///
+  /// Marked clean, not dirty: this content CAME from the server, so pushing
+  /// it back would echo forever between the two devices.
+  Future<void> applyRemoteDump({
+    required String id,
+    required String mode,
+    required String title,
+    required String? transcript,
+    required String? meetingNotes,
+    required int durationSeconds,
+    required bool audioOnServer,
+    required DateTime createdAt,
+    required DateTime updatedAt,
+    required int seq,
+  }) async {
+    final DumpRow? existing = await getDumpRow(id);
+    if (existing == null) {
+      await into(dumps).insert(
+        DumpsCompanion.insert(
+          id: id,
+          createdAt: createdAt,
+          updatedAt: updatedAt,
+          mode: mode,
+          durationSeconds: durationSeconds,
+          title: title,
+          transcript: Value(transcript),
+          meetingNotes: Value(meetingNotes),
+          // A remote recording that already carries transcript text IS
+          // transcribed. Leaving this at the default made the list show
+          // "Not transcribed" on 37 rows whose transcript was right there.
+          transcriptionStatus: Value(
+            (transcript ?? '').trim().isEmpty ? 'not_transcribed' : 'completed',
+          ),
+          // No bytes here. remoteOnly is what the UI branches on.
+          audioPath: '',
+          audioSizeBytes: 0,
+          syncStatus: 'synced',
+          remoteOnly: const Value<bool?>(true),
+          audioOnServer: Value<bool?>(audioOnServer),
+          syncedSeq: Value(seq),
+        ),
+        mode: InsertMode.insertOrReplace,
+      );
+      return;
+    }
+    // Existing row: update only the metadata columns. Whole-row replacement
+    // here would wipe audioPath, transcription ownership columns and the
+    // storage key, which is how a local recording loses its own audio.
+    await (update(dumps)..where((d) => d.id.equals(id))).write(
+      DumpsCompanion(
+        title: Value(title),
+        transcript: Value(transcript),
+        meetingNotes: Value(meetingNotes),
+        // Same rule on update: a peer finishing a transcript must flip this
+        // row out of "not transcribed" here too.
+        transcriptionStatus: (transcript ?? '').trim().isEmpty
+            ? const Value.absent()
+            : const Value('completed'),
+        updatedAt: Value(updatedAt),
+        audioOnServer: Value<bool?>(audioOnServer),
+        syncDirty: const Value<bool?>(false),
+        syncedSeq: Value(seq),
+      ),
+    );
+  }
+
+  /// Soft-deletes a recording because a peer deleted it.
+  ///
+  /// The tombstone is authoritative for metadata. Any audio this device
+  /// downloaded is removed from the row, but the file itself is left to the
+  /// storage layer's own cleanup — this method never deletes user audio
+  /// directly.
+  Future<void> applyRemoteDumpDeletion(String id) async {
+    await (delete(dumps)..where((d) => d.id.equals(id))).go();
+  }
+
+  /// Records that this device has downloaded a remote recording's audio.
+  Future<void> attachDownloadedAudio(
+    String id, {
+    required String audioPath,
+    required int audioSizeBytes,
+  }) async {
+    await (update(dumps)..where((d) => d.id.equals(id))).write(
+      DumpsCompanion(
+        audioPath: Value(audioPath),
+        audioSizeBytes: Value(audioSizeBytes),
+        remoteOnly: const Value<bool?>(false),
+      ),
+    );
   }
 
   Future<void> recordTombstone({
@@ -1088,6 +1285,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
         ),
       );
       if (count != 1) throw StateError('Dump not found: $id');
+      // Metadata edits sync. Without this the engine has no dirty rows and
+      // pushes nothing while every one of its tests passes.
+      await markDumpDirty(id);
       return (await getDump(id))!;
     });
   }
@@ -1135,6 +1335,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
           'Dump title or transcript revision changed while editing notes: $id',
         );
       }
+      await markDumpDirty(id);
       return (await getDump(id))!;
     });
   }
@@ -1196,6 +1397,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
           'Transcript revision changed while editing: $id',
         );
       }
+      await markDumpDirty(id);
       return (await getDump(id))!;
     });
   }

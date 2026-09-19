@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS dumps (
     duration_seconds INTEGER NOT NULL,
     title TEXT NOT NULL,
     transcript TEXT,
+    meeting_notes TEXT,
     audio_kept INTEGER NOT NULL DEFAULT 0,
     deleted_at INTEGER
 );
@@ -164,6 +165,91 @@ def _migrate_jobs_result_segments(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE jobs ADD COLUMN result_segments TEXT")
 
 
+def _reconcile_audio_kept(conn: sqlite3.Connection, data_dir: str) -> None:
+    """Make ``audio_kept`` reflect what is actually in the audio directory.
+
+    The upload route historically never set the flag, so every row reads 0
+    even when the file is on disk. Runs before the change-feed backfill so
+    the published payloads carry the truth. Only promotes 0 -> 1; it never
+    clears the flag, so a temporarily unmounted directory cannot erase the
+    server's knowledge.
+    """
+    audio_dir = Path(data_dir) / "audio"
+    if not audio_dir.is_dir():
+        return
+    on_disk = {p.stem for p in audio_dir.iterdir() if p.is_file()}
+    if not on_disk:
+        return
+    rows = conn.execute(
+        "SELECT id FROM dumps WHERE audio_kept = 0"
+    ).fetchall()
+    for (dump_id,) in rows:
+        if dump_id in on_disk:
+            conn.execute(
+                "UPDATE dumps SET audio_kept = 1 WHERE id = ?", (dump_id,)
+            )
+
+
+def _backfill_dump_change_feed(conn: sqlite3.Connection) -> None:
+    """Publish an upsert for every live dump the change feed has never seen.
+
+    Recordings made before dump sync existed have rows in ``dumps`` but no
+    entry in ``change_log``, so a peer pulling from seq 0 would never learn
+    they exist. Idempotent: only dumps with no feed entry are published, so
+    reruns add nothing. Attributed to 'server' — pull excludes only the
+    caller's own device_id, so every real device receives these.
+    """
+    import json as _json
+    import time as _time
+
+    prior = conn.row_factory
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            """
+            SELECT d.* FROM dumps d
+            WHERE d.deleted_at IS NULL
+              AND NOT EXISTS (
+                SELECT 1 FROM change_log c
+                WHERE c.entity_type = 'dump' AND c.entity_id = d.id
+              )
+            """
+        ).fetchall()
+        now = int(_time.time())
+        for row in rows:
+            payload = {
+                "client_id": row["client_id"],
+                "mode": row["mode"],
+                "title": row["title"],
+                "transcript": row["transcript"],
+                "meeting_notes": row["meeting_notes"],
+                "duration_seconds": row["duration_seconds"],
+                "audio_kept": bool(row["audio_kept"]),
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+            }
+            conn.execute(
+                "INSERT INTO change_log "
+                "(entity_type, entity_id, op, device_id, payload, created_at) "
+                "VALUES ('dump', ?, 'upsert', 'server', ?, ?)",
+                (row["id"], _json.dumps(payload), now),
+            )
+    finally:
+        conn.row_factory = prior
+
+
+def _migrate_dumps_meeting_notes(conn: sqlite3.Connection) -> None:
+    """Dump sync carries meeting notes; older databases lack the column.
+
+    Same defensive shape as the other migrations: ask the table, never the
+    version — adding a column twice is an OperationalError that would stop
+    the server from booting.
+    """
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(dumps)")}
+    if "meeting_notes" not in cols:
+        conn.execute("ALTER TABLE dumps ADD COLUMN meeting_notes TEXT")
+
+
 def _migrate_dumps_mode_check(conn: sqlite3.Connection) -> None:
     """Rebuild dumps if its mode CHECK predates text_note. Idempotent."""
     row = conn.execute(
@@ -213,6 +299,9 @@ def init_db(data_dir: str) -> None:
         _migrate_jobs_request_id(conn)
         _migrate_jobs_result_segments(conn)
         _migrate_dumps_mode_check(conn)
+        _migrate_dumps_meeting_notes(conn)
+        _reconcile_audio_kept(conn, data_dir)
+        _backfill_dump_change_feed(conn)
         conn.commit()
     finally:
         conn.close()

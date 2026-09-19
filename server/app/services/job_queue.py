@@ -159,6 +159,19 @@ def run_job_inline(job_id: str, audio_path: str) -> None:
                 "WHERE id = (SELECT dump_id FROM jobs WHERE id = ?)",
                 (transcript, _now_ts(), job_id),
             )
+            # Publish to the sync feed so other devices receive the finished
+            # transcript. Attributed to the server: no device pushed this.
+            try:
+                from app.api.dumps import _publish_dump_change
+
+                dump_id_row = db.execute(
+                    "SELECT dump_id FROM jobs WHERE id = ?", (job_id,)
+                ).fetchone()
+                if dump_id_row is not None:
+                    _publish_dump_change(db, dump_id_row["dump_id"], None)
+            except Exception:
+                # A feed failure must not fail the finished transcription.
+                log.exception("job.sync_publish_failed", job_id=job_id)
             log.info(
                 "job.completed",
                 job_id=job_id,

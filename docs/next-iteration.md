@@ -85,7 +85,49 @@ Nothing is built yet. Constraints that already apply:
 
 ---
 
-## 3. Carried, not started
+## 3. Collapse the Dumps filters into one dropdown bar
+
+The Dumps list currently spends two stacked rows on filtering. Mode offers
+All / Brain Dump / Meeting / Text Note; Transcript offers All / Needs
+transcript / In progress / Transcribed / Failed. That is nine chips and two
+full-width rows of vertical space permanently above the list, on a screen
+whose whole job is showing recordings.
+
+Collapse both into a **single bar at the top of the page**, with each filter
+as a **dropdown menu** rather than a chip row.
+
+### Shape
+
+- One row, two dropdowns: Mode and Transcript.
+- Each closed dropdown shows the active selection, so the current filter
+  state stays readable without opening anything.
+- The chip rows (`_FilterRow`, `dumps_list_screen.dart:531`) go away entirely;
+  it is only used by these two filters.
+- Space reclaimed goes to the list, which is the point of the change.
+
+### Watch for
+
+- **Test keys are load-bearing.** `ValueKey('mode-filter-<name>')` and
+  `ValueKey('transcript-filter-<name>')` are used by four widget test files:
+  `dumps_list_fab_test.dart`, `dumps_list_note_test.dart`,
+  `dumps_list_transcription_indicator_test.dart`,
+  `home_dumps_fab_result_test.dart`. A dropdown's items do not exist in the
+  tree until it is opened, so those tests need an open-then-tap step. Keep the
+  same key names on the menu entries so the change is mechanical rather than a
+  rewrite of every selector.
+- The FAB reads `dumpModeFilterProvider` to decide what a tap creates directly
+  vs. asking via the bottom sheet (`dumps_list_screen.dart:140`). Selecting a
+  mode from a dropdown must drive that identically — All still asks.
+- Both providers cancel the multi-select selection when they change
+  (`ref.listen`, lines 202-203). Preserve that or a stale selection survives a
+  filter change.
+- Two dropdowns in one row need to survive a narrow screen and long labels
+  ("Needs transcript") without overflowing — check the Fold's cover display,
+  not just the tablet.
+
+---
+
+## 4. Carried, not started
 
 - **Pen-writes-without-draw-mode (`dea6b39`)** — committed and gated at 1094
   tests, never validated on hardware. The S Pen should write anywhere on the

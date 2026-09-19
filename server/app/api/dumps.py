@@ -11,17 +11,79 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    Header,
+    HTTPException,
+    Query,
+    Response,
+    UploadFile,
+    status,
+)
 
 from app.auth import require_auth
 from app.config import get_settings
 from app.db import get_db
 from app.logging_config import get_logger
 from app.models import DumpCreate, DumpListResponse, DumpPatch, DumpResponse
+from app.services.change_log import record_change
 
 router = APIRouter()
 
 log = get_logger(__name__)
+
+# Attribution for feed entries made by server-side work (or clients that
+# predate the X-Device-Id header). A pull never filters these out, which is
+# correct: every device should receive them.
+SERVER_DEVICE_ID = "server"
+
+
+def _publish_dump_change(
+    db: sqlite3.Connection,
+    dump_id: str,
+    device_id: str | None,
+    op: str = "upsert",
+) -> None:
+    """Append this dump's current state to the sync change feed.
+
+    Reads the row AFTER the mutation so the payload is exactly what the
+    server now holds — including fields the mutating request didn't carry.
+    A delete publishes a bare tombstone.
+    """
+    author = device_id or SERVER_DEVICE_ID
+    if op == "delete":
+        record_change(
+            db,
+            entity_type="dump",
+            entity_id=dump_id,
+            op="delete",
+            device_id=author,
+        )
+        return
+    row = db.execute(
+        "SELECT * FROM dumps WHERE id = ?", (dump_id,)
+    ).fetchone()
+    if row is None:
+        return
+    record_change(
+        db,
+        entity_type="dump",
+        entity_id=dump_id,
+        op="upsert",
+        device_id=author,
+        payload={
+            "client_id": row["client_id"],
+            "mode": row["mode"],
+            "title": row["title"],
+            "transcript": row["transcript"],
+            "meeting_notes": row["meeting_notes"],
+            "duration_seconds": row["duration_seconds"],
+            "audio_kept": bool(row["audio_kept"]),
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        },
+    )
 
 
 def _now_ts() -> int:
@@ -58,6 +120,7 @@ async def upload_audio(
     audio: UploadFile,
     db: Annotated[sqlite3.Connection, Depends(get_db)],
     _user: Annotated[str, Depends(require_auth)],
+    x_device_id: Annotated[str | None, Header()] = None,
 ) -> Response:
     """Upload the audio file for an existing dump. Idempotent overwrite.
 
@@ -127,6 +190,13 @@ async def upload_audio(
             temporary.unlink(missing_ok=True)
 
     log.info("audio.uploaded", dump_id=dump_id, size=size, path=str(target))
+    # The server now verifiably holds this audio: record that and tell the
+    # other devices, so their "download from server" affordance can appear.
+    db.execute(
+        "UPDATE dumps SET audio_kept = 1, updated_at = ? WHERE id = ?",
+        (_now_ts(), dump_id),
+    )
+    _publish_dump_change(db, dump_id, x_device_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -174,6 +244,7 @@ def create_dump(
     payload: DumpCreate,
     db: Annotated[sqlite3.Connection, Depends(get_db)],
     _user: Annotated[str, Depends(require_auth)],
+    x_device_id: Annotated[str | None, Header()] = None,
 ) -> DumpResponse:
     """Create a dump. Idempotent on id (client-generated UUID)."""
     now = _now_ts()
@@ -208,6 +279,7 @@ def create_dump(
     row = db.execute(
         "SELECT * FROM dumps WHERE id = ?", (payload.id,)
     ).fetchone()
+    _publish_dump_change(db, payload.id, x_device_id)
     return _row_to_dump(row)
 
 
@@ -262,6 +334,7 @@ def patch_dump(
     payload: DumpPatch,
     db: Annotated[sqlite3.Connection, Depends(get_db)],
     _user: Annotated[str, Depends(require_auth)],
+    x_device_id: Annotated[str | None, Header()] = None,
 ) -> DumpResponse:
     row = db.execute(
         "SELECT * FROM dumps WHERE id = ? AND deleted_at IS NULL", (dump_id,)
@@ -282,6 +355,7 @@ def patch_dump(
         params.append(_now_ts())
         params.append(dump_id)
         db.execute(f"UPDATE dumps SET {', '.join(updates)} WHERE id = ?", params)
+        _publish_dump_change(db, dump_id, x_device_id)
 
     row = db.execute(
         "SELECT * FROM dumps WHERE id = ?", (dump_id,)
@@ -294,6 +368,7 @@ def delete_dump(
     dump_id: str,
     db: Annotated[sqlite3.Connection, Depends(get_db)],
     _user: Annotated[str, Depends(require_auth)],
+    x_device_id: Annotated[str | None, Header()] = None,
 ) -> Response:
     row = db.execute(
         "SELECT id FROM dumps WHERE id = ? AND deleted_at IS NULL", (dump_id,)
@@ -306,4 +381,5 @@ def delete_dump(
     db.execute(
         "UPDATE dumps SET deleted_at = ? WHERE id = ?", (_now_ts(), dump_id)
     )
+    _publish_dump_change(db, dump_id, x_device_id, op="delete")
     return Response(status_code=status.HTTP_204_NO_CONTENT)

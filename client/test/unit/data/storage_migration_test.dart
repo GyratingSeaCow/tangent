@@ -144,7 +144,7 @@ void main() {
       expect(queue, hasLength(10));
       expect(sql.userVersion, version);
       await db.listDumps();
-      expect(sql.userVersion, 10);
+      expect(sql.userVersion, 11);
       final after = sqlRows(sql, 'dumps');
       expect(after, hasLength(before.length));
       for (var i = 0; i < before.length; i++) {
@@ -257,7 +257,7 @@ void main() {
           .data
           .values
           .single,
-      10,
+      11,
     );
     expect(
       (await db

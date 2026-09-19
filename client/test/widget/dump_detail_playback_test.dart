@@ -34,6 +34,10 @@ class _NoopTranscriptionClient implements TranscriptionClient {
   // rather than returning an empty result keeps an unexpected sync call
   // visible instead of silently passing.
   @override
+  Future<List<int>> downloadAudio(String dumpId) async =>
+      throw UnimplementedError();
+
+  @override
   Future<void> registerDevice({
     required String deviceId,
     required String displayName,

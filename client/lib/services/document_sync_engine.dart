@@ -199,6 +199,10 @@ class DocumentSyncEngine extends ChangeNotifier {
 
   /// Applies one incoming change. Returns true when it forked a conflict.
   Future<bool> _applyRemote(RemoteChange change) async {
+    if (change.entityType == 'dump') {
+      await _applyRemoteDump(change);
+      return false;
+    }
     if (change.entityType != 'notebook') return false;
 
     if (change.op == SyncOp.delete) {
@@ -241,6 +245,58 @@ class DocumentSyncEngine extends ChangeNotifier {
     }
   }
 
+  /// Applies one incoming recording change.
+  ///
+  /// Recordings do NOT fork on conflict the way notebooks do. A notebook
+  /// carries handwriting that cannot be merged, so a fork protects it; a
+  /// recording's synced fields are short metadata (title, transcript, notes)
+  /// and the audio itself never travels this path. Forking here would litter
+  /// the list with duplicate entries for a renamed recording. A local edit
+  /// still pending push therefore WINS and stays dirty, which is the same
+  /// "never silently discard the user's edit" rule expressed for flat data.
+  Future<void> _applyRemoteDump(RemoteChange change) async {
+    if (change.op == SyncOp.delete) {
+      await _db.applyRemoteDumpDeletion(change.entityId);
+      return;
+    }
+
+    final Map<String, dynamic> payload = change.payload ?? const {};
+    final DumpRow? local = await _db.getDumpRow(change.entityId);
+    if (local != null && local.syncDirty == true) {
+      // This device has an unpushed edit. Keep it; our push will carry it up
+      // and the peer converges on the next cycle.
+      return;
+    }
+
+    final int remoteUpdatedAt = (payload['updated_at'] as num?)?.toInt() ?? 0;
+    if (local != null &&
+        remoteUpdatedAt > 0 &&
+        local.updatedAt.millisecondsSinceEpoch ~/ 1000 > remoteUpdatedAt) {
+      // Our copy is newer than what the peer sent; nothing to learn from it.
+      return;
+    }
+
+    await _db.applyRemoteDump(
+      id: change.entityId,
+      mode: payload['mode'] as String? ?? 'brain_dump',
+      title: payload['title'] as String? ?? 'Untitled',
+      transcript: payload['transcript'] as String?,
+      meetingNotes: payload['meeting_notes'] as String?,
+      durationSeconds: (payload['duration_seconds'] as num?)?.toInt() ?? 0,
+      audioOnServer: payload['audio_kept'] == true,
+      createdAt: _tsToDate(payload['created_at']),
+      updatedAt: _tsToDate(payload['updated_at']),
+      seq: change.seq,
+    );
+  }
+
+  /// Server timestamps are whole seconds; Drift stores DateTime.
+  DateTime _tsToDate(Object? raw) {
+    final int seconds = (raw as num?)?.toInt() ?? 0;
+    if (seconds <= 0) return DateTime.now().toUtc();
+    return DateTime.fromMillisecondsSinceEpoch(seconds * 1000, isUtc: true);
+  }
+
   Future<void> _writeRemote(
     String id,
     Map<String, dynamic> payload,
@@ -272,8 +328,9 @@ class DocumentSyncEngine extends ChangeNotifier {
 
   Future<int> _pushLocal(TranscriptionClient client, String deviceId) async {
     final List<NotebookRow> dirty = await _db.notebooksNeedingPush();
+    final List<DumpRow> dirtyDumps = await _db.dumpsNeedingMetadataPush();
     final List<SyncTombstoneRow> tombstones = await _db.pendingTombstones();
-    if (dirty.isEmpty && tombstones.isEmpty) return 0;
+    if (dirty.isEmpty && dirtyDumps.isEmpty && tombstones.isEmpty) return 0;
 
     final List<Map<String, dynamic>> changes = <Map<String, dynamic>>[
       for (final NotebookRow row in dirty)
@@ -288,6 +345,24 @@ class DocumentSyncEngine extends ChangeNotifier {
             'doc': row.docJson,
             'ink': row.inkJson,
             'ruling': row.ruling,
+          },
+        },
+      for (final DumpRow row in dirtyDumps)
+        <String, dynamic>{
+          'entity_type': 'dump',
+          'entity_id': row.id,
+          'op': 'upsert',
+          'payload': <String, dynamic>{
+            'mode': row.mode,
+            'title': row.title,
+            'transcript': row.transcript,
+            'meeting_notes': row.meetingNotes,
+            'duration_seconds': row.durationSeconds,
+            'created_at': row.createdAt.millisecondsSinceEpoch ~/ 1000,
+            'updated_at': row.updatedAt.millisecondsSinceEpoch ~/ 1000,
+            // audio_kept is deliberately absent: whether the SERVER holds the
+            // audio is the server's own fact, and sending our view of it
+            // would let a device that never uploaded clear the flag.
           },
         },
       for (final SyncTombstoneRow stone in tombstones)
@@ -306,6 +381,9 @@ class DocumentSyncEngine extends ChangeNotifier {
     final Map<String, int> pushedUpdatedAt = <String, int>{
       for (final NotebookRow row in dirty) row.id: row.updatedAt,
     };
+    final Map<String, DateTime> pushedDumpUpdatedAt = <String, DateTime>{
+      for (final DumpRow row in dirtyDumps) row.id: row.updatedAt,
+    };
 
     int accepted = 0;
     for (final PushResult result in results) {
@@ -313,6 +391,25 @@ class DocumentSyncEngine extends ChangeNotifier {
       // flag on a rejection would lose the edit silently.
       if (!result.applied) continue;
       accepted++;
+      // Dispatch on the entity TYPE, not on "was it in the notebook map":
+      // an accepted dump would otherwise fall through to clearTombstone and
+      // stay dirty forever, re-pushing on every cycle.
+      if (result.entityType == 'dump') {
+        final DateTime? wasDump = pushedDumpUpdatedAt[result.entityId];
+        if (wasDump != null) {
+          await _db.markDumpSynced(
+            result.entityId,
+            seq: result.seq,
+            pushedUpdatedAt: wasDump,
+          );
+        } else {
+          await _db.clearTombstone(
+            entityType: result.entityType,
+            entityId: result.entityId,
+          );
+        }
+        continue;
+      }
       final int? was = pushedUpdatedAt[result.entityId];
       if (was != null) {
         await _db.markNotebookSynced(

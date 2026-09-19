@@ -457,6 +457,29 @@ class TranscriptionClient {
         .toList(growable: false);
   }
 
+  /// Download a recording's audio from the server.
+  ///
+  /// Returns the raw bytes. Throws [ApiException] when the server does not
+  /// hold this recording's audio (404) — callers must treat that as "not
+  /// available" rather than as a transport failure, because a dump without
+  /// server-side audio is a first-class state.
+  Future<List<int>> downloadAudio(String dumpId) async {
+    final Response<List<int>> resp = await _dio.get<List<int>>(
+      '/v1/dumps/$dumpId/audio',
+      options: Options(responseType: ResponseType.bytes),
+    );
+    _checkStatus(resp);
+    final List<int>? body = resp.data;
+    if (body == null || body.isEmpty) {
+      throw ApiException(
+        statusCode: resp.statusCode ?? 0,
+        code: 'empty_audio',
+        message: 'Server returned no audio for $dumpId',
+      );
+    }
+    return body;
+  }
+
   Future<Map<String, dynamic>> _fetch(
     String path, {
     String method = 'GET',

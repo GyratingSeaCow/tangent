@@ -167,7 +167,14 @@ def sync_pull(
 
 
 def _apply_dump(conn: sqlite3.Connection, change: SyncChange, now: int) -> None:
-    """Dump METADATA only. Audio is never synced; it stays where it was made."""
+    """Dump METADATA only. Audio bytes are never pushed through sync; they
+    move via upload/download. ``audio_kept`` is the SERVER'S own knowledge of
+    whether it holds the file, so a client push never changes it — a device
+    that never saw the audio must not make the server forget it has it.
+
+    Fields the peer did not send keep their stored values (an older client
+    is a narrower payload, not an eraser).
+    """
     if change.op == "delete":
         conn.execute(
             "UPDATE dumps SET deleted_at = ?, updated_at = ? WHERE id = ?",
@@ -175,27 +182,43 @@ def _apply_dump(conn: sqlite3.Connection, change: SyncChange, now: int) -> None:
         )
         return
     p: dict[str, Any] = change.payload or {}
+    existing = conn.execute(
+        "SELECT * FROM dumps WHERE id = ?", (change.entity_id,)
+    ).fetchone()
+
+    def val(key: str, default: Any = None) -> Any:
+        if key in p:
+            return p[key]
+        if existing is not None:
+            return existing[key]
+        return default
+
     conn.execute(
         """
         INSERT INTO dumps
             (id, client_id, created_at, updated_at, mode, duration_seconds,
-             title, transcript, audio_kept, deleted_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, NULL)
+             title, transcript, meeting_notes, audio_kept, deleted_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
         ON CONFLICT(id) DO UPDATE SET
+            mode = excluded.mode,
+            duration_seconds = excluded.duration_seconds,
             title = excluded.title,
             transcript = excluded.transcript,
+            meeting_notes = excluded.meeting_notes,
             updated_at = excluded.updated_at,
             deleted_at = NULL
         """,
         (
             change.entity_id,
             p.get("client_id", change.device_id or "sync"),
-            int(p.get("created_at", now)),
+            int(val("created_at", now)),
             now,
-            p.get("mode", "brain_dump"),
-            int(p.get("duration_seconds", 0)),
-            p.get("title", "Untitled"),
-            p.get("transcript"),
+            val("mode", "brain_dump"),
+            int(val("duration_seconds", 0)),
+            val("title", "Untitled"),
+            val("transcript"),
+            val("meeting_notes"),
+            int(existing["audio_kept"]) if existing is not None else 0,
         ),
     )
 
@@ -257,8 +280,21 @@ def sync_push(
 
     for change in body.changes:
         try:
+            publish_payload = change.payload
             if change.entity_type == "dump":
                 _apply_dump(db, change, now)
+                # Republish what the server now HOLDS, not what the device
+                # sent. A device that never had the audio omits audio_kept,
+                # and echoing that omission tells every other device the
+                # recording is undownloadable while the file sits on disk.
+                if change.op != "delete" and change.payload is not None:
+                    stored = db.execute(
+                        "SELECT audio_kept FROM dumps WHERE id = ?",
+                        (change.entity_id,),
+                    ).fetchone()
+                    if stored is not None:
+                        publish_payload = dict(change.payload)
+                        publish_payload["audio_kept"] = bool(stored["audio_kept"])
             elif change.entity_type == "notebook":
                 _apply_document(db, "notebooks", change, now)
             else:
@@ -270,7 +306,7 @@ def sync_push(
                 entity_id=change.entity_id,
                 op=change.op,
                 device_id=body.device_id,
-                payload=change.payload,
+                payload=publish_payload,
                 now=now,
             )
             results.append(
