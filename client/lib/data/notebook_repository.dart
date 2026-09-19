@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 
 import '../models/notebook.dart';
+import '../models/notebook_ruling.dart';
 import '../screens/home/home_screen.dart' show localDbProvider;
 import 'local_db.dart';
 
@@ -45,6 +46,7 @@ class NotebookRepository {
       updatedAt: timestamp,
       document: const NotebookDocument.empty(),
       ink: const NotebookInk.empty(),
+      // New notebooks arrive ruled; the model's default states which.
     );
     await _db.into(_db.notebooks).insert(
           NotebooksCompanion.insert(
@@ -54,6 +56,7 @@ class NotebookRepository {
             updatedAt: timestamp.millisecondsSinceEpoch,
             docJson: notebook.document.encode(),
             inkJson: notebook.ink.encode(),
+            ruling: Value<String?>(notebook.ruling.wireValue),
           ),
         );
     return notebook;
@@ -106,6 +109,7 @@ class NotebookRepository {
             docJson: notebook.document.encode(),
             inkJson: notebook.ink.encode(),
             folderId: Value<String?>(existingFolderId),
+            ruling: Value<String?>(notebook.ruling.wireValue),
           ),
         );
   }
@@ -129,6 +133,10 @@ class NotebookRepository {
         document: NotebookDocument.decode(row.docJson),
         ink: NotebookInk.decode(row.inkJson),
         folderId: row.folderId,
+        // Null is a notebook written before ruling existed. It reads as blank,
+        // NOT as the new-notebook default: an existing page must not silently
+        // gain lines the user never asked for.
+        ruling: NotebookRuling.parse(row.ruling),
       );
 }
 

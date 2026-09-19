@@ -4023,6 +4023,11 @@ class $NotebooksTable extends Notebooks
   late final GeneratedColumn<String> folderId = GeneratedColumn<String>(
       'folder_id', aliasedName, true,
       type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _rulingMeta = const VerificationMeta('ruling');
+  @override
+  late final GeneratedColumn<String> ruling = GeneratedColumn<String>(
+      'ruling', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
   static const VerificationMeta _syncDirtyMeta =
       const VerificationMeta('syncDirty');
   @override
@@ -4048,6 +4053,7 @@ class $NotebooksTable extends Notebooks
         docJson,
         inkJson,
         folderId,
+        ruling,
         syncDirty,
         syncedSeq
       ];
@@ -4100,6 +4106,10 @@ class $NotebooksTable extends Notebooks
       context.handle(_folderIdMeta,
           folderId.isAcceptableOrUnknown(data['folder_id']!, _folderIdMeta));
     }
+    if (data.containsKey('ruling')) {
+      context.handle(_rulingMeta,
+          ruling.isAcceptableOrUnknown(data['ruling']!, _rulingMeta));
+    }
     if (data.containsKey('sync_dirty')) {
       context.handle(_syncDirtyMeta,
           syncDirty.isAcceptableOrUnknown(data['sync_dirty']!, _syncDirtyMeta));
@@ -4131,6 +4141,8 @@ class $NotebooksTable extends Notebooks
           .read(DriftSqlType.string, data['${effectivePrefix}ink_json'])!,
       folderId: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}folder_id']),
+      ruling: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}ruling']),
       syncDirty: attachedDatabase.typeMapping
           .read(DriftSqlType.bool, data['${effectivePrefix}sync_dirty'])!,
       syncedSeq: attachedDatabase.typeMapping
@@ -4159,6 +4171,14 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
   /// deleted folder must unfile its notebooks, never delete them.
   final String? folderId;
 
+  /// How the page is ruled: 'blank', 'small', or 'medium'.
+  ///
+  /// Stored as the enum's NAME rather than its index, so reordering the enum
+  /// cannot silently re-rule every existing notebook. Nullable because every
+  /// notebook written before v10 has no value, and null reads as blank —
+  /// which is exactly how those pages have always rendered.
+  final String? ruling;
+
   /// True when this notebook has local edits the server has not accepted.
   ///
   /// Set on every local save and cleared only by a push the server confirmed.
@@ -4178,6 +4198,7 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
       required this.docJson,
       required this.inkJson,
       this.folderId,
+      this.ruling,
       required this.syncDirty,
       this.syncedSeq});
   @override
@@ -4191,6 +4212,9 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
     map['ink_json'] = Variable<String>(inkJson);
     if (!nullToAbsent || folderId != null) {
       map['folder_id'] = Variable<String>(folderId);
+    }
+    if (!nullToAbsent || ruling != null) {
+      map['ruling'] = Variable<String>(ruling);
     }
     map['sync_dirty'] = Variable<bool>(syncDirty);
     if (!nullToAbsent || syncedSeq != null) {
@@ -4210,6 +4234,8 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
       folderId: folderId == null && nullToAbsent
           ? const Value.absent()
           : Value(folderId),
+      ruling:
+          ruling == null && nullToAbsent ? const Value.absent() : Value(ruling),
       syncDirty: Value(syncDirty),
       syncedSeq: syncedSeq == null && nullToAbsent
           ? const Value.absent()
@@ -4228,6 +4254,7 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
       docJson: serializer.fromJson<String>(json['docJson']),
       inkJson: serializer.fromJson<String>(json['inkJson']),
       folderId: serializer.fromJson<String?>(json['folderId']),
+      ruling: serializer.fromJson<String?>(json['ruling']),
       syncDirty: serializer.fromJson<bool>(json['syncDirty']),
       syncedSeq: serializer.fromJson<int?>(json['syncedSeq']),
     );
@@ -4243,6 +4270,7 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
       'docJson': serializer.toJson<String>(docJson),
       'inkJson': serializer.toJson<String>(inkJson),
       'folderId': serializer.toJson<String?>(folderId),
+      'ruling': serializer.toJson<String?>(ruling),
       'syncDirty': serializer.toJson<bool>(syncDirty),
       'syncedSeq': serializer.toJson<int?>(syncedSeq),
     };
@@ -4256,6 +4284,7 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
           String? docJson,
           String? inkJson,
           Value<String?> folderId = const Value.absent(),
+          Value<String?> ruling = const Value.absent(),
           bool? syncDirty,
           Value<int?> syncedSeq = const Value.absent()}) =>
       NotebookRow(
@@ -4266,6 +4295,7 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
         docJson: docJson ?? this.docJson,
         inkJson: inkJson ?? this.inkJson,
         folderId: folderId.present ? folderId.value : this.folderId,
+        ruling: ruling.present ? ruling.value : this.ruling,
         syncDirty: syncDirty ?? this.syncDirty,
         syncedSeq: syncedSeq.present ? syncedSeq.value : this.syncedSeq,
       );
@@ -4278,6 +4308,7 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
       docJson: data.docJson.present ? data.docJson.value : this.docJson,
       inkJson: data.inkJson.present ? data.inkJson.value : this.inkJson,
       folderId: data.folderId.present ? data.folderId.value : this.folderId,
+      ruling: data.ruling.present ? data.ruling.value : this.ruling,
       syncDirty: data.syncDirty.present ? data.syncDirty.value : this.syncDirty,
       syncedSeq: data.syncedSeq.present ? data.syncedSeq.value : this.syncedSeq,
     );
@@ -4293,6 +4324,7 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
           ..write('docJson: $docJson, ')
           ..write('inkJson: $inkJson, ')
           ..write('folderId: $folderId, ')
+          ..write('ruling: $ruling, ')
           ..write('syncDirty: $syncDirty, ')
           ..write('syncedSeq: $syncedSeq')
           ..write(')'))
@@ -4301,7 +4333,7 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
 
   @override
   int get hashCode => Object.hash(id, title, createdAt, updatedAt, docJson,
-      inkJson, folderId, syncDirty, syncedSeq);
+      inkJson, folderId, ruling, syncDirty, syncedSeq);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -4313,6 +4345,7 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
           other.docJson == this.docJson &&
           other.inkJson == this.inkJson &&
           other.folderId == this.folderId &&
+          other.ruling == this.ruling &&
           other.syncDirty == this.syncDirty &&
           other.syncedSeq == this.syncedSeq);
 }
@@ -4325,6 +4358,7 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
   final Value<String> docJson;
   final Value<String> inkJson;
   final Value<String?> folderId;
+  final Value<String?> ruling;
   final Value<bool> syncDirty;
   final Value<int?> syncedSeq;
   final Value<int> rowid;
@@ -4336,6 +4370,7 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
     this.docJson = const Value.absent(),
     this.inkJson = const Value.absent(),
     this.folderId = const Value.absent(),
+    this.ruling = const Value.absent(),
     this.syncDirty = const Value.absent(),
     this.syncedSeq = const Value.absent(),
     this.rowid = const Value.absent(),
@@ -4348,6 +4383,7 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
     required String docJson,
     required String inkJson,
     this.folderId = const Value.absent(),
+    this.ruling = const Value.absent(),
     this.syncDirty = const Value.absent(),
     this.syncedSeq = const Value.absent(),
     this.rowid = const Value.absent(),
@@ -4365,6 +4401,7 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
     Expression<String>? docJson,
     Expression<String>? inkJson,
     Expression<String>? folderId,
+    Expression<String>? ruling,
     Expression<bool>? syncDirty,
     Expression<int>? syncedSeq,
     Expression<int>? rowid,
@@ -4377,6 +4414,7 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
       if (docJson != null) 'doc_json': docJson,
       if (inkJson != null) 'ink_json': inkJson,
       if (folderId != null) 'folder_id': folderId,
+      if (ruling != null) 'ruling': ruling,
       if (syncDirty != null) 'sync_dirty': syncDirty,
       if (syncedSeq != null) 'synced_seq': syncedSeq,
       if (rowid != null) 'rowid': rowid,
@@ -4391,6 +4429,7 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
       Value<String>? docJson,
       Value<String>? inkJson,
       Value<String?>? folderId,
+      Value<String?>? ruling,
       Value<bool>? syncDirty,
       Value<int?>? syncedSeq,
       Value<int>? rowid}) {
@@ -4402,6 +4441,7 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
       docJson: docJson ?? this.docJson,
       inkJson: inkJson ?? this.inkJson,
       folderId: folderId ?? this.folderId,
+      ruling: ruling ?? this.ruling,
       syncDirty: syncDirty ?? this.syncDirty,
       syncedSeq: syncedSeq ?? this.syncedSeq,
       rowid: rowid ?? this.rowid,
@@ -4432,6 +4472,9 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
     if (folderId.present) {
       map['folder_id'] = Variable<String>(folderId.value);
     }
+    if (ruling.present) {
+      map['ruling'] = Variable<String>(ruling.value);
+    }
     if (syncDirty.present) {
       map['sync_dirty'] = Variable<bool>(syncDirty.value);
     }
@@ -4454,6 +4497,7 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
           ..write('docJson: $docJson, ')
           ..write('inkJson: $inkJson, ')
           ..write('folderId: $folderId, ')
+          ..write('ruling: $ruling, ')
           ..write('syncDirty: $syncDirty, ')
           ..write('syncedSeq: $syncedSeq, ')
           ..write('rowid: $rowid')
@@ -7174,6 +7218,7 @@ typedef $$NotebooksTableCreateCompanionBuilder = NotebooksCompanion Function({
   required String docJson,
   required String inkJson,
   Value<String?> folderId,
+  Value<String?> ruling,
   Value<bool> syncDirty,
   Value<int?> syncedSeq,
   Value<int> rowid,
@@ -7186,6 +7231,7 @@ typedef $$NotebooksTableUpdateCompanionBuilder = NotebooksCompanion Function({
   Value<String> docJson,
   Value<String> inkJson,
   Value<String?> folderId,
+  Value<String?> ruling,
   Value<bool> syncDirty,
   Value<int?> syncedSeq,
   Value<int> rowid,
@@ -7220,6 +7266,9 @@ class $$NotebooksTableFilterComposer
 
   ColumnFilters<String> get folderId => $composableBuilder(
       column: $table.folderId, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get ruling => $composableBuilder(
+      column: $table.ruling, builder: (column) => ColumnFilters(column));
 
   ColumnFilters<bool> get syncDirty => $composableBuilder(
       column: $table.syncDirty, builder: (column) => ColumnFilters(column));
@@ -7258,6 +7307,9 @@ class $$NotebooksTableOrderingComposer
   ColumnOrderings<String> get folderId => $composableBuilder(
       column: $table.folderId, builder: (column) => ColumnOrderings(column));
 
+  ColumnOrderings<String> get ruling => $composableBuilder(
+      column: $table.ruling, builder: (column) => ColumnOrderings(column));
+
   ColumnOrderings<bool> get syncDirty => $composableBuilder(
       column: $table.syncDirty, builder: (column) => ColumnOrderings(column));
 
@@ -7294,6 +7346,9 @@ class $$NotebooksTableAnnotationComposer
 
   GeneratedColumn<String> get folderId =>
       $composableBuilder(column: $table.folderId, builder: (column) => column);
+
+  GeneratedColumn<String> get ruling =>
+      $composableBuilder(column: $table.ruling, builder: (column) => column);
 
   GeneratedColumn<bool> get syncDirty =>
       $composableBuilder(column: $table.syncDirty, builder: (column) => column);
@@ -7332,6 +7387,7 @@ class $$NotebooksTableTableManager extends RootTableManager<
             Value<String> docJson = const Value.absent(),
             Value<String> inkJson = const Value.absent(),
             Value<String?> folderId = const Value.absent(),
+            Value<String?> ruling = const Value.absent(),
             Value<bool> syncDirty = const Value.absent(),
             Value<int?> syncedSeq = const Value.absent(),
             Value<int> rowid = const Value.absent(),
@@ -7344,6 +7400,7 @@ class $$NotebooksTableTableManager extends RootTableManager<
             docJson: docJson,
             inkJson: inkJson,
             folderId: folderId,
+            ruling: ruling,
             syncDirty: syncDirty,
             syncedSeq: syncedSeq,
             rowid: rowid,
@@ -7356,6 +7413,7 @@ class $$NotebooksTableTableManager extends RootTableManager<
             required String docJson,
             required String inkJson,
             Value<String?> folderId = const Value.absent(),
+            Value<String?> ruling = const Value.absent(),
             Value<bool> syncDirty = const Value.absent(),
             Value<int?> syncedSeq = const Value.absent(),
             Value<int> rowid = const Value.absent(),
@@ -7368,6 +7426,7 @@ class $$NotebooksTableTableManager extends RootTableManager<
             docJson: docJson,
             inkJson: inkJson,
             folderId: folderId,
+            ruling: ruling,
             syncDirty: syncDirty,
             syncedSeq: syncedSeq,
             rowid: rowid,

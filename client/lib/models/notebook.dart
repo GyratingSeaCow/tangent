@@ -4,6 +4,8 @@ import 'dart:ui' show Offset;
 
 import 'package:flutter/foundation.dart' show immutable, listEquals;
 
+import 'notebook_ruling.dart';
+
 /// Typed view of one notebook row, its document and its ink layer.
 ///
 /// Notebooks are stored as a single row with two JSON payloads (phase 1 of the
@@ -17,6 +19,7 @@ class Notebook {
     required this.document,
     required this.ink,
     this.folderId,
+    this.ruling = NotebookRuling.medium,
   });
 
   final String id;
@@ -32,11 +35,20 @@ class Notebook {
   /// published file, so a reorganise cannot half-fail across storage.
   final String? folderId;
 
+  /// How the page is ruled.
+  ///
+  /// New notebooks default to college ruled. Notebooks that predate this
+  /// feature store null, and the repository reads null as [
+  /// NotebookRuling.blank] — an existing page must not silently gain lines it
+  /// was never given.
+  final NotebookRuling ruling;
+
   Notebook copyWith({
     String? title,
     DateTime? updatedAt,
     NotebookDocument? document,
     NotebookInk? ink,
+    NotebookRuling? ruling,
   }) =>
       Notebook(
         id: id,
@@ -46,6 +58,7 @@ class Notebook {
         document: document ?? this.document,
         ink: ink ?? this.ink,
         folderId: folderId,
+        ruling: ruling ?? this.ruling,
       );
 }
 

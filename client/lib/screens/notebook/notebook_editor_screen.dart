@@ -25,6 +25,7 @@ import '../../data/notebook_repository.dart';
 import '../../models/dump.dart';
 import '../../models/dump_mode.dart';
 import '../../models/notebook.dart';
+import '../../models/notebook_ruling.dart';
 import '../../models/sync_status.dart';
 import '../../services/notebook_persistence.dart';
 import '../../widgets/dump_picker_sheet.dart';
@@ -66,7 +67,7 @@ const double _minBlockWidth = 160;
 
 
 /// Insert actions offered by the editor's bottom-left menu.
-enum _InsertAction { text, checkbox, dump, meeting, textNote, recentre }
+enum _InsertAction { text, checkbox, dump, meeting, textNote, cycleRuling, recentre }
 
 class NotebookEditorScreen extends ConsumerStatefulWidget {
   const NotebookEditorScreen({super.key, required this.notebookId});
@@ -93,6 +94,10 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
   List<InkStroke> _strokes = <InkStroke>[];
 
   Notebook? _notebook;
+
+  /// How the page is ruled. Mirrors the notebook's stored value so the painter
+  /// can rebuild without re-reading the database on every frame.
+  NotebookRuling _ruling = NotebookRuling.blank;
   bool _loading = true;
   String? _loadError;
   bool _dirty = false;
@@ -165,6 +170,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
       }
     }
     _strokes = List<InkStroke>.of(notebook.ink.strokes);
+    _ruling = notebook.ruling;
     _hydrating = false;
     _title.addListener(_markDirty);
   }
@@ -227,6 +233,21 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
     final int index =
         _blocks.indexWhere((NotebookBlock block) => block.id == focused);
     return index < 0 ? _blocks.length : index + 1;
+  }
+
+  /// Cycles the page ruling and marks the notebook dirty so the choice is
+  /// saved and reaches the user's other devices.
+  void _cycleRuling() {
+    const List<NotebookRuling> order = <NotebookRuling>[
+      NotebookRuling.blank,
+      NotebookRuling.small,
+      NotebookRuling.medium,
+    ];
+    final int next = (order.indexOf(_ruling) + 1) % order.length;
+    setState(() {
+      _ruling = order[next];
+      _dirty = true;
+    });
   }
 
   void _addTextBlock() {
@@ -429,6 +450,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
       title: typed.isEmpty ? current.title : typed,
       document: NotebookDocument(_composeBlocks()),
       ink: NotebookInk(List<InkStroke>.of(_strokes)),
+      ruling: _ruling,
     );
     try {
       // Route through NotebookPersistence, not the bare repository: it writes
@@ -812,6 +834,8 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                             unawaited(_importDumps(dumps, DumpMode.meeting));
                           case _InsertAction.textNote:
                             unawaited(_importDumps(dumps, DumpMode.textNote));
+                          case _InsertAction.cycleRuling:
+                            _cycleRuling();
                           case _InsertAction.recentre:
                             _pageScroll.jumpTo(0);
                         }
@@ -856,6 +880,20 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                           child: ListTile(
                             leading: Icon(dumpModeIcon(DumpMode.textNote)),
                             title: const Text('Text note'),
+                            contentPadding: EdgeInsets.zero,
+                          ),
+                        ),
+                        const PopupMenuDivider(),
+                        // Cycles blank -> small -> medium -> blank. A submenu
+                        // would be three taps deep for a setting most people
+                        // choose once; the label always states where the next
+                        // tap lands.
+                        PopupMenuItem<_InsertAction>(
+                          key: const ValueKey('notebook-ruling-item'),
+                          value: _InsertAction.cycleRuling,
+                          child: ListTile(
+                            leading: const Icon(Icons.format_align_justify),
+                            title: Text('Page: ${_ruling.label}'),
                             contentPadding: EdgeInsets.zero,
                           ),
                         ),
@@ -931,6 +969,21 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                 // Bottom: the page itself -- black, per the ink contract.
                 const Positioned.fill(
                   child: ColoredBox(color: NotebookInkCanvas.backgroundColor),
+                ),
+                // Rule lines, directly above the page colour and beneath every
+                // piece of content. This fills the whole scrollable surface,
+                // not the viewport, so the ruling extends with the page as it
+                // grows and stays put while scrolling rather than sliding
+                // against the writing.
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: RepaintBoundary(
+                      child: CustomPaint(
+                        key: const ValueKey('notebook-ruling'),
+                        painter: NotebookRulingPainter(ruling: _ruling),
+                      ),
+                    ),
+                  ),
                 ),
                 // Typed blocks, each positioned where it was left.
                 ..._buildPositionedBlocks(constraints.maxWidth),

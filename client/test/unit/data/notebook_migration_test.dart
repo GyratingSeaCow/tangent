@@ -18,6 +18,10 @@ const _notebookColumns = [
   'folder_id',
   // v9: multi-device sync. sync_dirty tracks unsynced local edits; synced_seq
   // records the server sequence the row was last reconciled at.
+  // v10: page ruling, stored as the enum's name. Nullable — null reads as
+  // blank, which is how every page rendered before this column existed.
+  // Declared right after folder_id, so it precedes the sync pair.
+  'ruling',
   'sync_dirty',
   'synced_seq',
 ];
@@ -38,8 +42,8 @@ void main() {
 
     await db.listDumps();
 
-    expect(db.schemaVersion, 9);
-    expect(sql.userVersion, 9);
+    expect(db.schemaVersion, 10);
+    expect(sql.userVersion, 10);
     expect(_columnNames(sql, 'notebooks'), _notebookColumns);
     expect(
       sql.select('PRAGMA foreign_key_list(notebooks)'),
@@ -65,7 +69,7 @@ void main() {
 
     await db.listDumps();
 
-    expect(sql.userVersion, 9);
+    expect(sql.userVersion, 10);
     expect(_columnNames(sql, 'notebooks'), _notebookColumns);
     // v8 adds folder_id to dumps, so compare the columns the fixture had:
     // this test is about existing rows surviving, not about the column list.
@@ -119,7 +123,7 @@ void main() {
 
     sql = sqlite3.open(file.path);
     addTearDown(sql.dispose);
-    expect(sql.userVersion, 9);
+    expect(sql.userVersion, 10);
     expect(_columnNames(sql, 'notebooks'), _notebookColumns);
     // v8 adds folder_id to dumps, so compare the columns the fixture had:
     // this test is about existing rows surviving, not about the column list.

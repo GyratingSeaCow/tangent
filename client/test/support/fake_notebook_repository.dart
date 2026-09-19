@@ -5,6 +5,7 @@ import 'package:drift/native.dart';
 import 'package:tangent/data/local_db.dart';
 import 'package:tangent/data/notebook_repository.dart';
 import 'package:tangent/models/notebook.dart';
+import 'package:tangent/models/notebook_ruling.dart';
 
 /// In-memory [NotebookRepository] for widget tests.
 ///
@@ -100,6 +101,7 @@ Notebook testNotebook({
   List<InkStroke> strokes = const <InkStroke>[],
   DateTime? updatedAt,
   String? folderId,
+  NotebookRuling ruling = NotebookRuling.medium,
 }) {
   final DateTime at = updatedAt ?? DateTime.utc(2026, 9, 17, 12);
   return Notebook(
@@ -110,5 +112,6 @@ Notebook testNotebook({
     document: NotebookDocument(blocks),
     ink: NotebookInk(strokes),
     folderId: folderId,
+    ruling: ruling,
   );
 }

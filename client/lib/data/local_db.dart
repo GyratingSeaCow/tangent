@@ -100,6 +100,14 @@ class Notebooks extends Table {
   /// deleted folder must unfile its notebooks, never delete them.
   TextColumn get folderId => text().nullable()();
 
+  /// How the page is ruled: 'blank', 'small', or 'medium'.
+  ///
+  /// Stored as the enum's NAME rather than its index, so reordering the enum
+  /// cannot silently re-rule every existing notebook. Nullable because every
+  /// notebook written before v10 has no value, and null reads as blank —
+  /// which is exactly how those pages have always rendered.
+  TextColumn get ruling => text().nullable()();
+
   /// True when this notebook has local edits the server has not accepted.
   ///
   /// Set on every local save and cleared only by a push the server confirmed.
@@ -177,7 +185,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   LocalDb.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 9;
+  int get schemaVersion => 10;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -307,6 +315,29 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
               );
             }
           }
+
+          if (from < 10) {
+            // Page ruling. One nullable column; null reads as blank, which is
+            // how every page has rendered until now, so there is nothing to
+            // backfill and no existing notebook changes appearance.
+            final List<QueryRow> rulingColumns =
+                await customSelect('PRAGMA table_info(notebooks)').get();
+            if (rulingColumns.isEmpty) {
+              // Ask the database rather than trusting the version number —
+              // the same reasoning as v9, which is where "no such table:
+              // notebooks" was caught.
+              await m.createTable(notebooks);
+            } else {
+              final bool present = rulingColumns.any(
+                (QueryRow row) => row.data['name'] == 'ruling',
+              );
+              // Adding a column twice throws "duplicate column name", which
+              // would leave the app unable to open its own database.
+              if (!present) {
+                await m.addColumn(notebooks, notebooks.ruling);
+              }
+            }
+          }
         },
       );
 
@@ -412,7 +443,18 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     required String docJson,
     required String inkJson,
     required int seq,
+    String? ruling,
   }) async {
+    // insertOrReplace rewrites the whole row, so a null ruling here would
+    // erase a value this device already holds whenever the peer is an older
+    // build that does not send one. Fall back to what is already stored.
+    final String? effectiveRuling = ruling ??
+        await (selectOnly(notebooks)
+              ..addColumns([notebooks.ruling])
+              ..where(notebooks.id.equals(id)))
+            .map((row) => row.read(notebooks.ruling))
+            .getSingleOrNull();
+
     await into(notebooks).insert(
       NotebooksCompanion.insert(
         id: id,
@@ -421,6 +463,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
         updatedAt: updatedAt,
         docJson: docJson,
         inkJson: inkJson,
+        ruling: Value<String?>(effectiveRuling),
         syncDirty: const Value(false),
         syncedSeq: Value(seq),
       ),

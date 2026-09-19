@@ -10,6 +10,7 @@ import 'package:tangent/data/local_db.dart';
 import 'package:tangent/data/notebook_repository.dart';
 import 'package:tangent/models/dump.dart';
 import 'package:tangent/models/notebook.dart';
+import 'package:tangent/models/notebook_ruling.dart';
 import 'package:tangent/screens/dump/dumps_providers.dart';
 import 'package:tangent/screens/notebook/notebook_editor_screen.dart';
 import 'package:tangent/services/notebook_persistence.dart';
@@ -881,6 +882,133 @@ void main() {
       order.sublist(0, 2),
       <String>['notebook-block-b1', 'notebook-block-b2'],
       reason: 'the existing blocks keep their order and the new one is last',
+    );
+  });
+
+  /// The ruling layer's painter, or null when it is not in the tree.
+  NotebookRulingPainter? rulingPainter(WidgetTester tester) {
+    final Finder finder = find.byKey(const ValueKey('notebook-ruling'));
+    if (finder.evaluate().isEmpty) return null;
+    return tester.widget<CustomPaint>(finder).painter as NotebookRulingPainter?;
+  }
+
+  testWidgets('a ruled notebook paints its lines', (tester) async {
+    await mountEditor(
+      tester,
+      notebook: testNotebook(id: 'nb-1', ruling: NotebookRuling.medium),
+    );
+
+    expect(
+      rulingPainter(tester)?.ruling,
+      NotebookRuling.medium,
+      reason: 'the stored ruling must reach the painter',
+    );
+  });
+
+  testWidgets('a blank notebook draws no lines', (tester) async {
+    await mountEditor(
+      tester,
+      notebook: testNotebook(id: 'nb-1', ruling: NotebookRuling.blank),
+    );
+
+    expect(rulingPainter(tester)?.ruling, NotebookRuling.blank);
+  });
+
+  testWidgets('the ruling covers the whole page, not just the viewport',
+      (tester) async {
+    // The page is a vertical roll taller than the screen. Painting only the
+    // visible part would leave the lines behind as soon as the user scrolls,
+    // and the page would run out of ruling at the bottom.
+    await mountEditor(
+      tester,
+      notebook: testNotebook(
+        id: 'nb-1',
+        ruling: NotebookRuling.medium,
+        // Content low on the page, so the roll is genuinely taller than the
+        // viewport. An empty notebook is exactly one screen, which would make
+        // "covers the whole page" pass without proving anything.
+        blocks: const <NotebookBlock>[
+          NotebookTextBlock(id: 'b1', text: 'far down', x: 20, y: 1800),
+        ],
+      ),
+    );
+    final Size rulingSize =
+        tester.getSize(find.byKey(const ValueKey('notebook-ruling')));
+    final Size surfaceSize =
+        tester.getSize(find.byKey(const ValueKey('notebook-canvas-surface')));
+
+    expect(
+      rulingSize.height,
+      surfaceSize.height,
+      reason: 'the ruling must be as tall as the scrollable page',
+    );
+    // The visible canvas is the viewport minus the app bar. The page must be
+    // taller than that, or "covers the whole page" proves nothing.
+    final double visibleCanvasHeight = tester.getSize(
+      find.byKey(const ValueKey('notebook-canvas-scroll')),
+    ).height;
+    expect(
+      surfaceSize.height,
+      greaterThan(visibleCanvasHeight),
+      reason: 'the page must be a roll taller than what is on screen',
+    );
+  });
+
+  testWidgets('the ruling does not swallow taps meant for the page',
+      (tester) async {
+    // A full-page layer above the background is exactly the shape of thing
+    // that silently breaks drawing and card dragging.
+    await mountEditor(
+      tester,
+      notebook: testNotebook(id: 'nb-1', ruling: NotebookRuling.medium),
+    );
+
+    // IgnorePointer is common in Flutter's own tree, so assert on the one
+    // wrapping the ruling specifically and that it is actually enabled.
+    final IgnorePointer guard = tester.widget<IgnorePointer>(
+      find
+          .ancestor(
+            of: find.byKey(const ValueKey('notebook-ruling')),
+            matching: find.byType(IgnorePointer),
+          )
+          .first,
+    );
+    expect(
+      guard.ignoring,
+      isTrue,
+      reason: 'the ruling must be invisible to hit testing, or it would eat '
+          'pen strokes and card drags',
+    );
+  });
+
+  testWidgets('cycling the ruling changes what is painted and saves it',
+      (tester) async {
+    await mountEditor(
+      tester,
+      notebook: testNotebook(id: 'nb-1', ruling: NotebookRuling.blank),
+    );
+
+    expect(rulingPainter(tester)?.ruling, NotebookRuling.blank);
+
+    await tester.tap(find.byKey(const ValueKey('notebook-insert-menu')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('notebook-ruling-item')));
+    await tester.pumpAndSettle();
+
+    expect(
+      rulingPainter(tester)?.ruling,
+      NotebookRuling.small,
+      reason: 'blank cycles to small',
+    );
+
+    await tester.tap(find.byIcon(Icons.save));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(
+      publishedNotebooks.last.ruling,
+      NotebookRuling.small,
+      reason: 'a ruling the user chose must survive leaving the screen',
     );
   });
 

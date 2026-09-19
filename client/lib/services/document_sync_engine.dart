@@ -260,6 +260,12 @@ class DocumentSyncEngine extends ChangeNotifier {
       // us.
       docJson: doc is String ? doc : jsonEncode(doc ?? const {}),
       inkJson: ink is String ? ink : jsonEncode(ink ?? const {}),
+      // Absent means the peer is an older build that does not know about
+      // ruling. Passing null through would erase a ruling this device already
+      // has, so a missing value leaves the local one alone.
+      ruling: payload.containsKey('ruling')
+          ? payload['ruling'] as String?
+          : null,
       seq: seq,
     );
   }
@@ -281,6 +287,7 @@ class DocumentSyncEngine extends ChangeNotifier {
             'updated_at': row.updatedAt,
             'doc': row.docJson,
             'ink': row.inkJson,
+            'ruling': row.ruling,
           },
         },
       for (final SyncTombstoneRow stone in tombstones)
