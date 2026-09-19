@@ -953,7 +953,16 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
     // compete -- and while drawing, the scroll is locked outright.
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
-        final double pageHeight = _pageHeight(constraints.maxHeight);
+        // Scale-to-fit: block x/y and ink points persist in a CANONICAL page
+        // space at least [_pageColumnWidth] wide. A narrower viewport renders
+        // the whole page scaled by viewport/canon, so a layout authored on a
+        // tablet arrives on a phone proportionally smaller instead of hanging
+        // off the right edge ("saved a bit of a notebook on the tab s10 ...
+        // way off to the side on my phone"). Wider viewports keep scale 1.
+        final double scale =
+            math.min(1.0, constraints.maxWidth / _pageColumnWidth);
+        final double canonicalWidth = constraints.maxWidth / scale;
+        final double pageHeight = _pageHeight(constraints.maxHeight / scale);
         return SingleChildScrollView(
           key: const ValueKey('notebook-canvas-scroll'),
           controller: _pageScroll,
@@ -962,9 +971,18 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
               : const ClampingScrollPhysics(),
           child: SizedBox(
             key: const ValueKey('notebook-canvas-surface'),
-            height: pageHeight,
+            height: pageHeight * scale,
             width: constraints.maxWidth,
-            child: Stack(
+            // FittedBox scales both painting AND hit-testing, so pointer
+            // positions inside arrive already in canonical coordinates and
+            // ink strokes persist canonically with no per-point conversion.
+            child: FittedBox(
+              fit: BoxFit.fill,
+              alignment: Alignment.topLeft,
+              child: SizedBox(
+                height: pageHeight,
+                width: canonicalWidth,
+                child: Stack(
               children: <Widget>[
                 // Bottom: the page itself -- black, per the ink contract.
                 const Positioned.fill(
@@ -985,8 +1003,9 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                     ),
                   ),
                 ),
-                // Typed blocks, each positioned where it was left.
-                ..._buildPositionedBlocks(constraints.maxWidth),
+                // Typed blocks, each positioned where it was left. Laid out
+                // in canonical space; the FittedBox above scales them.
+                ..._buildPositionedBlocks(canonicalWidth),
                 // Floating recording cards. Each is a Positioned, so they
                 // MUST be direct children of this Stack.
                 for (final NotebookBlock block in _blocks)
@@ -1032,6 +1051,8 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                   ),
                 ),
               ],
+            ),
+              ),
             ),
           ),
         );

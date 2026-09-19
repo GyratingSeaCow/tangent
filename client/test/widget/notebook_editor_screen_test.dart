@@ -72,9 +72,12 @@ void main() {
     WidgetTester tester, {
     required Notebook notebook,
     List<DumpRow> dumps = const <DumpRow>[],
+    bool setViewSize = true,
   }) async {
-    tester.view.physicalSize = const Size(1080, 2340);
-    tester.view.devicePixelRatio = 1.0;
+    if (setViewSize) {
+      tester.view.physicalSize = const Size(1080, 2340);
+      tester.view.devicePixelRatio = 1.0;
+    }
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     repository = FakeNotebookRepository(seed: <Notebook>[notebook]);
@@ -2102,5 +2105,120 @@ void main() {
     );
 
     await unmount(tester);
+  });
+
+  group('cross-device scale-to-fit', () {
+    // Positions persist in CANONICAL page space (720 logical px wide). A
+    // narrower viewport renders the same layout scaled by viewport/720 —
+    // content authored on a tablet must not sit off a phone's right edge:
+    // block x=600 on a 360-wide phone renders at 300, fully on screen.
+    testWidgets('blocks render scaled down on a narrow viewport',
+        (tester) async {
+      tester.view.physicalSize = const Size(360, 780);
+      tester.view.devicePixelRatio = 1.0;
+      await mountEditor(
+        tester,
+        notebook: testNotebook(
+          id: 'nb-1',
+          title: 'Scaled',
+          blocks: <NotebookBlock>[
+            const NotebookTextBlock(id: 'b1', text: 'far right', x: 600, y: 100),
+          ],
+        ),
+        setViewSize: false,
+      );
+
+      final Offset surface = tester.getTopLeft(
+        find.byKey(const ValueKey('notebook-canvas-surface')),
+      );
+      final Offset topLeft = tester.getTopLeft(
+            find.byKey(const ValueKey('notebook-block-b1')),
+          ) -
+          surface;
+      // 600 * (360/720) = 300; the whole block must start on-screen.
+      expect(topLeft.dx, moreOrLessEquals(300, epsilon: 1));
+      expect(topLeft.dy, moreOrLessEquals(50, epsilon: 1));
+      await unmount(tester);
+    });
+
+    testWidgets('dragging a block on a narrow viewport stores canonical x/y',
+        (tester) async {
+      tester.view.physicalSize = const Size(360, 780);
+      tester.view.devicePixelRatio = 1.0;
+      await mountEditor(
+        tester,
+        notebook: testNotebook(
+          id: 'nb-1',
+          title: 'Scaled drag',
+          blocks: <NotebookBlock>[
+            const NotebookTextBlock(id: 'b1', text: 'movable', x: 100, y: 100),
+          ],
+        ),
+        setViewSize: false,
+      );
+
+      // Drag the block 60 screen px right, 40 down: at scale 0.5 that is
+      // 120/80 in canonical space.
+      final Finder handle =
+          find.byKey(const ValueKey('notebook-block-grip-b1'));
+      final TestGesture drag = await tester.startGesture(
+        tester.getCenter(handle),
+      );
+      await drag.moveBy(const Offset(60, 40));
+      await tester.pump(const Duration(milliseconds: 16));
+      await drag.up();
+      await tester.pumpAndSettle();
+      await tester.tap(find.byIcon(Icons.save));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      final NotebookTextBlock moved = repository.saved.single.document.blocks
+          .whereType<NotebookTextBlock>()
+          .single;
+      expect(moved.x, moreOrLessEquals(220, epsilon: 2)); // 100 + 120
+      expect(moved.y, moreOrLessEquals(180, epsilon: 2)); // 100 + 80
+      await unmount(tester);
+    });
+
+    testWidgets('ink drawn on a narrow viewport stores canonical points',
+        (tester) async {
+      tester.view.physicalSize = const Size(360, 780);
+      tester.view.devicePixelRatio = 1.0;
+      await mountEditor(
+        tester,
+        notebook: testNotebook(id: 'nb-1', title: 'Scaled ink'),
+        setViewSize: false,
+      );
+
+      await tester.tap(find.byIcon(Icons.draw));
+      await tester.pumpAndSettle();
+      final Offset surface = tester.getTopLeft(
+        find.byKey(const ValueKey('notebook-canvas-surface')),
+      );
+      // A stroke at screen x 90..180 is canonical 180..360 at scale 0.5.
+      final TestGesture pen = await tester.startGesture(
+        surface + const Offset(90, 100),
+        kind: ui.PointerDeviceKind.stylus,
+      );
+      await pen.moveTo(surface + const Offset(180, 100));
+      await pen.up();
+      await tester.pumpAndSettle();
+      await tester.tap(find.byIcon(Icons.save));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      final InkStroke stroke = repository.saved.single.ink.strokes.single;
+      expect(
+        stroke.points.first.x,
+        moreOrLessEquals(180, epsilon: 3),
+        reason: 'screen x=90 at scale 0.5 must persist as canonical 180',
+      );
+      expect(
+        stroke.points.last.x,
+        moreOrLessEquals(360, epsilon: 3),
+        reason: 'screen x=180 at scale 0.5 must persist as canonical 360',
+      );
+      await unmount(tester);
+    });
   });
 }
