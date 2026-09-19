@@ -5,12 +5,25 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.3.0] - 2026-09-19
 
 ### Added
 - **Notebooks** — endless vertical scrolling page mixing handwriting, typed
   text, checkboxes and embedded recordings. Blocks and imported cards are
   draggable; tapping a recording card opens it for playback.
+- **Notebook folders** — file notebooks into folders; folder sections render
+  in both the named list and the cover-grid view.
+- **Collapsible folder sections** — tap a folder's name in the Notebooks list
+  to fold the section down to its header (rotating chevron affordance); tap
+  again to expand. State is shared across the list and cover views.
+- **Cover-grid view for notebooks** — Samsung-Notes-style book covers as an
+  alternate view, persisted across restarts.
+- **Audio download (single + bulk)** — pull a synced recording's audio from
+  the server back onto the device. Per-row "Download audio" menu entry and a
+  bulk "download all audio" toolbar action; downloads land in
+  `Tangent Synced Audio/` with playable bindings (publish → attach → bind).
+- **Bulk transcribe** from the selection toolbar.
+- **Action-agnostic multi-select** in the Dumps list.
 - **Stroke eraser** on the pen toolbar, erasing for the whole gesture.
 - **Import audio** — bring an existing audio file into Tangent from the home
   screen. The file is copied (never moved) through the same reserve → stage →
@@ -27,16 +40,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   server. Recording, playback, notebooks and search remain fully offline.
 - Recordings stay on the device by default; syncing to a server is an explicit
   choice, no longer conflated with transcription.
+- **Dumps filters collapsed into one dropdown bar** — two stacked chip rows
+  became a single row of two dropdowns (`Mode · All ▾` / `Transcript · All ▾`);
+  the closed anchor always names the active selection.
 
 ### Fixed
 - **Stop latency ~10.4 s → ~1.8 s** (T8). The receipt proof was enumerating and
   parsing the entire recordings folder after every capture; it now reads the one
   entry it just wrote.
+- **Download with no usable storage folder now says so** ("Choose a storage
+  folder first") instead of silently doing nothing — an enabled control that
+  did nothing was indistinguishable from a broken app.
+- Downloaded synced audio actually plays: the path resolver (Kotlin and Dart)
+  both learned the `Tangent Synced Audio/` folder.
+- "Select all" selected only a couple of rows; selection is now
+  action-agnostic.
 - Notebook cards could not be dragged slowly — the page scroll won the gesture
   arena before the card's threshold was reached. The page now yields on touch.
 - Card taps, per-block delete, and backspace-deletes-empty-line in notebooks.
 - Durable notebook files are re-adopted at startup and republished on save.
 - Several SAF publication defects around MIME-coherent names and text notes.
+- Transcription status repaired on recordings that synced before the fix.
+
+### Known issues
+- Recordings fenced by earlier interrupted runs fail bulk download with
+  `Recording identity is fenced`; the fence is never released. Under
+  investigation.
+- A failed audio fetch (e.g. server unreachable) is not yet surfaced in the
+  UI; the download simply does not happen.
 
 ## [1.0.0] - 2026-09-13
 

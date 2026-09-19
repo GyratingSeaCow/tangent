@@ -15,12 +15,12 @@ cd server
 docker compose up -d          # published on host port 8765
 # ...or from source:
 uv sync --all-extras
-uv run pytest                 # 125 passed, 1 skipped
+uv run pytest                 # 162 passed, 3 skipped
 
 # Client (needs Flutter >= 3.27, JDK 17, Android SDK)
 cd ../client
 flutter pub get
-flutter test                  # 978 tests
+flutter test                  # 1320 tests
 flutter analyze               # No issues found
 flutter build apk --debug
 ```

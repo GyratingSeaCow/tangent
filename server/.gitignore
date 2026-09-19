@@ -36,4 +36,4 @@ models/*.gguf
 
 # Env files
 .env
-.env.local
+.env.local.venv-test/

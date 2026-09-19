@@ -50,7 +50,7 @@ ADH2/
 
 ## Status
 
-Shipping. Client and server are both implemented and tested (978 Flutter tests, 125 server tests). See CHANGELOG.md for what has landed.
+Shipping — **v1.3.0** (see CHANGELOG.md). Client and server are both implemented and tested (1320 Flutter tests, 162 server tests, 100 Kotlin tests). Current work state and open defects live in `docs/HANDOFF-2026-09-19.md`.
 
 ---
 

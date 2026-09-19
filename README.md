@@ -5,8 +5,9 @@
 > Built for ADHD minds. Self-hosted. Offline-first. No subscriptions.
 
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](./LICENSE)
-[![Client tests: 978 passing](https://img.shields.io/badge/client_tests-978%20passing-brightgreen.svg)]()
-[![Server tests: 125 passing](https://img.shields.io/badge/server_tests-125%20passing-brightgreen.svg)]()
+[![Version: 1.3.0](https://img.shields.io/badge/version-1.3.0-blue.svg)](./CHANGELOG.md)
+[![Client tests: 1320 passing](https://img.shields.io/badge/client_tests-1320%20passing-brightgreen.svg)]()
+[![Server tests: 162 passing](https://img.shields.io/badge/server_tests-162%20passing-brightgreen.svg)]()
 
 ---
 
@@ -35,7 +36,9 @@ fingers. You tap a big red button, ramble for 30 seconds or 30 minutes, and the 
 
 **Notebooks** give you an endless scrolling page where handwriting, typed
 blocks and your recordings live side by side — drag a recording onto the page,
-write around it, and tap it to play it back.
+write around it, and tap it to play it back. File notebooks into **folders**,
+collapse a folder by tapping its name, and switch between a named list and a
+cover-grid view.
 
 **Import audio** pulls an existing file (a voice memo from another app, a
 meeting recording someone sent you) into Tangent and treats it like anything
@@ -217,17 +220,17 @@ flutter build linux
 | Real-time job updates (Server-Sent Events) | ✅ |
 | Sync engine with retry + failure tracking | ✅ |
 | Batched "Confirm to Transcribe All" notification | ✅ (the Sync button on home) |
-| Server-side audio download | ✅ |
+| Server-side audio download (single + bulk, playable) | ✅ device-verified |
+| Bulk transcribe from the selection toolbar | ✅ |
 | Token-based auth (hashed, single-user) | ✅ |
 | Self-hosted Docker Compose | ✅ |
-| AGPL-3 license | ✅ |
 | Notebooks (handwriting + typed blocks + embedded recordings) | ✅ |
+| Notebook folders with collapsible sections (list + cover views) | ✅ |
 | Import existing audio files | ✅ |
 | Text notes | ✅ |
-| Folder/tag organization | ❌ v2 |
+| Speaker diarization (server, pyannote) | ✅ optional, off by default |
 | Encryption at rest for audio | ❌ v2 |
 | Multi-device sync | ❌ v2 |
-| Speaker diarization | ❌ v2 |
 
 ---
 
@@ -238,11 +241,11 @@ flutter build linux
 ```bash
 # Server (Python)
 cd server
-python -m pytest                # 125 passed, 1 skipped
+python -m pytest                # 162 passed, 3 skipped
 
 # Client (Flutter)
 cd client
-flutter test                    # 978 widget + unit tests
+flutter test                    # 1320 widget + unit tests
 flutter analyze                 # No issues found
 
 # Android native (Kotlin) — from client/android
