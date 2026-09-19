@@ -759,6 +759,131 @@ void main() {
     );
   });
 
+  /// Reads the block keys in the order they are laid out on the page.
+  ///
+  /// Asserting on rendered order rather than on the screen's private State
+  /// keeps this honest about what the user actually sees, and survives a
+  /// refactor of the backing list.
+  List<String> renderedBlockOrder(WidgetTester tester) {
+    // Anchor the prefix: 'notebook-block-grip-' and '-remove-' share it, so an
+    // unanchored startsWith counts three widgets per block.
+    final RegExp blockKey = RegExp(r'^notebook-block-[^-]');
+    return tester
+        .widgetList<Positioned>(
+          find.byWidgetPredicate(
+            (Widget w) =>
+                w is Positioned &&
+                w.key is ValueKey<String> &&
+                blockKey.hasMatch((w.key! as ValueKey<String>).value),
+          ),
+        )
+        .map((Positioned w) => (w.key! as ValueKey<String>).value)
+        .toList();
+  }
+
+  testWidgets('a new text block lands below the item being edited',
+      (tester) async {
+    // Appending to the very end scatters a page being written top-to-bottom:
+    // the user is working in the middle of the document and the new block
+    // appears far below, off screen. Enter already inserts in place
+    // (_splitCheckboxBlock); the toolbar buttons must agree with it.
+    await mountEditor(
+      tester,
+      notebook: testNotebook(
+        id: 'nb-1',
+        blocks: const <NotebookBlock>[
+          NotebookCheckboxBlock(id: 'b1', text: 'milk', x: 20, y: 40),
+          NotebookTextBlock(id: 'b2', text: 'trailing note', x: 20, y: 160),
+        ],
+      ),
+    );
+
+    // Put the caret in the FIRST block, so "the end" and "below the caret"
+    // are different answers and the test can tell them apart.
+    await tester.tap(find.byKey(const ValueKey('notebook-checkbox-block-b1')));
+    await tester.pumpAndSettle();
+
+    // PROBE: what actually holds focus after the tap?
+    await tester.tap(find.byKey(const ValueKey('notebook-insert-menu')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Text block'));
+    await tester.pumpAndSettle();
+
+    final List<String> order = renderedBlockOrder(tester);
+    expect(order.length, 3, reason: 'exactly one block was added');
+    expect(
+      order.first,
+      'notebook-block-b1',
+      reason: 'the focused block stays put',
+    );
+    expect(
+      order.last,
+      'notebook-block-b2',
+      reason: 'the new block sits BETWEEN the focused block and what followed '
+          'it, not appended after everything',
+    );
+  });
+
+  testWidgets('a new checkbox lands below the item being edited',
+      (tester) async {
+    await mountEditor(
+      tester,
+      notebook: testNotebook(
+        id: 'nb-1',
+        blocks: const <NotebookBlock>[
+          NotebookCheckboxBlock(id: 'b1', text: 'milk', x: 20, y: 40),
+          NotebookTextBlock(id: 'b2', text: 'trailing note', x: 20, y: 160),
+        ],
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('notebook-checkbox-block-b1')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('notebook-insert-menu')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Checkbox'));
+    await tester.pumpAndSettle();
+
+    final List<String> order = renderedBlockOrder(tester);
+    expect(order.length, 3);
+    expect(order.first, 'notebook-block-b1');
+    expect(
+      order.last,
+      'notebook-block-b2',
+      reason: 'the new checkbox goes below the caret, matching what Enter does',
+    );
+  });
+
+  testWidgets('with nothing focused a new block still appends to the end',
+      (tester) async {
+    // No caret means no "here" to insert at, and the end of the page is the
+    // only answer that does not move the user somewhere they did not ask for.
+    await mountEditor(
+      tester,
+      notebook: testNotebook(
+        id: 'nb-1',
+        blocks: const <NotebookBlock>[
+          NotebookCheckboxBlock(id: 'b1', text: 'milk', x: 20, y: 40),
+          NotebookTextBlock(id: 'b2', text: 'trailing note', x: 20, y: 160),
+        ],
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('notebook-insert-menu')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Text block'));
+    await tester.pumpAndSettle();
+
+    final List<String> order = renderedBlockOrder(tester);
+    expect(order.length, 3);
+    expect(
+      order.sublist(0, 2),
+      <String>['notebook-block-b1', 'notebook-block-b2'],
+      reason: 'the existing blocks keep their order and the new one is last',
+    );
+  });
+
   testWidgets('the soft keyboard enter key starts the next checkbox item',
       (tester) async {
     // The hardware-key test above passed while the DEVICE still grew the box:

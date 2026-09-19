@@ -184,8 +184,15 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
   /// block, exactly like its controller.
   final Map<String, FocusNode> _focusNodes = <String, FocusNode>{};
 
-  FocusNode _focusFor(String id) =>
-      _focusNodes.putIfAbsent(id, () => FocusNode());
+  FocusNode _focusFor(String id) => _focusNodes.putIfAbsent(id, () {
+        final FocusNode node = FocusNode();
+        // Remember the last block that held the caret. Read at insert time,
+        // by which point the menu has taken focus away from the field.
+        node.addListener(() {
+          if (node.hasFocus) _lastFocusedBlockId = id;
+        });
+        return node;
+      });
 
   void _markDirty() {
     if (_hydrating || _dirty) return;
@@ -196,13 +203,43 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
   // Block editing
   // -------------------------------------------------------------------
 
+  /// The block the caret is in, or null when nothing is focused.
+  ///
+  /// Remembered on every focus change rather than read on demand: opening the
+  /// insert menu moves focus to the menu itself, so by the time an item is
+  /// selected the field has already lost it and a live read always answers
+  /// "nothing focused".
+  String? _lastFocusedBlockId;
+
+  /// Where a newly inserted block belongs.
+  ///
+  /// Directly after the block being edited, matching what Enter already does
+  /// in a checkbox list. Appending to the very end scatters a page written
+  /// top-to-bottom: the user is working mid-document and the new block appears
+  /// far below, often off screen.
+  ///
+  /// With nothing focused there is no "here" to insert at, so the end of the
+  /// page is the only answer that does not move the user somewhere they did
+  /// not ask to go.
+  int get _insertionIndex {
+    final String? focused = _lastFocusedBlockId;
+    if (focused == null) return _blocks.length;
+    final int index =
+        _blocks.indexWhere((NotebookBlock block) => block.id == focused);
+    return index < 0 ? _blocks.length : index + 1;
+  }
+
   void _addTextBlock() {
     final String id = _uuid.v4();
     _controllerFor(id, '');
+    final int at = _insertionIndex;
     setState(() {
       _blocks = <NotebookBlock>[
-        ..._blocks,
+        ..._blocks.take(at),
+        // Unplaced (x/y null) so it flows beneath its neighbour rather than
+        // landing on top of it at identical coordinates.
         NotebookTextBlock(id: id, text: ''),
+        ..._blocks.skip(at),
       ];
       _dirty = true;
     });
@@ -211,10 +248,12 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
   void _addCheckboxBlock() {
     final String id = _uuid.v4();
     _controllerFor(id, '');
+    final int at = _insertionIndex;
     setState(() {
       _blocks = <NotebookBlock>[
-        ..._blocks,
+        ..._blocks.take(at),
         NotebookCheckboxBlock(id: id, text: ''),
+        ..._blocks.skip(at),
       ];
       _dirty = true;
     });
@@ -278,6 +317,9 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
     });
     _controllers.remove(id)?.dispose();
     _focusNodes.remove(id)?.dispose();
+    // A deleted block must not keep steering where new blocks land; its id
+    // would never match again and the insert would silently go to the end.
+    if (_lastFocusedBlockId == id) _lastFocusedBlockId = null;
   }
 
   /// The card reports interim pan positions AND the settled one through the
