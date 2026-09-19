@@ -89,13 +89,16 @@ void main() {
     await t.longPress(find.byKey(const ValueKey('dump-row-fixture-0')));
     await pumpSelection(t);
     expect(find.byKey(const ValueKey('dump-row-fixture-99')), findsNothing);
-    final disabled = find.byKey(const ValueKey('dump-select-fixture-1'));
-    expect(t.widget<Checkbox>(disabled).onChanged, isNull);
-    expect(t.widget<Checkbox>(disabled).semanticLabel,
+    // Action-agnostic selection: the in-progress row is still SELECTABLE;
+    // its semantic label carries the status so the user knows what delete
+    // will later skip.
+    final inProgress = find.byKey(const ValueKey('dump-select-fixture-1'));
+    expect(t.widget<Checkbox>(inProgress).onChanged, isNotNull);
+    expect(t.widget<Checkbox>(inProgress).semanticLabel,
         contains('Transcription in progress'),);
     await t.tap(find.byKey(const ValueKey('selection-all')));
     await pumpSelection(t);
-    expect(find.text('99 selected'), findsOneWidget);
+    expect(find.text('100 selected'), findsOneWidget);
     expect(find.textContaining('100-candidate limit'), findsOneWidget);
     c.read(eligibilityFixture.notifier).state = {
       ...c.read(eligibilityFixture),
@@ -110,10 +113,12 @@ void main() {
       limit: 100
     ),);
     await pumpSelection(t);
-    expect(find.text('97 selected'), findsOneWidget);
+    // Only disappearance prunes (fixture-0 left the results); a changed
+    // eligibility (fixture-2 now syncing) does not silently deselect.
+    expect(find.text('99 selected'), findsOneWidget);
     await t.tap(find.byKey(const ValueKey('selection-delete')));
     await pumpSelection(t);
-    expect(d.previews.single, hasLength(97));
+    expect(d.previews.single, hasLength(99));
     expect(d.previews.single, isNot(contains('arrival')));
     expect(d.previews.single, isNot(contains('hidden')));
   });

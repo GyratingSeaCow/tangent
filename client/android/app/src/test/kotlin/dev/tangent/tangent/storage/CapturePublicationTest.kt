@@ -18,6 +18,37 @@ class CapturePublicationTest {
         assertEquals("audio/wav", CaptureWire.audioMimeForSuffix(".wav"))
     }
 
+    @Test fun boundContentSearchOrderCoversRootNotesAndSyncedAudio() {
+        // The device defect this guards: a downloaded recording published into
+        // 'Tangent Synced Audio' bound correctly, but ownedContent() searched
+        // only the root and the text-note child — so playback said
+        // "absent: Audio absent" while the bytes sat on disk, byte-exact.
+        val root = NativeDirectory("fixture", "content://fixture/tree/r", "r")
+        val note = NativeNode("n1", CaptureWire.TEXT_NOTE_DIRECTORY, true)
+        val synced = NativeNode("s1", CaptureWire.SYNCED_AUDIO_DIRECTORY, true)
+        val stray = NativeNode("x1", "Vacation photos", true)
+        val file = NativeNode("f1", CaptureWire.SYNCED_AUDIO_DIRECTORY, false)
+
+        val dirs = CaptureWire.boundContentDirectories(
+            root, listOf(stray, note, synced, file),
+        )
+        assertEquals(
+            "search order is root, then notes, then synced audio",
+            listOf("r", "n1", "s1"),
+            dirs.map { it.documentId },
+        )
+
+        // A same-name FILE must not be treated as the child directory.
+        val fileOnly = CaptureWire.boundContentDirectories(root, listOf(file))
+        assertEquals(listOf("r"), fileOnly.map { it.documentId })
+
+        // Duplicate same-name directories are ambiguous: skip, never guess.
+        val dup = NativeNode("s2", CaptureWire.SYNCED_AUDIO_DIRECTORY, true)
+        val ambiguous =
+            CaptureWire.boundContentDirectories(root, listOf(synced, dup))
+        assertEquals(listOf("r"), ambiguous.map { it.documentId })
+    }
+
     @Test fun opusKeepsItsOggMimeType() {
         assertEquals("audio/ogg", CaptureWire.audioMimeForSuffix(".opus"))
     }

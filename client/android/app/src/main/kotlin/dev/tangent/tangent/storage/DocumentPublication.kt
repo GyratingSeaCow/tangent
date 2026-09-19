@@ -87,14 +87,47 @@ class DocumentPublication(private val port: DurableDocumentsPort) {
         val content = DocumentWire.text(args["content"])
         DocumentWire.literal(args["publicationId"])
         val bytes = content.toByteArray(Charsets.UTF_8)
+        return write(root, directoryName, name, bytes, DocumentWire.DOCUMENT_MIME, content)
+    }
+
+    /**
+     * Publishes raw bytes (downloaded audio) rather than text.
+     *
+     * The text [publish] above encodes its content as UTF-8, which corrupts
+     * anything that is not text, so audio needs its own entry point. Both
+     * share [write] so the atomic temp -> verify -> park -> rename -> delete
+     * sequence can never drift between them.
+     */
+    fun publishBinary(args: Map<String, Any?>): Map<String, Any?> {
+        val (root, directoryName) = located(args)
+        val name = DocumentWire.literal(args["name"])
+        DocumentWire.literal(args["publicationId"])
+        val bytes = args["bytes"] as? ByteArray
+            ?: CaptureWire.fault("invalid", "Document bytes are missing")
+        if (bytes.isEmpty()) CaptureWire.fault("invalid", "Refusing to publish an empty document")
+        val mime = DocumentWire.text(args["mimeType"])
+        if (mime.isEmpty()) CaptureWire.fault("invalid", "Empty document MIME type")
+        // `content` describes TEXT documents; binary publication reports an
+        // empty string rather than decoding audio into one.
+        return write(root, directoryName, name, bytes, mime, "")
+    }
+
+    private fun write(
+        root: NativeDirectory,
+        directoryName: String,
+        name: String,
+        bytes: ByteArray,
+        mime: String,
+        content: String,
+    ): Map<String, Any?> {
         val d = directoryFor(root, directoryName, true)!!
         val old = policy.ownedNode(d, name, null)
         // Write to a MIME-coherent temp, verify, replace, then rename: a torn
         // write can never truncate the last successfully published copy.
         val temp = port.create(
             d,
-            ".$name-${java.util.UUID.randomUUID()}.partial${DocumentWire.tempExtension(DocumentWire.DOCUMENT_MIME)}",
-            DocumentWire.DOCUMENT_MIME,
+            ".$name-${java.util.UUID.randomUUID()}.partial${DocumentWire.tempExtension(mime)}",
+            mime,
         )
         try {
             port.write(d, temp, bytes)
@@ -108,7 +141,7 @@ class DocumentPublication(private val port: DurableDocumentsPort) {
                 parked = port.rename(
                     d,
                     old,
-                    ".$name-${java.util.UUID.randomUUID()}.superseded${DocumentWire.tempExtension(DocumentWire.DOCUMENT_MIME)}",
+                    ".$name-${java.util.UUID.randomUUID()}.superseded${DocumentWire.tempExtension(mime)}",
                 )
             }
             val published = try {
@@ -172,6 +205,7 @@ class DocumentPublication(private val port: DurableDocumentsPort) {
 
     fun execute(method: String, args: Map<String, Any?>): Any = when (method) {
         "publishDocumentAt" -> publish(args)
+        "publishBinaryDocumentAt" -> publishBinary(args)
         "listDocumentsAt" -> list(args)
         "deleteDocumentAt" -> delete(args)
         else -> CaptureWire.fault("unsupported", "Unknown document operation")

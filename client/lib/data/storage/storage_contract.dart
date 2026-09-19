@@ -104,6 +104,18 @@ const String textNoteSubdirectoryName = 'Tangent Text Notes';
 /// mirrors this exact literal (DocumentWire.NOTEBOOK_DIRECTORY).
 const String notebookSubdirectoryName = 'Tangent Notebooks';
 
+/// Child directory of the user-chosen storage folder that owns audio
+/// downloaded from the sync server, a sibling of [notebookSubdirectoryName].
+/// The Kotlin SAF port mirrors this exact literal
+/// (DocumentWire.SYNCED_AUDIO_DIRECTORY).
+///
+/// Downloaded audio is kept out of the folder ROOT deliberately: the root
+/// holds what this device captured, and a synced copy of a recording made on
+/// another device is a different thing. Keeping them apart means a user
+/// browsing the folder can tell which recordings are theirs from this device
+/// without opening the app.
+const String syncedAudioSubdirectoryName = 'Tangent Synced Audio';
+
 /// Durable notebook filename suffix: one self-contained JSON document per
 /// notebook, `<id>.notebook.json`, with no sidecar.
 const String notebookFileSuffix = '.notebook.json';
@@ -452,6 +464,27 @@ abstract interface class StorageBackend {
     String directoryName,
     String name,
     String content,
+    String publicationId,
+  );
+
+  /// Publishes one sidecar-free durable document called [name] carrying raw
+  /// [bytes] into the [directoryName] child of [location].
+  ///
+  /// The text [publishDocument] above cannot carry audio: the Kotlin side
+  /// encodes its content as UTF-8 and verifies readback against those bytes,
+  /// which corrupts anything that is not text. Downloaded audio needs a real
+  /// binary write, and it must be a playable file in the user's folder rather
+  /// than an encoded blob.
+  ///
+  /// Returns `Unsupported` by default so a backend that cannot write binary
+  /// documents keeps compiling and simply never offers audio download; only
+  /// the backends that genuinely support it override this.
+  IoOperation<Outcome<DurableDocument>> publishBinaryDocument(
+    StorageLocation location,
+    String directoryName,
+    String name,
+    List<int> bytes,
+    String mimeType,
     String publicationId,
   );
 

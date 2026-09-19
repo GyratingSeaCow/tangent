@@ -114,6 +114,9 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
       case ItemAction.duplicate:
       case ItemAction.share:
       case ItemAction.select:
+      // Notebooks have no server-side audio to fetch, so this action is
+      // never offered here; the branch exists to keep the switch exhaustive.
+      case ItemAction.download:
         break;
     }
   }

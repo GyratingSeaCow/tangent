@@ -8,6 +8,45 @@ import '../../screens/home/home_screen.dart' show localDbProvider;
 
 import 'dart:convert';
 import '../../data/storage/storage_providers.dart';
+import '../../services/synced_audio_download.dart';
+import '../../screens/home/home_providers.dart'
+    show connectivityServiceProvider;
+import '../../screens/server/server_connection_screen.dart'
+    show transcriptionClientProvider;
+import '../../screens/settings/settings_screen.dart' show settingsStoreProvider;
+
+/// Builds the audio downloader against the currently selected folder.
+///
+/// Returns null while no folder is available: without one there is nowhere
+/// to publish, and offering a download that cannot land would be a lying
+/// control. The UI reads null as "not offerable yet".
+final syncedAudioDownloaderProvider =
+    Provider<SyncedAudioDownloader?>((Ref ref) {
+  final AsyncValue<DefaultFolderState> folder =
+      ref.watch(defaultFolderProvider);
+  final StorageLocation? location = folder.valueOrNull?.location;
+  if (location == null || folder.valueOrNull?.available != true) return null;
+
+  return SyncedAudioDownloader(
+    db: ref.watch(localDbProvider),
+    backend: ref.watch(storageBackendProvider),
+    location: location,
+    fetch: (String dumpId) =>
+        ref.read(transcriptionClientProvider).downloadAudio(dumpId),
+    // Read at fetch time, not construction: the user may flip either between
+    // opening the list and tapping download.
+    wifiOnly: () async => ref.read(settingsStoreProvider).wifiOnlySync,
+    connection: () => ref.read(connectivityServiceProvider).currentStatus(),
+  );
+});
+
+/// True when this row's audio lives only on the server.
+///
+/// Both halves matter: `audioOnServer` says the bytes exist to fetch, and
+/// `remoteOnly` says this device does not already hold them. A row failing
+/// either is not downloadable, and the action must not be offered.
+bool dumpNeedsAudioDownload(DumpRow row) =>
+    row.audioOnServer == true && row.remoteOnly == true;
 
 class _PresentedEpoch {
   int generation = 0;

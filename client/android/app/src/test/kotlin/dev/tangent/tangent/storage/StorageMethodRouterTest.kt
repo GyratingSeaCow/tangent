@@ -76,7 +76,10 @@ class StorageMethodRouterTest {
             "prepareCaptureAt",
             "inspectPreparedCaptureAt", "publishPreparedCaptureAt",
             // Durable notebook documents publish through the same router.
-            "publishDocumentAt", "listDocumentsAt", "deleteDocumentAt")
+            // Downloaded audio uses the binary variant: the text one encodes
+            // its content as UTF-8 and would corrupt it.
+            "publishDocumentAt", "publishBinaryDocumentAt",
+            "listDocumentsAt", "deleteDocumentAt")
         assertEquals(expected, StorageChannel.methods)
         var picker = 0; var awake = 0
         val calls = mutableListOf<Pair<String, Map<String, Any?>>>()

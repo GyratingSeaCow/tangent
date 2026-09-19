@@ -43,13 +43,17 @@ void main() {
       'fixture-1': Eligibility.busy,
     });
     expect(c.state.selectedIds, isNot(contains('fixture-0')));
-    expect(c.state.selectedIds, isNot(contains('fixture-1')));
+    // Busy rows STAY selected: selection is action-agnostic, and each bulk
+    // action (delete included) re-checks its own eligibility per target at
+    // execution and reports skips. Only disappearance from the presented
+    // results prunes a selection.
+    expect(c.state.selectedIds, contains('fixture-1'));
     c.apply(
         (scopeKey: 'all', generation: 1, settled: false, rows: [], limit: null),
         eligible,);
-    expect(c.state.selectedIds, hasLength(118));
+    expect(c.state.selectedIds, hasLength(119));
     c.toggleAll();
-    expect(c.state.selectedIds, hasLength(118));
+    expect(c.state.selectedIds, hasLength(119));
     c.apply((
       scopeKey: 'search',
       generation: 2,

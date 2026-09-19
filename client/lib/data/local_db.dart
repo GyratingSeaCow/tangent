@@ -646,6 +646,22 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     );
   }
 
+  /// Reverses [attachDownloadedAudio] after a failed download.
+  ///
+  /// A row holding an audio path with no binding is unplayable but LOOKS
+  /// available, so a partial failure must put the row back to remote-only
+  /// rather than leaving the user a recording that cannot open. Only the
+  /// audio columns move; metadata and transcript are untouched.
+  Future<void> clearDownloadedAudio(String id) async {
+    await (update(dumps)..where((d) => d.id.equals(id))).write(
+      const DumpsCompanion(
+        audioPath: Value<String>(''),
+        audioSizeBytes: Value<int>(0),
+        remoteOnly: Value<bool?>(true),
+      ),
+    );
+  }
+
   Future<void> recordTombstone({
     required String entityType,
     required String entityId,

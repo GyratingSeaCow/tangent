@@ -24,6 +24,10 @@ enum ItemAction {
   move,
   duplicate,
   share,
+
+  /// Fetch a synced recording's audio from the server onto this device.
+  /// Offered only when the server holds audio this device does not.
+  download,
   select,
   delete,
 }
@@ -36,6 +40,7 @@ const Set<ItemAction> _destructive = <ItemAction>{ItemAction.delete};
 /// muscle memory keeps working.
 const List<ItemAction> _canonicalOrder = <ItemAction>[
   ItemAction.open,
+  ItemAction.download,
   ItemAction.rename,
   ItemAction.move,
   ItemAction.duplicate,
@@ -65,7 +70,8 @@ class ItemActionSheet extends StatelessWidget {
   final Map<ItemAction, String> disabledActions;
 
   /// Stable key per action, so tests and later restyling both survive.
-  static Key keyFor(ItemAction action) => ValueKey<String>('item-action-${action.name}');
+  static Key keyFor(ItemAction action) =>
+      ValueKey<String>('item-action-${action.name}');
 
   static String labelFor(ItemAction action) {
     switch (action) {
@@ -79,6 +85,8 @@ class ItemActionSheet extends StatelessWidget {
         return 'Duplicate';
       case ItemAction.share:
         return 'Share';
+      case ItemAction.download:
+        return 'Download audio';
       case ItemAction.select:
         return 'Select';
       case ItemAction.delete:
@@ -98,6 +106,8 @@ class ItemActionSheet extends StatelessWidget {
         return Icons.copy_all_outlined;
       case ItemAction.share:
         return Icons.ios_share;
+      case ItemAction.download:
+        return Icons.download_for_offline_outlined;
       case ItemAction.select:
         return Icons.check_circle_outline;
       case ItemAction.delete:

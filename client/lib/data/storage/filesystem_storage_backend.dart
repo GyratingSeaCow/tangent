@@ -220,17 +220,24 @@ class FilesystemStorageBackend implements StorageBackend {
     };
     // The binding locator is authoritative for the parent: audio modes (and
     // legacy notes) live at the root, published text notes live inside the
-    // owned 'Tangent Text Notes' child. Only the note content name may bind
-    // through the subdirectory.
+    // owned 'Tangent Text Notes' child, and downloaded synced audio lives
+    // inside 'Tangent Synced Audio'. Only the matching content name may bind
+    // through each subdirectory.
     final parent = p.dirname(binding.audio.value);
     final basename = p.basename(binding.audio.value);
     final rootParent = p.equals(parent, root);
     final noteParent =
         p.equals(parent, p.join(root, textNoteSubdirectoryName)) &&
             basename == '$id.${contentExtensionForMode('text_note')}';
+    // Synced audio is always audio, never a note: only audio content names
+    // may resolve through this child, so a markdown file smuggled into the
+    // downloads folder still faults.
+    final syncedParent =
+        p.equals(parent, p.join(root, syncedAudioSubdirectoryName)) &&
+            (basename == '$id.opus' || basename == '$id.wav');
     if (binding.metadataName != '$id.meta.json' ||
         binding.audio.kind != 'file' ||
-        (!rootParent && !noteParent) ||
+        (!rootParent && !noteParent && !syncedParent) ||
         !contentNames.contains(basename)) {
       _invalid('Binding does not identify exact owned components');
     }
@@ -645,6 +652,55 @@ class FilesystemStorageBackend implements StorageBackend {
             name: name,
             locator: (kind: 'file', value: target),
             content: content
+          );
+        }),
+      );
+
+  @override
+  IoOperation<Outcome<DurableDocument>> publishBinaryDocument(
+    StorageLocation location,
+    String directoryName,
+    String name,
+    List<int> bytes,
+    String mimeType,
+    String publicationId,
+  ) =>
+      _run(
+        () => _outcome(() async {
+          StorageCodec.validateLiteralId(publicationId);
+          StorageCodec.validateLiteralId(name);
+          if (bytes.isEmpty) _invalid('Refusing to publish an empty document');
+          final directory = (await _childDirectory(
+            location,
+            directoryName,
+            create: true,
+          ))!;
+          final target = p.join(directory, name);
+          final type = await FileSystemEntity.type(target, followLinks: false);
+          if (type != FileSystemEntityType.file &&
+              type != FileSystemEntityType.notFound) {
+            _invalid('Not an owned document file');
+          }
+          // Write-then-rename: a torn write never replaces the last good copy.
+          final tmp = await _temporary(directory, publicationId);
+          try {
+            await tmp.writeAsBytes(bytes, flush: true);
+            // Verify before replacing. A short write is silent otherwise, and
+            // the failure would not surface until playback.
+            final int written = await tmp.length();
+            if (written != bytes.length) {
+              _invalid('Document readback mismatch');
+            }
+            await tmp.rename(target);
+          } finally {
+            if (await tmp.exists()) await tmp.delete();
+          }
+          // `content` describes TEXT documents; binary publication reports an
+          // empty string rather than decoding audio into one.
+          return (
+            name: name,
+            locator: (kind: 'file', value: target),
+            content: ''
           );
         }),
       );

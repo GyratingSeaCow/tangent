@@ -150,6 +150,17 @@ void main() {
     });
 
     testWidgets('every action has a stable key and a label', (tester) async {
+      // A modal bottom sheet is capped at 9/16 of the screen, so the full
+      // action list does not fit on the default 800x600 surface. Dragging it
+      // into view is not an option: a drag on a modal sheet is its
+      // dismiss gesture, so scrollUntilVisible closes the sheet and every
+      // later lookup fails with "No element". Give the test a tall surface
+      // instead — the claim under test is that each action RENDERS with a key
+      // and a label, not that it survives a scroll.
+      tester.view.physicalSize = const Size(1200, 2400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
       await open(
         tester,
         title: 'Everything',
@@ -158,13 +169,6 @@ void main() {
       await tester.pumpAndSettle();
 
       for (final ItemAction action in ItemAction.values) {
-        // The full list scrolls on a short screen, so bring each row into view
-        // before asserting on it.
-        await tester.scrollUntilVisible(
-          find.byKey(ItemActionSheet.keyFor(action)),
-          80,
-          scrollable: find.byType(Scrollable).last,
-        );
         expect(
           find.byKey(ItemActionSheet.keyFor(action)),
           findsOneWidget,

@@ -285,18 +285,9 @@ class AndroidDocumentsPort(context: Context) : DocumentsIoPort, CaptureDocuments
             throw e
         }
     }
-    /** The 'Tangent Text Notes' child of the owned root, if present as a real
-     * directory. Text notes publish there (see CapturePublication); bound
-     * note operations must follow. Never created on this read path. */
-    private fun noteDirectory(d:NativeDirectory):NativeDirectory? {
-        val matches = children(d).filter { it.name == CaptureWire.TEXT_NOTE_DIRECTORY }
-        val node = matches.singleOrNull() ?: return null
-        if (!node.directory || node.virtual) return null
-        return NativeDirectory(d.authority,d.treeUri,node.id)
-    }
     fun execute(method:String,args:Map<String,Any?>):Any? {
         if(method in setOf("prepareCaptureAt","inspectPreparedCaptureAt","publishPreparedCaptureAt")) return capture.execute(method,args)
-        if(method in setOf("publishDocumentAt","listDocumentsAt","deleteDocumentAt")) return documents.execute(method,args)
+        if(method in setOf("publishDocumentAt","publishBinaryDocumentAt","listDocumentsAt","deleteDocumentAt")) return documents.execute(method,args)
         if (method == "inspectLegacyStorage") {
             return LegacyStorageInspection(
                 { app.getSharedPreferences("tangent_storage",Context.MODE_PRIVATE).getString("recordings_tree_uri",null) },
@@ -351,7 +342,10 @@ class AndroidDocumentsPort(context: Context) : DocumentsIoPort, CaptureDocuments
                 }
                 return null
             }
-            return readOne(d) ?: noteDirectory(d)?.let { readOne(it) }
+            for (home in CaptureWire.boundContentDirectories(d, children(d))) {
+                readOne(home)?.let { return it }
+            }
+            return null
         }
         if (method == "listRecordingsAt") {
             // Durable-pair primary content mirrors the shared Dart mode helper
@@ -378,9 +372,10 @@ class AndroidDocumentsPort(context: Context) : DocumentsIoPort, CaptureDocuments
                     mapOf("id" to id,"audio" to mapOf("version" to 1,"kind" to "saf","value" to uri(dir,node)),"sizeBytes" to size,"modifiedAt" to modified,"metadataJson" to meta,"problem" to problem)
                 }
             }
-            val results = scan(d).toMutableList()
-            noteDirectory(d)?.let { results += scan(it) }
-            return results
+            // Every home bound content may occupy, so downloaded synced
+            // audio enumerates alongside captures and text notes.
+            return CaptureWire.boundContentDirectories(d, children(d))
+                .flatMap { scan(it) }
         }
 
         val b = binding ?: fault("invalid","Missing binding")
@@ -398,15 +393,21 @@ class AndroidDocumentsPort(context: Context) : DocumentsIoPort, CaptureDocuments
         // first (audio modes, legacy root notes) and then that child; the
         // binding-derived docId keeps the lookup anchored to the exact
         // published document either way.
-        val note = noteDirectory(d)
+        // Bound content may live in the reserved root, the text-note child,
+        // or the synced-audio child (downloads). CaptureWire owns that list;
+        // searching fewer homes than it names is the defect that shipped
+        // "absent" playback for downloaded audio.
+        val homes = CaptureWire.boundContentDirectories(d, children(d))
+        val note = homes.getOrNull(1)
         fun ownedContent():Pair<NativeDirectory,NativeNode>? {
-            policy.ownedNode(d,"$id.opus",expected)?.let { return d to it }
-            // Amplified captures publish .wav (see the Dart helper
-            // captureExtensionForGain). Without this the audio exists on disk
-            // but is invisible to playback, read and delete.
-            policy.ownedNode(d,"$id.wav",expected)?.let { return d to it }
-            policy.ownedNode(d,"$id.md",expected)?.let { return d to it }
-            note?.let { n -> policy.ownedNode(n,"$id.md",expected)?.let { return n to it } }
+            for (home in homes) {
+                policy.ownedNode(home,"$id.opus",expected)?.let { return home to it }
+                // Amplified captures publish .wav (see the Dart helper
+                // captureExtensionForGain). Without this the audio exists on disk
+                // but is invisible to playback, read and delete.
+                policy.ownedNode(home,"$id.wav",expected)?.let { return home to it }
+                policy.ownedNode(home,"$id.md",expected)?.let { return home to it }
+            }
             return null
         }
         // If content is present, even metadata-only work must reject a same-name

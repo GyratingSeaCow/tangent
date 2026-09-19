@@ -34,11 +34,16 @@ void main() {
     c.read(presentedFixture.notifier).state = current;
     await pumpSelection(t);
     expect(find.text('1 selected'), findsOneWidget);
+    // Selection is action-agnostic: wiping the eligibility map no longer
+    // empties the selection. The delete pipeline re-checks per target, so
+    // the preview still fires — with the selected id, whose ineligibility
+    // is the SERVICE's news to report, not the toolbar's to swallow.
     c.read(eligibilityFixture.notifier).state = {};
     await pumpSelection(t);
+    expect(find.text('1 selected'), findsOneWidget);
     delete();
     await pumpSelection(t);
-    expect(d.previews, isEmpty);
+    expect(d.previews.single, contains('fixture-a'));
     c.read(presentedFixture.notifier).state = AsyncError<PresentedDumpResults>(
             StateError('synthetic results failed'), StackTrace.current,)
         .copyWithPrevious(current);

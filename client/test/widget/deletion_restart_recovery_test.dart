@@ -230,7 +230,10 @@ void main() {
       await h.mountList(tester);
       final row = find.byKey(ValueKey('dump-row-${a.key.dumpId}'));
       await pumpBoundUntil(tester, () => row.evaluate().isNotEmpty);
-      expect(tester.widget<ListTile>(row).onLongPress, isNull);
+      // Selection is action-agnostic now: the row with a saved ticket can
+      // still be SELECTED (long-press live); the deletion pipeline itself
+      // re-checks eligibility per target and reports the skip.
+      expect(tester.widget<ListTile>(row).onLongPress, isNotNull);
       await tester.tap(row);
       await pumpBoundUntil(
           tester,

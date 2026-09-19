@@ -770,6 +770,49 @@ class SafStorageBackend implements StorageBackend {
   }
 
   @override
+  IoOperation<Outcome<DurableDocument>> publishBinaryDocument(
+    StorageLocation location,
+    String directoryName,
+    String name,
+    List<int> bytes,
+    String mimeType,
+    String publicationId,
+  ) {
+    final id = _id();
+    try {
+      StorageCodec.validateLiteralId(publicationId);
+      StorageCodec.validateLiteralId(name);
+      if (bytes.isEmpty) {
+        throw const StorageFault(
+          (
+            code: ProblemCode.invalid,
+            message: 'Refusing to publish an empty document',
+          ),
+        );
+      }
+      final args = {
+        ..._documentArgs(location, directoryName),
+        'name': name,
+        // Uint8List crosses the platform channel as a byte array; a plain
+        // List<int> is encoded element-by-element and is far slower for audio.
+        'bytes': Uint8List.fromList(bytes),
+        'mimeType': mimeType,
+        'publicationId': publicationId,
+      };
+      return _track(
+        id,
+        (value) => Ok(_document(value)),
+        (problem) => Fail<DurableDocument>(problem),
+        method: 'publishBinaryDocumentAt',
+        args: args,
+        typedDecode: true,
+      );
+    } on StorageFault catch (e) {
+      return _local(id, Fail<DurableDocument>(e.problem));
+    }
+  }
+
+  @override
   IoOperation<Outcome<List<DurableDocument>>> listDocuments(
     StorageLocation location,
     String directoryName,

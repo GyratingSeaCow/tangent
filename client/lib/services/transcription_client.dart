@@ -77,6 +77,13 @@ class TranscriptionClient {
             contentType: 'application/json',
             headers: token != null ? {'Authorization': 'Bearer $token'} : {},
             validateStatus: (status) => status != null && status < 500,
+            // A dead route must FAIL, not hang: with no transport deadline a
+            // fetch against an unreachable server wedges its caller forever
+            // (a bulk download froze the whole selection toolbar this way).
+            // receiveTimeout is per read event, not whole-body, so large
+            // audio on a slow link still succeeds as long as bytes flow.
+            connectTimeout: const Duration(seconds: 15),
+            receiveTimeout: const Duration(seconds: 60),
           ),
         );
 

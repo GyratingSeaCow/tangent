@@ -61,6 +61,7 @@ class StorageChannel(private val supervisor: NativeIoSupervisor,
                 if (method in documentMethods) {
                     val fields = when(method) {
                         "publishDocumentAt" -> setOf("operationId","location","directoryName","name","content","publicationId")
+                        "publishBinaryDocumentAt" -> setOf("operationId","location","directoryName","name","bytes","mimeType","publicationId")
                         "listDocumentsAt" -> setOf("operationId","location","directoryName","suffix")
                         else -> setOf("operationId","location","directoryName","name","locator","deletionId")
                     }
@@ -85,7 +86,7 @@ class StorageChannel(private val supervisor: NativeIoSupervisor,
     }
     companion object {
         val captureMethods = setOf("prepareCaptureAt","inspectPreparedCaptureAt","publishPreparedCaptureAt")
-        val documentMethods = setOf("publishDocumentAt","listDocumentsAt","deleteDocumentAt")
+        val documentMethods = setOf("publishDocumentAt","publishBinaryDocumentAt","listDocumentsAt","deleteDocumentAt")
         val methods = setOf("inspectLegacyStorage","validateCandidate","probeLocationAt","readAudioAt","playbackSourceAt","writeMetadataAt","deleteComponentAt","listRecordingsAt","readRecordingAt") + captureMethods + documentMethods
     }
 }

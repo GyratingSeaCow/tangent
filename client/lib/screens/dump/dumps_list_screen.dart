@@ -16,6 +16,10 @@ import 'dumps_providers.dart';
 import '../../widgets/signal_bars.dart';
 import '../../widgets/sync_button.dart';
 import '../home/home_providers.dart' show documentSyncEngineProvider;
+import '../../services/bulk_dump_actions.dart';
+import '../../services/server_transcription_service.dart';
+import '../../services/synced_audio_download.dart';
+import '../home/home_providers.dart' show serverTranscriptionServiceProvider;
 import '../../widgets/item_action_sheet.dart';
 import '../../widgets/folder_picker.dart';
 import '../home/home_screen.dart' show localDbProvider;
@@ -38,6 +42,10 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
   bool _searching = false;
   final _selection = DumpSelectionController();
   bool _batchBusy = false;
+
+  /// Rows with a download in flight. Per-row rather than a single flag: one
+  /// slow fetch must not make every other row look busy.
+  final Set<String> _downloading = <String>{};
   final _deletionRecovery = LocalDeletionRecoveryState();
   BulkDeletionResult? get _deleteResult => _deletionRecovery.latest;
   String? _deleteError;
@@ -82,7 +90,8 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
         return;
       }
       final result = switch (await service.deleteConfirmed(
-          (operationId: const Uuid().v4(), targets: targets),)) {
+        (operationId: const Uuid().v4(), targets: targets),
+      )) {
         Ok<BulkDeletionResult>(:final value) => value,
         Fail<BulkDeletionResult>(:final problem) => throw StorageFault(problem),
       };
@@ -168,8 +177,8 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
                   key: const ValueKey('create-option-meeting'),
                   leading: const Icon(Icons.groups),
                   title: const Text('Meeting'),
-                  onTap: () => Navigator.of(sheetContext)
-                      .pop(DumpsCreateAction.meeting),
+                  onTap: () =>
+                      Navigator.of(sheetContext).pop(DumpsCreateAction.meeting),
                 ),
               ],
             ),
@@ -226,11 +235,10 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
         !presented.hasError &&
         !eligibilityAsync.isLoading &&
         !eligibilityAsync.hasError;
-    final eligibleIds = results?.rows
-            .where((r) => eligibility[r.id] == Eligibility.eligible)
-            .map((r) => r.id)
-            .toSet() ??
-        <String>{};
+    // Everything presented is selectable; the select-all indicator compares
+    // against the full result set, not the delete-eligible subset.
+    final selectableIds =
+        results?.rows.map((r) => r.id).toSet() ?? <String>{};
 
     return PopScope(
       canPop: !selection.active,
@@ -287,14 +295,17 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
                   Row(
                     children: [
                       IconButton(
-                          key: const ValueKey('selection-cancel'),
-                          tooltip: 'Cancel selection',
-                          onPressed: () => _change(_selection.cancel),
-                          icon: const Icon(Icons.close),),
+                        key: const ValueKey('selection-cancel'),
+                        tooltip: 'Cancel selection',
+                        onPressed: () => _change(_selection.cancel),
+                        icon: const Icon(Icons.close),
+                      ),
                       Expanded(
-                          child: Text(
-                              '${selection.selectedIds.length} selected',
-                              maxLines: 2,),),
+                        child: Text(
+                          '${selection.selectedIds.length} selected',
+                          maxLines: 2,
+                        ),
+                      ),
                       Semantics(
                         label: 'Select all returned results',
                         excludeSemantics: true,
@@ -304,32 +315,55 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
                             ? () => _change(_selection.toggleAll)
                             : null,
                         checked: selection.selectedIds.isNotEmpty &&
-                            selection.selectedIds.containsAll(eligibleIds),
+                            selection.selectedIds.containsAll(selectableIds),
                         mixed: selection.selectedIds.isNotEmpty &&
-                            !selection.selectedIds.containsAll(eligibleIds),
+                            !selection.selectedIds.containsAll(selectableIds),
                         child: IconButton(
-                            key: const ValueKey('selection-all'),
-                            tooltip: 'Select all returned results',
-                            onPressed: ready && !_batchBusy
-                                ? () => _change(_selection.toggleAll)
-                                : null,
-                            icon: const Icon(Icons.select_all),),
+                          key: const ValueKey('selection-all'),
+                          tooltip: 'Select all returned results',
+                          onPressed: ready && !_batchBusy
+                              ? () => _change(_selection.toggleAll)
+                              : null,
+                          icon: const Icon(Icons.select_all),
+                        ),
                       ),
                       IconButton(
-                          key: const ValueKey('selection-delete'),
-                          tooltip: 'Delete selected local recordings',
-                          onPressed: ready &&
-                                  !_batchBusy &&
-                                  selection.selectedIds.isNotEmpty
-                              ? _deleteSelected
-                              : null,
-                          icon: const Icon(Icons.delete_outline),),
+                        key: const ValueKey('selection-download'),
+                        tooltip: 'Download audio for selected',
+                        onPressed: ready &&
+                                !_batchBusy &&
+                                selection.selectedIds.isNotEmpty
+                            ? _downloadSelected
+                            : null,
+                        icon: const Icon(Icons.download_for_offline_outlined),
+                      ),
+                      IconButton(
+                        key: const ValueKey('selection-transcribe'),
+                        tooltip: 'Transcribe selected',
+                        onPressed: ready &&
+                                !_batchBusy &&
+                                selection.selectedIds.isNotEmpty
+                            ? _transcribeSelected
+                            : null,
+                        icon: const Icon(Icons.text_snippet_outlined),
+                      ),
+                      IconButton(
+                        key: const ValueKey('selection-delete'),
+                        tooltip: 'Delete selected local recordings',
+                        onPressed: ready &&
+                                !_batchBusy &&
+                                selection.selectedIds.isNotEmpty
+                            ? _deleteSelected
+                            : null,
+                        icon: const Icon(Icons.delete_outline),
+                      ),
                     ],
                   ),
                   if (results?.limit != null)
                     const Text(
-                        'Select all covers returned results (100-candidate limit).',
-                        textAlign: TextAlign.center,),
+                      'Select all covers returned results (100-candidate limit).',
+                      textAlign: TextAlign.center,
+                    ),
                 ],
               ),
             _FilterRow<DumpModeFilter>(
@@ -354,17 +388,19 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
               Text(_deleteError!, textAlign: TextAlign.center),
             if (_deleteResult != null)
               LocalDeletionResults(
-                  result: _deleteResult!,
-                  pending: _deletionRecovery.pending,
-                  onRetry: _retryDeletion,
-                  busy: _batchBusy,),
+                result: _deleteResult!,
+                pending: _deletionRecovery.pending,
+                onRetry: _retryDeletion,
+                busy: _batchBusy,
+              ),
             Expanded(
               child: stale
                   ? const Center(child: Text('Waiting for current results'))
                   : presented.hasError
                       ? Center(
                           child:
-                              Text('Results unavailable: ${presented.error}'),)
+                              Text('Results unavailable: ${presented.error}'),
+                        )
                       : results == null ||
                               !results.settled ||
                               presented.isLoading
@@ -391,6 +427,7 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
       ),
     );
   }
+
   /// Renames a recording or note.
   ///
   /// The controller is disposed a frame late: disposing it the moment
@@ -426,8 +463,7 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
         ],
       ),
     );
-    WidgetsBinding.instance
-        .addPostFrameCallback((_) => controller.dispose());
+    WidgetsBinding.instance.addPostFrameCallback((_) => controller.dispose());
     if (!mounted || name == null || name.isEmpty) return;
     try {
       await ref.read(localDbProvider).renameDump(dumpId: dump.id, title: name);
@@ -478,12 +514,18 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
   ) async {
     final Eligibility? state = eligibility[dump.id];
     final bool deletable = state == Eligibility.eligible;
+    // Offered only when the server holds audio this device does not. A row
+    // that already has its bytes has nothing to fetch.
+    final bool downloadable = dumpNeedsAudioDownload(dump);
+    final bool canDownload =
+        downloadable && ref.read(syncedAudioDownloaderProvider) != null;
     final ItemAction? action = await showItemActionSheet(
       context,
       title: dump.title.isEmpty ? '(untitled)' : dump.title,
       subtitle: dumpSubtitle(dump),
-      actions: const <ItemAction>[
+      actions: <ItemAction>[
         ItemAction.open,
+        if (downloadable) ItemAction.download,
         ItemAction.rename,
         ItemAction.move,
         ItemAction.select,
@@ -491,6 +533,11 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
       ],
       disabledActions: <ItemAction, String>{
         if (!deletable) ItemAction.delete: eligibilityReason(state),
+        // Shown-but-disabled rather than hidden: a control that vanishes
+        // reads as a bug, while a greyed row carrying the reason explains
+        // the app.
+        if (downloadable && !canDownload)
+          ItemAction.download: 'Choose a storage folder first',
       },
     );
     if (!mounted || action == null) return;
@@ -521,10 +568,139 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
         // Select this row, then run the same bulk path the toolbar uses.
         _change(() => _selection.enter(dump.id));
         await _deleteSelected();
+      case ItemAction.download:
+        await _downloadAudio(dump);
       case ItemAction.duplicate:
       case ItemAction.share:
         break;
     }
+  }
+
+  /// Downloads audio for every selected recording that needs it.
+  ///
+  /// Selection is cleared only AFTER the run: while rows are being worked,
+  /// the user can still see what they asked for. `_batchBusy` serializes
+  /// this against delete and transcribe — two bulk runs interleaving over
+  /// one selection would produce a receipt neither run can explain.
+  Future<void> _downloadSelected() async {
+    final SyncedAudioDownloader? downloader =
+        ref.read(syncedAudioDownloaderProvider);
+    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+    if (downloader == null) {
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text('Choose a storage folder first'),
+        ),
+      );
+      return;
+    }
+    final List<DumpRow> rows = _selectedRows();
+    setState(() => _batchBusy = true);
+    BulkActionSummary summary;
+    try {
+      summary = await runBulkDownload(
+        rows: rows,
+        download: (String id) async {
+          setState(() => _downloading.add(id));
+          try {
+            return switch (await downloader.download(id)) {
+              Ok<String>() => true,
+              Fail<String>() => false,
+            };
+          } finally {
+            if (mounted) setState(() => _downloading.remove(id));
+          }
+        },
+      );
+    } finally {
+      if (mounted) setState(() => _batchBusy = false);
+    }
+    if (!mounted) return;
+    _change(_selection.cancel);
+    messenger.showSnackBar(
+      SnackBar(
+        key: const ValueKey<String>('bulk-download-result'),
+        content: Text(describeBulkSummary(summary)),
+      ),
+    );
+  }
+
+  /// Queues transcription for every selected recording that can transcribe
+  /// without a question: local audio, no transcript worth protecting.
+  ///
+  /// Completed rows are skipped BY DESIGN — the per-row flow confirms before
+  /// overwriting and a bulk loop cannot ask, so it must not overwrite.
+  Future<void> _transcribeSelected() async {
+    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+    final ServerTranscriptionService service =
+        ref.read(serverTranscriptionServiceProvider);
+    final List<DumpRow> rows = _selectedRows();
+    setState(() => _batchBusy = true);
+    BulkActionSummary summary;
+    try {
+      summary = await runBulkTranscribe(
+        rows: rows,
+        transcribe: service.transcribeDump,
+      );
+    } finally {
+      if (mounted) setState(() => _batchBusy = false);
+    }
+    if (!mounted) return;
+    _change(_selection.cancel);
+    messenger.showSnackBar(
+      SnackBar(
+        key: const ValueKey<String>('bulk-transcribe-result'),
+        content: Text(describeBulkSummary(summary)),
+      ),
+    );
+  }
+
+  /// The selected rows in list order, resolved from the presented results —
+  /// the same rows the user is looking at, not a fresh query that might
+  /// have shifted under them.
+  List<DumpRow> _selectedRows() {
+    final Set<String> ids = _selection.selection.selectedIds;
+    final PresentedDumpResults? results =
+        ref.read(presentedDumpsProvider).valueOrNull;
+    return <DumpRow>[
+      for (final DumpRow row in results?.rows ?? const <DumpRow>[])
+        if (ids.contains(row.id)) row,
+    ];
+  }
+
+  /// Fetches a synced recording's audio onto this device.
+  ///
+  /// Reports the outcome either way. While a download renders as idle, a
+  /// stalled fetch, a refused one and a dead button all look identical, so
+  /// the busy state is an instrument rather than decoration.
+  Future<void> _downloadAudio(DumpRow dump) async {
+    final SyncedAudioDownloader? downloader =
+        ref.read(syncedAudioDownloaderProvider);
+    if (downloader == null) return;
+
+    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+    setState(() => _downloading.add(dump.id));
+    Outcome<String> result;
+    try {
+      result = await downloader.download(dump.id);
+    } finally {
+      if (mounted) setState(() => _downloading.remove(dump.id));
+    }
+    if (!mounted) return;
+
+    messenger.showSnackBar(
+      SnackBar(
+        key: const ValueKey<String>('download-audio-result'),
+        content: Text(
+          switch (result) {
+            Ok<String>() => 'Audio downloaded',
+            // The service's wording is written for the user; show it as-is
+            // rather than flattening every failure to "download failed".
+            Fail<String>(:final StorageProblem problem) => problem.message,
+          },
+        ),
+      ),
+    );
   }
 }
 
@@ -584,16 +760,17 @@ class _FilterRow<T> extends StatelessWidget {
 }
 
 class _DumpList extends StatelessWidget {
-  const _DumpList(
-      {required this.dumps,
-      required this.empty,
-      this.onOpen,
-      required this.selection,
-      required this.eligibility,
-      required this.enabled,
-      required this.onEnter,
-      required this.onToggle,
-      this.onLongPressItem,});
+  const _DumpList({
+    required this.dumps,
+    required this.empty,
+    this.onOpen,
+    required this.selection,
+    required this.eligibility,
+    required this.enabled,
+    required this.onEnter,
+    required this.onToggle,
+    this.onLongPressItem,
+  });
   final void Function(BuildContext, DumpRow)? onOpen;
   final DumpSelectionState selection;
   final Map<String, Eligibility> eligibility;
@@ -636,32 +813,40 @@ class _DumpList extends StatelessWidget {
             final reason = eligibilityReason(eligibility[dump.id]);
             final isNote = dump.mode == 'text_note';
             final pill = _TranscriptionStatusPill(
-                dumpId: dump.id, status: transcription,);
-            final subtitle = Row(children: [
-              _SyncBadge(status: sync),
-              const SizedBox(width: 6),
-              if (isNote) ...[
-                Icon(
-                  Icons.edit_note,
-                  key: ValueKey('note-row-icon-${dump.id}'),
-                  size: 16,
-                ),
+              dumpId: dump.id,
+              status: transcription,
+            );
+            final subtitle = Row(
+              children: [
+                _SyncBadge(status: sync),
                 const SizedBox(width: 6),
-              ] else ...[
-                // The waveform motif: audio always looks like audio. Idle rows
-                // stay dim and unglowed so a long list costs nothing extra.
-                SignalBars(
-                  key: ValueKey('dump-waveform-${dump.id}'),
-                  seed: dump.id,
-                  barCount: 14,
-                  height: 14,
+                if (isNote) ...[
+                  Icon(
+                    Icons.edit_note,
+                    key: ValueKey('note-row-icon-${dump.id}'),
+                    size: 16,
+                  ),
+                  const SizedBox(width: 6),
+                ] else ...[
+                  // The waveform motif: audio always looks like audio. Idle rows
+                  // stay dim and unglowed so a long list costs nothing extra.
+                  SignalBars(
+                    key: ValueKey('dump-waveform-${dump.id}'),
+                    seed: dump.id,
+                    barCount: 14,
+                    height: 14,
+                  ),
+                  const SizedBox(width: 8),
+                ],
+                Expanded(
+                  child: Text(
+                    dumpSubtitle(dump),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
-                const SizedBox(width: 8),
               ],
-              Expanded(
-                  child: Text(dumpSubtitle(dump),
-                      maxLines: 2, overflow: TextOverflow.ellipsis,),),
-            ],);
+            );
             return ListTile(
               key: ValueKey('dump-row-${dump.id}'),
               selected: selection.selectedIds.contains(dump.id),
@@ -675,10 +860,11 @@ class _DumpList extends StatelessWidget {
                           shape: const CircleBorder(),
                           semanticLabel: 'Select ${dump.title}; $reason',
                           value: selection.selectedIds.contains(dump.id),
-                          onChanged: enabled &&
-                                  eligibility[dump.id] == Eligibility.eligible
-                              ? (_) => onToggle(dump.id)
-                              : null,
+                          // Selection is action-agnostic: any presented row
+                          // may be selected. Delete/download/transcribe each
+                          // decide eligibility at execution and report skips.
+                          onChanged:
+                              enabled ? (_) => onToggle(dump.id) : null,
                         ),
                       ),
                     )
@@ -691,7 +877,8 @@ class _DumpList extends StatelessWidget {
               subtitle: compact
                   ? Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [subtitle, const SizedBox(height: 4), pill],)
+                      children: [subtitle, const SizedBox(height: 4), pill],
+                    )
                   : subtitle,
               // The ⋮ button carries per-item actions, so long-press can stay
               // multi-select. Hidden during selection: a menu that mutates one
@@ -719,14 +906,9 @@ class _DumpList extends StatelessWidget {
               // control never navigate"). Per-item actions get their own ⋮
               // button instead — the same split Drive, Files and Samsung's
               // own apps use, so the gesture is not overloaded.
-              onLongPress:
-                  enabled && eligibility[dump.id] == Eligibility.eligible
-                      ? () => onEnter(dump.id)
-                      : null,
+              onLongPress: enabled ? () => onEnter(dump.id) : null,
               onTap: selection.active
-                  ? (enabled && eligibility[dump.id] == Eligibility.eligible
-                      ? () => onToggle(dump.id)
-                      : null)
+                  ? (enabled ? () => onToggle(dump.id) : null)
                   : () => onOpen != null
                       ? onOpen!(context, dump)
                       : Navigator.of(context).push<void>(
@@ -744,8 +926,6 @@ class _DumpList extends StatelessWidget {
       },
     );
   }
-
-
 }
 
 /// Shared by the list rows and the long-press sheet, so the wording a user
@@ -756,7 +936,8 @@ String eligibilityReason(Eligibility? eligibility) => switch (eligibility) {
       Eligibility.syncing => 'Sync in progress',
       Eligibility.publicationPending => 'Saving transcript or metadata',
       Eligibility.busy => 'Recording is in use',
-      Eligibility.retryOnly => 'Local deletion pending; open recording to retry',
+      Eligibility.retryOnly =>
+        'Local deletion pending; open recording to retry',
       Eligibility.deleting => 'Local deletion in progress',
       Eligibility.denied => 'Storage permission denied',
       Eligibility.unresolved => 'Original storage is unresolved',

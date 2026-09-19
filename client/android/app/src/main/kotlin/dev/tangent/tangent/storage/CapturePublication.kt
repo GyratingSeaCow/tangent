@@ -151,6 +151,42 @@ object CaptureWire {
     const val TEXT_NOTE_DIRECTORY = "Tangent Text Notes"
     const val DIRECTORY_MIME = "vnd.android.document/directory"
 
+    /** Mirrors the shared Dart constant syncedAudioSubdirectoryName: audio
+     * fetched from the server publishes inside this child, a sibling of
+     * [TEXT_NOTE_DIRECTORY]. */
+    const val SYNCED_AUDIO_DIRECTORY = "Tangent Synced Audio"
+
+    /**
+     * Every directory a bound recording's content may legitimately occupy,
+     * in search order: the reserved root (captures, legacy notes), the
+     * text-note child, then the synced-audio child.
+     *
+     * This list is THE definition of where bound content lives. The device
+     * defect that motivated it: downloads published into the synced-audio
+     * child while playback searched only the first two homes, reporting
+     * "absent" for bytes that were on disk and byte-exact. A same-name file
+     * is not a child directory; duplicate same-name directories are
+     * ambiguous, so they are skipped rather than guessed at.
+     */
+    fun boundContentDirectories(
+        root: NativeDirectory,
+        children: List<NativeNode>,
+    ): List<NativeDirectory> {
+        fun child(name: String): NativeDirectory? {
+            // A same-name FILE is not a candidate and must not veto the real
+            // child; only duplicate same-name DIRECTORIES are ambiguous.
+            val node = children
+                .filter { it.name == name && it.directory && !it.virtual }
+                .singleOrNull() ?: return null
+            return NativeDirectory(root.authority, root.treeUri, node.id)
+        }
+        return listOfNotNull(
+            root,
+            child(TEXT_NOTE_DIRECTORY),
+            child(SYNCED_AUDIO_DIRECTORY),
+        )
+    }
+
     /**
      * MIME type for a published audio component, derived from its suffix.
      *
