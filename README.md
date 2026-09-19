@@ -123,9 +123,11 @@ the app under **Settings → Server**.
 
 **Easiest: download the APK from [Releases](https://github.com/GyratingSeaCow/tangent/releases)**
 and sideload it (`adb install -r tangent-vX.Y.Z.apk`, or just open the file on
-the phone). No toolchain needed. Note: release APKs are currently
-debug-signed — Android will warn on install, and you must uninstall an
-existing debug build first.
+the phone). No toolchain needed. Releases from v1.3.0 onward are signed with
+the project's release key; Android may still warn about installing from
+outside Play, which is normal for sideloaded apps. If you previously
+installed a locally-built (debug-signed) copy, uninstall it once before
+installing a release APK — the signatures differ.
 
 **Or build it yourself:**
 
