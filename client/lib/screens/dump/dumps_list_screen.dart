@@ -622,8 +622,10 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
           setState(() => _downloading.add(id));
           try {
             return switch (await downloader.download(id)) {
-              Ok<String>() => true,
-              Fail<String>() => false,
+              Ok<String>() => null,
+              // The service's wording is written for the user; carry it into
+              // the receipt rather than flattening to a count.
+              Fail<String>(:final StorageProblem problem) => problem.message,
             };
           } finally {
             if (mounted) setState(() => _downloading.remove(id));
@@ -635,12 +637,7 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
     }
     if (!mounted) return;
     _change(_selection.cancel);
-    messenger.showSnackBar(
-      SnackBar(
-        key: const ValueKey<String>('bulk-download-result'),
-        content: Text(describeBulkSummary(summary)),
-      ),
-    );
+    _showBulkReceipt(messenger, summary);
   }
 
   /// Queues transcription for every selected recording that can transcribe
@@ -665,10 +662,82 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
     }
     if (!mounted) return;
     _change(_selection.cancel);
+    _showBulkReceipt(messenger, summary, resultKey: 'bulk-transcribe-result');
+  }
+
+  /// Shows the one-line receipt, and — when rows failed — a Details action
+  /// opening the per-row reasons. The count alone cannot tell a Wi-Fi gate
+  /// from a dead server from a fenced identity, and 43 indistinguishable
+  /// failures cost a debugging session; the reasons are already in hand.
+  void _showBulkReceipt(
+    ScaffoldMessengerState messenger,
+    BulkActionSummary summary, {
+    String resultKey = 'bulk-download-result',
+  }) {
+    final Map<String, String> titles = <String, String>{
+      for (final DumpRow row
+          in ref.read(presentedDumpsProvider).valueOrNull?.rows ??
+              const <DumpRow>[])
+        row.id: row.title.isEmpty ? '(untitled)' : row.title,
+    };
     messenger.showSnackBar(
       SnackBar(
-        key: const ValueKey<String>('bulk-transcribe-result'),
+        key: ValueKey<String>(resultKey),
         content: Text(describeBulkSummary(summary)),
+        action: summary.failures.isEmpty
+            ? null
+            : SnackBarAction(
+                label: 'Details',
+                onPressed: () => _showBulkFailures(summary, titles),
+              ),
+      ),
+    );
+  }
+
+  /// The per-row failure list: each failed row by TITLE with the storage
+  /// layer's own wording, scrollable because a bulk run can fail dozens of
+  /// rows at once.
+  void _showBulkFailures(
+    BulkActionSummary summary,
+    Map<String, String> titles,
+  ) {
+    if (!mounted) return;
+    showDialog<void>(
+      context: context,
+      builder: (BuildContext context) => AlertDialog(
+        key: const ValueKey<String>('bulk-failure-details'),
+        title: Text('${summary.failed} failed'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: ListView.separated(
+            shrinkWrap: true,
+            itemCount: summary.failures.length,
+            separatorBuilder: (_, __) => const Divider(height: 12),
+            itemBuilder: (BuildContext context, int index) {
+              final BulkFailure failure = summary.failures[index];
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Text(
+                    titles[failure.id] ?? failure.id,
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    failure.reason,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Close'),
+          ),
+        ],
       ),
     );
   }

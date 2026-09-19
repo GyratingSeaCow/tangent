@@ -7,8 +7,21 @@ import 'dart:async';
 
 import '../data/local_db.dart';
 
+/// One row's failure in a bulk run: which row and the reason shown to the
+/// user. The reason is the storage layer's own wording where available.
+typedef BulkFailure = ({String id, String reason});
+
 /// Receipt for one bulk run. [noun] names the unit for the summary line.
-typedef BulkActionSummary = ({int succeeded, int skipped, int failed, String noun});
+/// [failures] carries each failed row's id and reason — the count alone
+/// cannot tell a Wi-Fi gate from a dead server from a fenced identity, and
+/// the receipt is the only diagnostic surface the user gets.
+typedef BulkActionSummary = ({
+  int succeeded,
+  int skipped,
+  int failed,
+  String noun,
+  List<BulkFailure> failures,
+});
 
 /// True when this row's audio can be fetched from the server: the server
 /// holds it and this device does not.
@@ -36,14 +49,16 @@ bool bulkTranscribeEligible(DumpRow row) {
 /// Sequential on purpose: each download publishes into the same storage
 /// tree and the server is a single small box — a burst of parallel fetches
 /// wins nothing and turns one failure mode into several. [download] returns
-/// whether the fetch succeeded (a refusal — Wi-Fi gate, absent audio — is
-/// false, not a throw).
+/// null on success or the user-facing failure reason (a refusal — Wi-Fi
+/// gate, absent audio — is a reason string, not a throw), so the receipt
+/// can name WHY each row failed rather than only counting.
 Future<BulkActionSummary> runBulkDownload({
   required List<DumpRow> rows,
-  required Future<bool> Function(String dumpId) download,
+  required Future<String?> Function(String dumpId) download,
   Duration perItemTimeout = const Duration(minutes: 2),
 }) async {
-  int succeeded = 0, skipped = 0, failed = 0;
+  int succeeded = 0, skipped = 0;
+  final List<BulkFailure> failures = <BulkFailure>[];
   for (final DumpRow row in rows) {
     if (!bulkDownloadEligible(row)) {
       skipped++;
@@ -52,16 +67,33 @@ Future<BulkActionSummary> runBulkDownload({
     try {
       // A hard per-row deadline: one wedged fetch (dead route, no transport
       // timeout) must cost ONE failed row, never freeze the whole run with
-      // the toolbar disabled behind it.
-      (await download(row.id).timeout(perItemTimeout))
+      // the toolbar disabled behind it. TimeoutException is caught below
+      // rather than via onTimeout: the callback's future may be reified
+      // narrower than Future<String?> (a test closure returning only null),
+      // and a mismatched onTimeout callback throws a TypeError at runtime.
+      final String? reason = await download(row.id).timeout(perItemTimeout);
+      reason == null
           ? succeeded++
-          : failed++;
-    } catch (_) {
+          : failures.add((id: row.id, reason: reason));
+    } on TimeoutException {
+      failures.add(
+        (
+          id: row.id,
+          reason: 'Timed out after ${perItemTimeout.inMinutes} min',
+        ),
+      );
+    } catch (e) {
       // One row's failure is that row's news; the rest still get their turn.
-      failed++;
+      failures.add((id: row.id, reason: '$e'));
     }
   }
-  return (succeeded: succeeded, skipped: skipped, failed: failed, noun: 'download');
+  return (
+    succeeded: succeeded,
+    skipped: skipped,
+    failed: failures.length,
+    noun: 'download',
+    failures: failures,
+  );
 }
 
 /// Requests transcription for every eligible row in [rows].
@@ -74,7 +106,8 @@ Future<BulkActionSummary> runBulkTranscribe({
   required Future<void> Function(String dumpId) transcribe,
   Duration perItemTimeout = const Duration(minutes: 2),
 }) async {
-  int succeeded = 0, skipped = 0, failed = 0;
+  int succeeded = 0, skipped = 0;
+  final List<BulkFailure> failures = <BulkFailure>[];
   for (final DumpRow row in rows) {
     if (!bulkTranscribeEligible(row)) {
       skipped++;
@@ -83,15 +116,16 @@ Future<BulkActionSummary> runBulkTranscribe({
     try {
       await transcribe(row.id).timeout(perItemTimeout);
       succeeded++;
-    } catch (_) {
-      failed++;
+    } catch (e) {
+      failures.add((id: row.id, reason: '$e'));
     }
   }
   return (
     succeeded: succeeded,
     skipped: skipped,
-    failed: failed,
-    noun: 'transcription'
+    failed: failures.length,
+    noun: 'transcription',
+    failures: failures,
   );
 }
 

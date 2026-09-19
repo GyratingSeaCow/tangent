@@ -7,10 +7,28 @@
 // The eligibility rules they apply are proven in bulk_dump_actions_test;
 // this file proves the toolbar actually offers them — a bulk service with
 // no button is the same defect as a download service with no menu entry.
+import 'package:drift/drift.dart' show Value;
+import 'package:drift/native.dart' show NativeDatabase;
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:tangent/data/local_db.dart';
+import 'package:tangent/data/storage/filesystem_storage_backend.dart';
+import 'package:tangent/screens/dump/dumps_providers.dart';
+import 'package:tangent/services/synced_audio_download.dart';
 
 import '../support/dump_selection_fixture.dart';
+import '../support/dump_view_fixture.dart';
+import '../support/storage_fixture.dart';
+
+/// A recording whose audio is on the server but not on this device.
+DumpRow remoteRow(String id) => viewRow(id).copyWith(
+      audioPath: '',
+      audioSizeBytes: 0,
+      syncStatus: 'synced',
+      remoteOnly: const Value<bool?>(true),
+      audioOnServer: const Value<bool?>(true),
+    );
 
 void main() {
   testWidgets('bulk toolbar offers download and transcribe beside delete',
@@ -56,5 +74,60 @@ void main() {
         reason: '$key over nothing is a lying control',
       );
     }
+  });
+
+  testWidgets('a failed bulk download offers Details naming each failure',
+      (WidgetTester tester) async {
+    // A downloader whose DB knows none of the fixture rows: every eligible
+    // row fails with the service's own wording ('Recording is missing').
+    final ProviderContainer container = await mountSelection(
+      tester,
+      CountingDeletion(),
+      extraOverrides: <Override>[
+        syncedAudioDownloaderProvider.overrideWith(
+          (ref) => SyncedAudioDownloader(
+            db: LocalDb.forTesting(NativeDatabase.memory()),
+            backend: FilesystemStorageBackend(),
+            location: fileLocation('fixture-folder', '/synthetic'),
+            fetch: (_) async => const <int>[],
+          ),
+        ),
+      ],
+    );
+    container.read(presentedFixture.notifier).state = AsyncData(
+      (
+        scopeKey: 'all',
+        generation: 2,
+        settled: true,
+        rows: <DumpRow>[remoteRow('fixture-a'), viewRow('fixture-b')],
+        limit: null,
+      ),
+    );
+    await pumpSelection(tester);
+
+    await tester.longPress(find.byKey(const ValueKey('dump-row-fixture-a')));
+    await pumpSelection(tester);
+    await tester.tap(find.byKey(const ValueKey('selection-download')));
+    await pumpSelection(tester);
+
+    // The receipt names the failure and offers the detail.
+    expect(
+      find.descendant(
+        of: find.byType(SnackBar),
+        matching: find.textContaining('1 failed'),
+      ),
+      findsOneWidget,
+    );
+    await tester.tap(find.text('Details'));
+    await pumpSelection(tester);
+
+    // The dialog names the row by TITLE and carries the service's wording —
+    // an id alone means nothing to a person scanning 43 failures.
+    expect(
+      find.byKey(const ValueKey('bulk-failure-details')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('fixture-a'), findsWidgets);
+    expect(find.textContaining('Recording is missing'), findsOneWidget);
   });
 }

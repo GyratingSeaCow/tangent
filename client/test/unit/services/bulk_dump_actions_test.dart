@@ -45,13 +45,14 @@ void main() {
         rows: <DumpRow>[remote('r1'), local('l1'), remote('r2')],
         download: (String id) async {
           downloaded.add(id);
-          return true;
+          return null; // success
         },
       );
       expect(downloaded, <String>['r1', 'r2']);
       expect(summary.succeeded, 2);
       expect(summary.skipped, 1);
       expect(summary.failed, 0);
+      expect(summary.failures, isEmpty);
     });
 
     test('one failure does not stop the rest', () async {
@@ -61,7 +62,7 @@ void main() {
         download: (String id) async {
           attempted.add(id);
           if (id == 'r2') throw StateError('boom');
-          return true;
+          return null;
         },
       );
       expect(attempted, <String>['r1', 'r2', 'r3']);
@@ -73,7 +74,7 @@ void main() {
         () async {
       final BulkActionSummary summary = await runBulkDownload(
         rows: <DumpRow>[remote('r1')],
-        download: (String id) async => false,
+        download: (String id) async => 'Audio absent',
       );
       expect(summary.succeeded, 0);
       expect(summary.failed, 1);
@@ -93,7 +94,7 @@ void main() {
             // cut it loose or one dead row freezes the whole selection.
             await Completer<void>().future;
           }
-          return true;
+          return null;
         },
       );
       expect(attempted, <String>['r1', 'r2']);
@@ -154,16 +155,82 @@ void main() {
     });
   });
 
+  group('per-row failure reasons', () {
+    // The snackbar count alone cannot tell "Wi-Fi gate" from "server down"
+    // from "identity fenced" — the receipt must carry each row's own reason
+    // so 43 failures are diagnosable without a debugger.
+    test('download failures carry the id and the reason', () async {
+      final BulkActionSummary summary = await runBulkDownload(
+        rows: <DumpRow>[remote('r1'), remote('r2'), remote('r3')],
+        download: (String id) async =>
+            id == 'r2' ? 'Recording identity is fenced' : null,
+      );
+      expect(summary.succeeded, 2);
+      expect(summary.failed, 1);
+      expect(summary.failures, <BulkFailure>[
+        (id: 'r2', reason: 'Recording identity is fenced'),
+      ]);
+    });
+
+    test('a thrown download is a failure with a readable reason', () async {
+      final BulkActionSummary summary = await runBulkDownload(
+        rows: <DumpRow>[remote('r1')],
+        download: (String id) async => throw StateError('boom'),
+      );
+      expect(summary.failed, 1);
+      expect(summary.failures.single.id, 'r1');
+      expect(summary.failures.single.reason, contains('boom'));
+    });
+
+    test('a timed-out download names the timeout, not a generic failure',
+        () async {
+      final BulkActionSummary summary = await runBulkDownload(
+        rows: <DumpRow>[remote('r1')],
+        perItemTimeout: const Duration(milliseconds: 10),
+        download: (String id) =>
+            Completer<String?>().future, // never completes
+      );
+      expect(summary.failed, 1);
+      expect(summary.failures.single.reason.toLowerCase(), contains('timed'));
+    });
+
+    test('transcribe failures carry reasons the same way', () async {
+      final BulkActionSummary summary = await runBulkTranscribe(
+        rows: <DumpRow>[local('a'), local('b')],
+        transcribe: (String id) async {
+          if (id == 'b') throw StateError('server down');
+        },
+      );
+      expect(summary.failures.single.id, 'b');
+      expect(summary.failures.single.reason, contains('server down'));
+    });
+  });
+
   group('summary line', () {
     test('reads as a human receipt', () {
-      const BulkActionSummary s =
-          (succeeded: 2, skipped: 1, failed: 1, noun: 'download');
+      const BulkActionSummary s = (
+        succeeded: 2,
+        skipped: 1,
+        failed: 1,
+        noun: 'download',
+        failures: <BulkFailure>[(id: 'x', reason: 'Audio absent')],
+      );
       expect(describeBulkSummary(s), '2 downloads done · 1 skipped · 1 failed');
-      const BulkActionSummary one =
-          (succeeded: 1, skipped: 0, failed: 0, noun: 'download');
+      const BulkActionSummary one = (
+        succeeded: 1,
+        skipped: 0,
+        failed: 0,
+        noun: 'download',
+        failures: <BulkFailure>[],
+      );
       expect(describeBulkSummary(one), '1 download done');
-      const BulkActionSummary none =
-          (succeeded: 0, skipped: 3, failed: 0, noun: 'transcription');
+      const BulkActionSummary none = (
+        succeeded: 0,
+        skipped: 3,
+        failed: 0,
+        noun: 'transcription',
+        failures: <BulkFailure>[],
+      );
       expect(describeBulkSummary(none), 'Nothing to do · 3 skipped');
     });
   });
