@@ -2,6 +2,7 @@
 import 'dart:async';
 import 'dart:io' show Platform;
 
+import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 
@@ -111,7 +112,7 @@ final documentSyncEngineProvider = Provider<DocumentSyncEngine>((ref) {
     // would keep talking to the old server.
     client: () => ref.read(transcriptionClientProvider),
     connectivity: ref.watch(connectivityServiceProvider),
-    deviceLabel: _deviceLabel(),
+    deviceLabel: _deviceLabel,
     newDeviceId: const Uuid().v4(),
   );
   ref.onDispose(engine.dispose);
@@ -120,12 +121,20 @@ final documentSyncEngineProvider = Provider<DocumentSyncEngine>((ref) {
 
 /// A human-readable name for this replica, shown in the server's device list.
 ///
-/// Derived from the Android model so the list reads "SM-X520" rather than a
-/// UUID nobody can match to a physical device.
-String _deviceLabel() {
+/// Reads the real Android model (e.g. "SM-X520") so the server's device list
+/// names physical hardware rather than a UUID nobody can match to a device.
+/// Platform.environment does NOT carry this on Android — that mistake shipped
+/// once and every device registered as the literal string "Android device".
+Future<String> _deviceLabel() async {
   if (!Platform.isAndroid) return 'Tangent client';
-  final String model = Platform.environment['ANDROID_MODEL'] ?? '';
-  return model.isNotEmpty ? model : 'Android device';
+  try {
+    final AndroidDeviceInfo info = await DeviceInfoPlugin().androidInfo;
+    final String model = info.model.trim();
+    return model.isNotEmpty ? model : 'Android device';
+  } catch (_) {
+    // A naming failure must never block sync itself.
+    return 'Android device';
+  }
 }
 
 /// Mirrors transcription progress into the notification shade.

@@ -29,10 +29,25 @@ import 'screens/server/server_connection_screen.dart';
 import 'screens/settings/settings_screen.dart';
 import 'package:workmanager/workmanager.dart';
 
+import 'package:device_info_plus/device_info_plus.dart';
+
 import 'services/background_sync_scheduler.dart';
 import 'services/connectivity_service.dart';
 import 'services/document_sync_engine.dart';
 import 'services/transcription_client.dart';
+
+/// Device label for the background isolate, which cannot reach the app's
+/// providers. Duplicated deliberately rather than shared: the UI copy lives
+/// behind a provider this isolate has no access to.
+Future<String> _backgroundDeviceLabel() async {
+  try {
+    final AndroidDeviceInfo info = await DeviceInfoPlugin().androidInfo;
+    final String model = info.model.trim();
+    return model.isNotEmpty ? model : 'Android device';
+  } catch (_) {
+    return 'Android device';
+  }
+}
 
 /// Entry point for WorkManager's background isolate.
 ///
@@ -62,7 +77,7 @@ void backgroundSyncDispatcher() {
         db: () => handle,
         client: () => TranscriptionClient(baseUrl: url, token: token),
         connectivity: ConnectivityService(),
-        deviceLabel: 'Android device',
+        deviceLabel: _backgroundDeviceLabel,
         newDeviceId: const Uuid().v4(),
       );
       final SyncReport report = await engine.syncNow();

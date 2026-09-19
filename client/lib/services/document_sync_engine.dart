@@ -53,7 +53,7 @@ class DocumentSyncEngine extends ChangeNotifier {
     required LocalDb Function() db,
     required TranscriptionClient Function() client,
     required ConnectivityService connectivity,
-    required String deviceLabel,
+    required Future<String> Function() deviceLabel,
     required String newDeviceId,
   })  : _dbFactory = db,
         _client = client,
@@ -74,7 +74,10 @@ class DocumentSyncEngine extends ChangeNotifier {
   /// the old one.
   final TranscriptionClient Function() _client;
   final ConnectivityService _connectivity;
-  final String _deviceLabel;
+  /// Resolved asynchronously on first registration: the real Android model
+  /// comes from a platform channel, which cannot be read synchronously while
+  /// building a provider.
+  final Future<String> Function() _deviceLabel;
   final String _newDeviceId;
 
   bool _syncing = false;
@@ -129,9 +132,20 @@ class DocumentSyncEngine extends ChangeNotifier {
       final SyncStateRow state = await _db.syncState(newDeviceId: _newDeviceId);
       final TranscriptionClient client = _client();
 
+      // A device that cannot name itself is a cosmetic problem: the server
+      // keys on the id, and the label is only there so a human can tell the
+      // tablet from the phone. Letting it throw would turn that into no sync
+      // at all.
+      String label;
+      try {
+        label = await _deviceLabel();
+      } catch (_) {
+        label = 'Android device';
+      }
+
       await client.registerDevice(
         deviceId: state.deviceId,
-        displayName: _deviceLabel,
+        displayName: label,
         platform: 'android',
       );
 
