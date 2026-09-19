@@ -121,6 +121,12 @@ final transcriptionNotificationOwnerProvider = Provider<void>((ref) {
     );
   }
 
+  // A notification outlives the process that posted it: a kill during
+  // transcription leaves "Transcribing" in the shade with no job behind it.
+  // Cleared before the first sync so the shade starts from a state this
+  // process can vouch for.
+  unawaited(notifier.reconcileStaleNotification());
+
   // fireImmediately so a job already running at subscription time (a recovery
   // resumed at launch) is announced rather than waiting for its next event.
   ref.listen(

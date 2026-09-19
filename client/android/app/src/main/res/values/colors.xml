@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Blackout chassis. Backs the adaptive launcher icon, so the icon sits
+         on the same near-black the app itself uses. -->
+    <color name="ic_launcher_background">#141719</color>
+
+    <!-- Notification accent. Android masks a status-bar icon to a flat
+         silhouette, so this is the only channel that can carry the purple
+         from the brand mark into the shade. -->
+    <color name="notification_accent">#9B2594</color>
+</resources>

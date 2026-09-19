@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tangent/services/transcription_notifications.dart';
 
@@ -13,6 +15,36 @@ class _RecordingPort implements TranscriptionNotificationPort {
 
   @override
   Future<void> cancel() async => cancels++;
+}
+
+/// A port whose operations only finish when the test releases them, so a
+/// second sync can be made to arrive mid-flight.
+///
+/// Calls are recorded AFTER the gate, mirroring the real Android adapter:
+/// `show()` first awaits the runtime permission prompt and only then posts to
+/// the platform. Recording at entry instead would model an adapter that posts
+/// before it blocks, and would hide the very ordering bug this reproduces.
+class _BlockingPort implements TranscriptionNotificationPort {
+  final List<String> calls = <String>[];
+  final List<Completer<void>> _gates = <Completer<void>>[];
+
+  Completer<void> gate() {
+    final Completer<void> c = Completer<void>();
+    _gates.add(c);
+    return c;
+  }
+
+  @override
+  Future<void> show(TranscriptionNotice notice) async {
+    if (_gates.isNotEmpty) await _gates.removeAt(0).future;
+    calls.add('show:${notice.body}');
+  }
+
+  @override
+  Future<void> cancel() async {
+    if (_gates.isNotEmpty) await _gates.removeAt(0).future;
+    calls.add('cancel');
+  }
 }
 
 void main() {
@@ -183,6 +215,102 @@ void main() {
       await notifier.dispose();
 
       expect(port.cancels, 0);
+    });
+
+    test('a slow show cannot post after a cancel has overtaken it', () async {
+      // THE DEVICE DEFECT. On Android 13+ the first show() blocks on the
+      // runtime permission prompt, which waits on a human. A 14s job finished
+      // while the prompt was still up; cancel() ran, then the permission was
+      // granted and the queued show() resumed and posted. The shade was left
+      // reading "Transcribing" indefinitely with nothing transcribing.
+      final _BlockingPort port = _BlockingPort();
+      final TranscriptionNotifier notifier = TranscriptionNotifier(port: port);
+
+      final Completer<void> prompt = port.gate();
+      final Future<void> showing =
+          notifier.sync(hasActive: true, queuedCount: 0);
+
+      // The job finishes while the prompt is still on screen.
+      final Future<void> cancelling =
+          notifier.sync(hasActive: false, queuedCount: 0);
+
+      prompt.complete(); // the user finally taps Allow
+      await showing;
+      await cancelling;
+
+      expect(
+        port.calls.last,
+        'cancel',
+        reason: 'the last thing the platform sees must be the cancel, '
+            'never a show that outlived the work it described',
+      );
+    });
+
+    test('serialised syncs still reach the newest state', () async {
+      // Guard against "fix" by dropping work: overlapping syncs must still
+      // converge on the latest state, not silently skip it.
+      final _BlockingPort port = _BlockingPort();
+      final TranscriptionNotifier notifier = TranscriptionNotifier(port: port);
+
+      final Completer<void> first = port.gate();
+      final Future<void> a = notifier.sync(hasActive: true, queuedCount: 0);
+      final Future<void> b = notifier.sync(hasActive: true, queuedCount: 2);
+
+      first.complete();
+      await a;
+      await b;
+
+      expect(port.calls, contains('show:1 of 3 recordings'));
+    });
+
+    test('a superseded state is never posted after the newer one', () async {
+      // Three syncs, the middle one obsolete before its turn arrives. Without
+      // the supersede check the queue faithfully replays it and the shade
+      // ends up one state behind reality.
+      final _BlockingPort port = _BlockingPort();
+      final TranscriptionNotifier notifier = TranscriptionNotifier(port: port);
+
+      final Completer<void> first = port.gate();
+      final Future<void> a = notifier.sync(hasActive: true, queuedCount: 0);
+      final Future<void> b = notifier.sync(hasActive: true, queuedCount: 5);
+      final Future<void> c = notifier.sync(hasActive: false, queuedCount: 0);
+
+      first.complete();
+      await a;
+      await b;
+      await c;
+
+      expect(
+        port.calls,
+        isNot(contains('show:1 of 6 recordings')),
+        reason: 'a state that was obsolete before it reached the platform '
+            'must be dropped, not replayed',
+      );
+      expect(port.calls.last, 'cancel');
+    });
+
+    test('startup clears a notification left by a killed process', () async {
+      // Nothing in this process posted it, so the only safe assumption is
+      // that a previous launch died mid-job.
+      final _RecordingPort port = _RecordingPort();
+      final TranscriptionNotifier notifier = TranscriptionNotifier(port: port);
+
+      await notifier.reconcileStaleNotification();
+
+      expect(port.cancels, 1);
+    });
+
+    test('startup reconcile does not clear this process own notice', () async {
+      // A recovery resumed at launch announces itself before reconcile runs;
+      // clearing it would erase a live job's notification.
+      final _RecordingPort port = _RecordingPort();
+      final TranscriptionNotifier notifier = TranscriptionNotifier(port: port);
+
+      await notifier.sync(hasActive: true, queuedCount: 0);
+      await notifier.reconcileStaleNotification();
+
+      expect(port.cancels, 0);
+      expect(port.shown, hasLength(1));
     });
 
     test('a disposed notifier ignores later queue changes', () async {

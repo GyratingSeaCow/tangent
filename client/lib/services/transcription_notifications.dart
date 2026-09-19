@@ -85,6 +85,21 @@ class TranscriptionNotifier {
   TranscriptionNotice? _shown;
   bool _disposed = false;
 
+  /// Serialises platform calls. The first `show()` on Android 13+ blocks on
+  /// the runtime permission prompt, which waits on a human — a job can finish
+  /// while it is still on screen. Without this chain the queued `show()`
+  /// resumes AFTER the `cancel()` and repaints a notification describing work
+  /// that is already over, leaving "Transcribing" in the shade forever.
+  ///
+  /// Ordering, not exclusion: every state still reaches the platform, in the
+  /// order it was observed.
+  Future<void> _pending = Future<void>.value();
+
+  /// The state the shade should end up in, which is not what is on screen yet
+  /// while a call is in flight. Compared against the newest intent rather than
+  /// the last completed call, so a burst collapses to its final state.
+  TranscriptionNotice? _intended;
+
   /// What is currently on screen, for tests and for debugging.
   @visibleForTesting
   TranscriptionNotice? get shown => _shown;
@@ -98,21 +113,48 @@ class TranscriptionNotifier {
       hasActive: hasActive,
       queuedCount: queuedCount,
     );
-    if (next == _shown) return;
-    _shown = next;
-    if (next == null) {
-      await _port.cancel();
-    } else {
-      await _port.show(next);
-    }
+    if (next == _intended) return;
+    _intended = next;
+
+    _pending = _pending.then((_) async {
+      // Re-check on arrival: a newer sync may have superseded this one while
+      // it waited its turn, and posting a stale state would undo it.
+      if (_disposed || next != _intended) return;
+      _shown = next;
+      if (next == null) {
+        await _port.cancel();
+      } else {
+        await _port.show(next);
+      }
+    });
+    return _pending;
+  }
+
+  /// Clears anything left in the shade by a previous process.
+  ///
+  /// A notification outlives the process that posted it. If the app is killed
+  /// mid-transcription — swiped away, or reclaimed under memory pressure — no
+  /// `cancel()` ever runs and "Transcribing" survives into the next launch
+  /// describing a job that no longer exists. Called once at startup, before
+  /// the first sync, so the shade always starts from a state the app can
+  /// actually vouch for.
+  Future<void> reconcileStaleNotification() async {
+    if (_disposed) return;
+    if (_shown != null || _intended != null) return; // this process owns it
+    _pending = _pending.then((_) => _port.cancel());
+    return _pending;
   }
 
   /// Clears the notification so a stale "Transcribing" cannot outlive the app.
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;
-    if (_shown == null) return;
+    if (_shown == null && _intended == null) return;
     _shown = null;
-    await _port.cancel();
+    _intended = null;
+    // Queued behind any in-flight call: a cancel that overtakes a pending
+    // show would be undone by it.
+    _pending = _pending.then((_) => _port.cancel());
+    return _pending;
   }
 }

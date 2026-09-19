@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import 'dart:io';
+import 'dart:ui' show Color;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
@@ -27,6 +28,14 @@ class AndroidTranscriptionNotificationPort
   static const String _channelName = 'Transcription progress';
   static const String _channelDescription =
       'Shows when a recording is being transcribed.';
+
+  /// The brand purple, carried by the notification's accent colour.
+  ///
+  /// Android masks a status-bar icon to a flat silhouette — every opaque
+  /// pixel is repainted one system colour — so the dot's purple cannot
+  /// survive in the drawable. This field is the only channel the platform
+  /// leaves under the app's control.
+  static const Color _accent = Color(0xFF9B2594);
 
   bool _initialised = false;
   bool _permissionRequested = false;
@@ -66,6 +75,11 @@ class AndroidTranscriptionNotificationPort
             _channelId,
             _channelName,
             channelDescription: _channelDescription,
+            // The waveform mark, not the launcher icon: Android silhouettes
+            // status-bar icons, and a full-colour launcher PNG comes out a
+            // solid blob.
+            icon: '@drawable/ic_notification',
+            color: _accent,
             // Progress, not an alert: it belongs in the shade without a sound
             // or a heads-up card interrupting whatever the user is doing.
             importance: Importance.low,
