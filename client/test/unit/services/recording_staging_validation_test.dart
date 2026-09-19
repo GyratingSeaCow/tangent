@@ -107,6 +107,16 @@ Future<DumpRow> saveWith(
 }
 
 void main() {
+  // The deliberate host-side capture-I/O hardening rejects reparse-point
+  // ancestors on every desktop platform, but each platform words it
+  // differently: Windows names the object kind, POSIX surfaces the errno
+  // (20 ENOTDIR / 40 ELOOP from O_NOFOLLOW). Both are ProblemCode.conflict
+  // from the same guard, and both are the ONLY tolerated rejection.
+  final Matcher hostHardeningMessage = anyOf(
+    equals('Capture object is a reparse point or wrong type'),
+    matches(RegExp(r'^Linux capture openat failed \((20|40)\)$')),
+  );
+
   final links = () {
     try {
       final probe = Directory.systemTemp.createTempSync('tangent-linkprobe-');
@@ -155,7 +165,7 @@ void main() {
       expect(e.problem.code, ProblemCode.conflict);
       expect(
         e.problem.message,
-        'Capture object is a reparse point or wrong type',
+        hostHardeningMessage,
         reason: 'only the host publish-path ancestor hardening may reject',
       );
       expect(await File(r.stagingPath).exists(), isTrue,
@@ -262,13 +272,15 @@ void main() {
         'problem',
         anyOf(
           // The scripted publication failure (the intended interruption)...
-          (code: ProblemCode.io, message: 'fixture process interrupted'),
-          // ...or, on hosts whose hardened capture I/O rejects reparse-point
-          // ancestors before publication, that earlier deliberate guard.
-          (
-            code: ProblemCode.conflict,
-            message: 'Capture object is a reparse point or wrong type'
+          equals(
+            (code: ProblemCode.io, message: 'fixture process interrupted'),
           ),
+          // ...or, on hosts whose hardened capture I/O rejects reparse-point
+          // ancestors before publication, that earlier deliberate guard
+          // (worded per platform).
+          isA<StorageProblem>()
+              .having((p) => p.code, 'code', ProblemCode.conflict)
+              .having((p) => p.message, 'message', hostHardeningMessage),
         ),
       ),),
     );
@@ -301,7 +313,7 @@ void main() {
       // Host-only publish-path ancestor hardening; staged audio preserved.
       expect(
         recovered.problems.single.message,
-        'Capture object is a reparse point or wrong type',
+        hostHardeningMessage,
       );
       expect(recovered.recoveredIds, isEmpty);
       expect(await File(r.stagingPath).readAsBytes(), audio,
