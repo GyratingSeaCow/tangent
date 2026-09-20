@@ -25,6 +25,9 @@ enum ItemAction {
   duplicate,
   share,
 
+  /// Render the item to a PDF and hand it to the system share sheet.
+  exportPdf,
+
   /// Fetch a synced recording's audio from the server onto this device.
   /// Offered only when the server holds audio this device does not.
   download,
@@ -45,6 +48,7 @@ const List<ItemAction> _canonicalOrder = <ItemAction>[
   ItemAction.move,
   ItemAction.duplicate,
   ItemAction.share,
+  ItemAction.exportPdf,
   ItemAction.select,
   ItemAction.delete,
 ];
@@ -85,6 +89,8 @@ class ItemActionSheet extends StatelessWidget {
         return 'Duplicate';
       case ItemAction.share:
         return 'Share';
+      case ItemAction.exportPdf:
+        return 'Export to PDF';
       case ItemAction.download:
         return 'Download audio';
       case ItemAction.select:
@@ -106,6 +112,8 @@ class ItemActionSheet extends StatelessWidget {
         return Icons.copy_all_outlined;
       case ItemAction.share:
         return Icons.ios_share;
+      case ItemAction.exportPdf:
+        return Icons.picture_as_pdf_outlined;
       case ItemAction.download:
         return Icons.download_for_offline_outlined;
       case ItemAction.select:

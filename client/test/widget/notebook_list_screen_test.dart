@@ -8,10 +8,10 @@ import 'package:tangent/data/storage/storage_contract.dart';
 import 'package:tangent/data/notebook_repository.dart';
 import 'package:tangent/models/notebook.dart';
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:tangent/screens/dump/dumps_providers.dart';
-import 'package:tangent/screens/home/home_screen.dart'
-    show localDbProvider;
+import 'package:tangent/screens/home/home_screen.dart' show localDbProvider;
 import 'package:tangent/screens/notebook/notebook_editor_screen.dart';
 import 'package:tangent/screens/notebook/notebook_list_screen.dart';
 import 'package:tangent/services/notebook_persistence.dart';
@@ -111,6 +111,7 @@ void main() {
     List<Notebook> seed = const <Notebook>[],
     List<Folder> folders = const <Folder>[],
     _FakeFoldersDb? db,
+    NotebookPdfShare? sharePdf,
   }) async {
     tester.view.physicalSize = const Size(1080, 2340);
     tester.view.devicePixelRatio = 1.0;
@@ -135,7 +136,9 @@ void main() {
           ),
           if (db != null) localDbProvider.overrideWithValue(db),
         ],
-        child: const MaterialApp(home: NotebookListScreen()),
+        child: MaterialApp(
+          home: NotebookListScreen(sharePdfOverride: sharePdf),
+        ),
       ),
     );
     await tester.pump();
@@ -202,7 +205,8 @@ void main() {
     expect(repository.createCalls, 1);
     expect(find.byType(NotebookEditorScreen), findsOneWidget);
     expect(
-      tester.widget<NotebookEditorScreen>(find.byType(NotebookEditorScreen))
+      tester
+          .widget<NotebookEditorScreen>(find.byType(NotebookEditorScreen))
           .notebookId,
       'notebook-1',
     );
@@ -225,7 +229,8 @@ void main() {
 
     expect(repository.createCalls, 0);
     expect(
-      tester.widget<NotebookEditorScreen>(find.byType(NotebookEditorScreen))
+      tester
+          .widget<NotebookEditorScreen>(find.byType(NotebookEditorScreen))
           .notebookId,
       'nb-7',
     );
@@ -557,8 +562,7 @@ void main() {
     expect(find.byKey(const ValueKey('notebook-cover-nb-1')), findsNothing);
   });
 
-  testWidgets('a stored cover preference opens in cover view',
-      (tester) async {
+  testWidgets('a stored cover preference opens in cover view', (tester) async {
     // The read path, proved independently of the write path.
     SharedPreferences.setMockInitialValues(
       <String, Object>{'notebooks.coverView': true},
@@ -1010,6 +1014,101 @@ void main() {
         findsOneWidget,
       );
       expect(find.text('1 selected'), findsNothing);
+
+      await unmount(tester);
+    });
+  });
+
+  group('export to PDF', () {
+    testWidgets('the menu offers Export to PDF and shares real PDF bytes',
+        (tester) async {
+      final List<({Uint8List bytes, String filename, String subject})> shared =
+          <({Uint8List bytes, String filename, String subject})>[];
+      await mountList(
+        tester,
+        seed: <Notebook>[
+          testNotebook(
+            id: 'nb-1',
+            title: 'Field notes',
+            blocks: const <NotebookBlock>[
+              NotebookTextBlock(id: 'b-1', text: 'hello', x: 10, y: 10),
+            ],
+            strokes: <InkStroke>[
+              InkStroke(
+                id: 's-1',
+                width: 3,
+                points: const <InkPoint>[
+                  InkPoint(x: 0, y: 0),
+                  InkPoint(x: 40, y: 40),
+                ],
+              ),
+            ],
+          ),
+        ],
+        sharePdf: ({
+          required Uint8List bytes,
+          required String filename,
+          required String subject,
+        }) async {
+          shared.add((bytes: bytes, filename: filename, subject: subject));
+        },
+      );
+
+      await tester.tap(find.byKey(const ValueKey('notebook-menu-nb-1')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(
+        find.byKey(const ValueKey('item-action-exportPdf')),
+        findsOneWidget,
+      );
+      await tester.tap(find.byKey(const ValueKey('item-action-exportPdf')));
+      // The export rasterises off the test's fake-async clock.
+      await tester.runAsync(() async {
+        await Future<void>.delayed(const Duration(milliseconds: 600));
+      });
+      await tester.pumpAndSettle();
+
+      expect(shared, hasLength(1));
+      expect(shared.single.filename, 'Field notes.pdf');
+      expect(shared.single.subject, 'Field notes');
+      expect(
+        String.fromCharCodes(shared.single.bytes.sublist(0, 5)),
+        '%PDF-',
+        reason: 'the share must carry real PDF bytes, not a stub',
+      );
+
+      await unmount(tester);
+    });
+
+    testWidgets('a failed export reports instead of dying silently',
+        (tester) async {
+      await mountList(
+        tester,
+        seed: <Notebook>[testNotebook(id: 'nb-1', title: 'Field notes')],
+        sharePdf: ({
+          required Uint8List bytes,
+          required String filename,
+          required String subject,
+        }) async {
+          throw StateError('no share targets');
+        },
+      );
+
+      await tester.tap(find.byKey(const ValueKey('notebook-menu-nb-1')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.tap(find.byKey(const ValueKey('item-action-exportPdf')));
+      await tester.runAsync(() async {
+        await Future<void>.delayed(const Duration(milliseconds: 600));
+      });
+      await tester.pumpAndSettle();
+
+      expect(
+        find.textContaining('Could not export PDF'),
+        findsOneWidget,
+        reason: 'a tapped control that does nothing reads as a broken app',
+      );
 
       await unmount(tester);
     });

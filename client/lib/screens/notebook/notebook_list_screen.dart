@@ -6,11 +6,17 @@
 // individual notebooks. Deleting a notebook never touches the dumps its cards
 // referenced — the repository only drops the notebook row.
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show Uint8List;
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'dart:io' show File;
+
 import '../../data/notebook_repository.dart';
 import '../../models/notebook.dart';
+import '../../services/notebook_pdf_exporter.dart';
 import '../../services/notebook_persistence.dart';
 import '../../widgets/folder_picker.dart';
 import '../../widgets/sync_button.dart';
@@ -22,8 +28,35 @@ import '../../widgets/folder_header_actions.dart';
 import 'notebook_grouping.dart';
 import 'notebook_editor_screen.dart';
 
+/// Signature of the share step, injectable for tests.
+typedef NotebookPdfShare = Future<void> Function({
+  required Uint8List bytes,
+  required String filename,
+  required String subject,
+});
+
+/// Production share: write the PDF to the app cache and open the system
+/// share sheet with it.
+Future<void> _systemSharePdf({
+  required Uint8List bytes,
+  required String filename,
+  required String subject,
+}) async {
+  final directory = await getTemporaryDirectory();
+  final File file = File('${directory.path}/$filename');
+  await file.writeAsBytes(bytes, flush: true);
+  await Share.shareXFiles(
+    <XFile>[XFile(file.path, mimeType: 'application/pdf')],
+    subject: subject,
+  );
+}
+
 class NotebookListScreen extends ConsumerStatefulWidget {
-  const NotebookListScreen({super.key});
+  const NotebookListScreen({super.key, this.sharePdfOverride});
+
+  /// Test seam: replaces the system share sheet, which widget tests can
+  /// neither open nor observe. Production leaves this null.
+  final NotebookPdfShare? sharePdfOverride;
 
   @override
   ConsumerState<NotebookListScreen> createState() => _NotebookListScreenState();
@@ -215,6 +248,7 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
         ItemAction.open,
         ItemAction.rename,
         ItemAction.move,
+        ItemAction.exportPdf,
         ItemAction.delete,
       ],
     );
@@ -226,6 +260,8 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
         await _rename(notebook);
       case ItemAction.move:
         await _move(notebook);
+      case ItemAction.exportPdf:
+        await _exportPdf(notebook);
       case ItemAction.delete:
         await _confirmDelete(notebook);
       case ItemAction.duplicate:
@@ -236,6 +272,52 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
       case ItemAction.download:
         break;
     }
+  }
+
+  /// Renders the notebook to a PDF and hands it to the system share sheet.
+  ///
+  /// The export reads the notebook fresh from the repository rather than
+  /// trusting the list row: the row carries no document or ink, and a stale
+  /// copy exporting silently would be worse than a failure.
+  Future<void> _exportPdf(Notebook notebook) async {
+    try {
+      final Notebook? full =
+          await ref.read(notebookRepositoryProvider).getNotebook(notebook.id);
+      if (full == null) {
+        throw StateError('Notebook is no longer available');
+      }
+      final Uint8List bytes = await renderNotebookPdf(
+        NotebookExportSource(
+          title: full.title,
+          document: full.document,
+          strokes: full.ink.strokes,
+        ),
+      );
+      final String safeName = full.title.isEmpty
+          ? 'notebook'
+          : full.title.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+      await _sharePdf(
+        bytes: bytes,
+        filename: '$safeName.pdf',
+        subject: full.title.isEmpty ? 'Notebook' : full.title,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not export PDF: $error')),
+      );
+    }
+  }
+
+  /// Seam for tests: sharing opens a platform sheet that widget tests can
+  /// neither drive nor assert on, so tests inject a capture here.
+  Future<void> _sharePdf({
+    required Uint8List bytes,
+    required String filename,
+    required String subject,
+  }) async {
+    final NotebookPdfShare share = widget.sharePdfOverride ?? _systemSharePdf;
+    await share(bytes: bytes, filename: filename, subject: subject);
   }
 
   Future<void> _move(Notebook notebook) async {

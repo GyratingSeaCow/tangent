@@ -621,6 +621,7 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
         await _downloadAudio(dump);
       case ItemAction.duplicate:
       case ItemAction.share:
+      case ItemAction.exportPdf:
         break;
     }
   }
