@@ -12,10 +12,11 @@ import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import 'dart:io' show File;
+import 'dart:io' show File, Platform;
 
 import '../../data/notebook_repository.dart';
 import '../../models/notebook.dart';
+import '../../services/desktop_pdf_share.dart';
 import '../../services/notebook_pdf_exporter.dart';
 import '../../services/notebook_persistence.dart';
 import '../../widgets/folder_picker.dart';
@@ -316,8 +317,34 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
     required String filename,
     required String subject,
   }) async {
-    final NotebookPdfShare share = widget.sharePdfOverride ?? _systemSharePdf;
-    await share(bytes: bytes, filename: filename, subject: subject);
+    final NotebookPdfShare? injected = widget.sharePdfOverride;
+    if (injected != null) {
+      await injected(bytes: bytes, filename: filename, subject: subject);
+      return;
+    }
+    // Desktop: share_plus's shareXFiles is UnimplementedError on Linux (no
+    // system share sheet exists). Export to Documents/Tangent/Exports and
+    // open it — and always say where it went, because a viewer-less system
+    // otherwise shows nothing at all for a successful export.
+    if (Platform.isLinux) {
+      final DesktopPdfShareResult result = await DesktopPdfShare().sharePdf(
+        bytes: bytes,
+        filename: filename,
+        subject: subject,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            result.opened
+                ? 'Exported to ${result.path}'
+                : 'Exported to ${result.path} (no PDF viewer found)',
+          ),
+        ),
+      );
+      return;
+    }
+    await _systemSharePdf(bytes: bytes, filename: filename, subject: subject);
   }
 
   Future<void> _move(Notebook notebook) async {
