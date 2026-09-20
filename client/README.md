@@ -1,8 +1,10 @@
 # Tangent client
 
 Flutter app for Android and Linux desktop. Records audio, keeps it on the
-device, and (optionally) sends it to a [Tangent server](../server/README.md) for
-transcription.
+device, and (optionally) pairs with a [Tangent server](../server/README.md)
+for transcription and multi-device sync — **Settings → Server → Find my
+server** discovers it on the LAN, and a 6-digit code pairs the device (see
+the root README's "Connecting the app to your server").
 
 See the [root README](../README.md) for what the app does and the full
 prerequisites table.
@@ -30,7 +32,7 @@ expect several minutes and a few GB. Later builds take well under a minute.
 
 ```bash
 flutter analyze                # No issues found
-flutter test                   # 978 tests
+flutter test                   # 1397 tests
 cd android && ./gradlew :app:testDebugUnitTest    # Kotlin storage layer
 ```
 
@@ -47,7 +49,7 @@ paths on a device before trusting a green suite.
 | Path | What lives there |
 |---|---|
 | `lib/screens/` | Home, dump detail, notebooks, settings |
-| `lib/services/` | Recording, persistence, import, server transcription |
+| `lib/services/` | Recording, persistence, import, sync, discovery, pairing |
 | `lib/data/storage/` | Storage contract + SAF/filesystem backends |
 | `android/app/src/main/kotlin/` | Native capture, SAF publication, audio routing |
 | `test/` | Widget, unit and storage-contract tests |

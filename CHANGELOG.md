@@ -5,6 +5,47 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Server discovery** — "Find my server" on the connect screen sweeps the
+  local /24 for Tangent servers (unauthenticated `/v1/server/info/public`
+  beacon: name, version, auth flag — nothing private) and lists finds live.
+- **Pairing** — a device earns its own bearer token by typing a 6-digit code
+  read off the server's log (`pairing.code_issued`). Codes live 120 seconds,
+  are stored hashed, and die after 5 wrong attempts; each device's token is
+  individually revocable via `DELETE /v1/devices/{id}/token`. Manual
+  URL + token entry remains for VPN/Tailscale setups the sweep can't see.
+- **Multi-step undo/redo** in notebooks — history stacks 100 actions deep
+  (strokes, erase sweeps, lasso moves, lasso deletes); redo walks forward
+  step by step and any new mutation clears it.
+- **Smart lasso** — circle-select ink, text blocks and recording cards
+  together (anything >40% inside the loop is caught); drag the selection
+  anywhere or delete it as one, with undo. Works with pen and finger.
+- **Fountain pen and italic nib** pen styles — pressure-tapered rendering
+  with per-style stroke character; raw pressure is stored per point and
+  curves apply at render time, so old notebooks gain the styles too.
+- **Save-on-back everywhere** — backing out of a notebook or a text note
+  saves it; the discard-confirmation dialogs are gone. A failed save keeps
+  the screen open with the error visible instead of silently losing work.
+
+### Changed
+- Notebook toolbar restructured: the top row is stable (draw toggle, undo,
+  redo, save); eraser, nib, lasso and delete live in a second row shown only
+  in draw mode.
+- Palm rejection no longer suppresses finger input while the lasso is
+  active (a selection gesture can't scribble).
+- `require_auth` accepts device-bound tokens minted by pairing alongside
+  the primary setup token.
+
+### Fixed
+- A cancelled gesture (system edge-swipe, palm, second finger) could
+  permanently wedge the lasso; pointer-cancel now releases every mode's
+  claim and rolls back half-finished selection drags.
+- The DEBUG banner no longer shows on debug builds.
+- Wrong pairing-code attempts are counted even though the request returns
+  401 (the counter previously rolled back with the error response).
+
 ## [1.3.0] - 2026-09-19
 
 ### Added

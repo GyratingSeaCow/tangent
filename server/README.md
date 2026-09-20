@@ -11,7 +11,8 @@ docker compose logs -f tangent-server
 ```
 
 The server prints a one-time setup URL on first run. **POST** to it to generate
-your API token, then paste that into the Tangent app — the endpoint is POST-only,
+your API token, then pair your devices with the app's **Find my server**
+button (see [Pairing devices](#pairing-devices)) — the endpoint is POST-only,
 so opening it in a browser returns `405 Method Not Allowed`.
 
 **Ports:** the container always listens on `8000` internally, and
@@ -58,9 +59,51 @@ curl -X POST http://localhost:8765/v1/setup \
   -d '{"display_name": "Your Name"}'
 ```
 
-1. Copy the returned `token` — it is not shown again.
-2. In the Tangent app, open **Settings → Server** and paste the URL + token.
-3. From the phone, use `http://<lan-ip>:8765` (not `localhost`).
+1. Copy the returned `token` — it is not shown again. It is the server's
+   primary credential; keep it safe.
+2. Connect your devices by **pairing** (next section) — you normally never
+   type this token into a device.
+3. If you do connect manually (VPN/Tailscale), use `http://<lan-ip>:8765`
+   from the phone (not `localhost`).
+
+## Pairing devices
+
+Each device earns its **own** revocable token by proving it can read the
+server's output — no token copying:
+
+1. In the app: **Settings → Server → Find my server** → tap **Pair** next to
+   this server. (The app discovers it via the unauthenticated
+   `GET /v1/server/info/public` beacon, which exposes only name, version and
+   an auth flag.)
+2. The server logs a 6-digit code the moment the device asks. Read it:
+
+   ```bash
+   # Linux/macOS:
+   docker compose logs tangent-server --since 2m | grep code_issued
+
+   # Windows PowerShell:
+   docker compose logs tangent-server --since 2m | Select-String code_issued
+   ```
+
+   (Run from `server/`, or add `-f path\to\server\docker-compose.yml`.)
+3. Type the code into the device. It receives a token bound to its device id
+   and is fully connected.
+
+Security properties:
+
+- The code is **never sent to the requesting device** — only to the server's
+  own log (and to already-authenticated devices via `GET /v1/pair/pending`).
+- Codes expire in **120 seconds**, are stored **hashed**, and a pairing dies
+  after **5 wrong attempts**. Pairing requests are rate-limited per IP.
+- A server restart voids all pending pairings.
+- Revoke a lost device without touching anything else:
+
+  ```bash
+  curl -X DELETE http://localhost:8765/v1/devices/<device-id>/token \
+    -H "Authorization: Bearer <any-valid-token>"
+  ```
+
+  The primary setup token is not revocable this way; it lives separately.
 
 ## Configuration
 
@@ -116,7 +159,7 @@ services:
 ```bash
 cd server
 uv sync --extra dev        # lean: just the server + test tools
-uv run pytest                                             # 162 passed, 3 skipped
+uv run pytest                                             # 180 passed, 1 skipped
 uv run uvicorn app.main:create_app --factory --reload     # http://127.0.0.1:8000
 ```
 
