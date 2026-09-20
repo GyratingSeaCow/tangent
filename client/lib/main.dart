@@ -34,6 +34,7 @@ import 'package:device_info_plus/device_info_plus.dart';
 import 'services/background_sync_scheduler.dart';
 import 'services/connectivity_service.dart';
 import 'services/document_sync_engine.dart';
+import 'services/platform_audio.dart';
 import 'services/transcription_client.dart';
 
 /// Device label for the background isolate, which cannot reach the app's
@@ -98,6 +99,9 @@ void backgroundSyncDispatcher() {
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Desktop playback backend. Must precede any AudioPlayer construction,
+  // which providers below can trigger.
+  initPlatformAudio();
 
   final appDocuments = await getApplicationDocumentsDirectory();
   final temp = await getTemporaryDirectory();
@@ -107,8 +111,17 @@ Future<void> main() async {
   );
 
   final secureStore = SecureStore();
-  final url = await secureStore.getServerUrl();
-  final token = await secureStore.getToken();
+  String? url;
+  String? token;
+  try {
+    url = await secureStore.getServerUrl();
+    token = await secureStore.getToken();
+  } catch (e) {
+    // Linux without a Secret Service (KWallet/gnome-keyring): reads throw.
+    // Startup must not die before runApp — launch unpaired; the connect
+    // screen surfaces the same failure with an explanation when opened.
+    debugPrint('tangent.secure-storage unavailable at startup: $e');
+  }
   final client = TranscriptionClient(
     baseUrl: url ?? 'http://10.0.2.2:8000',
     token: token,
