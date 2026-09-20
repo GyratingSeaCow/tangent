@@ -8,6 +8,7 @@ import 'sync_status_presentation.dart';
 
 import '../../data/local_db.dart';
 import '../../data/storage/storage_contract.dart';
+import 'dump_grouping.dart';
 import 'dump_selection_controller.dart';
 import '../../models/sync_status.dart' show SyncStatus, SyncStatusX;
 import '../../models/transcription_status.dart';
@@ -21,7 +22,10 @@ import '../../services/server_transcription_service.dart';
 import '../../services/synced_audio_download.dart';
 import '../home/home_providers.dart' show serverTranscriptionServiceProvider;
 import '../../widgets/item_action_sheet.dart';
+import '../../widgets/folder_header_actions.dart';
 import '../../widgets/folder_picker.dart';
+import '../notebook/notebook_grouping.dart' show FolderSummary;
+import '../../data/notebook_repository.dart' show foldersProvider;
 import '../home/home_screen.dart' show localDbProvider;
 
 /// What the `+` FAB on the dumps list asks the home screen to create.
@@ -237,8 +241,7 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
         !eligibilityAsync.hasError;
     // Everything presented is selectable; the select-all indicator compares
     // against the full result set, not the delete-eligible subset.
-    final selectableIds =
-        results?.rows.map((r) => r.id).toSet() ?? <String>{};
+    final selectableIds = results?.rows.map((r) => r.id).toSet() ?? <String>{};
 
     return PopScope(
       canPop: !selection.active,
@@ -433,6 +436,33 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
                               eligibility: eligibility,
                               downloading: _downloading,
                               enabled: ready && !_batchBusy,
+                              // Folders mirror the notebooks list; search
+                              // results stay flat — a search is already a
+                              // selection, and slicing it by folder would
+                              // hide hits in collapsed sections.
+                              folders: showingSearch
+                                  ? const <FolderSummary>[]
+                                  : ref.watch(foldersProvider).maybeWhen(
+                                        data: (List<Folder> rows) => rows
+                                            .map(
+                                              (Folder f) => FolderSummary(
+                                                id: f.id,
+                                                name: f.name,
+                                              ),
+                                            )
+                                            .toList(growable: false),
+                                        orElse: () => const <FolderSummary>[],
+                                      ),
+                              onHeaderLongPress: (
+                                String folderId,
+                                String name,
+                              ) =>
+                                  showFolderHeaderActions(
+                                context,
+                                folderId: folderId,
+                                name: name,
+                                db: ref.read(localDbProvider),
+                              ),
                               onEnter: (id) =>
                                   _change(() => _selection.enter(id)),
                               onToggle: (id) =>
@@ -866,7 +896,7 @@ class _FilterDropdown<T> extends StatelessWidget {
   }
 }
 
-class _DumpList extends StatelessWidget {
+class _DumpList extends StatefulWidget {
   const _DumpList({
     required this.dumps,
     required this.empty,
@@ -878,7 +908,15 @@ class _DumpList extends StatelessWidget {
     required this.onEnter,
     required this.onToggle,
     this.onLongPressItem,
+    this.folders = const <FolderSummary>[],
+    this.onHeaderLongPress,
   });
+
+  /// Folders presented as section headers, mirroring the notebooks list.
+  final List<FolderSummary> folders;
+
+  /// Long-press on a REAL folder header (never the 'No folder' one).
+  final void Function(String folderId, String name)? onHeaderLongPress;
   final void Function(BuildContext, DumpRow)? onOpen;
   final DumpSelectionState selection;
   final Map<String, Eligibility> eligibility;
@@ -902,20 +940,100 @@ class _DumpList extends StatelessWidget {
   final String empty;
 
   @override
+  State<_DumpList> createState() => _DumpListState();
+}
+
+class _DumpListState extends State<_DumpList> {
+  /// Session-scoped collapse state, same contract as the notebooks list.
+  final Set<String> _collapsed = <String>{};
+
+  @override
   Widget build(BuildContext context) {
-    if (dumps.isEmpty) {
+    if (widget.dumps.isEmpty && widget.folders.isEmpty) {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(24),
-          child: Text(empty, textAlign: TextAlign.center),
+          child: Text(widget.empty, textAlign: TextAlign.center),
         ),
       );
     }
-    return ListView.separated(
-      itemCount: dumps.length,
-      separatorBuilder: (_, __) => const Divider(height: 1),
-      itemBuilder: (context, index) {
-        final dump = dumps[index];
+    final List<DumpSection> sections = groupDumps(
+      dumps: widget.dumps,
+      folders: widget.folders,
+    );
+    // The flat path: no folders exist, so no headers -- the list a user who
+    // never opted into folders has always had.
+    if (sections.length == 1 && sections.first.title == null) {
+      return ListView.separated(
+        itemCount: widget.dumps.length,
+        separatorBuilder: (_, __) => const Divider(height: 1),
+        itemBuilder: (context, index) => _rowTile(widget.dumps[index]),
+      );
+    }
+    final List<Widget> children = <Widget>[];
+    for (final DumpSection section in sections) {
+      final String sectionKey = section.folderId ?? 'unfiled';
+      final bool collapsed = _collapsed.contains(sectionKey);
+      children.add(
+        InkWell(
+          key: ValueKey<String>('dump-section-$sectionKey'),
+          onTap: () => setState(() {
+            if (!_collapsed.remove(sectionKey)) _collapsed.add(sectionKey);
+          }),
+          // Only real folders have actions; the 'No folder' pseudo-section
+          // is not a folder and cannot be renamed or deleted.
+          onLongPress:
+              section.folderId == null || widget.onHeaderLongPress == null
+                  ? null
+                  : () => widget.onHeaderLongPress!(
+                        section.folderId!,
+                        section.title!,
+                      ),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+            child: Row(
+              children: <Widget>[
+                Icon(
+                  collapsed ? Icons.chevron_right : Icons.expand_more,
+                  size: 20,
+                ),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(
+                    section.title!,
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
+                ),
+                Text(
+                  '${section.dumps.length}',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+      if (collapsed) continue;
+      if (section.isEmpty) {
+        children.add(
+          const Padding(
+            padding: EdgeInsets.fromLTRB(40, 0, 16, 12),
+            child: Text('Empty'),
+          ),
+        );
+        continue;
+      }
+      for (final DumpRow dump in section.dumps) {
+        children.add(_rowTile(dump));
+        children.add(const Divider(height: 1));
+      }
+    }
+    return ListView(children: children);
+  }
+
+  Widget _rowTile(DumpRow dump) {
+    return Builder(
+      builder: (context) {
         final sync = SyncStatusX.fromWire(dump.syncStatus);
         final transcription =
             TranscriptionStatus.fromWire(dump.transcriptionStatus);
@@ -923,7 +1041,7 @@ class _DumpList extends StatelessWidget {
           builder: (context, constraints) {
             final compact = constraints.maxWidth < 500 ||
                 MediaQuery.textScalerOf(context).scale(14) > 21;
-            final reason = eligibilityReason(eligibility[dump.id]);
+            final reason = eligibilityReason(widget.eligibility[dump.id]);
             final isNote = dump.mode == 'text_note';
             final pill = _TranscriptionStatusPill(
               dumpId: dump.id,
@@ -935,7 +1053,7 @@ class _DumpList extends StatelessWidget {
                 const SizedBox(width: 6),
                 // An in-flight audio fetch replaces the idle motif: the row
                 // is WORKING, and nothing else on screen says so.
-                if (downloading.contains(dump.id)) ...[
+                if (widget.downloading.contains(dump.id)) ...[
                   SizedBox.square(
                     dimension: 14,
                     child: CircularProgressIndicator(
@@ -973,8 +1091,8 @@ class _DumpList extends StatelessWidget {
             );
             return ListTile(
               key: ValueKey('dump-row-${dump.id}'),
-              selected: selection.selectedIds.contains(dump.id),
-              leading: selection.active
+              selected: widget.selection.selectedIds.contains(dump.id),
+              leading: widget.selection.active
                   ? Tooltip(
                       message: 'Select ${dump.title}; $reason',
                       child: SizedBox.square(
@@ -983,12 +1101,13 @@ class _DumpList extends StatelessWidget {
                           key: ValueKey('dump-select-${dump.id}'),
                           shape: const CircleBorder(),
                           semanticLabel: 'Select ${dump.title}; $reason',
-                          value: selection.selectedIds.contains(dump.id),
+                          value: widget.selection.selectedIds.contains(dump.id),
                           // Selection is action-agnostic: any presented row
                           // may be selected. Delete/download/transcribe each
-                          // decide eligibility at execution and report skips.
-                          onChanged:
-                              enabled ? (_) => onToggle(dump.id) : null,
+                          // decide widget.eligibility at execution and report skips.
+                          onChanged: widget.enabled
+                              ? (_) => widget.onToggle(dump.id)
+                              : null,
                         ),
                       ),
                     )
@@ -1008,7 +1127,7 @@ class _DumpList extends StatelessWidget {
               // multi-select. Hidden during selection: a menu that mutates one
               // row while several are selected is ambiguous, and the toolbar
               // already owns bulk actions.
-              trailing: selection.active
+              trailing: widget.selection.active
                   ? (compact ? null : pill)
                   : Row(
                       mainAxisSize: MainAxisSize.min,
@@ -1018,9 +1137,10 @@ class _DumpList extends StatelessWidget {
                           key: ValueKey<String>('dump-more-${dump.id}'),
                           icon: const Icon(Icons.more_vert),
                           tooltip: 'More actions',
-                          onPressed: !enabled || onLongPressItem == null
+                          onPressed: !widget.enabled ||
+                                  widget.onLongPressItem == null
                               ? null
-                              : () => onLongPressItem!(context, dump),
+                              : () => widget.onLongPressItem!(context, dump),
                         ),
                       ],
                     ),
@@ -1030,11 +1150,12 @@ class _DumpList extends StatelessWidget {
               // control never navigate"). Per-item actions get their own ⋮
               // button instead — the same split Drive, Files and Samsung's
               // own apps use, so the gesture is not overloaded.
-              onLongPress: enabled ? () => onEnter(dump.id) : null,
-              onTap: selection.active
-                  ? (enabled ? () => onToggle(dump.id) : null)
-                  : () => onOpen != null
-                      ? onOpen!(context, dump)
+              onLongPress:
+                  widget.enabled ? () => widget.onEnter(dump.id) : null,
+              onTap: widget.selection.active
+                  ? (widget.enabled ? () => widget.onToggle(dump.id) : null)
+                  : () => widget.onOpen != null
+                      ? widget.onOpen!(context, dump)
                       : Navigator.of(context).push<void>(
                           MaterialPageRoute<void>(
                             builder: (_) => DumpDetailScreen(

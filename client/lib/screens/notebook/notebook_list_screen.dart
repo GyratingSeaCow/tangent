@@ -18,11 +18,9 @@ import '../../data/local_db.dart';
 import '../home/home_screen.dart' show localDbProvider;
 import '../home/home_providers.dart' show documentSyncEngineProvider;
 import '../../widgets/item_action_sheet.dart';
+import '../../widgets/folder_header_actions.dart';
 import 'notebook_grouping.dart';
 import 'notebook_editor_screen.dart';
-
-/// What the folder-header long-press menu can do.
-enum _FolderAction { rename, delete }
 
 class NotebookListScreen extends ConsumerStatefulWidget {
   const NotebookListScreen({super.key});
@@ -73,8 +71,7 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
 
   void _toggleSelectAll(List<Notebook> rows) {
     setState(() {
-      final Set<String> all =
-          rows.map((Notebook n) => n.id).toSet();
+      final Set<String> all = rows.map((Notebook n) => n.id).toSet();
       if (_selectedIds.containsAll(all)) {
         _selectedIds.clear();
       } else {
@@ -274,135 +271,6 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
     }
   }
 
-  /// Long-press menu for a folder header: rename or delete the folder
-  /// itself. Deleting a folder never deletes its contents — they are
-  /// revealed as unfiled, matching sync semantics on every other device.
-  Future<void> _showFolderActions(String folderId, String name) async {
-    final _FolderAction? action = await showModalBottomSheet<_FolderAction>(
-      context: context,
-      builder: (BuildContext sheetContext) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            ListTile(
-              key: const ValueKey<String>('folder-action-rename'),
-              leading: const Icon(Icons.drive_file_rename_outline),
-              title: const Text('Rename folder'),
-              onTap: () =>
-                  Navigator.of(sheetContext).pop(_FolderAction.rename),
-            ),
-            ListTile(
-              key: const ValueKey<String>('folder-action-delete'),
-              leading: Icon(
-                Icons.delete_outline,
-                color: Theme.of(sheetContext).colorScheme.error,
-              ),
-              title: Text(
-                'Delete folder',
-                style: TextStyle(
-                  color: Theme.of(sheetContext).colorScheme.error,
-                ),
-              ),
-              onTap: () =>
-                  Navigator.of(sheetContext).pop(_FolderAction.delete),
-            ),
-          ],
-        ),
-      ),
-    );
-    if (action == null || !mounted) return;
-    switch (action) {
-      case _FolderAction.rename:
-        await _renameFolder(folderId, name);
-      case _FolderAction.delete:
-        await _deleteFolder(folderId, name);
-    }
-  }
-
-  Future<void> _renameFolder(String folderId, String currentName) async {
-    final TextEditingController controller =
-        TextEditingController(text: currentName);
-    final String? name = await showDialog<String>(
-      context: context,
-      builder: (BuildContext dialogContext) => AlertDialog(
-        title: const Text('Rename folder'),
-        content: TextField(
-          key: const ValueKey<String>('folder-rename-field'),
-          controller: controller,
-          autofocus: true,
-          decoration: const InputDecoration(labelText: 'Name'),
-          onSubmitted: (String value) =>
-              Navigator.of(dialogContext).pop(value.trim()),
-        ),
-        actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            key: const ValueKey<String>('folder-rename-save'),
-            onPressed: () =>
-                Navigator.of(dialogContext).pop(controller.text.trim()),
-            child: const Text('Save'),
-          ),
-        ],
-      ),
-    );
-    WidgetsBinding.instance.addPostFrameCallback((_) => controller.dispose());
-    if (name == null || name.isEmpty || name == currentName || !mounted) {
-      return;
-    }
-    try {
-      await ref.read(localDbProvider).renameFolder(
-            folderId: folderId,
-            name: name,
-          );
-    } catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not rename folder: $error')),
-      );
-    }
-  }
-
-  Future<void> _deleteFolder(String folderId, String name) async {
-    final bool? confirmed = await showDialog<bool>(
-      context: context,
-      builder: (BuildContext dialogContext) => AlertDialog(
-        title: Text('Delete "$name"?'),
-        content: const Text(
-          'Only the folder is deleted. Its notebooks, recordings and notes '
-          'are kept and move to "No folder".',
-        ),
-        actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            key: const ValueKey<String>('folder-delete-confirm'),
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: Text(
-              'Delete folder',
-              style: TextStyle(
-                color: Theme.of(dialogContext).colorScheme.error,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !mounted) return;
-    try {
-      await ref.read(localDbProvider).deleteFolder(folderId);
-    } catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not delete folder: $error')),
-      );
-    }
-  }
-
   Future<void> _rename(Notebook notebook) async {
     final TextEditingController controller =
         TextEditingController(text: notebook.title);
@@ -550,9 +418,8 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
                     IconButton(
                       key: const ValueKey<String>('notebook-selection-all'),
                       tooltip: 'Select all notebooks',
-                      onPressed: _bulkBusy
-                          ? null
-                          : () => _toggleSelectAll(rows),
+                      onPressed:
+                          _bulkBusy ? null : () => _toggleSelectAll(rows),
                       icon: const Icon(Icons.select_all),
                     ),
                     IconButton(
@@ -599,9 +466,11 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
                   // or deleted.
                   onLongPress: section.folderId == null
                       ? null
-                      : () => _showFolderActions(
-                            section.folderId!,
-                            section.title!,
+                      : () => showFolderHeaderActions(
+                            context,
+                            folderId: section.folderId!,
+                            name: section.title!,
+                            db: ref.read(localDbProvider),
                           ),
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
@@ -782,9 +651,8 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
                   shape: const CircleBorder(),
                   semanticLabel: 'Select ${notebook.title}',
                   value: _selectedIds.contains(notebook.id),
-                  onChanged: _bulkBusy
-                      ? null
-                      : (_) => _toggleSelected(notebook.id),
+                  onChanged:
+                      _bulkBusy ? null : (_) => _toggleSelected(notebook.id),
                 ),
               )
             : const Icon(Icons.menu_book),

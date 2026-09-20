@@ -13,6 +13,7 @@ import 'package:tangent/screens/dump/dumps_list_screen.dart';
 import 'package:tangent/screens/dump/dumps_providers.dart';
 import 'package:tangent/screens/home/home_providers.dart';
 import 'package:tangent/screens/home/home_screen.dart';
+import 'package:tangent/data/notebook_repository.dart' show foldersProvider;
 
 void main() {
   testWidgets('list renders every durable status and two independent filters',
@@ -53,10 +54,14 @@ void main() {
       ProviderScope(
         overrides: [
           localDbProvider.overrideWithValue(db),
+          // The screen watches folders for section headers; a real
+          // drift stream here trips !timersPending in widget tests.
+          foldersProvider.overrideWith((_) => Stream.value(const <Folder>[])),
           audioStorageProvider.overrideWithValue(storage),
           // This status/filter presentation fixture has no bound storage owner.
           // Eligibility/lifetime behavior is covered by the selection and bound detail suites.
-          deletionEligibilityProvider.overrideWith((_) => Stream.value(const {})),
+          deletionEligibilityProvider
+              .overrideWith((_) => Stream.value(const {})),
           dumpsProvider.overrideWith((_) => Stream.value(rows)),
         ],
         child: const MaterialApp(home: DumpsListScreen()),
@@ -123,10 +128,14 @@ void main() {
       ProviderScope(
         overrides: [
           localDbProvider.overrideWithValue(db),
+          // The screen watches folders for section headers; a real
+          // drift stream here trips !timersPending in widget tests.
+          foldersProvider.overrideWith((_) => Stream.value(const <Folder>[])),
           audioStorageProvider.overrideWithValue(storage),
           // This status/filter presentation fixture has no bound storage owner.
           // Eligibility/lifetime behavior is covered by the selection and bound detail suites.
-          deletionEligibilityProvider.overrideWith((_) => Stream.value(const {})),
+          deletionEligibilityProvider
+              .overrideWith((_) => Stream.value(const {})),
           dumpsProvider.overrideWith((_) => rows.stream),
         ],
         child: const MaterialApp(home: DumpsListScreen()),
