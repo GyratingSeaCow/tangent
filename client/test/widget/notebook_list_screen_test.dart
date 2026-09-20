@@ -293,10 +293,9 @@ void main() {
     await unmount(tester);
   });
 
-  // The behaviour change: long-press used to delete outright. It now opens the
-  // shared menu, so the destructive path always has a menu in front of it and
-  // the gesture means the same thing as it does on every other list.
-  testWidgets('long-press opens the action menu instead of deleting',
+  // The unified contract: long-press means multi-select on every list, the
+  // same as dumps. Per-item actions live behind the row's own menu button.
+  testWidgets('long-press enters selection instead of opening a menu',
       (tester) async {
     await mountList(
       tester,
@@ -307,13 +306,19 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
 
-    expect(find.byKey(const ValueKey('item-action-rename')), findsOneWidget);
-    expect(find.byKey(const ValueKey('item-action-delete')), findsOneWidget);
     expect(
-      find.text('Delete notebook?'),
-      findsNothing,
-      reason: 'long-press must not jump straight to the destructive dialog',
+      find.byKey(const ValueKey('notebook-selection-cancel')),
+      findsOneWidget,
+      reason: 'long-press must enter selection mode, as it does on dumps',
     );
+    expect(find.text('1 selected'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('item-action-rename')),
+      findsNothing,
+      reason: 'the per-item menu belongs to the row menu button, not '
+          'long-press',
+    );
+    expect(find.text('Delete notebook?'), findsNothing);
     expect(repository.deleted, isEmpty);
     expect(tester.takeException(), isNull);
 
@@ -387,7 +392,7 @@ void main() {
       seed: <Notebook>[testNotebook(id: 'nb-7', title: 'Sprint ideas')],
     );
 
-    await tester.longPress(find.byKey(const ValueKey('notebook-row-nb-7')));
+    await tester.tap(find.byKey(const ValueKey('notebook-menu-nb-7')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     await tester.tap(find.byKey(const ValueKey('item-action-rename')));
@@ -485,7 +490,9 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('notebook-view-toggle')));
     await tester.pumpAndSettle();
 
-    await tester.longPress(find.byKey(const ValueKey('notebook-cover-nb-1')));
+    // Same split as the list: the cover's ⋮ button carries the per-item
+    // menu, long-press means multi-select in both views.
+    await tester.tap(find.byKey(const ValueKey('notebook-cover-menu-nb-1')));
     await tester.pumpAndSettle();
 
     expect(
@@ -850,6 +857,161 @@ void main() {
         findsNothing,
         reason: 'the No-folder header is not a folder; it has no actions',
       );
+    });
+  });
+
+  group('notebook multi-select', () {
+    testWidgets('tap toggles rows and select-all covers every notebook',
+        (tester) async {
+      await mountList(
+        tester,
+        seed: <Notebook>[
+          testNotebook(id: 'nb-1', title: 'One'),
+          testNotebook(id: 'nb-2', title: 'Two'),
+          testNotebook(id: 'nb-3', title: 'Three'),
+        ],
+      );
+
+      await tester.longPress(find.byKey(const ValueKey('notebook-row-nb-1')));
+      await tester.pumpAndSettle();
+      expect(find.text('1 selected'), findsOneWidget);
+
+      // Tapping a row now toggles it instead of opening the editor.
+      await tester.tap(find.byKey(const ValueKey('notebook-row-nb-2')));
+      await tester.pumpAndSettle();
+      expect(find.text('2 selected'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('notebook-selection-all')));
+      await tester.pumpAndSettle();
+      expect(find.text('3 selected'), findsOneWidget);
+
+      // Select-all on a full selection clears it, as on dumps.
+      await tester.tap(find.byKey(const ValueKey('notebook-selection-all')));
+      await tester.pumpAndSettle();
+      expect(find.text('0 selected'), findsOneWidget);
+
+      await unmount(tester);
+    });
+
+    testWidgets('the row menu button is hidden while selecting',
+        (tester) async {
+      await mountList(
+        tester,
+        seed: <Notebook>[testNotebook(id: 'nb-1', title: 'One')],
+      );
+
+      expect(
+        find.byKey(const ValueKey('notebook-menu-nb-1')),
+        findsOneWidget,
+      );
+
+      await tester.longPress(find.byKey(const ValueKey('notebook-row-nb-1')));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey('notebook-menu-nb-1')),
+        findsNothing,
+        reason: 'a one-row menu is ambiguous while several rows are selected',
+      );
+
+      await unmount(tester);
+    });
+
+    testWidgets('cancel leaves selection mode with nothing deleted',
+        (tester) async {
+      await mountList(
+        tester,
+        seed: <Notebook>[testNotebook(id: 'nb-1', title: 'One')],
+      );
+
+      await tester.longPress(find.byKey(const ValueKey('notebook-row-nb-1')));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('notebook-selection-cancel')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('1 selected'), findsNothing);
+      expect(
+        find.byKey(const ValueKey('notebook-menu-nb-1')),
+        findsOneWidget,
+      );
+      expect(repository.deleted, isEmpty);
+
+      await unmount(tester);
+    });
+
+    testWidgets('bulk delete confirms once and deletes every selected row',
+        (tester) async {
+      await mountList(
+        tester,
+        seed: <Notebook>[
+          testNotebook(id: 'nb-1', title: 'One'),
+          testNotebook(id: 'nb-2', title: 'Two'),
+          testNotebook(id: 'nb-3', title: 'Three'),
+        ],
+      );
+
+      await tester.longPress(find.byKey(const ValueKey('notebook-row-nb-1')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('notebook-row-nb-2')));
+      await tester.pumpAndSettle();
+
+      await tester.tap(
+        find.byKey(const ValueKey('notebook-selection-delete')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        repository.deleted,
+        isEmpty,
+        reason: 'nothing is deleted before the user confirms',
+      );
+
+      await tester.tap(
+        find.byKey(const ValueKey('notebook-bulk-delete-confirm')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(repository.deleted, unorderedEquals(<String>['nb-1', 'nb-2']));
+      expect(
+        find.text('1 selected'),
+        findsNothing,
+        reason: 'selection mode ends after the bulk action',
+      );
+
+      await unmount(tester);
+    });
+
+    testWidgets('long-press on a folder header still opens folder actions',
+        (tester) async {
+      // Selection must not swallow the folder-header gesture shipped
+      // earlier: headers are not rows.
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      final _FakeFoldersDb db = _FakeFoldersDb()
+        ..seedFolder(Folder(id: 'f-1', name: 'Work', createdAt: 1));
+      addTearDown(db.dispose);
+      await mountList(
+        tester,
+        seed: <Notebook>[
+          testNotebook(id: 'nb-1', title: 'Filed', folderId: 'f-1'),
+        ],
+        db: db,
+      );
+      await tester.pumpAndSettle();
+
+      await tester.longPress(
+        find.byKey(const ValueKey('notebook-section-f-1')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey('folder-action-rename')),
+        findsOneWidget,
+      );
+      expect(find.text('1 selected'), findsNothing);
+
+      await unmount(tester);
     });
   });
 }

@@ -49,6 +49,111 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
   /// one library, and a fold made in one must hold in the other.
   final Set<String> _collapsed = <String>{};
 
+  /// Multi-select over notebooks. Mirrors the dumps contract: long-press
+  /// enters selection, tap toggles, the toolbar owns bulk actions, and the
+  /// per-row menu button hides while selecting.
+  bool _selecting = false;
+  final Set<String> _selectedIds = <String>{};
+  bool _bulkBusy = false;
+
+  void _enterSelection(String id) {
+    setState(() {
+      _selecting = true;
+      _selectedIds
+        ..clear()
+        ..add(id);
+    });
+  }
+
+  void _toggleSelected(String id) {
+    setState(() {
+      if (!_selectedIds.add(id)) _selectedIds.remove(id);
+    });
+  }
+
+  void _toggleSelectAll(List<Notebook> rows) {
+    setState(() {
+      final Set<String> all =
+          rows.map((Notebook n) => n.id).toSet();
+      if (_selectedIds.containsAll(all)) {
+        _selectedIds.clear();
+      } else {
+        _selectedIds
+          ..clear()
+          ..addAll(all);
+      }
+    });
+  }
+
+  void _cancelSelection() {
+    setState(() {
+      _selecting = false;
+      _selectedIds.clear();
+    });
+  }
+
+  Future<void> _deleteSelected() async {
+    final Set<String> ids = Set<String>.of(_selectedIds);
+    if (ids.isEmpty) return;
+    final bool? confirmed = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext dialogContext) => AlertDialog(
+        title: Text(
+          ids.length == 1
+              ? 'Delete 1 notebook?'
+              : 'Delete ${ids.length} notebooks?',
+        ),
+        content: const Text(
+          'They will be removed from this device. Recordings they '
+          'referenced are not deleted.',
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            key: const ValueKey<String>('notebook-bulk-delete-confirm'),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text(
+              'Delete',
+              style: TextStyle(
+                color: Theme.of(dialogContext).colorScheme.error,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => _bulkBusy = true);
+    final List<String> failed = <String>[];
+    for (final String id in ids) {
+      try {
+        // Persistence deletes the row AND its durable file, same as the
+        // single-notebook path.
+        await ref.read(notebookPersistenceProvider).deleteNotebook(id);
+      } catch (_) {
+        failed.add(id);
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      _bulkBusy = false;
+      _selecting = false;
+      _selectedIds.clear();
+    });
+    if (failed.isNotEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Could not delete ${failed.length} of ${ids.length} notebooks',
+          ),
+        ),
+      );
+    }
+  }
+
   void _toggleSection(String folderId) {
     setState(() {
       if (!_collapsed.remove(folderId)) _collapsed.add(folderId);
@@ -425,6 +530,41 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
               ),
             );
           }
+          // Rows can vanish mid-selection (sync pull, another screen's
+          // delete); a selection covering ghosts would mislead the count
+          // and the bulk actions.
+          _selectedIds.retainAll(rows.map((Notebook n) => n.id).toSet());
+          final Widget selectionBar = !_selecting
+              ? const SizedBox.shrink()
+              : Row(
+                  children: <Widget>[
+                    IconButton(
+                      key: const ValueKey<String>('notebook-selection-cancel'),
+                      tooltip: 'Cancel selection',
+                      onPressed: _bulkBusy ? null : _cancelSelection,
+                      icon: const Icon(Icons.close),
+                    ),
+                    Expanded(
+                      child: Text('${_selectedIds.length} selected'),
+                    ),
+                    IconButton(
+                      key: const ValueKey<String>('notebook-selection-all'),
+                      tooltip: 'Select all notebooks',
+                      onPressed: _bulkBusy
+                          ? null
+                          : () => _toggleSelectAll(rows),
+                      icon: const Icon(Icons.select_all),
+                    ),
+                    IconButton(
+                      key: const ValueKey<String>('notebook-selection-delete'),
+                      tooltip: 'Delete selected notebooks',
+                      onPressed: _bulkBusy || _selectedIds.isEmpty
+                          ? null
+                          : _deleteSelected,
+                      icon: const Icon(Icons.delete_outline),
+                    ),
+                  ],
+                );
           // Folders are watched via a provider (not the database directly) so
           // the screen stays testable, and filing shows up immediately: move a
           // notebook and the section it left collapses without a refresh.
@@ -540,7 +680,12 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
             }
           }
 
-          return ListView(children: children);
+          return Column(
+            children: <Widget>[
+              selectionBar,
+              Expanded(child: ListView(children: children)),
+            ],
+          );
         },
       ),
     );
@@ -548,16 +693,19 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
 
   /// Builds one cover for the grid view.
   ///
-  /// The cover carries the SAME gestures as the row -- tap opens, long-press
-  /// opens the action sheet -- so switching view never costs the user an
-  /// affordance. The title is always drawn: a grid of identical covers with no
-  /// names cannot be navigated.
+  /// The cover carries the SAME gestures as the row -- tap opens (or toggles
+  /// while selecting), long-press starts selection -- so switching view never
+  /// costs the user an affordance. The title is always drawn: a grid of
+  /// identical covers with no names cannot be navigated.
   Widget _notebookCover(Notebook notebook) {
     final ColorScheme colors = Theme.of(context).colorScheme;
+    final bool selected = _selectedIds.contains(notebook.id);
     return InkWell(
       key: ValueKey<String>('notebook-cover-${notebook.id}'),
-      onTap: () => _openNotebook(notebook.id),
-      onLongPress: () => _showActions(notebook),
+      onTap: _selecting
+          ? () => _toggleSelected(notebook.id)
+          : () => _openNotebook(notebook.id),
+      onLongPress: _selecting ? null : () => _enterSelection(notebook.id),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
@@ -567,11 +715,14 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
               decoration: BoxDecoration(
                 color: colors.surfaceContainerHighest,
                 borderRadius: BorderRadius.circular(7),
-                border: Border.all(color: colors.outlineVariant),
+                border: Border.all(
+                  color: selected ? colors.primary : colors.outlineVariant,
+                  width: selected ? 2 : 1,
+                ),
               ),
               child: Center(
                 child: Icon(
-                  Icons.menu_book,
+                  selected ? Icons.check_circle : Icons.menu_book,
                   size: 40,
                   color: colors.primary,
                 ),
@@ -579,17 +730,41 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
             ),
           ),
           const SizedBox(height: 6),
-          Text(
-            notebook.title.isEmpty ? '(untitled)' : notebook.title,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: Theme.of(context).textTheme.bodyMedium,
-          ),
-          Text(
-            formatNotebookUpdated(notebook.updatedAt),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: Theme.of(context).textTheme.bodySmall,
+          Row(
+            children: <Widget>[
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Text(
+                      notebook.title.isEmpty ? '(untitled)' : notebook.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                    Text(
+                      formatNotebookUpdated(notebook.updatedAt),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
+                ),
+              ),
+              // Covers keep the same ⋮ menu as rows; without it the grid
+              // view would have no path to rename/move/open-as-menu at all
+              // now that long-press means multi-select. Hidden during
+              // selection for the same reason as the row's.
+              if (!_selecting)
+                IconButton(
+                  key: ValueKey<String>('notebook-cover-menu-${notebook.id}'),
+                  tooltip: 'Notebook actions',
+                  visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                  icon: const Icon(Icons.more_vert, size: 20),
+                  onPressed: () => _showActions(notebook),
+                ),
+            ],
           ),
         ],
       ),
@@ -598,21 +773,43 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
 
   Widget _notebookTile(Notebook notebook) => ListTile(
         key: ValueKey<String>('notebook-row-${notebook.id}'),
-        leading: const Icon(Icons.menu_book),
+        selected: _selectedIds.contains(notebook.id),
+        leading: _selecting
+            ? SizedBox.square(
+                dimension: 48,
+                child: Checkbox(
+                  key: ValueKey<String>('notebook-select-${notebook.id}'),
+                  shape: const CircleBorder(),
+                  semanticLabel: 'Select ${notebook.title}',
+                  value: _selectedIds.contains(notebook.id),
+                  onChanged: _bulkBusy
+                      ? null
+                      : (_) => _toggleSelected(notebook.id),
+                ),
+              )
+            : const Icon(Icons.menu_book),
         title: Text(
           notebook.title.isEmpty ? '(untitled)' : notebook.title,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),
         subtitle: Text(formatNotebookUpdated(notebook.updatedAt)),
-        onTap: () => _openNotebook(notebook.id),
-        onLongPress: () => _showActions(notebook),
-        trailing: IconButton(
-          key: ValueKey<String>('notebook-menu-${notebook.id}'),
-          tooltip: 'Notebook actions',
-          icon: const Icon(Icons.more_vert),
-          onPressed: () => _showActions(notebook),
-        ),
+        // The same split dumps uses: long-press means multi-select, tap
+        // toggles while selecting, and per-item actions live behind the ⋮
+        // button — hidden during selection, because a one-row menu is
+        // ambiguous while several rows are selected.
+        onTap: _selecting
+            ? (_bulkBusy ? null : () => _toggleSelected(notebook.id))
+            : () => _openNotebook(notebook.id),
+        onLongPress: _selecting ? null : () => _enterSelection(notebook.id),
+        trailing: _selecting
+            ? null
+            : IconButton(
+                key: ValueKey<String>('notebook-menu-${notebook.id}'),
+                tooltip: 'Notebook actions',
+                icon: const Icon(Icons.more_vert),
+                onPressed: () => _showActions(notebook),
+              ),
       );
 }
 
