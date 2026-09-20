@@ -5,7 +5,7 @@
 > Built for ADHD minds. Self-hosted. Offline-first. No subscriptions.
 
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](./LICENSE)
-[![Version: 1.3.0](https://img.shields.io/badge/version-1.3.0-blue.svg)](./CHANGELOG.md)
+[![Version: 1.4.0](https://img.shields.io/badge/version-1.4.0-blue.svg)](./CHANGELOG.md)
 [![Client tests: 1397 passing](https://img.shields.io/badge/client_tests-1397%20passing-brightgreen.svg)]()
 [![Server tests: 180 passing](https://img.shields.io/badge/server_tests-180%20passing-brightgreen.svg)]()
 
