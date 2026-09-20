@@ -50,7 +50,11 @@ ADH2/
 
 ## Status
 
-Shipping — **v1.3.0** (see CHANGELOG.md). Client and server are both implemented and tested (1320 Flutter tests, 162 server tests, 100 Kotlin tests). Current work state and open defects live in `docs/HANDOFF-2026-09-19.md`.
+Shipping — **v1.3.0 + unreleased 2026-09 arc on `main`** (see CHANGELOG.md,
+Unreleased). Client and server are both implemented and tested (1397 Flutter
+tests, 180 server tests, 100 Kotlin tests). No known defects; open work
+candidates live in `docs/next-iteration.md`. Active effort: Linux desktop
+companion — see `docs/HANDOFF-linux-desktop.md`.
 
 ---
 
