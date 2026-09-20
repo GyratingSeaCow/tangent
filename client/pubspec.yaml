@@ -38,6 +38,8 @@ dependencies:
   share_plus: ^10.1.2
   just_audio_media_kit: ^2.1.0
   media_kit_libs_linux: ^1.2.1
+  tray_manager: ^0.5.3
+  window_manager: ^0.5.2
 
 dev_dependencies:
   flutter_test:
@@ -55,3 +57,5 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/tray/tray_icon.png

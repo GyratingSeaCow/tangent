@@ -28,6 +28,7 @@ import 'screens/recording/recording_controller.dart';
 import 'screens/server/server_connection_screen.dart';
 import 'screens/settings/settings_screen.dart';
 import 'package:workmanager/workmanager.dart';
+import 'package:window_manager/window_manager.dart';
 
 import 'package:device_info_plus/device_info_plus.dart';
 
@@ -37,6 +38,7 @@ import 'services/document_sync_engine.dart';
 import 'services/instance_commands.dart';
 import 'services/platform_audio.dart';
 import 'services/single_instance.dart';
+import 'services/tray_service.dart';
 import 'services/transcription_client.dart';
 
 /// Device label for the background isolate, which cannot reach the app's
@@ -104,6 +106,11 @@ Future<void> main(List<String> args) async {
   // Desktop playback backend. Must precede any AudioPlayer construction,
   // which providers below can trigger.
   initPlatformAudio();
+  // window_manager backs the tray's Open App (show/focus); it requires an
+  // explicit init before any call and is desktop-only.
+  if (Platform.isLinux) {
+    await windowManager.ensureInitialized();
+  }
 
   // Desktop single-instance + hotkey plumbing. A KDE global shortcut runs
   // `tangent --record`: when an instance already owns the socket this
@@ -218,6 +225,30 @@ Future<void> main(List<String> args) async {
   // path uses so there is exactly one code path for the command.
   if (instance != null && wantsRecord) {
     unawaited(sendInstanceCommand(instance.path, 'toggle-record'));
+  }
+  if (instance != null) {
+    // 'show' arrives when a second launch (no --record) found us running:
+    // the user double-clicked the AppImage again expecting the window.
+    instance.commands.listen((command) {
+      if (command == 'show') unawaited(raiseAppWindow());
+    });
+    // Tray icon: Tangent living in the bottom-right. Start Recording rides
+    // the same socket command as the global hotkey — one code path. The
+    // window survives while the icon does; Exit is the tray's own and only
+    // quit. Failure to install (no StatusNotifierItem host) must not take
+    // the app down; the tray is a convenience, not a dependency.
+    final ownedInstance = instance;
+    final trayService = TrayService(
+      onOpenApp: raiseAppWindow,
+      onStartRecording: () =>
+          sendInstanceCommand(ownedInstance.path, 'toggle-record'),
+      onExit: exitApp,
+    );
+    try {
+      await trayService.install();
+    } catch (e) {
+      debugPrint('tangent.tray unavailable: $e');
+    }
   }
 }
 
