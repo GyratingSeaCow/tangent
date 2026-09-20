@@ -137,6 +137,66 @@ void main() {
   });
 
   test(
+      'recheckDefault re-emits availability after the folder comes back '
+      'without any DB write', () async {
+    // The Fold's latch: a folder that inspects as unavailable (grant lost,
+    // media remounted) disables every write control, and watchDefault only
+    // re-inspects on a DB change — so re-granting the folder, which writes
+    // nothing, left the toolbar dead until an app restart.
+    final h = CatalogHarness();
+    addTearDown(h.close);
+    await h.bootstrap();
+
+    final List<DefaultFolderState> seen = <DefaultFolderState>[];
+    final StreamController<DefaultFolderState> relay =
+        StreamController<DefaultFolderState>.broadcast();
+    final subscription = h.catalog.watchDefault().listen((state) {
+      seen.add(state);
+      relay.add(state);
+    });
+    // NOT awaited: cancelling watchDefault's async* generator blocks until
+    // the database closes (pre-existing drift/generator interaction, see
+    // h.close teardown), and awaiting it here deadlocks LIFO teardown.
+    addTearDown(() {
+      unawaited(subscription.cancel());
+    });
+    addTearDown(relay.close);
+
+    final DefaultFolderState first = await relay.stream.first;
+    expect(first.available, isTrue, reason: 'folder A starts healthy');
+    final Directory root = Directory(h.f.directory('A'));
+
+    // The folder vanishes (grant revoked / media removed). No DB row
+    // changed, so only a recheck can observe it.
+    root.deleteSync(recursive: true);
+    final Future<DefaultFolderState> dropped = relay.stream
+        .firstWhere((s) => !s.available)
+        .timeout(const Duration(seconds: 5));
+    await h.catalog.recheckDefault();
+    expect((await dropped).available, isFalse);
+
+    // The folder returns (user re-granted it). Again no DB write — this is
+    // exactly the state that latched on device.
+    root.createSync(recursive: true);
+    final Future<DefaultFolderState> restored = relay.stream
+        .firstWhere((s) => s.available)
+        .timeout(const Duration(seconds: 5));
+    await h.catalog.recheckDefault();
+    expect(
+      (await restored).available,
+      isTrue,
+      reason: 'a recheck must re-inspect and lift the latch',
+    );
+  });
+
+  test('recheckDefault before any watcher exists is a safe no-op', () async {
+    final h = CatalogHarness();
+    addTearDown(h.close);
+    await h.bootstrap();
+    await h.catalog.recheckDefault();
+  });
+
+  test(
       'throwing failed probe remains fenced until actual settlement and permits fresh choice after',
       () async {
     final h = CatalogHarness();

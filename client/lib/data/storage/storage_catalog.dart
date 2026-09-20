@@ -224,6 +224,19 @@ class SqliteStorageCatalog implements StorageCatalog {
     }
   }
 
+  @override
+  Future<void> recheckDefault() async {
+    await _ready();
+    // No row changes: the folder's availability lives on disk, not in the
+    // database, so a revoked-then-restored grant writes nothing and the
+    // watcher above never wakes. Nudging the table it watches makes every
+    // subscriber re-run _present, which re-inspects the folder. With no
+    // active watcher this notification has no listeners — a safe no-op.
+    _db.notifyUpdates(<TableUpdate>{
+      TableUpdate.onTable(_db.storageCatalogStates),
+    });
+  }
+
   Map<String, dynamic>? _candidate(String? encoded) {
     if (encoded == null) return null;
     Object? value;

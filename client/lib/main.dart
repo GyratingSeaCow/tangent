@@ -261,6 +261,18 @@ class _TranscriptionLifecycleHostState
       // 30-minute background task happens to fire. The engine refuses
       // reentrancy, so colliding with a running cycle is a no-op.
       unawaited(ref.read(documentSyncEngineProvider).syncNow());
+      // A storage grant revoked-then-restored writes no DB row, so the
+      // default-folder watcher latches "unavailable" until something makes
+      // it look again. Resume is exactly when a re-grant comes back (the
+      // user returns from Settings), so look again now. Guarded read: the
+      // catalog's dependency chain includes main()-overridden providers
+      // that hosts without full storage wiring (widget tests) don't supply,
+      // and a lifecycle observer must not crash the app over a recheck.
+      try {
+        unawaited(ref.read(storageCatalogProvider).recheckDefault());
+      } on UnimplementedError {
+        // No storage wiring in this host; nothing to recheck.
+      }
       unawaited(
         ref.read(serverTranscriptionServiceProvider).reconcilePending(),
       );

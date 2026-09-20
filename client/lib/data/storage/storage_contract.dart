@@ -530,6 +530,14 @@ abstract interface class StorageCatalog {
     required String filesystemLegacyDirectory,
   });
   Stream<DefaultFolderState> watchDefault();
+
+  /// Re-inspects the default folder without requiring a database write.
+  ///
+  /// The watch stream re-emits on DB changes, but availability can change
+  /// with no row touched at all — the user revokes the folder's grant and
+  /// later re-grants it. Without this, the unavailable state LATCHES until
+  /// something else happens to write (in practice: an app restart).
+  Future<void> recheckDefault();
   Future<Outcome<FolderCandidate?>> chooseFolderCandidate();
   Future<Outcome<DefaultFolderState>> commitDefault(
     FolderCandidate candidate, {
