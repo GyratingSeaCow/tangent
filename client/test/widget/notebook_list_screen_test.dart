@@ -7,7 +7,11 @@ import 'package:tangent/data/local_db.dart';
 import 'package:tangent/data/storage/storage_contract.dart';
 import 'package:tangent/data/notebook_repository.dart';
 import 'package:tangent/models/notebook.dart';
+import 'dart:async';
+
 import 'package:tangent/screens/dump/dumps_providers.dart';
+import 'package:tangent/screens/home/home_screen.dart'
+    show localDbProvider;
 import 'package:tangent/screens/notebook/notebook_editor_screen.dart';
 import 'package:tangent/screens/notebook/notebook_list_screen.dart';
 import 'package:tangent/services/notebook_persistence.dart';
@@ -44,6 +48,59 @@ class _ForwardingNotebookPersistence implements NotebookPersistence {
   noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
+/// Live-folder fake for the header-action tests. A REAL drift db in a
+/// widget test trips '!timersPending' (StreamQueryStore closes queries via
+/// a zero-duration timer), which is why this suite fakes persistence
+/// everywhere; folder DELETE semantics (unfiling notebooks + dumps, the
+/// sync tombstone) are covered at the db layer in dump_folders_test and
+/// folders_schema_test.
+class _FakeFoldersDb implements LocalDb {
+  final List<Folder> _folders = <Folder>[];
+  final StreamController<List<Folder>> _stream =
+      StreamController<List<Folder>>.broadcast();
+  final List<String> deletedFolderIds = <String>[];
+
+  void seedFolder(Folder folder) {
+    _folders.add(folder);
+  }
+
+  void _emit() => _stream.add(List<Folder>.from(_folders));
+
+  @override
+  Stream<List<Folder>> watchFolders() async* {
+    yield List<Folder>.from(_folders);
+    yield* _stream.stream;
+  }
+
+  @override
+  Future<void> deleteFolder(String folderId) async {
+    _folders.removeWhere((Folder f) => f.id == folderId);
+    deletedFolderIds.add(folderId);
+    _emit();
+  }
+
+  @override
+  Future<void> renameFolder({
+    required String folderId,
+    required String name,
+  }) async {
+    final int i = _folders.indexWhere((Folder f) => f.id == folderId);
+    if (i != -1) {
+      _folders[i] = Folder(
+        id: _folders[i].id,
+        name: name,
+        createdAt: _folders[i].createdAt,
+      );
+    }
+    _emit();
+  }
+
+  Future<void> dispose() => _stream.close();
+
+  @override
+  noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -53,6 +110,7 @@ void main() {
     WidgetTester tester, {
     List<Notebook> seed = const <Notebook>[],
     List<Folder> folders = const <Folder>[],
+    _FakeFoldersDb? db,
   }) async {
     tester.view.physicalSize = const Size(1080, 2340);
     tester.view.devicePixelRatio = 1.0;
@@ -71,8 +129,11 @@ void main() {
             (_) => Stream<List<DumpRow>>.value(const <DumpRow>[]),
           ),
           foldersProvider.overrideWith(
-            (_) => Stream<List<Folder>>.value(folders),
+            // The fake streams live folders so deletion is observable;
+            // otherwise the static seed list is enough.
+            (_) => db?.watchFolders() ?? Stream<List<Folder>>.value(folders),
           ),
+          if (db != null) localDbProvider.overrideWithValue(db),
         ],
         child: const MaterialApp(home: NotebookListScreen()),
       ),
@@ -627,5 +688,168 @@ void main() {
     );
 
     await unmount(tester);
+  });
+
+  group('folder header actions', () {
+    _FakeFoldersDb mkDb({String name = 'Work'}) {
+      // Collapse state persists in the SharedPreferences mock across tests
+      // in this file; a folder left collapsed by an earlier test hides the
+      // rows this group asserts on.
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      final _FakeFoldersDb db = _FakeFoldersDb()
+        ..seedFolder(Folder(id: 'f-1', name: name, createdAt: 1));
+      addTearDown(db.dispose);
+      return db;
+    }
+
+    testWidgets('long-pressing a folder header offers rename and delete',
+        (tester) async {
+      final _FakeFoldersDb db = mkDb();
+      await mountList(
+        tester,
+        seed: <Notebook>[
+          testNotebook(id: 'nb-1', title: 'Filed', folderId: 'f-1'),
+        ],
+        db: db,
+      );
+      await tester.pumpAndSettle();
+
+      await tester.longPress(
+        find.byKey(const ValueKey('notebook-section-f-1')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey('folder-action-rename')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('folder-action-delete')),
+        findsOneWidget,
+      );
+
+      // Close the sheet so it cannot leak into the next test.
+      await tester.tapAt(const Offset(540, 100));
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets('deleting a folder asks first and then unfiles, not deletes',
+        (tester) async {
+      final _FakeFoldersDb db = mkDb();
+      await mountList(
+        tester,
+        seed: <Notebook>[
+          testNotebook(id: 'nb-1', title: 'Filed', folderId: 'f-1'),
+        ],
+        db: db,
+      );
+      await tester.pumpAndSettle();
+
+      await tester.longPress(
+        find.byKey(const ValueKey('notebook-section-f-1')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('folder-action-delete')));
+      await tester.pumpAndSettle();
+
+      // The confirmation must say the contents survive.
+      expect(find.textContaining('No folder'), findsWidgets);
+      expect(
+        db.deletedFolderIds,
+        isEmpty,
+        reason: 'nothing is deleted before the user confirms',
+      );
+
+      await tester.tap(find.byKey(const ValueKey('folder-delete-confirm')));
+      await tester.pumpAndSettle();
+
+      expect(db.deletedFolderIds, <String>['f-1']);
+      expect(
+        find.byKey(const ValueKey('notebook-section-f-1')),
+        findsNothing,
+        reason: 'the header must leave the list',
+      );
+      expect(
+        find.byKey(const ValueKey('notebook-row-nb-1')),
+        findsOneWidget,
+        reason: 'the notebook survives its folder',
+      );
+    });
+
+    testWidgets('cancelling the delete keeps the folder', (tester) async {
+      final _FakeFoldersDb db = mkDb();
+      await mountList(
+        tester,
+        // Without at least one notebook the screen shows its empty state
+        // instead of the section list.
+        seed: <Notebook>[
+          testNotebook(id: 'nb-1', title: 'Filed', folderId: 'f-1'),
+        ],
+        db: db,
+      );
+      await tester.pumpAndSettle();
+
+      await tester.longPress(
+        find.byKey(const ValueKey('notebook-section-f-1')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('folder-action-delete')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+
+      expect(db.deletedFolderIds, isEmpty);
+      expect(
+        find.byKey(const ValueKey('notebook-section-f-1')),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('renaming a folder updates its header', (tester) async {
+      final _FakeFoldersDb db = mkDb();
+      await mountList(
+        tester,
+        seed: <Notebook>[
+          testNotebook(id: 'nb-1', title: 'Filed', folderId: 'f-1'),
+        ],
+        db: db,
+      );
+      await tester.pumpAndSettle();
+
+      await tester.longPress(
+        find.byKey(const ValueKey('notebook-section-f-1')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('folder-action-rename')));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField).last, 'Projects');
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Projects'), findsOneWidget);
+      expect(find.text('Work'), findsNothing);
+    });
+
+    testWidgets('the No-folder header has no actions', (tester) async {
+      final _FakeFoldersDb db = mkDb();
+      await mountList(
+        tester,
+        seed: <Notebook>[testNotebook(id: 'nb-2', title: 'Loose')],
+        db: db,
+      );
+      await tester.pumpAndSettle();
+
+      await tester.longPress(
+        find.byKey(const ValueKey('notebook-section-unfiled')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey('folder-action-delete')),
+        findsNothing,
+        reason: 'the No-folder header is not a folder; it has no actions',
+      );
+    });
   });
 }

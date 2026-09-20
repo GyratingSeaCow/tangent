@@ -21,6 +21,9 @@ import '../../widgets/item_action_sheet.dart';
 import 'notebook_grouping.dart';
 import 'notebook_editor_screen.dart';
 
+/// What the folder-header long-press menu can do.
+enum _FolderAction { rename, delete }
+
 class NotebookListScreen extends ConsumerStatefulWidget {
   const NotebookListScreen({super.key});
 
@@ -162,6 +165,135 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Could not move notebook: $error')),
+      );
+    }
+  }
+
+  /// Long-press menu for a folder header: rename or delete the folder
+  /// itself. Deleting a folder never deletes its contents — they are
+  /// revealed as unfiled, matching sync semantics on every other device.
+  Future<void> _showFolderActions(String folderId, String name) async {
+    final _FolderAction? action = await showModalBottomSheet<_FolderAction>(
+      context: context,
+      builder: (BuildContext sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            ListTile(
+              key: const ValueKey<String>('folder-action-rename'),
+              leading: const Icon(Icons.drive_file_rename_outline),
+              title: const Text('Rename folder'),
+              onTap: () =>
+                  Navigator.of(sheetContext).pop(_FolderAction.rename),
+            ),
+            ListTile(
+              key: const ValueKey<String>('folder-action-delete'),
+              leading: Icon(
+                Icons.delete_outline,
+                color: Theme.of(sheetContext).colorScheme.error,
+              ),
+              title: Text(
+                'Delete folder',
+                style: TextStyle(
+                  color: Theme.of(sheetContext).colorScheme.error,
+                ),
+              ),
+              onTap: () =>
+                  Navigator.of(sheetContext).pop(_FolderAction.delete),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (action == null || !mounted) return;
+    switch (action) {
+      case _FolderAction.rename:
+        await _renameFolder(folderId, name);
+      case _FolderAction.delete:
+        await _deleteFolder(folderId, name);
+    }
+  }
+
+  Future<void> _renameFolder(String folderId, String currentName) async {
+    final TextEditingController controller =
+        TextEditingController(text: currentName);
+    final String? name = await showDialog<String>(
+      context: context,
+      builder: (BuildContext dialogContext) => AlertDialog(
+        title: const Text('Rename folder'),
+        content: TextField(
+          key: const ValueKey<String>('folder-rename-field'),
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: 'Name'),
+          onSubmitted: (String value) =>
+              Navigator.of(dialogContext).pop(value.trim()),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            key: const ValueKey<String>('folder-rename-save'),
+            onPressed: () =>
+                Navigator.of(dialogContext).pop(controller.text.trim()),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    WidgetsBinding.instance.addPostFrameCallback((_) => controller.dispose());
+    if (name == null || name.isEmpty || name == currentName || !mounted) {
+      return;
+    }
+    try {
+      await ref.read(localDbProvider).renameFolder(
+            folderId: folderId,
+            name: name,
+          );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not rename folder: $error')),
+      );
+    }
+  }
+
+  Future<void> _deleteFolder(String folderId, String name) async {
+    final bool? confirmed = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext dialogContext) => AlertDialog(
+        title: Text('Delete "$name"?'),
+        content: const Text(
+          'Only the folder is deleted. Its notebooks, recordings and notes '
+          'are kept and move to "No folder".',
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            key: const ValueKey<String>('folder-delete-confirm'),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text(
+              'Delete folder',
+              style: TextStyle(
+                color: Theme.of(dialogContext).colorScheme.error,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      await ref.read(localDbProvider).deleteFolder(folderId);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not delete folder: $error')),
       );
     }
   }
@@ -322,6 +454,15 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
                 InkWell(
                   key: ValueKey<String>('notebook-section-$sectionKey'),
                   onTap: () => _toggleSection(sectionKey),
+                  // Only real folders have actions; the "No folder"
+                  // pseudo-section is not a folder and cannot be renamed
+                  // or deleted.
+                  onLongPress: section.folderId == null
+                      ? null
+                      : () => _showFolderActions(
+                            section.folderId!,
+                            section.title!,
+                          ),
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
                     child: Row(
