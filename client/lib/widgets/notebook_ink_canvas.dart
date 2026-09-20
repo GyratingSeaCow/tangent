@@ -672,11 +672,40 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
     return (p - (a + ab * t)).distance;
   }
 
+  /// Cached bounding box per stroke OBJECT. Strokes are immutable — every
+  /// mutation (move, undo, redo) replaces the object via copyWith — so a
+  /// box keyed on identity can never go stale, and the Expando lets the
+  /// box die with its stroke. Erasing over a full page was O(every segment
+  /// on the page) per pointer move without this.
+  static final Expando<Rect> _strokeBounds = Expando<Rect>('strokeBounds');
+
+  static Rect _boundsOf(InkStroke s) {
+    final Rect? cached = _strokeBounds[s];
+    if (cached != null) return cached;
+    double minX = double.infinity, minY = double.infinity;
+    double maxX = -double.infinity, maxY = -double.infinity;
+    for (final InkPoint p in s.points) {
+      if (p.x < minX) minX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y > maxY) maxY = p.y;
+    }
+    final Rect bounds = Rect.fromLTRB(minX, minY, maxX, maxY);
+    _strokeBounds[s] = bounds;
+    return bounds;
+  }
+
   /// True when any part of stroke [s] lies within reach of the segment a-b.
   bool _strokeHitSegment(InkStroke s, Offset a, Offset b) {
     final List<InkPoint> points = s.points;
     if (points.isEmpty) return false;
     final double reach = _eraseTolerance + s.width / 2;
+    // Cheap rejection first: a stroke whose (inflated) box never meets the
+    // eraser segment's box cannot be hit. This is what keeps a sweep fast
+    // on a full page — distant ink costs one rect check, not a walk of all
+    // its segments.
+    final Rect sweep = Rect.fromPoints(a, b).inflate(reach);
+    if (!sweep.overlaps(_boundsOf(s).inflate(reach))) return false;
     if (points.length == 1) {
       return _distanceToSegment(Offset(points.first.x, points.first.y), a, b) <=
           reach;
@@ -687,12 +716,15 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
       // Segment-to-segment proximity, approximated by the four endpoint-to-
       // segment distances. Exact for the crossing case that matters here: if
       // the segments intersect, at least one endpoint distance is zero.
-      final double closest = [
-        _distanceToSegment(p1, a, b),
-        _distanceToSegment(p2, a, b),
-        _distanceToSegment(a, p1, p2),
-        _distanceToSegment(b, p1, p2),
-      ].reduce((double x, double y) => x < y ? x : y);
+      // Written as straight comparisons — no list, no closure — because
+      // this is the innermost loop of a per-pointer-move scan.
+      double closest = _distanceToSegment(p1, a, b);
+      double d = _distanceToSegment(p2, a, b);
+      if (d < closest) closest = d;
+      d = _distanceToSegment(a, p1, p2);
+      if (d < closest) closest = d;
+      d = _distanceToSegment(b, p1, p2);
+      if (d < closest) closest = d;
       if (closest <= reach) return true;
     }
     return false;
@@ -1036,6 +1068,11 @@ class NotebookInkPainter extends CustomPainter {
   void _paintFountainStroke(Canvas canvas, InkStroke stroke) {
     final List<InkPoint> points = stroke.points;
     final Paint fill = _buildDotPaint();
+    // Every quad goes into ONE path and one drawPath call. A path-per-
+    // segment (the original) made each full repaint O(total ink segments)
+    // in native draw calls, which is what dragged the eraser once a page
+    // filled up: every removal repaints everything.
+    final Path ribbon = Path()..fillType = PathFillType.nonZero;
     for (int i = 0; i < points.length - 1; i++) {
       final InkPoint a = points[i];
       final InkPoint b = points[i + 1];
@@ -1045,14 +1082,14 @@ class NotebookInkPainter extends CustomPainter {
           ? stroke.width
           : _fountainWidth(stroke.width, ((pa ?? pb)! + (pb ?? pa)!) / 2);
       final Offset half = _nibEdge * (width / 2);
-      final Path quad = Path()
+      ribbon
         ..moveTo(a.x + half.dx, a.y + half.dy)
         ..lineTo(b.x + half.dx, b.y + half.dy)
         ..lineTo(b.x - half.dx, b.y - half.dy)
         ..lineTo(a.x - half.dx, a.y - half.dy)
         ..close();
-      canvas.drawPath(quad, fill);
     }
+    canvas.drawPath(ribbon, fill);
   }
 
   @override

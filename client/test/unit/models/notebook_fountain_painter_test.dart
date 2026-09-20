@@ -62,15 +62,32 @@ void main() {
       ),
     ).paint(canvas, const Size(100, 100));
 
-    expect(canvas.paths, 2, reason: 'one italic quad per segment');
+    expect(
+      canvas.paths,
+      1,
+      reason: 'the whole stroke batches into ONE path — a path per segment '
+          'made full-page repaints O(total segments) in native draw calls, '
+          'which dragged the eraser once a page filled up',
+    );
     expect(
       canvas.lineWidths,
       isEmpty,
       reason: 'the italic nib never strokes lines',
     );
+    // Width still follows pressure inside the batched path. For these
+    // horizontal segments a quad reaches width*sin(30°)/2 = width/4 above
+    // the midline: the light segment (avg p=0.3, ~4.49 wide, half ~1.12)
+    // must NOT reach y=1.3, the heavy one (avg p=0.75, ~5.86 wide,
+    // half ~1.46) must.
+    final Path ribbon = canvas.drawnPaths.single;
     expect(
-      nibWidthOf(canvas.pathBounds[1]),
-      greaterThan(nibWidthOf(canvas.pathBounds[0])),
+      ribbon.contains(const Offset(5, 1.3)),
+      isFalse,
+      reason: 'light pressure stays narrow',
+    );
+    expect(
+      ribbon.contains(const Offset(15, 1.3)),
+      isTrue,
       reason: 'harder pressure must draw wider',
     );
   });
@@ -187,19 +204,23 @@ void main() {
       ),
     ).paint(canvas, const Size(100, 100));
 
-    expect(canvas.paths, 2);
+    expect(canvas.paths, 1, reason: 'both segments batch into one path');
     // Midpoint of each segment, probed 1px perpendicular to the segment.
+    // The probes work unchanged against the batched path: the along-the-nib
+    // probe sits outside BOTH segments' quads, the across probe inside its
+    // own.
     const Offset alongProbe =
         Offset(10 * c / 2 + 0.5, 17.5 + c); // perp of (c, -0.5) is (0.5, c)
     const Offset acrossProbe =
         Offset(10 * c + 2.5 + c, 15 + 5 * c - 0.5); // perp of (0.5, c)
+    final Path ribbon = canvas.drawnPaths.single;
     expect(
-      canvas.drawnPaths[1].contains(acrossProbe),
+      ribbon.contains(acrossProbe),
       isTrue,
       reason: 'across the nib the stroke is full-bodied',
     );
     expect(
-      canvas.drawnPaths[0].contains(alongProbe),
+      ribbon.contains(alongProbe),
       isFalse,
       reason: 'along the nib the stroke thins to nearly nothing',
     );
