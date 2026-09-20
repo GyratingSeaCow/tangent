@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -1112,5 +1113,72 @@ void main() {
 
       await unmount(tester);
     });
+  });
+
+  // Desktop parity: a mouse right-click does exactly what long-press does.
+  // The wiring goes through secondaryTapFor (widgets/press_actions.dart) so
+  // the two inputs cannot drift; these prove the screen-level contract.
+  Future<void> rightClick(WidgetTester tester, Finder finder) async {
+    final TestGesture gesture = await tester.startGesture(
+      tester.getCenter(finder),
+      kind: PointerDeviceKind.mouse,
+      buttons: kSecondaryMouseButton,
+    );
+    await gesture.up();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+  }
+
+  testWidgets('right-click on a row enters selection, like long-press',
+      (tester) async {
+    await mountList(
+      tester,
+      seed: <Notebook>[testNotebook(id: 'nb-7', title: 'Sprint ideas')],
+    );
+
+    await rightClick(tester, find.byKey(const ValueKey('notebook-row-nb-7')));
+
+    expect(
+      find.byKey(const ValueKey('notebook-selection-cancel')),
+      findsOneWidget,
+      reason: 'right-click must enter selection mode exactly like long-press',
+    );
+    expect(find.text('1 selected'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await unmount(tester);
+  });
+
+  testWidgets('right-click on a folder header opens folder actions',
+      (tester) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final _FakeFoldersDb db = _FakeFoldersDb()
+      ..seedFolder(Folder(id: 'f-1', name: 'Work', createdAt: 1));
+    addTearDown(db.dispose);
+    await mountList(
+      tester,
+      seed: <Notebook>[
+        testNotebook(id: 'nb-1', title: 'Filed', folderId: 'f-1'),
+      ],
+      db: db,
+    );
+    await tester.pumpAndSettle();
+
+    await rightClick(
+      tester,
+      find.byKey(const ValueKey('notebook-section-f-1')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('folder-action-rename')),
+      findsOneWidget,
+      reason: 'right-click on a folder header must open its action sheet',
+    );
+
+    // Close the sheet so it cannot leak into the next test.
+    await tester.tapAt(const Offset(540, 100));
+    await tester.pumpAndSettle();
+    await unmount(tester);
   });
 }

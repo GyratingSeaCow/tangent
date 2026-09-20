@@ -20,6 +20,7 @@ import '../../services/desktop_pdf_share.dart';
 import '../../services/notebook_pdf_exporter.dart';
 import '../../services/notebook_persistence.dart';
 import '../../widgets/folder_picker.dart';
+import '../../widgets/press_actions.dart';
 import '../../widgets/sync_button.dart';
 import '../../data/local_db.dart';
 import '../home/home_screen.dart' show localDbProvider;
@@ -566,21 +567,24 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
             final String sectionKey = section.folderId ?? 'unfiled';
             final bool collapsed = _collapsed.contains(sectionKey);
             if (section.title != null) {
+              // Only real folders have actions; the "No folder"
+              // pseudo-section is not a folder and cannot be renamed
+              // or deleted.
+              final VoidCallback? headerActions = section.folderId == null
+                  ? null
+                  : () => showFolderHeaderActions(
+                        context,
+                        folderId: section.folderId!,
+                        name: section.title!,
+                        db: ref.read(localDbProvider),
+                      );
               children.add(
                 InkWell(
                   key: ValueKey<String>('notebook-section-$sectionKey'),
                   onTap: () => _toggleSection(sectionKey),
-                  // Only real folders have actions; the "No folder"
-                  // pseudo-section is not a folder and cannot be renamed
-                  // or deleted.
-                  onLongPress: section.folderId == null
-                      ? null
-                      : () => showFolderHeaderActions(
-                            context,
-                            folderId: section.folderId!,
-                            name: section.title!,
-                            db: ref.read(localDbProvider),
-                          ),
+                  onLongPress: headerActions,
+                  // Desktop: right-click is this app's long-press.
+                  onSecondaryTap: secondaryTapFor(headerActions),
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
                     child: Row(
@@ -684,6 +688,10 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
           ? () => _toggleSelected(notebook.id)
           : () => _openNotebook(notebook.id),
       onLongPress: _selecting ? null : () => _enterSelection(notebook.id),
+      // Desktop: right-click is this app's long-press.
+      onSecondaryTap: secondaryTapFor(
+        _selecting ? null : () => _enterSelection(notebook.id),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
@@ -749,44 +757,51 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
     );
   }
 
-  Widget _notebookTile(Notebook notebook) => ListTile(
-        key: ValueKey<String>('notebook-row-${notebook.id}'),
-        selected: _selectedIds.contains(notebook.id),
-        leading: _selecting
-            ? SizedBox.square(
-                dimension: 48,
-                child: Checkbox(
-                  key: ValueKey<String>('notebook-select-${notebook.id}'),
-                  shape: const CircleBorder(),
-                  semanticLabel: 'Select ${notebook.title}',
-                  value: _selectedIds.contains(notebook.id),
-                  onChanged:
-                      _bulkBusy ? null : (_) => _toggleSelected(notebook.id),
-                ),
-              )
-            : const Icon(Icons.menu_book),
-        title: Text(
-          notebook.title.isEmpty ? '(untitled)' : notebook.title,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
+  // Desktop: right-click is this app's long-press. GestureDetector wrapper
+  // because ListTile exposes no onSecondaryTap of its own.
+  Widget _notebookTile(Notebook notebook) => GestureDetector(
+        onSecondaryTap: secondaryTapFor(
+          _selecting ? null : () => _enterSelection(notebook.id),
         ),
-        subtitle: Text(formatNotebookUpdated(notebook.updatedAt)),
-        // The same split dumps uses: long-press means multi-select, tap
-        // toggles while selecting, and per-item actions live behind the ⋮
-        // button — hidden during selection, because a one-row menu is
-        // ambiguous while several rows are selected.
-        onTap: _selecting
-            ? (_bulkBusy ? null : () => _toggleSelected(notebook.id))
-            : () => _openNotebook(notebook.id),
-        onLongPress: _selecting ? null : () => _enterSelection(notebook.id),
-        trailing: _selecting
-            ? null
-            : IconButton(
-                key: ValueKey<String>('notebook-menu-${notebook.id}'),
-                tooltip: 'Notebook actions',
-                icon: const Icon(Icons.more_vert),
-                onPressed: () => _showActions(notebook),
-              ),
+        child: ListTile(
+          key: ValueKey<String>('notebook-row-${notebook.id}'),
+          selected: _selectedIds.contains(notebook.id),
+          leading: _selecting
+              ? SizedBox.square(
+                  dimension: 48,
+                  child: Checkbox(
+                    key: ValueKey<String>('notebook-select-${notebook.id}'),
+                    shape: const CircleBorder(),
+                    semanticLabel: 'Select ${notebook.title}',
+                    value: _selectedIds.contains(notebook.id),
+                    onChanged:
+                        _bulkBusy ? null : (_) => _toggleSelected(notebook.id),
+                  ),
+                )
+              : const Icon(Icons.menu_book),
+          title: Text(
+            notebook.title.isEmpty ? '(untitled)' : notebook.title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          subtitle: Text(formatNotebookUpdated(notebook.updatedAt)),
+          // The same split dumps uses: long-press means multi-select, tap
+          // toggles while selecting, and per-item actions live behind the ⋮
+          // button — hidden during selection, because a one-row menu is
+          // ambiguous while several rows are selected.
+          onTap: _selecting
+              ? (_bulkBusy ? null : () => _toggleSelected(notebook.id))
+              : () => _openNotebook(notebook.id),
+          onLongPress: _selecting ? null : () => _enterSelection(notebook.id),
+          trailing: _selecting
+              ? null
+              : IconButton(
+                  key: ValueKey<String>('notebook-menu-${notebook.id}'),
+                  tooltip: 'Notebook actions',
+                  icon: const Icon(Icons.more_vert),
+                  onPressed: () => _showActions(notebook),
+                ),
+        ),
       );
 }
 
