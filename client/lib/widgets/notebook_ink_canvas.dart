@@ -27,7 +27,6 @@ import 'package:uuid/uuid.dart';
 
 import '../models/notebook.dart';
 
-
 /// White-on-black handwriting canvas driven by stylus or (in draw mode) touch.
 ///
 /// Drive imperative actions through a `GlobalKey<NotebookInkCanvasState>`:
@@ -57,6 +56,16 @@ class NotebookInkCanvas extends StatefulWidget {
   /// the file format is unchanged either way.
   final bool erasing;
 
+  /// When true, pointer input selects instead of drawing: a drawn loop
+  /// selects every stroke inside it, a drag begun inside the selection moves
+  /// all of it together, and [NotebookInkCanvasState.deleteSelection] removes
+  /// it. Wins over [erasing] when both are set.
+  final bool lassoing;
+
+  /// Fired when the lasso selection becomes non-empty (true) or empty
+  /// (false). The editor uses it to enable its delete action.
+  final ValueChanged<bool>? onSelectionChanged;
+
   /// Whether this canvas paints its own opaque backdrop.
   ///
   /// False when it is layered over a page that already painted one: the ink
@@ -83,6 +92,8 @@ class NotebookInkCanvas extends StatefulWidget {
     required this.onStrokesChanged,
     required this.drawingEnabled,
     this.erasing = false,
+    this.lassoing = false,
+    this.onSelectionChanged,
     this.opaqueBackground = true,
     required this.penWidth,
     this.penStyle = PenStyle.ballpoint,
@@ -112,6 +123,7 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
   /// Null when the last action was drawing, so undo falls through to removing
   /// the last stroke.
   List<InkStroke>? _eraseUndoSnapshot;
+
   /// True while the CURRENT gesture is erasing (toggle or side button).
   bool _erasingGesture = false;
 
@@ -142,6 +154,54 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
   /// How long after the pen lifts before a finger is trusted again. Covers
   /// the gap between strokes when the nib lifts briefly mid-word.
   static const Duration _stylusWindow = Duration(milliseconds: 500);
+
+  // ---- Lasso selection ----
+
+  /// Ids of the currently selected strokes. Non-empty only in lasso mode.
+  final Set<String> _selected = <String>{};
+
+  /// The loop being drawn by the active lasso gesture, in canvas space.
+  List<Offset>? _lassoPath;
+
+  /// Origin of the active selection drag, when the gesture began inside the
+  /// selection instead of drawing a new loop.
+  Offset? _dragStart;
+
+  /// Cumulative translation applied by the active drag, for live preview.
+  Offset _dragDelta = Offset.zero;
+
+  /// Ink as it stood before the active drag, so the move commits as a single
+  /// undoable action and a cancelled drag restores exactly.
+  List<InkStroke>? _dragUndoSnapshot;
+
+  /// Number of strokes currently selected.
+  int get selectedCount => _selected.length;
+
+  void _setSelection(Iterable<String> ids) {
+    final bool wasEmpty = _selected.isEmpty;
+    _selected
+      ..clear()
+      ..addAll(ids);
+    if (wasEmpty != _selected.isEmpty) {
+      widget.onSelectionChanged?.call(_selected.isNotEmpty);
+    }
+  }
+
+  /// Deletes every selected stroke as ONE undoable action. Returns false
+  /// when nothing was selected.
+  bool deleteSelection() {
+    if (_selected.isEmpty) return false;
+    // Reuses the eraser's snapshot slot: undo restores the whole deletion,
+    // exactly like undoing an eraser sweep.
+    _eraseUndoSnapshot = List<InkStroke>.of(_strokes);
+    setState(() {
+      _strokes.removeWhere((InkStroke s) => _selected.contains(s.id));
+      _setSelection(const <String>[]);
+      _revision++;
+    });
+    _notify();
+    return true;
+  }
 
   void _markStylusPresent() {
     _stylusWindowTimer?.cancel();
@@ -174,6 +234,15 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
   @override
   void didUpdateWidget(covariant NotebookInkCanvas oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.lassoing && !widget.lassoing) {
+      // Leaving lasso mode drops the selection: a stale, invisible selection
+      // would make the next delete tap destroy off-screen ink.
+      _lassoPath = null;
+      _dragStart = null;
+      _dragUndoSnapshot = null;
+      _setSelection(const <String>[]);
+      _revision++;
+    }
     if (!listEquals(oldWidget.strokes, widget.strokes)) {
       // Our own edit echoing back through the parent is NOT a new document.
       // The editor is stateful: onStrokesChanged sets its state and rebuilds
@@ -321,6 +390,139 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
   /// neighbouring lines are erased by accident.
   static const double _eraseTolerance = 12;
 
+  /// True when [p] lies inside the closed polygon [loop] (ray casting).
+  /// The loop is implicitly closed: last vertex connects back to the first.
+  static bool _pointInLoop(Offset p, List<Offset> loop) {
+    bool inside = false;
+    for (int i = 0, j = loop.length - 1; i < loop.length; j = i++) {
+      final Offset a = loop[i];
+      final Offset b = loop[j];
+      if ((a.dy > p.dy) != (b.dy > p.dy) &&
+          p.dx < (b.dx - a.dx) * (p.dy - a.dy) / (b.dy - a.dy) + a.dx) {
+        inside = !inside;
+      }
+    }
+    return inside;
+  }
+
+  /// A stroke is "circled" when the MAJORITY of its points fall inside the
+  /// loop. All-points would drop a word whose descender pokes out of a hasty
+  /// circle; any-point would grab neighbours the loop barely clips. Majority
+  /// matches what the hand meant.
+  static bool _strokeInLoop(InkStroke s, List<Offset> loop) {
+    if (s.points.isEmpty) return false;
+    int inside = 0;
+    for (final InkPoint p in s.points) {
+      if (_pointInLoop(Offset(p.x, p.y), loop)) inside++;
+    }
+    return inside * 2 > s.points.length;
+  }
+
+  /// True when the gesture at [position] should DRAG the current selection:
+  /// it starts inside any selected stroke's bounding box (padded by the
+  /// erase tolerance, so grabbing thin ink is forgiving).
+  bool _hitsSelection(Offset position) {
+    for (final InkStroke s in _strokes) {
+      if (!_selected.contains(s.id)) continue;
+      double minX = double.infinity, minY = double.infinity;
+      double maxX = -double.infinity, maxY = -double.infinity;
+      for (final InkPoint p in s.points) {
+        if (p.x < minX) minX = p.x;
+        if (p.y < minY) minY = p.y;
+        if (p.x > maxX) maxX = p.x;
+        if (p.y > maxY) maxY = p.y;
+      }
+      final Rect box = Rect.fromLTRB(minX, minY, maxX, maxY)
+          .inflate(_eraseTolerance + s.width);
+      if (box.contains(position)) return true;
+    }
+    return false;
+  }
+
+  void _lassoDown(PointerDownEvent event) {
+    if (_selected.isNotEmpty && _hitsSelection(event.localPosition)) {
+      // Grabbed the selection: this gesture moves it.
+      _dragStart = event.localPosition;
+      _dragDelta = Offset.zero;
+      _dragUndoSnapshot = List<InkStroke>.of(_strokes);
+      _activePointer = event.pointer;
+      return;
+    }
+    // Anywhere else begins a fresh loop (and implicitly drops the old
+    // selection on release).
+    _activePointer = event.pointer;
+    setState(() {
+      _lassoPath = <Offset>[event.localPosition];
+      _revision++;
+    });
+  }
+
+  void _lassoMove(PointerMoveEvent event) {
+    if (event.pointer != _activePointer) return;
+    final Offset? dragStart = _dragStart;
+    if (dragStart != null) {
+      // Live-move the selected strokes by the delta since the last event.
+      final Offset step = event.localPosition - dragStart - _dragDelta;
+      _dragDelta = event.localPosition - dragStart;
+      setState(() {
+        for (int i = 0; i < _strokes.length; i++) {
+          final InkStroke s = _strokes[i];
+          if (!_selected.contains(s.id)) continue;
+          _strokes[i] = s.copyWith(
+            points: <InkPoint>[
+              for (final InkPoint p in s.points)
+                InkPoint(x: p.x + step.dx, y: p.y + step.dy, p: p.p),
+            ],
+          );
+        }
+        _revision++;
+      });
+      return;
+    }
+    final List<Offset>? path = _lassoPath;
+    if (path == null) return;
+    if (path.isEmpty || (event.localPosition - path.last).distance > 2) {
+      setState(() {
+        path.add(event.localPosition);
+        _revision++;
+      });
+    }
+  }
+
+  void _lassoUp(PointerUpEvent event) {
+    if (event.pointer != _activePointer) return;
+    _activePointer = null;
+    if (_dragStart != null) {
+      // Commit the move: one undo restores the pre-drag ink. A drag that
+      // went nowhere leaves no undo entry and no notify.
+      final bool moved = _dragDelta != Offset.zero;
+      _dragStart = null;
+      _dragDelta = Offset.zero;
+      final List<InkStroke>? snapshot = _dragUndoSnapshot;
+      _dragUndoSnapshot = null;
+      if (moved) {
+        _eraseUndoSnapshot = snapshot;
+        _notify();
+      }
+      return;
+    }
+    final List<Offset>? path = _lassoPath;
+    if (path == null) return;
+    setState(() {
+      _lassoPath = null;
+      // A loop needs area; a stray tap (too few points) selects nothing.
+      _setSelection(
+        path.length < 3
+            ? const <String>[]
+            : <String>[
+                for (final InkStroke s in _strokes)
+                  if (_strokeInLoop(s, path)) s.id,
+              ],
+      );
+      _revision++;
+    });
+  }
+
   /// Distance from [p] to the segment a-b. Strokes are polylines, so hit
   /// testing measures against segments, not just the recorded vertices: a long
   /// straight line has few points and a midpoint tap must still register.
@@ -390,6 +592,10 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
     }
     if (!_acceptsDevice(event.kind)) return;
     if (_activePointer != null) return;
+    if (widget.lassoing) {
+      _lassoDown(event);
+      return;
+    }
     if (_isErasing(event)) {
       _erasingGesture = true;
       // One eraser gesture is one user action, so the pre-gesture ink is
@@ -419,6 +625,10 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
       // a long written line would otherwise let the window lapse mid-stroke.
       _markStylusPresent();
     }
+    if (widget.lassoing) {
+      _lassoMove(event);
+      return;
+    }
     if (_erasingGesture || widget.erasing) {
       if (event.pointer != _activePointer) return;
       final Offset from = _lastErasePosition ?? event.localPosition;
@@ -436,6 +646,10 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
   }
 
   void _onPointerUp(PointerUpEvent event) {
+    if (widget.lassoing) {
+      _lassoUp(event);
+      return;
+    }
     if (_erasingGesture || widget.erasing) {
       _erasingGesture = false;
       if (event.pointer != _activePointer) return;
@@ -526,30 +740,32 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
             // below; the Listener above still sees every event first.
             child: IgnorePointer(
               child: ColoredBox(
-              key: NotebookInkCanvas.backgroundKey,
-              // Transparent when the page already paints the backdrop, so the
-              // caller does not have to punch the black back out with a
-              // colour filter. On a canvas the size of the notebook page that
-              // filter is a saveLayer tens of megapixels wide, and when the
-              // GPU declines it the black stays opaque and hides the page.
-              color: widget.opaqueBackground
-                  ? NotebookInkCanvas.backgroundColor
-                  : const Color(0x00000000),
-              child: CustomPaint(
-                painter: NotebookInkPainter(
-                  strokes: _strokes,
-                  activeStroke: active == null
-                      ? null
-                      : InkStroke(
-                          id: '_active',
-                          width: _activeWidth,
-                          style: _activeStyle,
-                          points: active,
-                        ),
-                  revision: _revision,
+                key: NotebookInkCanvas.backgroundKey,
+                // Transparent when the page already paints the backdrop, so the
+                // caller does not have to punch the black back out with a
+                // colour filter. On a canvas the size of the notebook page that
+                // filter is a saveLayer tens of megapixels wide, and when the
+                // GPU declines it the black stays opaque and hides the page.
+                color: widget.opaqueBackground
+                    ? NotebookInkCanvas.backgroundColor
+                    : const Color(0x00000000),
+                child: CustomPaint(
+                  painter: NotebookInkPainter(
+                    strokes: _strokes,
+                    selectedIds: _selected,
+                    lassoPath: _lassoPath,
+                    activeStroke: active == null
+                        ? null
+                        : InkStroke(
+                            id: '_active',
+                            width: _activeWidth,
+                            style: _activeStyle,
+                            points: active,
+                          ),
+                    revision: _revision,
+                  ),
+                  child: const SizedBox.expand(),
                 ),
-                child: const SizedBox.expand(),
-              ),
               ),
             ),
           ),
@@ -564,6 +780,10 @@ class NotebookInkPainter extends CustomPainter {
   final List<InkStroke> strokes;
   final InkStroke? activeStroke;
 
+  /// Ids drawn with the selection glow, plus the in-progress lasso loop.
+  final Set<String> selectedIds;
+  final List<Offset>? lassoPath;
+
   /// Bumped by the canvas on every visual change; see [shouldRepaint].
   final int revision;
 
@@ -571,6 +791,8 @@ class NotebookInkPainter extends CustomPainter {
     required this.strokes,
     required this.activeStroke,
     required this.revision,
+    this.selectedIds = const <String>{},
+    this.lassoPath,
   });
 
   /// The "round pen": round caps and round joins at the stroke's own width.
@@ -671,10 +893,59 @@ class NotebookInkPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     for (final InkStroke stroke in strokes) {
+      // Selected ink glows: a soft lime halo behind the stroke, so the
+      // selection reads through any ink colour without obscuring it.
+      if (selectedIds.contains(stroke.id)) {
+        _paintHalo(canvas, stroke);
+      }
       _paintStroke(canvas, stroke);
     }
     final InkStroke? active = activeStroke;
     if (active != null) _paintStroke(canvas, active);
+    final List<Offset>? loop = lassoPath;
+    if (loop != null && loop.length > 1) {
+      // The marquee: a dashed-feel thin line in the signal colour.
+      final Path path = Path()..moveTo(loop.first.dx, loop.first.dy);
+      for (final Offset p in loop.skip(1)) {
+        path.lineTo(p.dx, p.dy);
+      }
+      canvas.drawPath(
+        path,
+        Paint()
+          ..color = TangentColors.signal.withValues(alpha: 0.9)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.5
+          ..isAntiAlias = true,
+      );
+    }
+  }
+
+  /// The selection glow: the stroke redrawn wider and translucent beneath
+  /// itself. Reuses the stroke's own geometry so fountain and ballpoint
+  /// both halo correctly.
+  void _paintHalo(Canvas canvas, InkStroke stroke) {
+    if (stroke.points.isEmpty) return;
+    final Paint halo = Paint()
+      ..color = TangentColors.signal.withValues(alpha: 0.35)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = stroke.width + 8
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round
+      ..isAntiAlias = true;
+    if (stroke.points.length == 1) {
+      canvas.drawCircle(
+        stroke.points.first.offset,
+        (stroke.width + 8) / 2,
+        halo..style = PaintingStyle.fill,
+      );
+      return;
+    }
+    final Path path = Path()
+      ..moveTo(stroke.points.first.x, stroke.points.first.y);
+    for (final InkPoint point in stroke.points.skip(1)) {
+      path.lineTo(point.x, point.y);
+    }
+    canvas.drawPath(path, halo);
   }
 
   @override

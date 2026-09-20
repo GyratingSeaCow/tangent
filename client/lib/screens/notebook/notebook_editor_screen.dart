@@ -110,6 +110,12 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
   /// Vertical position of the page, so it can be scrolled back to the top.
   final ScrollController _pageScroll = ScrollController();
   bool _erasing = false;
+
+  /// Lasso mode: pointer input selects instead of drawing.
+  bool _lassoing = false;
+
+  /// True while the lasso selection is non-empty; enables the delete action.
+  bool _lassoSelection = false;
   double _penWidth = PenSizeControl.defaultPenWidth;
   PenStyle _penStyle = PenStyle.ballpoint;
 
@@ -774,7 +780,11 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                         // The pen is the safe default whenever drawing
                         // resumes: a stranded eraser would make the next
                         // stroke delete work instead of adding it.
-                        if (!_drawing) _erasing = false;
+                        if (!_drawing) {
+                          _erasing = false;
+                          _lassoing = false;
+                          _lassoSelection = false;
+                        }
                       }),
             ),
             if (_drawing)
@@ -807,6 +817,35 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                       ? PenStyle.ballpoint
                       : PenStyle.fountain;
                 }),
+              ),
+            if (_drawing)
+              IconButton(
+                key: const ValueKey('notebook-lasso'),
+                // The smart lasso: circle ink to select it, drag the
+                // selection anywhere, delete it from the toolbar. Selected
+                // state marks the mode, same convention as the eraser.
+                icon: const Icon(Icons.gesture),
+                tooltip: _lassoing ? 'Exit lasso' : 'Lasso select',
+                isSelected: _lassoing,
+                onPressed: () => setState(() {
+                  _lassoing = !_lassoing;
+                  // Lasso and eraser are exclusive: a gesture can select or
+                  // erase, never ambiguously both.
+                  if (_lassoing) _erasing = false;
+                  if (!_lassoing) _lassoSelection = false;
+                }),
+              ),
+            if (_drawing && _lassoing)
+              IconButton(
+                key: const ValueKey('notebook-lasso-delete'),
+                icon: const Icon(Icons.delete_outline),
+                tooltip: 'Delete selection',
+                // Enabled only while something is circled — a dead delete
+                // button reads as broken, a live one with nothing selected
+                // would surprise.
+                onPressed: _lassoSelection
+                    ? () => _canvasKey.currentState?.deleteSelection()
+                    : null,
               ),
             if (_drawing)
               IconButton(
@@ -1063,6 +1102,11 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                       strokes: _strokes,
                       drawingEnabled: _drawing,
                       erasing: _erasing,
+                      lassoing: _lassoing,
+                      onSelectionChanged: (bool has) {
+                        if (_lassoSelection == has) return;
+                        setState(() => _lassoSelection = has);
+                      },
                       penWidth: _penWidth,
                       penStyle: _penStyle,
                       // Palm rejection, page half: while the pen is present
