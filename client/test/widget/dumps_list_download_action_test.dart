@@ -11,6 +11,8 @@
 // These tests exist because a service with no call sites passes every unit
 // test while doing nothing at runtime — the default outcome for work split
 // across layers, and the reason the menu wiring gets its own proof.
+import 'dart:async' show Completer;
+
 import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart' show NativeDatabase;
 import 'package:flutter/material.dart';
@@ -201,6 +203,80 @@ void main() {
       ),
       findsOneWidget,
       reason: 'a tapped control must always report what happened',
+    );
+  });
+
+  testWidgets('a downloading row shows a busy indicator until the fetch ends',
+      (WidgetTester tester) async {
+    // _downloading was bookkeeping with no renderer: the screen tracked ids
+    // mid-download but no widget read the set, so a slow fetch looked like
+    // a dead tap. The row must show progress while its download runs.
+    final Completer<List<int>> gate = Completer<List<int>>();
+    final LocalDb db = LocalDb.forTesting(NativeDatabase.memory());
+    addTearDown(db.close);
+    // The downloader consults the row before fetching; without it the run
+    // fails at the first step and the indicator never gets a chance to show.
+    await db.into(db.dumps).insert(
+          DumpsCompanion.insert(
+            id: 'fixture-a',
+            createdAt: DateTime.utc(2026, 9, 18),
+            updatedAt: DateTime.utc(2026, 9, 18),
+            mode: 'brain_dump',
+            durationSeconds: 12,
+            title: 'From the other device',
+            audioPath: '',
+            audioSizeBytes: 0,
+            syncStatus: 'synced',
+            remoteOnly: const Value<bool?>(true),
+            audioOnServer: const Value<bool?>(true),
+          ),
+        );
+    final ProviderContainer container = await mountSelection(
+      tester,
+      CountingDeletion(),
+      extraOverrides: <Override>[
+        syncedAudioDownloaderProvider.overrideWith(
+          (ref) => SyncedAudioDownloader(
+            db: db,
+            backend: FilesystemStorageBackend(),
+            location: fileLocation('fixture-folder', '/synthetic'),
+            fetch: (_) => gate.future,
+          ),
+        ),
+      ],
+    );
+    container.read(presentedFixture.notifier).state = AsyncData(
+      (
+        scopeKey: 'all',
+        generation: 2,
+        settled: true,
+        rows: <DumpRow>[remoteRow('fixture-a'), viewRow('fixture-b')],
+        limit: null,
+      ),
+    );
+    await pumpSelection(tester);
+
+    await tester.tap(find.byKey(const ValueKey('dump-more-fixture-a')));
+    await pumpSelection(tester);
+    await tester.tap(find.byKey(ItemActionSheet.keyFor(ItemAction.download)));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(
+      find.byKey(const ValueKey('dump-downloading-fixture-a')),
+      findsOneWidget,
+      reason: 'an in-flight download must be visible on its row',
+    );
+
+    // The fetch fails (empty payload publish will error or complete); either
+    // way the indicator must clear when the download settles.
+    gate.complete(const <int>[]);
+    await pumpSelection(tester);
+
+    expect(
+      find.byKey(const ValueKey('dump-downloading-fixture-a')),
+      findsNothing,
+      reason: 'the indicator must not outlive the download',
     );
   });
 }

@@ -431,6 +431,7 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
                               onOpen: widget.onOpenDump,
                               selection: selection,
                               eligibility: eligibility,
+                              downloading: _downloading,
                               enabled: ready && !_batchBusy,
                               onEnter: (id) =>
                                   _change(() => _selection.enter(id)),
@@ -872,6 +873,7 @@ class _DumpList extends StatelessWidget {
     this.onOpen,
     required this.selection,
     required this.eligibility,
+    this.downloading = const <String>{},
     required this.enabled,
     required this.onEnter,
     required this.onToggle,
@@ -880,6 +882,11 @@ class _DumpList extends StatelessWidget {
   final void Function(BuildContext, DumpRow)? onOpen;
   final DumpSelectionState selection;
   final Map<String, Eligibility> eligibility;
+
+  /// Ids whose audio download is in flight right now. A fetch can take
+  /// seconds; a row that shows nothing while working reads as a dead tap.
+  final Set<String> downloading;
+
   final bool enabled;
   final ValueChanged<String> onEnter, onToggle;
 
@@ -926,7 +933,18 @@ class _DumpList extends StatelessWidget {
               children: [
                 _SyncBadge(status: sync),
                 const SizedBox(width: 6),
-                if (isNote) ...[
+                // An in-flight audio fetch replaces the idle motif: the row
+                // is WORKING, and nothing else on screen says so.
+                if (downloading.contains(dump.id)) ...[
+                  SizedBox.square(
+                    dimension: 14,
+                    child: CircularProgressIndicator(
+                      key: ValueKey('dump-downloading-${dump.id}'),
+                      strokeWidth: 2,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                ] else if (isNote) ...[
                   Icon(
                     Icons.edit_note,
                     key: ValueKey('note-row-icon-${dump.id}'),
