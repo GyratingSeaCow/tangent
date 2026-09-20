@@ -4,135 +4,39 @@ Work agreed but deliberately not started, so it is not carried in conversation
 alone. Each item states what is already true, so the next session does not
 re-derive it.
 
----
-
-## 1. Finish the amplified-capture (microphone gain) fix
-
-**Status: in progress, NOT shippable. The slider works; recording at any gain
-above 1.0x does not.**
-
-Found on the Galaxy Tab S10 FE, not by the suite. With gain at 4.0x the record
-button did nothing: the PCM stream genuinely opened (logcat showed
-`AudioRecorder` taking audio focus at 16 kHz mono) but no file appeared, the UI
-never entered the recording state, and the recorder was left **wedged** so the
-next recording failed too — even after dropping gain back to unity. Only an app
-restart cleared it.
-
-### Cause
-
-A capture's content extension stopped being a pure function of the capture
-*mode* when gain arrived: an amplified capture is PCM in a WAV container. But
-`contentExtensionForMode(mode)` is still called independently from eight places,
-each of which expects `<id>.opus` and therefore rejects the `.wav` the recorder
-just wrote. Staging validation is the one that bites first.
-
-Known call sites (grep `contentExtensionForMode` across `client/lib` **and**
-`client/android` — a single-directory grep under-reports them):
-
-- `services/recording_persistence.dart` (2 — staging validation, the blocker)
-- `data/storage/filesystem_capture_io.dart` (2)
-- `data/storage/filesystem_storage_backend.dart` (3)
-- `data/storage/capture_publication_codec.dart` (1)
-
-### Done already
-
-- `contentExtensionForReservation(mode, stagingPath)` exists in
-  `data/storage/storage_contract.dart` — derives the extension from the
-  reservation's own staging path, falling back to the mode for an unrecognised
-  name. **Uncommitted.**
-- `test/unit/services/amplified_capture_validation_test.dart` pins the rule
-  end to end against the real `SqliteStorageCatalog` (4 tests, passing).
-- Kotlin already handles this correctly (`CapturePublication.contentSuffix`
-  takes the staging path; 95 Kotlin tests pass, and reverting it to opus-only
-  fails one).
-
-### Remaining
-
-1. Convert the eight Dart call sites to `contentExtensionForReservation`.
-2. Release recorder resources on **every** start-failure branch, so a failed
-   capture cannot wedge the next one. This is a separate defect from the naming
-   bug and survives fixing it.
-3. Full gates, then verify on hardware: record at 1.0x and 4.0x, confirm
-   `.opus` vs `.wav`, both play back and both transcribe.
-
-### Watch for
-
-Gain is applied in Dart on the PCM stream. A long recording under load may drop
-chunks in a way no unit test can reveal — the 4.0x hardware run is partly there
-to surface that. If it appears, move the multiply into Kotlin.
+Status sweep 2026-09-19 (Jeff's answers):
+- Amplified-capture item REMOVED at Jeff's direction (the code shipped in
+  `8b65a6f` + `baa6a7f`; this doc's "uncommitted" status was stale).
+- Pen-writes-without-draw-mode (`dea6b39`): verified by Jeff on the S10 —
+  "functions pretty much flawlessly".
+- Lined page templates: already implemented (`f0916cb`, schema v10).
+- Dumps filter dropdown bar: shipped `523bc47`.
 
 ---
 
-## 2. Lined page templates for notebooks
+## 1. Pen input, remaining phases (ACTIVE 2026-09-19)
 
-Requested: a page template option offering **small** and **medium** lined
-(ruled) pages, selectable per notebook, alongside the current blank page.
+Design: `docs/design/pen-vs-finger-input.md` (measurements real; phases 1–2
+shipped and hardware-verified). In scope now, per Jeff:
 
-Nothing is built yet. Constraints that already apply:
-
-- The notebook page is a Samsung-Notes-style growing vertical page with no
-  `InteractiveViewer` and no pinch/zoom, so a rule line is a fixed device-pixel
-  spacing, not a zoom-relative one.
-- Ink stays **white**; rule lines must be a low-contrast chassis tone so they
-  never compete with handwriting or read as the lime signal colour.
-- Ruling is a per-notebook property and must persist — expect a schema column
-  and a migration (`references/schema-migrations.md` before writing it).
-- Existing notebooks must keep rendering exactly as they do now: the migration
-  default is "blank", and a characterisation test should pin that first.
-- Line spacing should be chosen against the pen, not guessed: the S Pen writes
-  comfortably at a size that needs measuring on the Tab S10 FE before the two
-  presets are fixed.
+- **Palm rejection** (phase 3): pen-present window (~500 ms trailing after the
+  last stylus event) during which touch neither draws, drags cards, nor
+  scrolls. Engages only on devices that have actually produced stylus events —
+  a phone with no pen must never suppress touch.
+- **Pressure-varying stroke width** (phase 4): optional `p` on `InkPoint`,
+  tapered rendering, legacy notebooks (no `p`) load and render flat.
+- **NEW (Jeff, 2026-09-19): fountain pen option, similar to Samsung Notes.**
+  A pen-style picker: the current uniform stroke stays the default, fountain
+  renders pressure-tapered with stroke character. This is where the phase-4
+  pressure data surfaces in UI.
+- Side-button eraser (phase 5) and hover cursor (phase 6) remain later polish;
+  flip-to-erase stays deferred (no `invertedStylus` observed on this pen).
 
 ---
 
-## 3. Collapse the Dumps filters into one dropdown bar
+## 2. Carried, not started
 
-The Dumps list currently spends two stacked rows on filtering. Mode offers
-All / Brain Dump / Meeting / Text Note; Transcript offers All / Needs
-transcript / In progress / Transcribed / Failed. That is nine chips and two
-full-width rows of vertical space permanently above the list, on a screen
-whose whole job is showing recordings.
-
-Collapse both into a **single bar at the top of the page**, with each filter
-as a **dropdown menu** rather than a chip row.
-
-### Shape
-
-- One row, two dropdowns: Mode and Transcript.
-- Each closed dropdown shows the active selection, so the current filter
-  state stays readable without opening anything.
-- The chip rows (`_FilterRow`, `dumps_list_screen.dart:531`) go away entirely;
-  it is only used by these two filters.
-- Space reclaimed goes to the list, which is the point of the change.
-
-### Watch for
-
-- **Test keys are load-bearing.** `ValueKey('mode-filter-<name>')` and
-  `ValueKey('transcript-filter-<name>')` are used by four widget test files:
-  `dumps_list_fab_test.dart`, `dumps_list_note_test.dart`,
-  `dumps_list_transcription_indicator_test.dart`,
-  `home_dumps_fab_result_test.dart`. A dropdown's items do not exist in the
-  tree until it is opened, so those tests need an open-then-tap step. Keep the
-  same key names on the menu entries so the change is mechanical rather than a
-  rewrite of every selector.
-- The FAB reads `dumpModeFilterProvider` to decide what a tap creates directly
-  vs. asking via the bottom sheet (`dumps_list_screen.dart:140`). Selecting a
-  mode from a dropdown must drive that identically — All still asks.
-- Both providers cancel the multi-select selection when they change
-  (`ref.listen`, lines 202-203). Preserve that or a stale selection survives a
-  filter change.
-- Two dropdowns in one row need to survive a narrow screen and long labels
-  ("Needs transcript") without overflowing — check the Fold's cover display,
-  not just the tablet.
-
----
-
-## 4. Carried, not started
-
-- **Pen-writes-without-draw-mode (`dea6b39`)** — committed and gated at 1094
-  tests, never validated on hardware. The S Pen should write anywhere on the
-  page with draw mode off, while a finger still scrolls and taps normally.
-- Palm rejection and pressure-varying stroke width (design in
-  `docs/design/pen-vs-finger-input.md`, unimplemented).
-- Multi-device sync and server discovery/pairing (designs in `docs/design/`,
+- Multi-device sync server discovery/pairing (designs in `docs/design/`,
   untracked and unreviewed).
+- Jeff's own to-do: back up `C:\Users\Jeff\Documents\tangent-signing\`
+  (signing keystore — unrecoverable if lost).
