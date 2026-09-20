@@ -16,6 +16,7 @@
 // This widget owns no persistence and knows nothing about screens or the
 // database. It reports completed strokes upward through `onStrokesChanged`.
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
@@ -617,16 +618,37 @@ class NotebookInkPainter extends CustomPainter {
   /// A fountain nib never quite vanishes: zero pressure still leaves a hair
   /// line, full pressure swells to 1.6x the chosen size. The floor keeps a
   /// fast light stroke visible; the ceiling keeps a heavy hand from blotting.
+  ///
+  /// Pressure passes through a gamma of 0.4 before scaling width: hardware
+  /// verification showed the linear curve demanded roughly twice a natural
+  /// writing pressure to reach full width, so the curve is bent to put
+  /// normal-hand pressure (~a quarter of the sensor range) at the pen's
+  /// nominal width. Stored points keep the RAW sensor value — only the
+  /// rendering bends — so re-tuning this never rewrites ink.
   static double _fountainWidth(double base, double pressure) =>
-      base * (0.35 + 1.25 * pressure.clamp(0.0, 1.0));
+      base * (0.35 + 1.25 * math.pow(pressure.clamp(0.0, 1.0), 0.4));
 
-  /// Tapered rendering: each segment is drawn at the width its endpoints'
-  /// pressure asks for. Round caps make consecutive segments of different
-  /// widths meet in a smooth swell instead of visible steps. Points without
-  /// pressure (legacy files, a stroke begun before the feature) render at the
-  /// flat width, so a mixed stroke degrades gracefully.
+  /// The chisel edge: an italic nib held at 30 degrees from horizontal
+  /// (hardware-tuned — Jeff asked for a stronger italic than round caps
+  /// gave). Every mark is this edge swept along the stroke, so direction
+  /// matters: a stroke perpendicular to the edge comes out full width, one
+  /// parallel to it nearly disappears — the classic calligraphy look.
+  ///
+  /// Screen y grows downward, so -sin gives the conventional up-to-the-right
+  /// slant of a right-handed nib.
+  static final Offset _nibEdge = Offset(
+    math.cos(30 * math.pi / 180),
+    -math.sin(30 * math.pi / 180),
+  );
+
+  /// Italic rendering: each segment becomes a filled parallelogram — the nib
+  /// edge at `a` swept to the nib edge at `b`. Adjacent segments share their
+  /// edge exactly, so consecutive quads tile into a smooth ribbon with no
+  /// seams. Points without pressure (legacy files) sweep at the flat width,
+  /// so a mixed stroke degrades gracefully.
   void _paintFountainStroke(Canvas canvas, InkStroke stroke) {
     final List<InkPoint> points = stroke.points;
+    final Paint fill = _buildDotPaint();
     for (int i = 0; i < points.length - 1; i++) {
       final InkPoint a = points[i];
       final InkPoint b = points[i + 1];
@@ -635,7 +657,14 @@ class NotebookInkPainter extends CustomPainter {
       final double width = pa == null && pb == null
           ? stroke.width
           : _fountainWidth(stroke.width, ((pa ?? pb)! + (pb ?? pa)!) / 2);
-      canvas.drawLine(a.offset, b.offset, buildStrokePaint(width));
+      final Offset half = _nibEdge * (width / 2);
+      final Path quad = Path()
+        ..moveTo(a.x + half.dx, a.y + half.dy)
+        ..lineTo(b.x + half.dx, b.y + half.dy)
+        ..lineTo(b.x - half.dx, b.y - half.dy)
+        ..lineTo(a.x - half.dx, a.y - half.dy)
+        ..close();
+      canvas.drawPath(quad, fill);
     }
   }
 
