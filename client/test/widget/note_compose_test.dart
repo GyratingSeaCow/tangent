@@ -247,41 +247,35 @@ void main() {
   });
 
   testWidgets(
-      'back with typed text confirms discard: Keep editing retains, Discard '
-      'pops without saving', (tester) async {
+      'back with typed text saves the note on the way out', (tester) async {
     useHandsetViewport(tester);
     final h = harnessFor(tester);
+    await bootstrapPumped(tester, h);
     final spy = _SpyNotes(h);
     final navigator = GlobalKey<NavigatorState>();
     await mountCompose(tester, h, spy, navigator);
 
-    const text = 'draft worth confirming';
+    const text = 'draft worth keeping';
     await tester.enterText(find.byType(TextField), text);
     await tester.pump();
 
     await tester.pageBack();
-    await tester.pumpAndSettle();
-    expect(find.text('Discard note?'), findsOneWidget);
-    expect(find.text('Keep editing'), findsOneWidget);
-    expect(find.text('Discard'), findsOneWidget);
-
-    await tester.tap(find.text('Keep editing'));
-    await tester.pumpAndSettle();
-    expect(find.text('Discard note?'), findsNothing);
-    expect(find.byType(NoteComposeScreen), findsOneWidget);
-    expect(
-      tester.widget<TextField>(find.byType(TextField)).controller!.text,
-      text,
-      reason: 'Keep editing must retain the typed text',
+    // The back path saves asynchronously before popping — wait for the
+    // compose route to actually leave the tree.
+    await pumpBoundUntil(
+      tester,
+      () => find.byType(NoteComposeScreen).evaluate().isEmpty,
     );
 
-    await tester.pageBack();
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Discard'));
-    await tester.pumpAndSettle();
-    expect(find.byType(NoteComposeScreen), findsNothing);
+    // No dialog, no data loss: the note persists and the screen closes
+    // back to where the user was heading.
+    expect(find.text('Discard note?'), findsNothing);
     expect(find.text('Host'), findsOneWidget);
-    expect(spy.texts, isEmpty, reason: 'Discard must never save');
+    expect(
+      spy.texts,
+      <String>[text],
+      reason: 'back must save the typed note, not discard it',
+    );
   });
 
   testWidgets('save failure shows the exact SnackBar and preserves the text',

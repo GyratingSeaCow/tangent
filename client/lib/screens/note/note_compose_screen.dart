@@ -39,55 +39,49 @@ class _NoteComposeScreenState extends ConsumerState<NoteComposeScreen> {
     super.dispose();
   }
 
-  Future<void> _save() async {
+  /// Saves the note. The Save button opens the created note afterwards
+  /// (openAfter); the back path leaves the app where the user was heading
+  /// instead.
+  Future<bool> _save({bool openAfter = true}) async {
     setState(() => _saving = true);
     try {
       final row = await ref
           .read(notePersistenceProvider)
           .saveNote(text: _controller.text, now: DateTime.now());
-      if (!mounted) return;
-      unawaited(
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute<void>(
-            builder: (_) => DumpDetailScreen(
-              dumpId: row.id,
-              audioPath: row.audioPath,
-              durationSeconds: 0,
+      if (!mounted) return true;
+      if (openAfter) {
+        unawaited(
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute<void>(
+              builder: (_) => DumpDetailScreen(
+                dumpId: row.id,
+                audioPath: row.audioPath,
+                durationSeconds: 0,
+              ),
             ),
           ),
-        ),
-      );
+        );
+      }
+      return true;
     } catch (error) {
-      if (!mounted) return;
+      if (!mounted) return false;
       // The typed text stays in the field; only the failure is reported.
       final problem =
           error is StorageFault ? error.problem.message : '$error';
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Note save failed: $problem')),
       );
+      return false;
     } finally {
       if (mounted) setState(() => _saving = false);
     }
   }
 
-  Future<void> _confirmDiscard() async {
-    final discard = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Discard note?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('Keep editing'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('Discard'),
-          ),
-        ],
-      ),
-    );
-    if (discard == true && mounted) Navigator.of(context).pop();
+  /// Back-button path: typed text is saved as a note on the way out, not
+  /// discarded. Only a failed save keeps the screen open (snackbar explains).
+  Future<void> _saveAndPop() async {
+    final bool saved = await _save(openAfter: false);
+    if (saved && mounted) Navigator.of(context).pop();
   }
 
   @override
@@ -96,7 +90,9 @@ class _NoteComposeScreenState extends ConsumerState<NoteComposeScreen> {
       canPop: !_hasText && !_saving,
       onPopInvokedWithResult: (didPop, _) {
         if (didPop || _saving) return;
-        unawaited(_confirmDiscard());
+        // Back saves the typed note instead of discarding it; a failed
+        // save keeps the screen open with the snackbar explaining.
+        unawaited(_saveAndPop());
       },
       child: Scaffold(
         appBar: AppBar(

@@ -491,25 +491,12 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
     }
   }
 
-  Future<void> _confirmDiscard() async {
-    final bool? discard = await showDialog<bool>(
-      context: context,
-      builder: (BuildContext dialogContext) => AlertDialog(
-        title: const Text('Discard changes?'),
-        content: const Text('This notebook has unsaved edits.'),
-        actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('Keep editing'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('Discard'),
-          ),
-        ],
-      ),
-    );
-    if (discard == true && mounted) Navigator.of(context).pop();
+  /// Back-button path: persist the unsaved edits, then leave. A save that
+  /// fails keeps the screen open (the _save snackbar already reported it) so
+  /// nothing is lost silently.
+  Future<void> _saveAndPop() async {
+    await _save();
+    if (mounted && !_dirty) Navigator.of(context).pop();
   }
 
   // -------------------------------------------------------------------
@@ -855,7 +842,10 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
       canPop: !_dirty && !_saving,
       onPopInvokedWithResult: (bool didPop, Object? _) {
         if (didPop || _saving) return;
-        unawaited(_confirmDiscard());
+        // Back means "I'm done", not "throw it away": unsaved edits are
+        // saved on the way out. Only a FAILED save keeps the screen open,
+        // with the failure snackbar explaining why.
+        unawaited(_saveAndPop());
       },
       child: Scaffold(
         appBar: AppBar(
@@ -895,6 +885,13 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                 icon: const Icon(Icons.undo),
                 tooltip: 'Undo stroke',
                 onPressed: () => _canvasKey.currentState?.undoLastStroke(),
+              ),
+            if (_drawing)
+              IconButton(
+                key: const ValueKey<String>('notebook-redo'),
+                icon: const Icon(Icons.redo),
+                tooltip: 'Redo',
+                onPressed: () => _canvasKey.currentState?.redo(),
               ),
             IconButton(
               icon: const Icon(Icons.save),

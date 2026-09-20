@@ -22,6 +22,7 @@ class _CanvasHarness {
   final List<List<InkStroke>> reports = <List<InkStroke>>[];
 
   bool drawingEnabled;
+  bool erasing = false;
   double penWidth;
   List<InkStroke> strokes;
   late StateSetter _setState;
@@ -43,6 +44,7 @@ class _CanvasHarness {
                     key: canvasKey,
                     strokes: strokes,
                     drawingEnabled: drawingEnabled,
+                    erasing: erasing,
                     penWidth: penWidth,
                     onStrokesChanged: reports.add,
                   );
@@ -61,6 +63,11 @@ class _CanvasHarness {
     await tester.pump();
   }
 
+  Future<void> setErasing(WidgetTester tester, bool value) async {
+    erasing = value;
+    _setState(() {});
+    await tester.pump();
+  }
 }
 
 Offset _at(WidgetTester tester, Offset local) =>
@@ -426,6 +433,102 @@ void main() {
       await tester.pump();
       expect(harness.state.strokes, isEmpty);
       expect(harness.reports, isEmpty);
+    });
+
+    testWidgets('redo restores what undo removed', (tester) async {
+      final _CanvasHarness harness = _CanvasHarness();
+      await harness.pump(tester);
+
+      await _drawStroke(
+        tester,
+        path: <Offset>[const Offset(5, 5), const Offset(30, 5)],
+      );
+      await _drawStroke(
+        tester,
+        path: <Offset>[const Offset(5, 30), const Offset(30, 30)],
+      );
+      final String lastId = harness.state.strokes.last.id;
+
+      expect(harness.state.undoLastStroke(), isTrue);
+      await tester.pump();
+      expect(harness.state.strokes, hasLength(1));
+
+      final bool redone = harness.state.redo();
+      await tester.pump();
+      expect(redone, isTrue);
+      expect(harness.state.strokes, hasLength(2));
+      expect(
+        harness.state.strokes.last.id,
+        lastId,
+        reason: 'redo must bring back the exact undone stroke',
+      );
+      expect(harness.reports.last, hasLength(2));
+    });
+
+    testWidgets('redo without a prior undo is a no-op', (tester) async {
+      final _CanvasHarness harness = _CanvasHarness();
+      await harness.pump(tester);
+
+      await _drawStroke(
+        tester,
+        path: <Offset>[const Offset(5, 5), const Offset(30, 5)],
+      );
+      expect(harness.state.redo(), isFalse);
+      await tester.pump();
+      expect(harness.state.strokes, hasLength(1));
+    });
+
+    testWidgets('drawing after undo forfeits the redo', (tester) async {
+      final _CanvasHarness harness = _CanvasHarness();
+      await harness.pump(tester);
+
+      await _drawStroke(
+        tester,
+        path: <Offset>[const Offset(5, 5), const Offset(30, 5)],
+      );
+      expect(harness.state.undoLastStroke(), isTrue);
+      await tester.pump();
+
+      // A new stroke rewrites history; redoing the old one now would
+      // interleave two futures.
+      await _drawStroke(
+        tester,
+        path: <Offset>[const Offset(5, 30), const Offset(30, 30)],
+      );
+      expect(harness.state.redo(), isFalse);
+      await tester.pump();
+      expect(harness.state.strokes, hasLength(1));
+    });
+
+    testWidgets('redo revives an undone erase sweep undo', (tester) async {
+      final _CanvasHarness harness = _CanvasHarness();
+      await harness.pump(tester);
+
+      await _drawStroke(
+        tester,
+        path: <Offset>[const Offset(5, 5), const Offset(30, 5)],
+      );
+      // Erase it with a real gesture, undo the erase (stroke back), then
+      // redo (erased again).
+      await harness.setErasing(tester, true);
+      await _drawStroke(
+        tester,
+        path: <Offset>[const Offset(15, 5), const Offset(16, 5)],
+      );
+      expect(harness.state.strokes, isEmpty);
+      await harness.setErasing(tester, false);
+
+      expect(harness.state.undoLastStroke(), isTrue);
+      await tester.pump();
+      expect(harness.state.strokes, hasLength(1));
+
+      expect(harness.state.redo(), isTrue);
+      await tester.pump();
+      expect(
+        harness.state.strokes,
+        isEmpty,
+        reason: 'redo must re-apply the undone erase sweep',
+      );
     });
 
     testWidgets('clearStrokes empties the canvas and reports', (tester) async {

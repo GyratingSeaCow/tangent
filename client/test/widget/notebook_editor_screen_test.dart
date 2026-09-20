@@ -1733,7 +1733,7 @@ void main() {
     await unmount(tester);
   });
 
-  testWidgets('backing out with unsaved edits asks before discarding',
+  testWidgets('backing out with unsaved edits saves them on the way out',
       (tester) async {
     await mountEditor(tester, notebook: seeded());
 
@@ -1744,23 +1744,17 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
 
-    expect(find.text('Discard changes?'), findsOneWidget);
-    expect(find.byType(NotebookEditorScreen), findsOneWidget);
-
-    await tester.tap(find.text('Keep editing'));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 400));
-    expect(find.byType(NotebookEditorScreen), findsOneWidget);
-
-    await tester.pageBack();
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 400));
-    await tester.tap(find.text('Discard'));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 400));
-
+    // No dialog, no data loss: the notebook persists and the screen closes.
+    expect(find.text('Discard changes?'), findsNothing);
     expect(find.byType(NotebookEditorScreen), findsNothing);
-    expect(repository.saved, isEmpty);
+    expect(repository.saved, hasLength(1));
+    expect(
+      repository.saved.single.document.blocks
+          .whereType<NotebookTextBlock>()
+          .map((NotebookTextBlock b) => b.text),
+      contains('unsaved words'),
+      reason: 'the edit made right before backing out must be in the save',
+    );
     expect(tester.takeException(), isNull);
 
     await unmount(tester);

@@ -145,6 +145,10 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
   /// the last stroke.
   List<InkStroke>? _eraseUndoSnapshot;
 
+  /// One-deep redo: the state undoLastStroke just left, captured at undo
+  /// time. Any new mutation clears it.
+  List<InkStroke>? _redoSnapshot;
+
   /// True while the CURRENT gesture is erasing (toggle or side button).
   bool _erasingGesture = false;
 
@@ -246,6 +250,7 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
     // Reuses the eraser's snapshot slot: undo restores the whole deletion,
     // exactly like undoing an eraser sweep.
     _eraseUndoSnapshot = List<InkStroke>.of(_strokes);
+    _redoSnapshot = null;
     setState(() {
       _strokes.removeWhere((InkStroke s) => _selected.contains(s.id));
       _externalSelected = 0;
@@ -348,6 +353,7 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
     final List<InkStroke>? snapshot = _eraseUndoSnapshot;
     if (snapshot != null) {
       setState(() {
+        _redoSnapshot = List<InkStroke>.of(_strokes);
         _strokes
           ..clear()
           ..addAll(snapshot);
@@ -359,7 +365,25 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
     }
     if (_strokes.isEmpty) return false;
     setState(() {
+      _redoSnapshot = List<InkStroke>.of(_strokes);
       _strokes.removeLast();
+      _revision++;
+    });
+    _notify();
+    return true;
+  }
+
+  /// Re-applies the state the last undo removed. One level deep, and any
+  /// new mutation (stroke, erase, move, delete) forfeits it — redoing an
+  /// old future into rewritten history would interleave two timelines.
+  bool redo() {
+    final List<InkStroke>? snapshot = _redoSnapshot;
+    if (snapshot == null) return false;
+    setState(() {
+      _redoSnapshot = null;
+      _strokes
+        ..clear()
+        ..addAll(snapshot);
       _revision++;
     });
     _notify();
@@ -511,6 +535,7 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
       _dragStart = event.localPosition;
       _dragDelta = Offset.zero;
       _dragUndoSnapshot = List<InkStroke>.of(_strokes);
+      _redoSnapshot = null;
       _activePointer = event.pointer;
       return;
     }
@@ -687,6 +712,7 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
       // One eraser gesture is one user action, so the pre-gesture ink is
       // snapshotted once and restored by a single undo.
       _eraseUndoSnapshot = List<InkStroke>.of(_strokes);
+      _redoSnapshot = null;
       _activePointer = event.pointer;
       _lastErasePosition = event.localPosition;
       final bool removed = _eraseAt(event.localPosition);
@@ -758,6 +784,7 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
       points: List<InkPoint>.unmodifiable(points),
     );
     setState(() {
+      _redoSnapshot = null;
       _strokes.add(stroke);
       // Drawing supersedes the erase: undo now removes this new stroke.
       _eraseUndoSnapshot = null;
