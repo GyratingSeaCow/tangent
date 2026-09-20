@@ -111,6 +111,11 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
   final ScrollController _pageScroll = ScrollController();
   bool _erasing = false;
   double _penWidth = PenSizeControl.defaultPenWidth;
+  PenStyle _penStyle = PenStyle.ballpoint;
+
+  /// True while a stylus is in contact or within its trailing window. The
+  /// page holds still so a resting palm cannot scroll it mid-word.
+  bool _stylusActive = false;
 
   /// Suppresses dirty-marking while the stored notebook is being poured into
   /// the controllers.
@@ -783,6 +788,28 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
               ),
             if (_drawing)
               IconButton(
+                key: const ValueKey('notebook-pen-style'),
+                // The nib: fountain tapers with pen pressure like Samsung
+                // Notes; ballpoint is the original uniform stroke. Selected
+                // state shows fountain is active, matching the eraser's
+                // labelled-mode convention above.
+                icon: Icon(
+                  _penStyle == PenStyle.fountain
+                      ? Icons.brush
+                      : Icons.mode_edit_outline,
+                ),
+                tooltip: _penStyle == PenStyle.fountain
+                    ? 'Fountain pen (pressure). Tap for ballpoint'
+                    : 'Ballpoint. Tap for fountain pen (pressure)',
+                isSelected: _penStyle == PenStyle.fountain,
+                onPressed: () => setState(() {
+                  _penStyle = _penStyle == PenStyle.fountain
+                      ? PenStyle.ballpoint
+                      : PenStyle.fountain;
+                }),
+              ),
+            if (_drawing)
+              IconButton(
                 icon: const Icon(Icons.undo),
                 tooltip: 'Undo stroke',
                 onPressed: () => _canvasKey.currentState?.undoLastStroke(),
@@ -966,7 +993,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
         return SingleChildScrollView(
           key: const ValueKey('notebook-canvas-scroll'),
           controller: _pageScroll,
-          physics: _drawing || _draggingCard
+          physics: _drawing || _draggingCard || _stylusActive
               ? const NeverScrollableScrollPhysics()
               : const ClampingScrollPhysics(),
           child: SizedBox(
@@ -1037,6 +1064,15 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                       drawingEnabled: _drawing,
                       erasing: _erasing,
                       penWidth: _penWidth,
+                      penStyle: _penStyle,
+                      // Palm rejection, page half: while the pen is present
+                      // the scroll physics lock so a resting hand cannot
+                      // shove the page mid-word. The canvas half (touch not
+                      // inking) lives inside the widget itself.
+                      onStylusPresence: (bool present) {
+                        if (_stylusActive == present) return;
+                        setState(() => _stylusActive = present);
+                      },
                       // The page below already painted the backdrop, so the
                       // ink layer composites directly instead of painting
                       // black and filtering it back out.

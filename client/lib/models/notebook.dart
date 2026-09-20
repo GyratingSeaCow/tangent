@@ -322,16 +322,22 @@ class InkStroke {
     required this.id,
     required this.width,
     required this.points,
+    this.style = PenStyle.ballpoint,
   });
 
   final String id;
   final double width;
   final List<InkPoint> points;
 
+  /// How this stroke renders. Ballpoint is the original flat stroke; fountain
+  /// tapers with the pressure recorded in each point.
+  final PenStyle style;
+
   /// Tolerant reader: missing fields fall back to defaults.
   factory InkStroke.fromJson(Map<String, dynamic> json) => InkStroke(
         id: json['id'] as String? ?? '',
         width: (json['width'] as num?)?.toDouble() ?? kDefaultPenWidth,
+        style: PenStyle.fromWire(json['style']),
         points: <InkPoint>[
           for (final Object? point
               in (json['points'] as List<dynamic>? ?? const <dynamic>[]))
@@ -352,19 +358,28 @@ class InkStroke {
         .whereType<InkPoint>()
         .toList(growable: false);
     if (decoded.isEmpty) return null;
-    return InkStroke(id: id, width: width.toDouble(), points: decoded);
+    return InkStroke(
+      id: id,
+      width: width.toDouble(),
+      style: PenStyle.fromWire(raw['style']),
+      points: decoded,
+    );
   }
 
   InkStroke copyWith({String? id, double? width, List<InkPoint>? points}) =>
       InkStroke(
         id: id ?? this.id,
         width: width ?? this.width,
+        style: style,
         points: points ?? this.points,
       );
 
   Map<String, dynamic> toJson() => {
         'id': id,
         'width': width,
+        // Written only when set: a legacy file must re-encode byte-comparable,
+        // without gaining fields it never had.
+        if (style != PenStyle.ballpoint) 'style': style.wireValue,
         'points': points.map((p) => p.toJson()).toList(growable: false),
       };
 
@@ -374,27 +389,53 @@ class InkStroke {
       other is InkStroke &&
           other.id == id &&
           other.width == width &&
+          other.style == style &&
           listEquals(other.points, points);
 
   @override
-  int get hashCode => Object.hash(id, width, Object.hashAll(points));
+  int get hashCode => Object.hash(id, width, style, Object.hashAll(points));
 
   @override
   String toString() => 'InkStroke($id, w=$width, ${points.length}pts)';
 }
 
+/// How a stroke is rendered. Stored per stroke, so a page can mix pens.
+enum PenStyle {
+  /// The original uniform-width round stroke.
+  ballpoint('ballpoint'),
+
+  /// Width tapers with pen pressure, like Samsung Notes' fountain pen.
+  fountain('fountain');
+
+  const PenStyle(this.wireValue);
+  final String wireValue;
+
+  /// Unknown or absent styles read as ballpoint: showing the user's ink at
+  /// the wrong width beats dropping it because a newer build named a pen
+  /// this one has never heard of.
+  static PenStyle fromWire(Object? raw) => switch (raw) {
+        'fountain' => PenStyle.fountain,
+        _ => PenStyle.ballpoint,
+      };
+}
+
 /// One sampled point of a stroke, in canvas logical pixels.
 @immutable
 class InkPoint {
-  const InkPoint({required this.x, required this.y});
+  const InkPoint({required this.x, required this.y, this.p});
 
   final double x;
   final double y;
+
+  /// Pen pressure 0–1 at this sample, null for legacy points and touch input.
+  /// Null renders at the stroke's flat width.
+  final double? p;
 
   /// Tolerant reader: missing/!num coordinates fall back to the origin.
   factory InkPoint.fromJson(Map<String, dynamic> json) => InkPoint(
         x: (json['x'] as num?)?.toDouble() ?? 0,
         y: (json['y'] as num?)?.toDouble() ?? 0,
+        p: (json['p'] is num) ? (json['p'] as num).toDouble() : null,
       );
 
   /// Strict reader used when decoding storage.
@@ -402,23 +443,34 @@ class InkPoint {
     final x = raw['x'];
     final y = raw['y'];
     if (x is! num || y is! num) return null;
-    return InkPoint(x: x.toDouble(), y: y.toDouble());
+    final Object? p = raw['p'];
+    return InkPoint(
+      x: x.toDouble(),
+      y: y.toDouble(),
+      // A malformed pressure degrades that one sample to flat, never the file.
+      p: p is num ? p.toDouble() : null,
+    );
   }
 
   Offset get offset => Offset(x, y);
 
-  Map<String, dynamic> toJson() => {'x': x, 'y': y};
+  Map<String, dynamic> toJson() => {
+        'x': x,
+        'y': y,
+        // Written only when present, so legacy files re-encode unchanged.
+        if (p != null) 'p': p,
+      };
 
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
-      other is InkPoint && other.x == x && other.y == y;
+      other is InkPoint && other.x == x && other.y == y && other.p == p;
 
   @override
-  int get hashCode => Object.hash(x, y);
+  int get hashCode => Object.hash(x, y, p);
 
   @override
-  String toString() => 'InkPoint($x, $y)';
+  String toString() => 'InkPoint($x, $y${p == null ? '' : ', p=$p'})';
 }
 
 /// The stroke list persisted in `notebooks.ink_json`.

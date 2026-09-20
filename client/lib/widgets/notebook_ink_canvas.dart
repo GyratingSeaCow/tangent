@@ -15,6 +15,8 @@
 //
 // This widget owns no persistence and knows nothing about screens or the
 // database. It reports completed strokes upward through `onStrokesChanged`.
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -63,6 +65,17 @@ class NotebookInkCanvas extends StatefulWidget {
   /// Width applied to the NEXT stroke started. Existing ink is untouched.
   final double penWidth;
 
+  /// Style applied to the NEXT stroke started. Fountain strokes record the
+  /// pen's per-point pressure and render tapered; ballpoint stays the
+  /// original flat stroke (and records no pressure, keeping legacy files
+  /// byte-comparable).
+  final PenStyle penStyle;
+
+  /// Reports pen presence: true when a stylus is in contact (and through a
+  /// short trailing window after it lifts), false once the window lapses.
+  /// The editor uses it to hold the page still under a resting palm.
+  final ValueChanged<bool>? onStylusPresence;
+
   const NotebookInkCanvas({
     super.key,
     required this.strokes,
@@ -71,6 +84,8 @@ class NotebookInkCanvas extends StatefulWidget {
     this.erasing = false,
     this.opaqueBackground = true,
     required this.penWidth,
+    this.penStyle = PenStyle.ballpoint,
+    this.onStylusPresence,
   });
 
   /// Handwriting. White, never the lime signal colour: lime ink competes
@@ -109,9 +124,41 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
   /// Pen width sampled when the active stroke STARTED.
   double _activeWidth = PenSizeControl.defaultPenWidth;
 
+  /// Pen style sampled when the active stroke STARTED.
+  PenStyle _activeStyle = PenStyle.ballpoint;
+
   /// Pointer owning the active stroke; other pointers are ignored (no
   /// multi-touch scribbling).
   int? _activePointer;
+
+  /// Palm rejection: true from a stylus contact until [_stylusWindow] after
+  /// the last stylus event. While set, touch neither draws nor erases here,
+  /// and the editor is told to hold the page still. Only ever set by a real
+  /// stylus event, so a device with no pen never suppresses touch.
+  bool _stylusPresent = false;
+  Timer? _stylusWindowTimer;
+
+  /// How long after the pen lifts before a finger is trusted again. Covers
+  /// the gap between strokes when the nib lifts briefly mid-word.
+  static const Duration _stylusWindow = Duration(milliseconds: 500);
+
+  void _markStylusPresent() {
+    _stylusWindowTimer?.cancel();
+    _stylusWindowTimer = Timer(_stylusWindow, () {
+      _stylusPresent = false;
+      widget.onStylusPresence?.call(false);
+    });
+    if (!_stylusPresent) {
+      _stylusPresent = true;
+      widget.onStylusPresence?.call(true);
+    }
+  }
+
+  @override
+  void dispose() {
+    _stylusWindowTimer?.cancel();
+    super.dispose();
+  }
 
   /// Monotonic counter bumped on every visual change, so the painter can make
   /// an O(1) repaint decision instead of deep-comparing stroke lists.
@@ -242,8 +289,25 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
 
   /// Appends a sample, skipping exact duplicates so a tap stays a single-point
   /// dot and a drag does not double-record its final position.
-  bool _appendPoint(List<InkPoint> points, Offset position) {
-    final InkPoint point = InkPoint(x: position.dx, y: position.dy);
+  ///
+  /// Pressure is recorded only for fountain strokes from a pressure-reporting
+  /// device: a ballpoint stroke must re-encode byte-identical to the legacy
+  /// shape, and a touch pointer reports a constant 1.0 that means nothing.
+  bool _appendPoint(
+    List<InkPoint> points,
+    Offset position, {
+    PointerEvent? event,
+  }) {
+    double? p;
+    if (event != null &&
+        _activeStyle == PenStyle.fountain &&
+        event.kind == PointerDeviceKind.stylus &&
+        event.pressureMax > event.pressureMin) {
+      p = ((event.pressure - event.pressureMin) /
+              (event.pressureMax - event.pressureMin))
+          .clamp(0.0, 1.0);
+    }
+    final InkPoint point = InkPoint(x: position.dx, y: position.dy, p: p);
     if (points.isNotEmpty && points.last == point) return false;
     points.add(point);
     return true;
@@ -314,6 +378,15 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
     // it is per-kind. A blanket early return above this line is what made the
     // stylus branch below dead code while its doc comment still advertised
     // "stylus input is always honoured".
+    final bool isStylus = event.kind == PointerDeviceKind.stylus ||
+        event.kind == PointerDeviceKind.invertedStylus;
+    if (isStylus) _markStylusPresent();
+    // Palm rejection: while the pen is present (in contact, or within the
+    // trailing window after lifting), a touch contact is a resting hand,
+    // not intent — even in draw mode.
+    if (!isStylus && event.kind == PointerDeviceKind.touch && _stylusPresent) {
+      return;
+    }
     if (!_acceptsDevice(event.kind)) return;
     if (_activePointer != null) return;
     if (_isErasing(event)) {
@@ -331,13 +404,20 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
     setState(() {
       _activePointer = event.pointer;
       _activeWidth = widget.penWidth;
+      _activeStyle = widget.penStyle;
       _activePoints = <InkPoint>[];
-      _appendPoint(_activePoints!, event.localPosition);
+      _appendPoint(_activePoints!, event.localPosition, event: event);
       _revision++;
     });
   }
 
   void _onPointerMove(PointerMoveEvent event) {
+    if (event.kind == PointerDeviceKind.stylus ||
+        event.kind == PointerDeviceKind.invertedStylus) {
+      // Keep the palm window alive for the whole contact, not just the down:
+      // a long written line would otherwise let the window lapse mid-stroke.
+      _markStylusPresent();
+    }
     if (_erasingGesture || widget.erasing) {
       if (event.pointer != _activePointer) return;
       final Offset from = _lastErasePosition ?? event.localPosition;
@@ -350,7 +430,7 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
     }
     final List<InkPoint>? points = _activePoints;
     if (points == null || event.pointer != _activePointer) return;
-    if (!_appendPoint(points, event.localPosition)) return;
+    if (!_appendPoint(points, event.localPosition, event: event)) return;
     setState(() => _revision++);
   }
 
@@ -368,11 +448,12 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
     }
     final List<InkPoint>? points = _activePoints;
     if (points == null || event.pointer != _activePointer) return;
-    _appendPoint(points, event.localPosition);
+    _appendPoint(points, event.localPosition, event: event);
     // A tap with no movement is still ink: it lands as a one-point dot.
     final InkStroke stroke = InkStroke(
       id: _uuid.v4(),
       width: _activeWidth,
+      style: _activeStyle,
       points: List<InkPoint>.unmodifiable(points),
     );
     setState(() {
@@ -461,6 +542,7 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
                       : InkStroke(
                           id: '_active',
                           width: _activeWidth,
+                          style: _activeStyle,
                           points: active,
                         ),
                   revision: _revision,
@@ -507,12 +589,21 @@ class NotebookInkPainter extends CustomPainter {
   void _paintStroke(Canvas canvas, InkStroke stroke) {
     if (stroke.points.isEmpty) return;
     if (stroke.points.length == 1) {
-      // Single tap: a round dot of the pen's own diameter.
+      // Single tap: a round dot of the pen's own diameter (scaled by the
+      // point's pressure for a fountain stroke).
+      final double? p = stroke.points.first.p;
+      final double diameter = stroke.style == PenStyle.fountain && p != null
+          ? _fountainWidth(stroke.width, p)
+          : stroke.width;
       canvas.drawCircle(
         stroke.points.first.offset,
-        stroke.width / 2,
+        diameter / 2,
         _buildDotPaint(),
       );
+      return;
+    }
+    if (stroke.style == PenStyle.fountain) {
+      _paintFountainStroke(canvas, stroke);
       return;
     }
     final Path path = Path()
@@ -521,6 +612,31 @@ class NotebookInkPainter extends CustomPainter {
       path.lineTo(point.x, point.y);
     }
     canvas.drawPath(path, buildStrokePaint(stroke.width));
+  }
+
+  /// A fountain nib never quite vanishes: zero pressure still leaves a hair
+  /// line, full pressure swells to 1.6x the chosen size. The floor keeps a
+  /// fast light stroke visible; the ceiling keeps a heavy hand from blotting.
+  static double _fountainWidth(double base, double pressure) =>
+      base * (0.35 + 1.25 * pressure.clamp(0.0, 1.0));
+
+  /// Tapered rendering: each segment is drawn at the width its endpoints'
+  /// pressure asks for. Round caps make consecutive segments of different
+  /// widths meet in a smooth swell instead of visible steps. Points without
+  /// pressure (legacy files, a stroke begun before the feature) render at the
+  /// flat width, so a mixed stroke degrades gracefully.
+  void _paintFountainStroke(Canvas canvas, InkStroke stroke) {
+    final List<InkPoint> points = stroke.points;
+    for (int i = 0; i < points.length - 1; i++) {
+      final InkPoint a = points[i];
+      final InkPoint b = points[i + 1];
+      final double? pa = a.p;
+      final double? pb = b.p;
+      final double width = pa == null && pb == null
+          ? stroke.width
+          : _fountainWidth(stroke.width, ((pa ?? pb)! + (pb ?? pa)!) / 2);
+      canvas.drawLine(a.offset, b.offset, buildStrokePaint(width));
+    }
   }
 
   @override

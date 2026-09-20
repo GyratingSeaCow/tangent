@@ -191,6 +191,50 @@ void main() {
     test('encodes empty ink as an empty stroke list', () {
       expect(const NotebookInk.empty().encode(), '{"strokes":[]}');
     });
+
+    test('round trips per-point pressure and pen style', () {
+      // Fountain strokes taper with pressure, so each point may carry `p`
+      // and the stroke may carry a style. Both are optional on the wire.
+      const source = '{"strokes":['
+          '{"id":"s1","width":3.0,"style":"fountain","points":['
+          '{"x":1.0,"y":2.0,"p":0.25},{"x":3.0,"y":4.0,"p":0.8}]}'
+          ']}';
+      final ink = NotebookInk.decode(source);
+      final stroke = ink.strokes.single;
+      expect(stroke.style, PenStyle.fountain);
+      expect(stroke.points.map((p) => p.p).toList(), [0.25, 0.8]);
+      expect(_decode(ink.encode()), _decode(source));
+    });
+
+    test('legacy strokes without style or pressure load as flat ballpoint', () {
+      // Refusing to break existing notebook files is worth more than uniform
+      // data: an old file must load, render flat, and re-encode without
+      // gaining fields it never had.
+      const source = '{"strokes":['
+          '{"id":"s1","width":3.0,"points":[{"x":1.0,"y":2.0}]}'
+          ']}';
+      final ink = NotebookInk.decode(source);
+      final stroke = ink.strokes.single;
+      expect(stroke.style, PenStyle.ballpoint);
+      expect(stroke.points.single.p, isNull);
+      expect(_decode(ink.encode()), _decode(source));
+    });
+
+    test('an unknown style degrades to ballpoint rather than dropping ink', () {
+      final ink = NotebookInk.decode(
+        '{"strokes":[{"id":"s","width":2.0,"style":"laser",'
+        '"points":[{"x":1,"y":2}]}]}',
+      );
+      expect(ink.strokes.single.style, PenStyle.ballpoint);
+    });
+
+    test('non-numeric pressure is dropped, not fatal', () {
+      final ink = NotebookInk.decode(
+        '{"strokes":[{"id":"s","width":2.0,'
+        '"points":[{"x":1,"y":2,"p":"hard"}]}]}',
+      );
+      expect(ink.strokes.single.points.single.p, isNull);
+    });
   });
 
   group('Notebook', () {

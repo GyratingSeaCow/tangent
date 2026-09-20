@@ -38,5 +38,8 @@ shipped and hardware-verified). In scope now, per Jeff:
 
 - Multi-device sync server discovery/pairing (designs in `docs/design/`,
   untracked and unreviewed).
-- Jeff's own to-do: back up `C:\Users\Jeff\Documents\tangent-signing\`
-  (signing keystore — unrecoverable if lost).
+
+## 3. Done
+
+- ~~Back up `tangent-signing\` keystore~~ — DONE 2026-09-19, copied to the
+  local NAS.
