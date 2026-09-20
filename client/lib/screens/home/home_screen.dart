@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -7,6 +9,7 @@ import '../../data/local_db.dart';
 import '../../data/storage/storage_contract.dart';
 import '../../models/dump_mode.dart';
 import '../../services/document_sync_engine.dart';
+import '../../services/instance_commands.dart';
 import '../../widgets/sync_button.dart' show syncMessageFor;
 
 import '../dump/dump_detail_screen.dart';
@@ -43,10 +46,29 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   bool _syncing = false;
   bool _importing = false;
   DumpMode _mode = DumpMode.brainDump;
+  StreamSubscription<String>? _instanceCommands;
 
   @override
   void initState() {
     super.initState();
+    // Desktop hotkey path: `tangent --record` from another process arrives
+    // here as 'toggle-record'. Same entry point as the on-screen button so
+    // the two can never diverge. Text Note mode is voice-less; the hotkey
+    // is about capturing a thought at the speed of speech, so it records a
+    // brain dump rather than opening a compose screen nobody asked for.
+    _instanceCommands = ref.read(instanceCommandsProvider).listen((command) {
+      if (command != 'toggle-record' || !mounted) return;
+      if (_mode == DumpMode.textNote) {
+        setState(() => _mode = DumpMode.brainDump);
+      }
+      unawaited(_toggleRecording());
+    });
+  }
+
+  @override
+  void dispose() {
+    unawaited(_instanceCommands?.cancel());
+    super.dispose();
   }
 
   /// Reads the elapsed-seconds counter. Wrapped in a method so the build()
@@ -363,8 +385,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           'Quick voice memo — gets transcribed and searchable.',
         DumpMode.meeting =>
           'Secretary mode — meeting notes with action items extracted.',
-        DumpMode.textNote =>
-          'Type a quick note — searchable with your dumps.',
+        DumpMode.textNote => 'Type a quick note — searchable with your dumps.',
       };
 }
 

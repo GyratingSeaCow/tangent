@@ -34,7 +34,9 @@ import 'package:device_info_plus/device_info_plus.dart';
 import 'services/background_sync_scheduler.dart';
 import 'services/connectivity_service.dart';
 import 'services/document_sync_engine.dart';
+import 'services/instance_commands.dart';
 import 'services/platform_audio.dart';
+import 'services/single_instance.dart';
 import 'services/transcription_client.dart';
 
 /// Device label for the background isolate, which cannot reach the app's
@@ -97,11 +99,34 @@ void backgroundSyncDispatcher() {
   });
 }
 
-Future<void> main() async {
+Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
   // Desktop playback backend. Must precede any AudioPlayer construction,
   // which providers below can trigger.
   initPlatformAudio();
+
+  // Desktop single-instance + hotkey plumbing. A KDE global shortcut runs
+  // `tangent --record`: when an instance already owns the socket this
+  // process forwards the command and exits without ever showing a window;
+  // otherwise this process becomes the instance and serves the socket.
+  SingleInstanceServer? instance;
+  final wantsRecord = args.contains('--record');
+  if (Platform.isLinux) {
+    final socketPath = defaultInstanceSocketPath();
+    instance = await SingleInstanceServer.bind(socketPath);
+    if (instance == null) {
+      final delivered = await sendInstanceCommand(
+        socketPath,
+        wantsRecord ? 'toggle-record' : 'show',
+      );
+      // Failure means the owner died between probe and send; starting a
+      // second full app here would race it, so report and exit either way.
+      // Hard exit(), deliberately: returning from Dart main() leaves the
+      // GTK embedder's event loop running forever with no window doing
+      // anything — the forwarder process must die here.
+      exit(delivered ? 0 : 1);
+    }
+  }
 
   final appDocuments = await getApplicationDocumentsDirectory();
   final temp = await getTemporaryDirectory();
@@ -182,10 +207,18 @@ Future<void> main() async {
         recordingImporterProvider.overrideWithValue(importer),
         localDeletionServiceProvider.overrideWithValue(deletion),
         settingsStoreProvider.overrideWithValue(settings),
+        if (instance != null)
+          instanceCommandsProvider.overrideWithValue(instance.commands),
       ],
       child: const TangentApp(),
     ),
   );
+  // Launched via the hotkey with no instance running: the app is up, now
+  // honour the intent. Deliver through the same socket the running-instance
+  // path uses so there is exactly one code path for the command.
+  if (instance != null && wantsRecord) {
+    unawaited(sendInstanceCommand(instance.path, 'toggle-record'));
+  }
 }
 
 class TangentApp extends StatelessWidget {
