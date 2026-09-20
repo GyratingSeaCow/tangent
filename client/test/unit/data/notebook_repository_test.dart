@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import 'dart:convert';
 
+import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -162,6 +163,36 @@ void main() {
     expect((await repository.getNotebook(keep.id))!.title, 'Keep');
     await repository.deleteNotebook('already-gone');
     expect(await repository.watchNotebooks().first, hasLength(1));
+
+    // Deletion is a move to the trash, not oblivion (user decision): the
+    // row survives 7 days for restore from Settings → Trash.
+    final trashed = await db.trashedNotebooks();
+    expect(trashed.map((r) => r.id), contains(drop.id));
+    await db.restoreNotebook(drop.id);
+    expect((await repository.getNotebook(drop.id))!.title, 'Drop');
+    expect(await repository.watchNotebooks().first, hasLength(2));
+  });
+
+  test('purgeExpiredTrash drops only rows older than the 7-day window',
+      () async {
+    final repository = build();
+    final old = await repository.createNotebook(title: 'Old garbage');
+    final fresh = await repository.createNotebook(title: 'Fresh regret');
+    await repository.deleteNotebook(old.id);
+    await repository.deleteNotebook(fresh.id);
+    // Age the first deletion past the window by writing its timestamp back.
+    final int eightDaysAgo = DateTime.now()
+        .subtract(const Duration(days: 8))
+        .millisecondsSinceEpoch;
+    await (db.update(db.notebooks)..where((t) => t.id.equals(old.id)))
+        .write(NotebooksCompanion(deletedAt: Value(eightDaysAgo)));
+
+    final int purged = await db.purgeExpiredTrash();
+
+    expect(purged, 1, reason: 'only the 8-day-old row crosses the cutoff');
+    final trashedIds = (await db.trashedNotebooks()).map((r) => r.id);
+    expect(trashedIds, contains(fresh.id));
+    expect(trashedIds, isNot(contains(old.id)));
   });
 
   test('notebookRepositoryProvider builds against the app database', () async {

@@ -234,6 +234,15 @@ class _TranscriptionLifecycleHostState
     // for up to 30 minutes while edits from the other device sit on the
     // server.
     unawaited(ref.read(documentSyncEngineProvider).syncNow());
+    // The 7-day trash promise is enforced here, once per launch. Purging in
+    // the background task instead would race the user browsing the trash.
+    // A failed purge is deferred, not fatal: the rows keep until next launch.
+    unawaited(
+      ref.read(localDbProvider).purgeExpiredTrash().catchError((Object e) {
+        debugPrint('tangent.trash purge deferred: $e');
+        return 0;
+      }),
+    );
   }
 
   @override

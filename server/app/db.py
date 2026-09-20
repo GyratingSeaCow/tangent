@@ -80,7 +80,7 @@ CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at DESC);
 CREATE TABLE IF NOT EXISTS change_log (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
     entity_type TEXT NOT NULL
-        CHECK (entity_type IN ('dump', 'notebook', 'note')),
+        CHECK (entity_type IN ('dump', 'notebook', 'note', 'folder')),
     entity_id TEXT NOT NULL,
     op TEXT NOT NULL CHECK (op IN ('upsert', 'delete')),
     -- Who authored it, so a client can skip the echo of its own push.
@@ -115,7 +115,8 @@ CREATE TABLE IF NOT EXISTS notebooks (
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
     deleted_at INTEGER,
-    origin_device_id TEXT
+    origin_device_id TEXT,
+    folder_id TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_notebooks_updated_at
@@ -132,6 +133,18 @@ CREATE TABLE IF NOT EXISTS notes (
 );
 
 CREATE INDEX IF NOT EXISTS idx_notes_updated_at ON notes(updated_at DESC);
+
+-- Folders sync by ID only: same-named folders created independently on two
+-- devices stay separate (user decision). One folder can hold notebooks and
+-- recordings alike; the server only relays, filing semantics live client-side.
+CREATE TABLE IF NOT EXISTS folders (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    deleted_at INTEGER,
+    origin_device_id TEXT
+);
 """
 
 
@@ -287,6 +300,58 @@ def _migrate_dumps_mode_check(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_notebooks_folder_id(conn: sqlite3.Connection) -> None:
+    """Add folder_id to pre-folder-sync notebooks. NULL means unfiled."""
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(notebooks)")}
+    if "folder_id" not in columns:
+        conn.execute("ALTER TABLE notebooks ADD COLUMN folder_id TEXT")
+
+
+def _migrate_change_log_folder_entity(conn: sqlite3.Connection) -> None:
+    """Rebuild change_log so its CHECK admits entity_type 'folder'.
+
+    SQLite cannot alter a CHECK in place. The rebuild must preserve seq
+    values exactly — every device's checkpoint points into this sequence,
+    and renumbering would make them all silently skip or re-apply changes.
+    """
+    ddl = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='change_log'"
+    ).fetchone()
+    if ddl is None or "'folder'" in (ddl[0] or ""):
+        return
+    conn.executescript(
+        """
+        PRAGMA foreign_keys = OFF;
+        CREATE TABLE change_log_new (
+            seq INTEGER PRIMARY KEY AUTOINCREMENT,
+            entity_type TEXT NOT NULL
+                CHECK (entity_type IN ('dump', 'notebook', 'note', 'folder')),
+            entity_id TEXT NOT NULL,
+            op TEXT NOT NULL CHECK (op IN ('upsert', 'delete')),
+            device_id TEXT NOT NULL,
+            payload TEXT,
+            created_at INTEGER NOT NULL
+        );
+        INSERT INTO change_log_new
+            (seq, entity_type, entity_id, op, device_id, payload, created_at)
+            SELECT seq, entity_type, entity_id, op, device_id, payload,
+                   created_at FROM change_log;
+        DROP TABLE change_log;
+        ALTER TABLE change_log_new RENAME TO change_log;
+        CREATE INDEX IF NOT EXISTS idx_change_log_seq ON change_log(seq);
+        CREATE INDEX IF NOT EXISTS idx_change_log_entity
+            ON change_log(entity_type, entity_id);
+        PRAGMA foreign_keys = ON;
+        """
+    )
+    # AUTOINCREMENT continuity: sqlite_sequence must not fall behind the
+    # copied rows, or the next insert would collide with an existing seq.
+    conn.execute(
+        "INSERT OR REPLACE INTO sqlite_sequence (name, seq) "
+        "SELECT 'change_log', COALESCE(MAX(seq), 0) FROM change_log"
+    )
+
+
 def init_db(data_dir: str) -> None:
     """Create the SQLite DB and apply schema. Idempotent."""
     Path(data_dir).mkdir(parents=True, exist_ok=True)
@@ -300,6 +365,8 @@ def init_db(data_dir: str) -> None:
         _migrate_jobs_result_segments(conn)
         _migrate_dumps_mode_check(conn)
         _migrate_dumps_meeting_notes(conn)
+        _migrate_notebooks_folder_id(conn)
+        _migrate_change_log_folder_entity(conn)
         _reconcile_audio_kept(conn, data_dir)
         _backfill_dump_change_feed(conn)
         conn.commit()

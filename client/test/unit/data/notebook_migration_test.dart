@@ -24,6 +24,9 @@ const _notebookColumns = [
   'ruling',
   'sync_dirty',
   'synced_seq',
+  // v13: notebook trash. Deletion parks the row here for 7 days before
+  // purge, so a synced-in (or fat-fingered) delete is recoverable.
+  'deleted_at',
 ];
 
 const _insertNotebook =
@@ -42,8 +45,8 @@ void main() {
 
     await db.listDumps();
 
-    expect(db.schemaVersion, 12);
-    expect(sql.userVersion, 12);
+    expect(db.schemaVersion, 13);
+    expect(sql.userVersion, 13);
     expect(_columnNames(sql, 'notebooks'), _notebookColumns);
     expect(
       sql.select('PRAGMA foreign_key_list(notebooks)'),
@@ -69,7 +72,7 @@ void main() {
 
     await db.listDumps();
 
-    expect(sql.userVersion, 12);
+    expect(sql.userVersion, 13);
     expect(_columnNames(sql, 'notebooks'), _notebookColumns);
     // v8 adds folder_id to dumps, so compare the columns the fixture had:
     // this test is about existing rows surviving, not about the column list.
@@ -123,7 +126,7 @@ void main() {
 
     sql = sqlite3.open(file.path);
     addTearDown(sql.dispose);
-    expect(sql.userVersion, 12);
+    expect(sql.userVersion, 13);
     expect(_columnNames(sql, 'notebooks'), _notebookColumns);
     // v8 adds folder_id to dumps, so compare the columns the fixture had:
     // this test is about existing rows surviving, not about the column list.

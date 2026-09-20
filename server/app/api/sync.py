@@ -223,6 +223,38 @@ def _apply_dump(conn: sqlite3.Connection, change: SyncChange, now: int) -> None:
     )
 
 
+def _apply_folder(conn: sqlite3.Connection, change: SyncChange, now: int) -> None:
+    """Folders sync by ID only: same-named folders stay separate (user
+    decision). Delete tombstones rather than removes, like every entity —
+    and filing REMAINS on each notebook row, so a folder deletion arriving
+    on a device simply reveals its notebooks as unfiled there."""
+    if change.op == "delete":
+        conn.execute(
+            "UPDATE folders SET deleted_at = ?, updated_at = ? WHERE id = ?",
+            (now, now, change.entity_id),
+        )
+        return
+    p: dict[str, Any] = change.payload or {}
+    conn.execute(
+        """
+        INSERT INTO folders
+            (id, name, created_at, updated_at, deleted_at, origin_device_id)
+        VALUES (?, ?, ?, ?, NULL, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            name = excluded.name,
+            updated_at = excluded.updated_at,
+            deleted_at = NULL
+        """,
+        (
+            change.entity_id,
+            p.get("name", "Folder"),
+            int(p.get("created_at", now)),
+            now,
+            change.device_id,
+        ),
+    )
+
+
 def _apply_document(
     conn: sqlite3.Connection,
     table: str,
@@ -240,6 +272,41 @@ def _apply_document(
     body_column = "doc" if table == "notebooks" else "body"
     body = p.get(body_column)
     encoded = json.dumps(body) if isinstance(body, (dict, list)) else (body or "")
+    if table == "notebooks":
+        # folder_id: present means "this filing", absent means "keep what is
+        # stored" — an older client's narrower payload is not an eraser.
+        existing = conn.execute(
+            "SELECT folder_id FROM notebooks WHERE id = ?", (change.entity_id,)
+        ).fetchone()
+        folder_id = (
+            p["folder_id"]
+            if "folder_id" in p
+            else (existing["folder_id"] if existing is not None else None)
+        )
+        conn.execute(
+            """
+            INSERT INTO notebooks
+                (id, title, doc, created_at, updated_at, deleted_at,
+                 origin_device_id, folder_id)
+            VALUES (?, ?, ?, ?, ?, NULL, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                title = excluded.title,
+                doc = excluded.doc,
+                updated_at = excluded.updated_at,
+                deleted_at = NULL,
+                folder_id = excluded.folder_id
+            """,
+            (
+                change.entity_id,
+                p.get("title", "Untitled"),
+                encoded,
+                int(p.get("created_at", now)),
+                now,
+                change.device_id,
+                folder_id,
+            ),
+        )
+        return
     conn.execute(
         f"""
         INSERT INTO {table}
@@ -297,6 +364,8 @@ def sync_push(
                         publish_payload["audio_kept"] = bool(stored["audio_kept"])
             elif change.entity_type == "notebook":
                 _apply_document(db, "notebooks", change, now)
+            elif change.entity_type == "folder":
+                _apply_folder(db, change, now)
             else:
                 _apply_document(db, "notes", change, now)
 

@@ -159,7 +159,21 @@ void main() {
       await db.applyRemoteNotebookDeletion('nb-1');
 
       expect(await db.pendingTombstones(), isEmpty);
-      expect(await db.getNotebookRow('nb-1'), isNull);
+      // Into the trash, not oblivion (user decision): the synced-in deletion
+      // is recoverable for 7 days from Settings → Trash.
+      final row = await db.getNotebookRow('nb-1');
+      expect(row, isNotNull);
+      expect(row!.deletedAt, isNotNull);
+      expect(
+        (await db.trashedNotebooks()).map((r) => r.id),
+        contains('nb-1'),
+      );
+      // And a trashed row never pushes: its body on the peer is gone, and
+      // pushing it would resurrect what the user just deleted.
+      expect(
+        (await db.notebooksNeedingPush()).map((r) => r.id),
+        isNot(contains('nb-1')),
+      );
     });
   });
 }

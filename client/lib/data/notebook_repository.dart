@@ -26,13 +26,19 @@ class NotebookRepository {
   final DateTime Function() _now;
 
   /// Most recently edited first, so the list reorders as the user works.
+  /// Trashed notebooks stay out; they live under Settings → Trash.
   Stream<List<Notebook>> watchNotebooks() => (_db.select(_db.notebooks)
+        ..where((n) => n.deletedAt.isNull())
         ..orderBy([(n) => OrderingTerm.desc(n.updatedAt)]))
       .watch()
       .map((rows) => rows.map(_fromRow).toList(growable: false));
 
   Future<Notebook?> getNotebook(String id) async {
-    final row = await (_db.select(_db.notebooks)..where((n) => n.id.equals(id)))
+    // Trashed rows read as absent: to the live app a trashed notebook is
+    // gone, and only Settings → Trash can see it. Without this filter the
+    // editor could reopen (and re-save) a notebook the user just deleted.
+    final row = await (_db.select(_db.notebooks)
+          ..where((n) => n.id.equals(id) & n.deletedAt.isNull()))
         .getSingleOrNull();
     return row == null ? null : _fromRow(row);
   }
@@ -116,11 +122,13 @@ class NotebookRepository {
 
   /// Deleting a notebook never touches the dumps its cards referenced.
   Future<void> deleteNotebook(String id) async {
-    // Record the tombstone BEFORE the row goes. Deleting first would leave
-    // nothing to push, so the other device would never hear about the
+    // Record the tombstone BEFORE the move. Trashing first would leave
+    // nothing pushed, so the other device would never hear about the
     // deletion and would push the notebook straight back on its next sync.
     await _db.recordTombstone(entityType: 'notebook', entityId: id);
-    await (_db.delete(_db.notebooks)..where((n) => n.id.equals(id))).go();
+    // Trash, not delete (user decision): the row survives 7 days under
+    // Settings → Trash so a deletion — local or synced-in — is reversible.
+    await _db.trashNotebook(id);
   }
 
   Notebook _fromRow(NotebookRow row) => Notebook(

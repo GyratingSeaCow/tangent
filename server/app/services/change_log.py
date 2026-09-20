@@ -19,12 +19,12 @@ import sqlite3
 import time
 from typing import Any, Literal
 
-EntityType = Literal["dump", "notebook", "note"]
+EntityType = Literal["dump", "notebook", "note", "folder"]
 Op = Literal["upsert", "delete"]
 
 #: Entity types the log accepts. Kept beside the DB CHECK constraint so a new
 #: kind fails loudly here rather than as an opaque IntegrityError.
-ENTITY_TYPES: frozenset[str] = frozenset({"dump", "notebook", "note"})
+ENTITY_TYPES: frozenset[str] = frozenset({"dump", "notebook", "note", "folder"})
 
 
 def record_change(

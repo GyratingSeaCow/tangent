@@ -144,7 +144,7 @@ class SyncChange(BaseModel):
     client-side document change does not require a server deploy.
     """
 
-    entity_type: Literal["dump", "notebook", "note"]
+    entity_type: Literal["dump", "notebook", "note", "folder"]
     entity_id: str = Field(min_length=1, max_length=64)
     op: Literal["upsert", "delete"]
     payload: dict[str, Any] | None = None

@@ -9,6 +9,7 @@ import '../server/server_connection_screen.dart';
 import 'input_device_section.dart';
 import 'mic_gain_section.dart';
 import 'storage_settings_section.dart';
+import 'trash_screen.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -135,6 +136,18 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             subtitle: Text(_serverUrl.isEmpty ? '(not set)' : _serverUrl),
             trailing: const Icon(Icons.chevron_right),
             onTap: _serverBusy ? null : _changeServer,
+          ),
+          ListTile(
+            key: const ValueKey<String>('settings-trash'),
+            title: const Text('Trash'),
+            subtitle:
+                const Text('Deleted notebooks — kept 7 days, then emptied'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (BuildContext context) => const TrashScreen(),
+              ),
+            ),
           ),
           const Divider(),
           const Padding(

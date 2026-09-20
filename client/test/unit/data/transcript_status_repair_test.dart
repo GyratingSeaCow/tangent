@@ -237,7 +237,7 @@ void main() {
     );
   });
 
-  test('the upgrade lands on v12 and keeps every row', () async {
+  test('the upgrade lands on v13 and keeps every row', () async {
     final sqlite3.Database raw = await _v11DatabaseAsync();
     for (int i = 0; i < 6; i++) {
       _insertDump(
@@ -252,7 +252,7 @@ void main() {
     addTearDown(db.close);
     await db.listDumps();
 
-    expect(raw.userVersion, 12);
+    expect(raw.userVersion, 13);
     final List<DumpRow> all = await db.select(db.dumps).get();
     expect(all, hasLength(6));
     expect(
@@ -312,7 +312,7 @@ void main() {
         .customSelect('SELECT id, title, audio_path FROM dumps')
         .get();
 
-    expect(raw.userVersion, 12);
+    expect(raw.userVersion, 13);
     expect(rows, hasLength(1));
     expect(rows.single.data['id'], 'ancient');
     expect(rows.single.data['title'], 'Old one');

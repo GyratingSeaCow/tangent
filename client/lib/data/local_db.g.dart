@@ -1325,8 +1325,24 @@ class $FoldersTable extends Folders with TableInfo<$FoldersTable, Folder> {
   late final GeneratedColumn<int> createdAt = GeneratedColumn<int>(
       'created_at', aliasedName, false,
       type: DriftSqlType.int, requiredDuringInsert: true);
+  static const VerificationMeta _syncDirtyMeta =
+      const VerificationMeta('syncDirty');
   @override
-  List<GeneratedColumn> get $columns => [id, name, createdAt];
+  late final GeneratedColumn<bool> syncDirty = GeneratedColumn<bool>(
+      'sync_dirty', aliasedName, true,
+      type: DriftSqlType.bool,
+      requiredDuringInsert: false,
+      defaultConstraints:
+          GeneratedColumn.constraintIsAlways('CHECK ("sync_dirty" IN (0, 1))'));
+  static const VerificationMeta _syncedSeqMeta =
+      const VerificationMeta('syncedSeq');
+  @override
+  late final GeneratedColumn<int> syncedSeq = GeneratedColumn<int>(
+      'synced_seq', aliasedName, true,
+      type: DriftSqlType.int, requiredDuringInsert: false);
+  @override
+  List<GeneratedColumn> get $columns =>
+      [id, name, createdAt, syncDirty, syncedSeq];
   @override
   String get aliasedName => _alias ?? actualTableName;
   @override
@@ -1354,6 +1370,14 @@ class $FoldersTable extends Folders with TableInfo<$FoldersTable, Folder> {
     } else if (isInserting) {
       context.missing(_createdAtMeta);
     }
+    if (data.containsKey('sync_dirty')) {
+      context.handle(_syncDirtyMeta,
+          syncDirty.isAcceptableOrUnknown(data['sync_dirty']!, _syncDirtyMeta));
+    }
+    if (data.containsKey('synced_seq')) {
+      context.handle(_syncedSeqMeta,
+          syncedSeq.isAcceptableOrUnknown(data['synced_seq']!, _syncedSeqMeta));
+    }
     return context;
   }
 
@@ -1369,6 +1393,10 @@ class $FoldersTable extends Folders with TableInfo<$FoldersTable, Folder> {
           .read(DriftSqlType.string, data['${effectivePrefix}name'])!,
       createdAt: attachedDatabase.typeMapping
           .read(DriftSqlType.int, data['${effectivePrefix}created_at'])!,
+      syncDirty: attachedDatabase.typeMapping
+          .read(DriftSqlType.bool, data['${effectivePrefix}sync_dirty']),
+      syncedSeq: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}synced_seq']),
     );
   }
 
@@ -1382,13 +1410,32 @@ class Folder extends DataClass implements Insertable<Folder> {
   final String id;
   final String name;
   final int createdAt;
-  const Folder({required this.id, required this.name, required this.createdAt});
+
+  /// Sync state, mirroring notebooks. Folders sync by ID only: same-named
+  /// folders created independently on two devices stay separate (user
+  /// decision). Nullable, and null reads as dirty for the same reason
+  /// notebooks default dirty: a folder that existed before folder sync has
+  /// never been pushed.
+  final bool? syncDirty;
+  final int? syncedSeq;
+  const Folder(
+      {required this.id,
+      required this.name,
+      required this.createdAt,
+      this.syncDirty,
+      this.syncedSeq});
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
     map['id'] = Variable<String>(id);
     map['name'] = Variable<String>(name);
     map['created_at'] = Variable<int>(createdAt);
+    if (!nullToAbsent || syncDirty != null) {
+      map['sync_dirty'] = Variable<bool>(syncDirty);
+    }
+    if (!nullToAbsent || syncedSeq != null) {
+      map['synced_seq'] = Variable<int>(syncedSeq);
+    }
     return map;
   }
 
@@ -1397,6 +1444,12 @@ class Folder extends DataClass implements Insertable<Folder> {
       id: Value(id),
       name: Value(name),
       createdAt: Value(createdAt),
+      syncDirty: syncDirty == null && nullToAbsent
+          ? const Value.absent()
+          : Value(syncDirty),
+      syncedSeq: syncedSeq == null && nullToAbsent
+          ? const Value.absent()
+          : Value(syncedSeq),
     );
   }
 
@@ -1407,6 +1460,8 @@ class Folder extends DataClass implements Insertable<Folder> {
       id: serializer.fromJson<String>(json['id']),
       name: serializer.fromJson<String>(json['name']),
       createdAt: serializer.fromJson<int>(json['createdAt']),
+      syncDirty: serializer.fromJson<bool?>(json['syncDirty']),
+      syncedSeq: serializer.fromJson<int?>(json['syncedSeq']),
     );
   }
   @override
@@ -1416,19 +1471,31 @@ class Folder extends DataClass implements Insertable<Folder> {
       'id': serializer.toJson<String>(id),
       'name': serializer.toJson<String>(name),
       'createdAt': serializer.toJson<int>(createdAt),
+      'syncDirty': serializer.toJson<bool?>(syncDirty),
+      'syncedSeq': serializer.toJson<int?>(syncedSeq),
     };
   }
 
-  Folder copyWith({String? id, String? name, int? createdAt}) => Folder(
+  Folder copyWith(
+          {String? id,
+          String? name,
+          int? createdAt,
+          Value<bool?> syncDirty = const Value.absent(),
+          Value<int?> syncedSeq = const Value.absent()}) =>
+      Folder(
         id: id ?? this.id,
         name: name ?? this.name,
         createdAt: createdAt ?? this.createdAt,
+        syncDirty: syncDirty.present ? syncDirty.value : this.syncDirty,
+        syncedSeq: syncedSeq.present ? syncedSeq.value : this.syncedSeq,
       );
   Folder copyWithCompanion(FoldersCompanion data) {
     return Folder(
       id: data.id.present ? data.id.value : this.id,
       name: data.name.present ? data.name.value : this.name,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+      syncDirty: data.syncDirty.present ? data.syncDirty.value : this.syncDirty,
+      syncedSeq: data.syncedSeq.present ? data.syncedSeq.value : this.syncedSeq,
     );
   }
 
@@ -1437,37 +1504,47 @@ class Folder extends DataClass implements Insertable<Folder> {
     return (StringBuffer('Folder(')
           ..write('id: $id, ')
           ..write('name: $name, ')
-          ..write('createdAt: $createdAt')
+          ..write('createdAt: $createdAt, ')
+          ..write('syncDirty: $syncDirty, ')
+          ..write('syncedSeq: $syncedSeq')
           ..write(')'))
         .toString();
   }
 
   @override
-  int get hashCode => Object.hash(id, name, createdAt);
+  int get hashCode => Object.hash(id, name, createdAt, syncDirty, syncedSeq);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
       (other is Folder &&
           other.id == this.id &&
           other.name == this.name &&
-          other.createdAt == this.createdAt);
+          other.createdAt == this.createdAt &&
+          other.syncDirty == this.syncDirty &&
+          other.syncedSeq == this.syncedSeq);
 }
 
 class FoldersCompanion extends UpdateCompanion<Folder> {
   final Value<String> id;
   final Value<String> name;
   final Value<int> createdAt;
+  final Value<bool?> syncDirty;
+  final Value<int?> syncedSeq;
   final Value<int> rowid;
   const FoldersCompanion({
     this.id = const Value.absent(),
     this.name = const Value.absent(),
     this.createdAt = const Value.absent(),
+    this.syncDirty = const Value.absent(),
+    this.syncedSeq = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   FoldersCompanion.insert({
     required String id,
     required String name,
     required int createdAt,
+    this.syncDirty = const Value.absent(),
+    this.syncedSeq = const Value.absent(),
     this.rowid = const Value.absent(),
   })  : id = Value(id),
         name = Value(name),
@@ -1476,12 +1553,16 @@ class FoldersCompanion extends UpdateCompanion<Folder> {
     Expression<String>? id,
     Expression<String>? name,
     Expression<int>? createdAt,
+    Expression<bool>? syncDirty,
+    Expression<int>? syncedSeq,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
       if (name != null) 'name': name,
       if (createdAt != null) 'created_at': createdAt,
+      if (syncDirty != null) 'sync_dirty': syncDirty,
+      if (syncedSeq != null) 'synced_seq': syncedSeq,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -1490,11 +1571,15 @@ class FoldersCompanion extends UpdateCompanion<Folder> {
       {Value<String>? id,
       Value<String>? name,
       Value<int>? createdAt,
+      Value<bool?>? syncDirty,
+      Value<int?>? syncedSeq,
       Value<int>? rowid}) {
     return FoldersCompanion(
       id: id ?? this.id,
       name: name ?? this.name,
       createdAt: createdAt ?? this.createdAt,
+      syncDirty: syncDirty ?? this.syncDirty,
+      syncedSeq: syncedSeq ?? this.syncedSeq,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -1511,6 +1596,12 @@ class FoldersCompanion extends UpdateCompanion<Folder> {
     if (createdAt.present) {
       map['created_at'] = Variable<int>(createdAt.value);
     }
+    if (syncDirty.present) {
+      map['sync_dirty'] = Variable<bool>(syncDirty.value);
+    }
+    if (syncedSeq.present) {
+      map['synced_seq'] = Variable<int>(syncedSeq.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -1523,6 +1614,8 @@ class FoldersCompanion extends UpdateCompanion<Folder> {
           ..write('id: $id, ')
           ..write('name: $name, ')
           ..write('createdAt: $createdAt, ')
+          ..write('syncDirty: $syncDirty, ')
+          ..write('syncedSeq: $syncedSeq, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -4238,6 +4331,12 @@ class $NotebooksTable extends Notebooks
   late final GeneratedColumn<int> syncedSeq = GeneratedColumn<int>(
       'synced_seq', aliasedName, true,
       type: DriftSqlType.int, requiredDuringInsert: false);
+  static const VerificationMeta _deletedAtMeta =
+      const VerificationMeta('deletedAt');
+  @override
+  late final GeneratedColumn<int> deletedAt = GeneratedColumn<int>(
+      'deleted_at', aliasedName, true,
+      type: DriftSqlType.int, requiredDuringInsert: false);
   @override
   List<GeneratedColumn> get $columns => [
         id,
@@ -4249,7 +4348,8 @@ class $NotebooksTable extends Notebooks
         folderId,
         ruling,
         syncDirty,
-        syncedSeq
+        syncedSeq,
+        deletedAt
       ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -4312,6 +4412,10 @@ class $NotebooksTable extends Notebooks
       context.handle(_syncedSeqMeta,
           syncedSeq.isAcceptableOrUnknown(data['synced_seq']!, _syncedSeqMeta));
     }
+    if (data.containsKey('deleted_at')) {
+      context.handle(_deletedAtMeta,
+          deletedAt.isAcceptableOrUnknown(data['deleted_at']!, _deletedAtMeta));
+    }
     return context;
   }
 
@@ -4341,6 +4445,8 @@ class $NotebooksTable extends Notebooks
           .read(DriftSqlType.bool, data['${effectivePrefix}sync_dirty'])!,
       syncedSeq: attachedDatabase.typeMapping
           .read(DriftSqlType.int, data['${effectivePrefix}synced_seq']),
+      deletedAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}deleted_at']),
     );
   }
 
@@ -4384,6 +4490,14 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
   /// The server sequence this row was last reconciled at, or null if never.
   /// Diagnostic: it makes "did this actually sync?" answerable from the data.
   final int? syncedSeq;
+
+  /// Epoch ms when this notebook was moved to the trash; null means live.
+  ///
+  /// Deletion is a two-stage affair (user decision): a delete files the row
+  /// here for 7 days before it is purged, so a deletion that synced from
+  /// another device — or a slip of the finger — is recoverable from
+  /// Settings → Trash.
+  final int? deletedAt;
   const NotebookRow(
       {required this.id,
       required this.title,
@@ -4394,7 +4508,8 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
       this.folderId,
       this.ruling,
       required this.syncDirty,
-      this.syncedSeq});
+      this.syncedSeq,
+      this.deletedAt});
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -4413,6 +4528,9 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
     map['sync_dirty'] = Variable<bool>(syncDirty);
     if (!nullToAbsent || syncedSeq != null) {
       map['synced_seq'] = Variable<int>(syncedSeq);
+    }
+    if (!nullToAbsent || deletedAt != null) {
+      map['deleted_at'] = Variable<int>(deletedAt);
     }
     return map;
   }
@@ -4434,6 +4552,9 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
       syncedSeq: syncedSeq == null && nullToAbsent
           ? const Value.absent()
           : Value(syncedSeq),
+      deletedAt: deletedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(deletedAt),
     );
   }
 
@@ -4451,6 +4572,7 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
       ruling: serializer.fromJson<String?>(json['ruling']),
       syncDirty: serializer.fromJson<bool>(json['syncDirty']),
       syncedSeq: serializer.fromJson<int?>(json['syncedSeq']),
+      deletedAt: serializer.fromJson<int?>(json['deletedAt']),
     );
   }
   @override
@@ -4467,6 +4589,7 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
       'ruling': serializer.toJson<String?>(ruling),
       'syncDirty': serializer.toJson<bool>(syncDirty),
       'syncedSeq': serializer.toJson<int?>(syncedSeq),
+      'deletedAt': serializer.toJson<int?>(deletedAt),
     };
   }
 
@@ -4480,7 +4603,8 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
           Value<String?> folderId = const Value.absent(),
           Value<String?> ruling = const Value.absent(),
           bool? syncDirty,
-          Value<int?> syncedSeq = const Value.absent()}) =>
+          Value<int?> syncedSeq = const Value.absent(),
+          Value<int?> deletedAt = const Value.absent()}) =>
       NotebookRow(
         id: id ?? this.id,
         title: title ?? this.title,
@@ -4492,6 +4616,7 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
         ruling: ruling.present ? ruling.value : this.ruling,
         syncDirty: syncDirty ?? this.syncDirty,
         syncedSeq: syncedSeq.present ? syncedSeq.value : this.syncedSeq,
+        deletedAt: deletedAt.present ? deletedAt.value : this.deletedAt,
       );
   NotebookRow copyWithCompanion(NotebooksCompanion data) {
     return NotebookRow(
@@ -4505,6 +4630,7 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
       ruling: data.ruling.present ? data.ruling.value : this.ruling,
       syncDirty: data.syncDirty.present ? data.syncDirty.value : this.syncDirty,
       syncedSeq: data.syncedSeq.present ? data.syncedSeq.value : this.syncedSeq,
+      deletedAt: data.deletedAt.present ? data.deletedAt.value : this.deletedAt,
     );
   }
 
@@ -4520,14 +4646,15 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
           ..write('folderId: $folderId, ')
           ..write('ruling: $ruling, ')
           ..write('syncDirty: $syncDirty, ')
-          ..write('syncedSeq: $syncedSeq')
+          ..write('syncedSeq: $syncedSeq, ')
+          ..write('deletedAt: $deletedAt')
           ..write(')'))
         .toString();
   }
 
   @override
   int get hashCode => Object.hash(id, title, createdAt, updatedAt, docJson,
-      inkJson, folderId, ruling, syncDirty, syncedSeq);
+      inkJson, folderId, ruling, syncDirty, syncedSeq, deletedAt);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -4541,7 +4668,8 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
           other.folderId == this.folderId &&
           other.ruling == this.ruling &&
           other.syncDirty == this.syncDirty &&
-          other.syncedSeq == this.syncedSeq);
+          other.syncedSeq == this.syncedSeq &&
+          other.deletedAt == this.deletedAt);
 }
 
 class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
@@ -4555,6 +4683,7 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
   final Value<String?> ruling;
   final Value<bool> syncDirty;
   final Value<int?> syncedSeq;
+  final Value<int?> deletedAt;
   final Value<int> rowid;
   const NotebooksCompanion({
     this.id = const Value.absent(),
@@ -4567,6 +4696,7 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
     this.ruling = const Value.absent(),
     this.syncDirty = const Value.absent(),
     this.syncedSeq = const Value.absent(),
+    this.deletedAt = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   NotebooksCompanion.insert({
@@ -4580,6 +4710,7 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
     this.ruling = const Value.absent(),
     this.syncDirty = const Value.absent(),
     this.syncedSeq = const Value.absent(),
+    this.deletedAt = const Value.absent(),
     this.rowid = const Value.absent(),
   })  : id = Value(id),
         title = Value(title),
@@ -4598,6 +4729,7 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
     Expression<String>? ruling,
     Expression<bool>? syncDirty,
     Expression<int>? syncedSeq,
+    Expression<int>? deletedAt,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -4611,6 +4743,7 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
       if (ruling != null) 'ruling': ruling,
       if (syncDirty != null) 'sync_dirty': syncDirty,
       if (syncedSeq != null) 'synced_seq': syncedSeq,
+      if (deletedAt != null) 'deleted_at': deletedAt,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -4626,6 +4759,7 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
       Value<String?>? ruling,
       Value<bool>? syncDirty,
       Value<int?>? syncedSeq,
+      Value<int?>? deletedAt,
       Value<int>? rowid}) {
     return NotebooksCompanion(
       id: id ?? this.id,
@@ -4638,6 +4772,7 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
       ruling: ruling ?? this.ruling,
       syncDirty: syncDirty ?? this.syncDirty,
       syncedSeq: syncedSeq ?? this.syncedSeq,
+      deletedAt: deletedAt ?? this.deletedAt,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -4675,6 +4810,9 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
     if (syncedSeq.present) {
       map['synced_seq'] = Variable<int>(syncedSeq.value);
     }
+    if (deletedAt.present) {
+      map['deleted_at'] = Variable<int>(deletedAt.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -4694,6 +4832,7 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
           ..write('ruling: $ruling, ')
           ..write('syncDirty: $syncDirty, ')
           ..write('syncedSeq: $syncedSeq, ')
+          ..write('deletedAt: $deletedAt, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -5858,12 +5997,16 @@ typedef $$FoldersTableCreateCompanionBuilder = FoldersCompanion Function({
   required String id,
   required String name,
   required int createdAt,
+  Value<bool?> syncDirty,
+  Value<int?> syncedSeq,
   Value<int> rowid,
 });
 typedef $$FoldersTableUpdateCompanionBuilder = FoldersCompanion Function({
   Value<String> id,
   Value<String> name,
   Value<int> createdAt,
+  Value<bool?> syncDirty,
+  Value<int?> syncedSeq,
   Value<int> rowid,
 });
 
@@ -5883,6 +6026,12 @@ class $$FoldersTableFilterComposer extends Composer<_$LocalDb, $FoldersTable> {
 
   ColumnFilters<int> get createdAt => $composableBuilder(
       column: $table.createdAt, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<bool> get syncDirty => $composableBuilder(
+      column: $table.syncDirty, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get syncedSeq => $composableBuilder(
+      column: $table.syncedSeq, builder: (column) => ColumnFilters(column));
 }
 
 class $$FoldersTableOrderingComposer
@@ -5902,6 +6051,12 @@ class $$FoldersTableOrderingComposer
 
   ColumnOrderings<int> get createdAt => $composableBuilder(
       column: $table.createdAt, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<bool> get syncDirty => $composableBuilder(
+      column: $table.syncDirty, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get syncedSeq => $composableBuilder(
+      column: $table.syncedSeq, builder: (column) => ColumnOrderings(column));
 }
 
 class $$FoldersTableAnnotationComposer
@@ -5921,6 +6076,12 @@ class $$FoldersTableAnnotationComposer
 
   GeneratedColumn<int> get createdAt =>
       $composableBuilder(column: $table.createdAt, builder: (column) => column);
+
+  GeneratedColumn<bool> get syncDirty =>
+      $composableBuilder(column: $table.syncDirty, builder: (column) => column);
+
+  GeneratedColumn<int> get syncedSeq =>
+      $composableBuilder(column: $table.syncedSeq, builder: (column) => column);
 }
 
 class $$FoldersTableTableManager extends RootTableManager<
@@ -5949,24 +6110,32 @@ class $$FoldersTableTableManager extends RootTableManager<
             Value<String> id = const Value.absent(),
             Value<String> name = const Value.absent(),
             Value<int> createdAt = const Value.absent(),
+            Value<bool?> syncDirty = const Value.absent(),
+            Value<int?> syncedSeq = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               FoldersCompanion(
             id: id,
             name: name,
             createdAt: createdAt,
+            syncDirty: syncDirty,
+            syncedSeq: syncedSeq,
             rowid: rowid,
           ),
           createCompanionCallback: ({
             required String id,
             required String name,
             required int createdAt,
+            Value<bool?> syncDirty = const Value.absent(),
+            Value<int?> syncedSeq = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               FoldersCompanion.insert(
             id: id,
             name: name,
             createdAt: createdAt,
+            syncDirty: syncDirty,
+            syncedSeq: syncedSeq,
             rowid: rowid,
           ),
           withReferenceMapper: (p0) => p0
@@ -7476,6 +7645,7 @@ typedef $$NotebooksTableCreateCompanionBuilder = NotebooksCompanion Function({
   Value<String?> ruling,
   Value<bool> syncDirty,
   Value<int?> syncedSeq,
+  Value<int?> deletedAt,
   Value<int> rowid,
 });
 typedef $$NotebooksTableUpdateCompanionBuilder = NotebooksCompanion Function({
@@ -7489,6 +7659,7 @@ typedef $$NotebooksTableUpdateCompanionBuilder = NotebooksCompanion Function({
   Value<String?> ruling,
   Value<bool> syncDirty,
   Value<int?> syncedSeq,
+  Value<int?> deletedAt,
   Value<int> rowid,
 });
 
@@ -7530,6 +7701,9 @@ class $$NotebooksTableFilterComposer
 
   ColumnFilters<int> get syncedSeq => $composableBuilder(
       column: $table.syncedSeq, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get deletedAt => $composableBuilder(
+      column: $table.deletedAt, builder: (column) => ColumnFilters(column));
 }
 
 class $$NotebooksTableOrderingComposer
@@ -7570,6 +7744,9 @@ class $$NotebooksTableOrderingComposer
 
   ColumnOrderings<int> get syncedSeq => $composableBuilder(
       column: $table.syncedSeq, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get deletedAt => $composableBuilder(
+      column: $table.deletedAt, builder: (column) => ColumnOrderings(column));
 }
 
 class $$NotebooksTableAnnotationComposer
@@ -7610,6 +7787,9 @@ class $$NotebooksTableAnnotationComposer
 
   GeneratedColumn<int> get syncedSeq =>
       $composableBuilder(column: $table.syncedSeq, builder: (column) => column);
+
+  GeneratedColumn<int> get deletedAt =>
+      $composableBuilder(column: $table.deletedAt, builder: (column) => column);
 }
 
 class $$NotebooksTableTableManager extends RootTableManager<
@@ -7645,6 +7825,7 @@ class $$NotebooksTableTableManager extends RootTableManager<
             Value<String?> ruling = const Value.absent(),
             Value<bool> syncDirty = const Value.absent(),
             Value<int?> syncedSeq = const Value.absent(),
+            Value<int?> deletedAt = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               NotebooksCompanion(
@@ -7658,6 +7839,7 @@ class $$NotebooksTableTableManager extends RootTableManager<
             ruling: ruling,
             syncDirty: syncDirty,
             syncedSeq: syncedSeq,
+            deletedAt: deletedAt,
             rowid: rowid,
           ),
           createCompanionCallback: ({
@@ -7671,6 +7853,7 @@ class $$NotebooksTableTableManager extends RootTableManager<
             Value<String?> ruling = const Value.absent(),
             Value<bool> syncDirty = const Value.absent(),
             Value<int?> syncedSeq = const Value.absent(),
+            Value<int?> deletedAt = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               NotebooksCompanion.insert(
@@ -7684,6 +7867,7 @@ class $$NotebooksTableTableManager extends RootTableManager<
             ruling: ruling,
             syncDirty: syncDirty,
             syncedSeq: syncedSeq,
+            deletedAt: deletedAt,
             rowid: rowid,
           ),
           withReferenceMapper: (p0) => p0

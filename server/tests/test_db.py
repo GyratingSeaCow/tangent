@@ -216,3 +216,58 @@ def test_init_db_migrates_dumps_mode_check_for_text_note(
 
     assert rows == [("dump-legacy", "brain_dump"), ("dump-note", "text_note")]
     assert {"idx_dumps_client_id", "idx_dumps_created_at"}.issubset(index_names)
+
+
+def test_change_log_check_migration_preserves_seqs(tmp_path):
+    """A pre-folder change_log (CHECK without 'folder') must be rebuilt
+    in place with every seq intact — device checkpoints point into that
+    sequence — and accept folder rows afterwards."""
+    import sqlite3
+
+    from app.db import init_db
+
+    data = tmp_path / "data"
+    data.mkdir()
+    db_file = data / "tangent.db"
+    conn = sqlite3.connect(db_file)
+    conn.executescript(
+        """
+        CREATE TABLE change_log (
+            seq INTEGER PRIMARY KEY AUTOINCREMENT,
+            entity_type TEXT NOT NULL
+                CHECK (entity_type IN ('dump', 'notebook', 'note')),
+            entity_id TEXT NOT NULL,
+            op TEXT NOT NULL CHECK (op IN ('upsert', 'delete')),
+            device_id TEXT NOT NULL,
+            payload TEXT,
+            created_at INTEGER NOT NULL
+        );
+        INSERT INTO change_log
+            (entity_type, entity_id, op, device_id, payload, created_at)
+        VALUES ('notebook', 'nb-1', 'upsert', 'dev-1', '{}', 100),
+               ('dump', 'd-1', 'upsert', 'dev-1', '{}', 101);
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    init_db(str(data))
+
+    conn = sqlite3.connect(db_file)
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        "SELECT seq, entity_type FROM change_log ORDER BY seq"
+    ).fetchall()
+    assert [(r["seq"], r["entity_type"]) for r in rows][:2] == [
+        (1, "notebook"),
+        (2, "dump"),
+    ], "existing seqs must survive the rebuild byte-for-byte"
+
+    conn.execute(
+        "INSERT INTO change_log "
+        "(entity_type, entity_id, op, device_id, payload, created_at) "
+        "VALUES ('folder', 'folder-1', 'upsert', 'dev-1', '{}', 102)"
+    )
+    new_seq = conn.execute("SELECT MAX(seq) FROM change_log").fetchone()[0]
+    assert new_seq > 2, "AUTOINCREMENT must continue past copied rows"
+    conn.close()

@@ -99,6 +99,14 @@ class Folders extends Table {
   TextColumn get id => text()();
   TextColumn get name => text()();
   IntColumn get createdAt => integer()();
+
+  /// Sync state, mirroring notebooks. Folders sync by ID only: same-named
+  /// folders created independently on two devices stay separate (user
+  /// decision). Nullable, and null reads as dirty for the same reason
+  /// notebooks default dirty: a folder that existed before folder sync has
+  /// never been pushed.
+  BoolColumn get syncDirty => boolean().nullable()();
+  IntColumn get syncedSeq => integer().nullable()();
   @override
   Set<Column> get primaryKey => {id};
 }
@@ -140,6 +148,14 @@ class Notebooks extends Table {
   /// The server sequence this row was last reconciled at, or null if never.
   /// Diagnostic: it makes "did this actually sync?" answerable from the data.
   IntColumn get syncedSeq => integer().nullable()();
+
+  /// Epoch ms when this notebook was moved to the trash; null means live.
+  ///
+  /// Deletion is a two-stage affair (user decision): a delete files the row
+  /// here for 7 days before it is purged, so a deletion that synced from
+  /// another device — or a slip of the finger — is recoverable from
+  /// Settings → Trash.
+  IntColumn get deletedAt => integer().nullable()();
   @override
   Set<Column> get primaryKey => {id};
 }
@@ -206,7 +222,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   LocalDb.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 12;
+  int get schemaVersion => 13;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -438,6 +454,65 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
               );
             }
           }
+
+          if (from < 13) {
+            // Folder sync. Two additive columns; ask the database, never the
+            // version number — adding a column twice throws "duplicate column
+            // name" and bricks app launch for every existing install.
+            final List<QueryRow> folderColumns =
+                await customSelect('PRAGMA table_info(folders)').get();
+            final Set<String> present = <String>{
+              for (final QueryRow row in folderColumns)
+                row.data['name'] as String,
+            };
+            if (folderColumns.isEmpty) {
+              await m.createTable(folders);
+            } else {
+              if (!present.contains('sync_dirty')) {
+                await m.addColumn(folders, folders.syncDirty);
+              }
+              if (!present.contains('synced_seq')) {
+                await m.addColumn(folders, folders.syncedSeq);
+              }
+            }
+
+            // Notebook trash: soft-deletes live 7 days before purge.
+            final List<QueryRow> nbColumns =
+                await customSelect('PRAGMA table_info(notebooks)').get();
+            final bool hasDeletedAt = nbColumns.any(
+              (QueryRow row) => row.data['name'] == 'deleted_at',
+            );
+            if (!hasDeletedAt) {
+              await m.addColumn(notebooks, notebooks.deletedAt);
+            }
+
+            // Repair: an earlier build wrote a folder id containing the
+            // LITERAL text "folder-${DateTime...}" — a Dart interpolation
+            // that never ran (single-quoted SQL heredoc territory). Any
+            // device carrying it can collide on primary key the next time
+            // that id template is written. Re-key it to a well-formed id
+            // and carry the filing along. Found live on the Fold.
+            final List<QueryRow> corrupt = await customSelect(
+              r"SELECT id FROM folders WHERE id LIKE '%${%'",
+            ).get();
+            for (final QueryRow row in corrupt) {
+              final String bad = row.data['id'] as String;
+              final String good =
+                  'folder-repair-${DateTime.now().microsecondsSinceEpoch}';
+              await customStatement(
+                'UPDATE folders SET id = ?1 WHERE id = ?2',
+                <Object>[good, bad],
+              );
+              await customStatement(
+                'UPDATE notebooks SET folder_id = ?1 WHERE folder_id = ?2',
+                <Object>[good, bad],
+              );
+              await customStatement(
+                'UPDATE dumps SET folder_id = ?1 WHERE folder_id = ?2',
+                <Object>[good, bad],
+              );
+            }
+          }
         },
       );
 
@@ -487,9 +562,12 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     });
   }
 
-  /// Notebooks with local edits the server has not confirmed.
-  Future<List<NotebookRow>> notebooksNeedingPush() =>
-      (select(notebooks)..where((t) => t.syncDirty.equals(true))).get();
+  /// Notebooks with local edits the server has not confirmed. Trashed rows
+  /// stay out: their tombstone travels instead, and pushing a trashed body
+  /// would resurrect it on the peer.
+  Future<List<NotebookRow>> notebooksNeedingPush() => (select(notebooks)
+        ..where((t) => t.syncDirty.equals(true) & t.deletedAt.isNull()))
+      .get();
 
   /// Marks a notebook as accepted by the server at [seq].
   ///
@@ -738,16 +816,20 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     required String inkJson,
     required int seq,
     String? ruling,
+    Object? folderId = absentFolderId,
   }) async {
     // insertOrReplace rewrites the whole row, so a null ruling here would
     // erase a value this device already holds whenever the peer is an older
     // build that does not send one. Fall back to what is already stored.
-    final String? effectiveRuling = ruling ??
-        await (selectOnly(notebooks)
-              ..addColumns([notebooks.ruling])
-              ..where(notebooks.id.equals(id)))
-            .map((row) => row.read(notebooks.ruling))
-            .getSingleOrNull();
+    // folder_id gets the same treatment with a twist: null is MEANINGFUL
+    // (it says "unfiled"), so absence is a sentinel rather than null.
+    final NotebookRow? existing = await (select(notebooks)
+          ..where((t) => t.id.equals(id)))
+        .getSingleOrNull();
+    final String? effectiveRuling = ruling ?? existing?.ruling;
+    final String? effectiveFolderId = identical(folderId, absentFolderId)
+        ? existing?.folderId
+        : folderId as String?;
 
     await into(notebooks).insert(
       NotebooksCompanion.insert(
@@ -758,19 +840,34 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
         docJson: docJson,
         inkJson: inkJson,
         ruling: Value<String?>(effectiveRuling),
+        folderId: Value<String?>(effectiveFolderId),
         syncDirty: const Value(false),
         syncedSeq: Value(seq),
+        // An arriving upsert means the notebook lives; a copy sitting in
+        // this device's trash from an earlier remote deletion returns to
+        // the shelf rather than shadowing the resurrection.
+        deletedAt: const Value<int?>(null),
       ),
       mode: InsertMode.insertOrReplace,
     );
   }
 
+  /// Sentinel distinguishing "caller sent nothing" from "caller sent null"
+  /// for [applyRemoteNotebook]'s folderId: null MEANS unfiled there.
+  static const Object absentFolderId = Object();
+
   /// Removes a notebook the server says was deleted elsewhere.
   ///
+  /// Into the TRASH, not oblivion: the deletion synced from another device,
+  /// and the user has 7 days (Settings → Trash) to disagree with it.
   /// No tombstone is written: this deletion is already in the server's log, and
   /// recording it again would push it back as if it were local.
   Future<void> applyRemoteNotebookDeletion(String id) async {
-    await (delete(notebooks)..where((t) => t.id.equals(id))).go();
+    await (update(notebooks)..where((t) => t.id.equals(id))).write(
+      NotebooksCompanion(
+        deletedAt: Value(DateTime.now().millisecondsSinceEpoch),
+      ),
+    );
   }
 
   // ---- folders -----------------------------------------------------------
@@ -784,6 +881,8 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
         id: folderId,
         name: name,
         createdAt: DateTime.now().millisecondsSinceEpoch,
+        // Local creations are unsynced work until the server confirms them.
+        syncDirty: const Value<bool?>(true),
       ),
     );
     return folderId;
@@ -796,8 +895,13 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     required String folderId,
     required String name,
   }) async {
-    await (update(folders)..where((t) => t.id.equals(folderId)))
-        .write(FoldersCompanion(name: Value<String>(name)));
+    await (update(folders)..where((t) => t.id.equals(folderId))).write(
+      FoldersCompanion(
+        name: Value<String>(name),
+        // A rename is a local edit the other devices have not heard.
+        syncDirty: const Value<bool?>(true),
+      ),
+    );
   }
 
   /// Files a notebook, or unfiles it when [folderId] is null.
@@ -806,7 +910,11 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     required String? folderId,
   }) async {
     await (update(notebooks)..where((t) => t.id.equals(notebookId))).write(
-      NotebooksCompanion(folderId: Value<String?>(folderId)),
+      NotebooksCompanion(
+        folderId: Value<String?>(folderId),
+        // Filing travels with the notebook payload, so a move must push.
+        syncDirty: const Value(true),
+      ),
     );
   }
 
@@ -832,16 +940,137 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   /// Deletes a folder and unfiles everything inside it.
   ///
   /// The contents are never deleted: a folder is a label, and removing a label
-  /// must not destroy the work it was attached to.
+  /// must not destroy the work it was attached to. The tombstone rides the
+  /// same feed as notebook deletions so the other devices drop the label too;
+  /// the unfiled notebooks are marked dirty so their new (unfiled) state
+  /// pushes with it.
   Future<void> deleteFolder(String folderId) async {
     await transaction(() async {
       await (update(notebooks)..where((t) => t.folderId.equals(folderId)))
-          .write(const NotebooksCompanion(folderId: Value<String?>(null)));
+          .write(
+        const NotebooksCompanion(
+          folderId: Value<String?>(null),
+          syncDirty: Value(true),
+        ),
+      );
       // One folder holds both kinds, so both must be unfiled together.
-      await (update(dumps)..where((t) => t.folderId.equals(folderId)))
-          .write(const DumpsCompanion(folderId: Value<String?>(null)));
+      await (update(dumps)..where((t) => t.folderId.equals(folderId))).write(
+        const DumpsCompanion(
+          folderId: Value<String?>(null),
+          syncDirty: Value<bool?>(true),
+        ),
+      );
       await (delete(folders)..where((t) => t.id.equals(folderId))).go();
+      await recordTombstone(entityType: 'folder', entityId: folderId);
     });
+  }
+
+  // ---- folder sync -------------------------------------------------------
+
+  /// Folders with local changes the server has not confirmed. Null reads as
+  /// dirty: a folder that predates folder sync has never been pushed.
+  Future<List<Folder>> foldersNeedingPush() => (select(folders)
+        ..where((t) => t.syncDirty.equals(true) | t.syncDirty.isNull()))
+      .get();
+
+  /// Marks a folder accepted by the server at [seq].
+  Future<void> markFolderSynced(String id, {required int seq}) async {
+    await (update(folders)..where((t) => t.id.equals(id))).write(
+      FoldersCompanion(
+        syncDirty: const Value<bool?>(false),
+        syncedSeq: Value(seq),
+      ),
+    );
+  }
+
+  /// Applies a folder the server sent us. Clean, not dirty: echoing a pulled
+  /// folder back would trade the same change between devices forever.
+  Future<void> applyRemoteFolder({
+    required String id,
+    required String name,
+    required int createdAt,
+    required int seq,
+  }) async {
+    await into(folders).insert(
+      FoldersCompanion.insert(
+        id: id,
+        name: name,
+        createdAt: createdAt,
+        syncDirty: const Value<bool?>(false),
+        syncedSeq: Value(seq),
+      ),
+      mode: InsertMode.insertOrReplace,
+    );
+  }
+
+  /// Removes a folder the server says was deleted elsewhere, unfiling its
+  /// contents WITHOUT marking them dirty — the peer that deleted the folder
+  /// already pushed its own unfilings, and re-pushing ours would echo.
+  Future<void> applyRemoteFolderDeletion(String id) async {
+    await transaction(() async {
+      await (update(notebooks)..where((t) => t.folderId.equals(id)))
+          .write(const NotebooksCompanion(folderId: Value<String?>(null)));
+      await (update(dumps)..where((t) => t.folderId.equals(id)))
+          .write(const DumpsCompanion(folderId: Value<String?>(null)));
+      await (delete(folders)..where((t) => t.id.equals(id))).go();
+    });
+  }
+
+  // ---- notebook trash ----------------------------------------------------
+
+  /// How long a trashed notebook survives before [purgeExpiredTrash] drops it.
+  static const Duration trashRetention = Duration(days: 7);
+
+  /// Moves a notebook to the trash instead of deleting it.
+  ///
+  /// The row keeps everything — content, filing, sync state — so a restore
+  /// is a single column write. Trashed rows are invisible to the live list
+  /// and to push (a trashed notebook's tombstone travels instead).
+  Future<void> trashNotebook(String id) async {
+    await (update(notebooks)..where((t) => t.id.equals(id))).write(
+      NotebooksCompanion(
+        deletedAt: Value(DateTime.now().millisecondsSinceEpoch),
+      ),
+    );
+  }
+
+  /// Brings a trashed notebook back, dirty so the restore pushes: the other
+  /// devices deleted it when the tombstone arrived, and only a push tells
+  /// them it lives again.
+  Future<void> restoreNotebook(String id) async {
+    await transaction(() async {
+      await (update(notebooks)..where((t) => t.id.equals(id))).write(
+        const NotebooksCompanion(
+          deletedAt: Value<int?>(null),
+          syncDirty: Value(true),
+        ),
+      );
+      // A restore must also cancel any still-undelivered tombstone, or the
+      // next sync would push the deletion straight after the resurrection.
+      await clearTombstone(entityType: 'notebook', entityId: id);
+    });
+  }
+
+  /// Everything currently in the trash, newest deletion first.
+  Future<List<NotebookRow>> trashedNotebooks() => (select(notebooks)
+        ..where((t) => t.deletedAt.isNotNull())
+        ..orderBy([(t) => OrderingTerm.desc(t.deletedAt)]))
+      .get();
+
+  /// Drops every trashed notebook older than [trashRetention]. Returns how
+  /// many were purged. Called at startup; the Settings screen states the
+  /// 7-day window so the emptying is a promise, not a surprise.
+  Future<int> purgeExpiredTrash({DateTime? now}) async {
+    final int cutoff = (now ?? DateTime.now())
+        .subtract(trashRetention)
+        .millisecondsSinceEpoch;
+    return (delete(notebooks)
+          ..where(
+            (t) =>
+                t.deletedAt.isNotNull() &
+                t.deletedAt.isSmallerOrEqualValue(cutoff),
+          ))
+        .go();
   }
 
   Future<void> _createStorageCatalog(Migrator m) async {

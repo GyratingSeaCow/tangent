@@ -203,6 +203,21 @@ class DocumentSyncEngine extends ChangeNotifier {
       await _applyRemoteDump(change);
       return false;
     }
+    if (change.entityType == 'folder') {
+      if (change.op == SyncOp.delete) {
+        await _db.applyRemoteFolderDeletion(change.entityId);
+      } else {
+        final Map<String, dynamic> p = change.payload ?? const {};
+        await _db.applyRemoteFolder(
+          id: change.entityId,
+          name: p['name'] as String? ?? 'Folder',
+          createdAt: (p['created_at'] as num?)?.toInt() ??
+              DateTime.now().millisecondsSinceEpoch,
+          seq: change.seq,
+        );
+      }
+      return false;
+    }
     if (change.entityType != 'notebook') return false;
 
     if (change.op == SyncOp.delete) {
@@ -322,6 +337,12 @@ class DocumentSyncEngine extends ChangeNotifier {
       ruling: payload.containsKey('ruling')
           ? payload['ruling'] as String?
           : null,
+      // Same pattern, sharper edge: folder_id null means UNFILED while
+      // absence means "older peer, keep the local filing" — collapsing the
+      // two would either strand filings or erase them.
+      folderId: payload.containsKey('folder_id')
+          ? payload['folder_id'] as String?
+          : LocalDb.absentFolderId,
       seq: seq,
     );
   }
@@ -329,10 +350,29 @@ class DocumentSyncEngine extends ChangeNotifier {
   Future<int> _pushLocal(TranscriptionClient client, String deviceId) async {
     final List<NotebookRow> dirty = await _db.notebooksNeedingPush();
     final List<DumpRow> dirtyDumps = await _db.dumpsNeedingMetadataPush();
+    final List<Folder> dirtyFolders = await _db.foldersNeedingPush();
     final List<SyncTombstoneRow> tombstones = await _db.pendingTombstones();
-    if (dirty.isEmpty && dirtyDumps.isEmpty && tombstones.isEmpty) return 0;
+    if (dirty.isEmpty &&
+        dirtyDumps.isEmpty &&
+        dirtyFolders.isEmpty &&
+        tombstones.isEmpty) {
+      return 0;
+    }
 
     final List<Map<String, dynamic>> changes = <Map<String, dynamic>>[
+      // Folders FIRST: a notebook payload can name a folder the peer has
+      // never heard of, and applying them folder-before-notebook within one
+      // push keeps the reference resolvable on arrival.
+      for (final Folder row in dirtyFolders)
+        <String, dynamic>{
+          'entity_type': 'folder',
+          'entity_id': row.id,
+          'op': 'upsert',
+          'payload': <String, dynamic>{
+            'name': row.name,
+            'created_at': row.createdAt,
+          },
+        },
       for (final NotebookRow row in dirty)
         <String, dynamic>{
           'entity_type': 'notebook',
@@ -345,6 +385,9 @@ class DocumentSyncEngine extends ChangeNotifier {
             'doc': row.docJson,
             'ink': row.inkJson,
             'ruling': row.ruling,
+            // Filing travels with the notebook. Null is meaningful here —
+            // it says "unfiled", and the server stores it verbatim.
+            'folder_id': row.folderId,
           },
         },
       for (final DumpRow row in dirtyDumps)
@@ -384,6 +427,9 @@ class DocumentSyncEngine extends ChangeNotifier {
     final Map<String, DateTime> pushedDumpUpdatedAt = <String, DateTime>{
       for (final DumpRow row in dirtyDumps) row.id: row.updatedAt,
     };
+    final Set<String> pushedFolderIds = <String>{
+      for (final Folder row in dirtyFolders) row.id,
+    };
 
     int accepted = 0;
     for (final PushResult result in results) {
@@ -402,6 +448,17 @@ class DocumentSyncEngine extends ChangeNotifier {
             seq: result.seq,
             pushedUpdatedAt: wasDump,
           );
+        } else {
+          await _db.clearTombstone(
+            entityType: result.entityType,
+            entityId: result.entityId,
+          );
+        }
+        continue;
+      }
+      if (result.entityType == 'folder') {
+        if (pushedFolderIds.contains(result.entityId)) {
+          await _db.markFolderSynced(result.entityId, seq: result.seq);
         } else {
           await _db.clearTombstone(
             entityType: result.entityType,

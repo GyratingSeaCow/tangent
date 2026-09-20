@@ -554,3 +554,141 @@ class TestPush:
         ).fetchone()
         assert row["title"] == "Recorded on the tablet"
         assert row["audio_kept"] == 0, "sync never implies the audio came too"
+
+
+class TestFolderSync:
+    """Folders travel: entity_type 'folder' and notebook folder_id.
+
+    Filing was device-local, so a library organized on the tablet arrived as
+    an unfiled heap on the phone. Folders sync by ID only — same-named
+    folders created independently stay separate (user decision).
+    """
+
+    def test_a_pushed_folder_is_stored_and_round_trips(self, authed_client, db):
+        client, token = authed_client
+        res = client.post(
+            "/v1/sync/push",
+            json={
+                "device_id": "device-aaaa-1",
+                "changes": [
+                    {
+                        "entity_type": "folder",
+                        "entity_id": "folder-1789759637687803",
+                        "op": "upsert",
+                        "payload": {"name": "tesr", "created_at": 1789759637},
+                    }
+                ],
+            },
+            headers=_auth(token),
+        )
+        assert res.status_code == 200
+        assert res.json()["results"][0]["status"] == "applied"
+
+        row = db.execute(
+            "SELECT name FROM folders WHERE id = ?", ("folder-1789759637687803",)
+        ).fetchone()
+        assert row["name"] == "tesr"
+
+        pulled = client.get(
+            "/v1/sync/pull",
+            params={"device_id": "device-bbbb-2", "since_seq": 0},
+            headers=_auth(token),
+        ).json()
+        assert pulled["changes"][0]["entity_type"] == "folder"
+        assert pulled["changes"][0]["payload"]["name"] == "tesr"
+
+    def test_notebook_folder_id_travels_and_absence_preserves(
+        self, authed_client, db
+    ):
+        # folder_id must survive the trip; a payload WITHOUT folder_id (an
+        # older client) must keep the stored filing rather than erase it.
+        client, token = authed_client
+        client.post(
+            "/v1/sync/push",
+            json={
+                "device_id": "device-aaaa-1",
+                "changes": [
+                    {
+                        "entity_type": "notebook",
+                        "entity_id": "nb-filed",
+                        "op": "upsert",
+                        "payload": {
+                            "title": "Filed",
+                            "doc": {"blocks": []},
+                            "folder_id": "folder-x",
+                        },
+                    }
+                ],
+            },
+            headers=_auth(token),
+        )
+        row = db.execute(
+            "SELECT folder_id FROM notebooks WHERE id = ?", ("nb-filed",)
+        ).fetchone()
+        assert row["folder_id"] == "folder-x"
+
+        # Older-client push: no folder_id key at all.
+        client.post(
+            "/v1/sync/push",
+            json={
+                "device_id": "device-aaaa-1",
+                "changes": [
+                    {
+                        "entity_type": "notebook",
+                        "entity_id": "nb-filed",
+                        "op": "upsert",
+                        "payload": {"title": "Filed v2", "doc": {"blocks": []}},
+                    }
+                ],
+            },
+            headers=_auth(token),
+        )
+        row = db.execute(
+            "SELECT title, folder_id FROM notebooks WHERE id = ?", ("nb-filed",)
+        ).fetchone()
+        assert row["title"] == "Filed v2"
+        assert row["folder_id"] == "folder-x", "absence is not an eraser"
+
+    def test_folder_delete_tombstones_and_round_trips(self, authed_client, db):
+        client, token = authed_client
+        client.post(
+            "/v1/sync/push",
+            json={
+                "device_id": "device-aaaa-1",
+                "changes": [
+                    {
+                        "entity_type": "folder",
+                        "entity_id": "folder-gone",
+                        "op": "upsert",
+                        "payload": {"name": "Doomed"},
+                    }
+                ],
+            },
+            headers=_auth(token),
+        )
+        client.post(
+            "/v1/sync/push",
+            json={
+                "device_id": "device-aaaa-1",
+                "changes": [
+                    {
+                        "entity_type": "folder",
+                        "entity_id": "folder-gone",
+                        "op": "delete",
+                    }
+                ],
+            },
+            headers=_auth(token),
+        )
+        row = db.execute(
+            "SELECT deleted_at FROM folders WHERE id = ?", ("folder-gone",)
+        ).fetchone()
+        assert row is not None and row["deleted_at"] is not None
+
+        pulled = client.get(
+            "/v1/sync/pull",
+            params={"device_id": "device-bbbb-2", "since_seq": 0},
+            headers=_auth(token),
+        ).json()
+        ops = [(c["entity_type"], c["op"]) for c in pulled["changes"]]
+        assert ("folder", "delete") in ops
