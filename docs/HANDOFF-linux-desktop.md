@@ -48,11 +48,12 @@ cd tangent
 git checkout -b feature/linux-desktop origin/main
 ```
 
-`main` is current as of this handoff (`7f958eb`): the full 2026-09 arc is
-merged — pen styles, smart lasso, multi-step undo/redo, save-on-back,
-multi-device sync, server discovery/pairing. `client/linux/` scaffold
-already exists (CMake runner). Read `README.md` and `CHANGELOG.md`
-(Unreleased section) for feature context.
+`main` is current as of this handoff (`caa89a2`, release **v1.4.0**): the
+full 2026-09 arc is merged and released — pen styles, smart lasso,
+multi-step undo/redo, save-on-back, multi-device sync, server
+discovery/pairing. `client/linux/` scaffold already exists (CMake runner).
+Read `README.md` and `CHANGELOG.md` (the `[1.4.0]` section) for feature
+context.
 
 ## Toolchain setup (Arch/CachyOS)
 
@@ -179,8 +180,9 @@ Jeff runs the Tangent server on his Windows box, in Docker:
 4. `Tangent-x86_64.AppImage` launches and passes the same smoke checks
 5. Branch `feature/linux-desktop` pushed with clean history; CI green; PR
    or merge decision left to Jeff
-6. Update `README.md` (Desktop section) + `CHANGELOG.md` (Unreleased) with
-   honest state — only what was actually verified
+6. Update `README.md` (Desktop section) + `CHANGELOG.md` (add a new
+   `[Unreleased]` section above `[1.4.0]`) with honest state — only what
+   was actually verified
 
 ## Known context that will save you time
 
