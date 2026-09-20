@@ -23,7 +23,12 @@ import '../support/fake_notebook_repository.dart';
 /// T4: the notebook editor — text/checkbox blocks over a draggable dump-card
 /// layer under an ink canvas, a page-local pen toolbar, and an explicit save.
 
-DumpRow _dumpRow(String id, String title, {String mode = 'brain_dump'}) =>
+DumpRow _dumpRow(
+  String id,
+  String title, {
+  String mode = 'brain_dump',
+  String? transcript,
+}) =>
     DumpRow(
       id: id,
       createdAt: DateTime.utc(2026, 9, 17, 8),
@@ -31,6 +36,7 @@ DumpRow _dumpRow(String id, String title, {String mode = 'brain_dump'}) =>
       mode: mode,
       durationSeconds: mode == 'text_note' ? 0 : 95,
       title: title,
+      transcript: transcript,
       audioPath: '/audio/$id.m4a',
       audioSizeBytes: 2048,
       syncStatus: 'local_only',
@@ -388,6 +394,8 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('dump-pick-d2')));
     await tester.pump();
     await tester.tap(find.byKey(const ValueKey('dump-picker-add')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('import-as-card')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
 
@@ -519,6 +527,8 @@ void main() {
     await tester.pump();
     await tester.tap(find.byKey(const ValueKey('dump-picker-add')));
     await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('import-as-card')));
+    await tester.pumpAndSettle();
 
     expect(
       find.byType(NotebookDumpCard),
@@ -599,7 +609,8 @@ void main() {
       ),
     );
 
-    final Finder remove = find.byKey(const ValueKey('notebook-block-remove-b1'));
+    final Finder remove =
+        find.byKey(const ValueKey('notebook-block-remove-b1'));
     expect(remove, findsOneWidget, reason: 'every block needs a remove button');
 
     final Rect rect = tester.getRect(remove);
@@ -947,9 +958,11 @@ void main() {
     );
     // The visible canvas is the viewport minus the app bar. The page must be
     // taller than that, or "covers the whole page" proves nothing.
-    final double visibleCanvasHeight = tester.getSize(
-      find.byKey(const ValueKey('notebook-canvas-scroll')),
-    ).height;
+    final double visibleCanvasHeight = tester
+        .getSize(
+          find.byKey(const ValueKey('notebook-canvas-scroll')),
+        )
+        .height;
     expect(
       surfaceSize.height,
       greaterThan(visibleCanvasHeight),
@@ -1054,7 +1067,8 @@ void main() {
     );
   });
 
-  testWidgets('the checkbox field asks Android for an action key, not a newline',
+  testWidgets(
+      'the checkbox field asks Android for an action key, not a newline',
       (tester) async {
     // Android IGNORES the IME action whenever the input type carries the
     // multi-line flag: it shows a newline key instead, the newline is
@@ -1375,7 +1389,6 @@ void main() {
     final Finder grip = find.byKey(const ValueKey('notebook-block-grip-b1'));
     expect(grip, findsOneWidget, reason: 'each block needs a drag handle');
 
-
     await tester.drag(grip, const Offset(60, 90));
     await tester.pumpAndSettle();
 
@@ -1471,8 +1484,8 @@ void main() {
       ),
     );
 
-    final Rect screen = Offset.zero & tester.view.physicalSize /
-        tester.view.devicePixelRatio;
+    final Rect screen =
+        Offset.zero & tester.view.physicalSize / tester.view.devicePixelRatio;
     final Rect row =
         tester.getRect(find.byKey(const ValueKey('notebook-block-b1')));
 
@@ -1624,6 +1637,8 @@ void main() {
     await tester.tap(find.text('Morning ideas').last);
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(FilledButton, 'Add'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('import-as-card')));
     await tester.pumpAndSettle();
 
     final Finder card = find.byType(NotebookDumpCard);
@@ -2015,8 +2030,11 @@ void main() {
         )
         .physics!;
 
-    expect(physics(), isA<ClampingScrollPhysics>(),
-        reason: 'the page scrolls normally at rest',);
+    expect(
+      physics(),
+      isA<ClampingScrollPhysics>(),
+      reason: 'the page scrolls normally at rest',
+    );
 
     final TestGesture gesture = await tester.startGesture(
       tester.getCenter(find.byKey(const ValueKey('notebook-block-grip-b1'))),
@@ -2116,7 +2134,12 @@ void main() {
           id: 'nb-1',
           title: 'Scaled',
           blocks: <NotebookBlock>[
-            const NotebookTextBlock(id: 'b1', text: 'far right', x: 600, y: 100),
+            const NotebookTextBlock(
+              id: 'b1',
+              text: 'far right',
+              x: 600,
+              y: 100,
+            ),
           ],
         ),
         setViewSize: false,
@@ -2362,6 +2385,188 @@ void main() {
       final Offset after = tester.getTopLeft(card);
       expect(after.dx - before.dx, moreOrLessEquals(80, epsilon: 1));
       expect(after.dy - before.dy, moreOrLessEquals(100, epsilon: 1));
+      await unmount(tester);
+    });
+  });
+
+  group('import shape and content-aware insert', () {
+    Future<void> importDump(WidgetTester tester, String pickKey) async {
+      await tester.tap(find.byKey(const ValueKey('notebook-insert-menu')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Dump'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(ValueKey(pickKey)));
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('dump-picker-add')));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('confirming the picker asks Audio bubble or Text',
+        (tester) async {
+      await mountEditor(
+        tester,
+        notebook: testNotebook(id: 'nb-1'),
+        dumps: <DumpRow>[_dumpRow('d1', 'Morning ideas')],
+      );
+
+      await importDump(tester, 'dump-pick-d1');
+
+      expect(find.byKey(const ValueKey('import-as-card')), findsOneWidget);
+      expect(find.byKey(const ValueKey('import-as-text')), findsOneWidget);
+      expect(
+        find.byType(NotebookDumpCard),
+        findsNothing,
+        reason: 'nothing is inserted before the user chooses a shape',
+      );
+
+      await unmount(tester);
+    });
+
+    testWidgets('choosing Text inserts the transcript as a text box',
+        (tester) async {
+      await mountEditor(
+        tester,
+        notebook: testNotebook(id: 'nb-1'),
+        dumps: <DumpRow>[
+          _dumpRow(
+            'd1',
+            'Morning ideas',
+            transcript: 'remember to buy solder and flux',
+          ),
+        ],
+      );
+
+      await importDump(tester, 'dump-pick-d1');
+      await tester.tap(find.byKey(const ValueKey('import-as-text')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(find.byType(NotebookDumpCard), findsNothing);
+      expect(
+        find.text('remember to buy solder and flux'),
+        findsOneWidget,
+        reason: 'the transcript must land in an editable text box',
+      );
+
+      await tester.tap(find.byIcon(Icons.save));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      final List<NotebookTextBlock> texts = repository
+          .saved.single.document.blocks
+          .whereType<NotebookTextBlock>()
+          .toList();
+      expect(texts, hasLength(1));
+      expect(texts.single.text, 'remember to buy solder and flux');
+      expect(tester.takeException(), isNull);
+
+      await unmount(tester);
+    });
+
+    testWidgets('a dump with no transcript still imports as text, honestly',
+        (tester) async {
+      await mountEditor(
+        tester,
+        notebook: testNotebook(id: 'nb-1'),
+        dumps: <DumpRow>[_dumpRow('d1', 'Morning ideas')],
+      );
+
+      await importDump(tester, 'dump-pick-d1');
+      await tester.tap(find.byKey(const ValueKey('import-as-text')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(
+        find.textContaining('no transcript'),
+        findsOneWidget,
+        reason: 'an empty text box would read as a broken import',
+      );
+
+      await unmount(tester);
+    });
+
+    testWidgets('imported cards land below existing content, not on top',
+        (tester) async {
+      await mountEditor(
+        tester,
+        notebook: testNotebook(
+          id: 'nb-1',
+          blocks: const <NotebookBlock>[
+            NotebookTextBlock(id: 'b1', text: 'placed low', x: 16, y: 600),
+          ],
+          strokes: <InkStroke>[
+            InkStroke(
+              id: 's-1',
+              width: 3,
+              points: const <InkPoint>[
+                InkPoint(x: 100, y: 700),
+                InkPoint(x: 200, y: 740),
+              ],
+            ),
+          ],
+        ),
+        dumps: <DumpRow>[_dumpRow('d1', 'Morning ideas')],
+      );
+
+      await importDump(tester, 'dump-pick-d1');
+      await tester.tap(find.byKey(const ValueKey('import-as-card')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      await tester.tap(find.byIcon(Icons.save));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      final NotebookDumpCardBlock card = repository.saved.single.document.blocks
+          .whereType<NotebookDumpCardBlock>()
+          .single;
+      expect(
+        card.y,
+        greaterThan(740),
+        reason: 'the new card must land below the lowest existing content '
+            '(text at 600, ink to 740), never on top of it',
+      );
+      expect(tester.takeException(), isNull);
+
+      await unmount(tester);
+    });
+
+    testWidgets('text imports land below existing content too', (tester) async {
+      await mountEditor(
+        tester,
+        notebook: testNotebook(
+          id: 'nb-1',
+          blocks: const <NotebookBlock>[
+            NotebookTextBlock(id: 'b1', text: 'placed low', x: 16, y: 500),
+          ],
+        ),
+        dumps: <DumpRow>[
+          _dumpRow('d1', 'Morning ideas', transcript: 'the transcript'),
+        ],
+      );
+
+      await importDump(tester, 'dump-pick-d1');
+      await tester.tap(find.byKey(const ValueKey('import-as-text')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      await tester.tap(find.byIcon(Icons.save));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      final List<NotebookTextBlock> texts = repository
+          .saved.single.document.blocks
+          .whereType<NotebookTextBlock>()
+          .toList();
+      final NotebookTextBlock imported = texts
+          .singleWhere((NotebookTextBlock t) => t.text == 'the transcript');
+      expect(
+        imported.y,
+        isNotNull,
+        reason: 'imported text is placed, not flow-laid over placed blocks',
+      );
+      expect(imported.y, greaterThan(500));
+
       await unmount(tester);
     });
   });

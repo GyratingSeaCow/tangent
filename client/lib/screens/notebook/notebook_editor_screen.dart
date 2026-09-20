@@ -55,6 +55,18 @@ const double _pagePadding = 12;
 /// Vertical step between blocks that have never been moved.
 const double _unplacedBlockSpacing = 72;
 
+/// Vertical gap between the current content bottom and an imported item.
+const double _importSpacing = 24;
+
+/// Nominal height reserved for a block when computing the content bottom.
+const double _importBlockHeight = 90;
+
+/// Spacing between consecutive imported audio cards.
+const double _importCardSpacing = 104;
+
+/// How a picked dump lands on the page.
+enum _ImportShape { card, text }
+
 /// Width of the typed-block column on the canvas.
 ///
 /// Typed blocks stay in a readable column instead of stretching across the
@@ -64,10 +76,16 @@ const double _pageColumnWidth = 720;
 /// Floor for a block's width, so a block dragged far right stays usable.
 const double _minBlockWidth = 160;
 
-
-
 /// Insert actions offered by the editor's bottom-left menu.
-enum _InsertAction { text, checkbox, dump, meeting, textNote, cycleRuling, recentre }
+enum _InsertAction {
+  text,
+  checkbox,
+  dump,
+  meeting,
+  textNote,
+  cycleRuling,
+  recentre
+}
 
 class NotebookEditorScreen extends ConsumerStatefulWidget {
   const NotebookEditorScreen({super.key, required this.notebookId});
@@ -385,11 +403,6 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
     });
   }
 
-  /// Default drop point for a newly embedded card: a cascade down the page so
-  /// several additions never land on top of each other.
-  Offset _nextCardPosition(int ordinal) =>
-      Offset(16 + (ordinal % 4) * 12, 24 + ordinal * 72);
-
   /// Imports recordings of one [mode] only.
   ///
   /// Each import entry filters the picker to its own kind: with 60 recordings
@@ -425,20 +438,113 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
         .where((String id) => !embedded.contains(id))
         .toList(growable: false);
     if (added.isEmpty) return;
-    var ordinal = embedded.length;
+
+    // Audio bubble or text? Asked AFTER picking so one answer covers the
+    // whole batch, and nothing lands until the user has answered.
+    final _ImportShape? shape = await _askImportShape();
+    if (shape == null || !mounted) return;
+
+    // Content-aware insert: everything new starts below the lowest existing
+    // content (blocks AND ink), never on top of what is already there.
+    double insertY = _contentBottom() + _importSpacing;
+    final Map<String, Dump> dumpsById = <String, Dump>{
+      for (final Dump dump in dumps) dump.id: dump,
+    };
+
     setState(() {
-      _blocks = <NotebookBlock>[
-        ..._blocks,
-        for (final String dumpId in added)
-          NotebookDumpCardBlock(
-            id: _uuid.v4(),
-            dumpId: dumpId,
-            x: _nextCardPosition(ordinal).dx,
-            y: _nextCardPosition(ordinal++).dy,
-          ),
-      ];
+      final List<NotebookBlock> newBlocks = <NotebookBlock>[];
+      for (final String dumpId in added) {
+        switch (shape) {
+          case _ImportShape.card:
+            newBlocks.add(
+              NotebookDumpCardBlock(
+                id: _uuid.v4(),
+                dumpId: dumpId,
+                x: _pagePadding + 4,
+                y: insertY,
+              ),
+            );
+            insertY += _importCardSpacing;
+          case _ImportShape.text:
+            final Dump? dump = dumpsById[dumpId];
+            final String? transcript = dump?.transcript?.trim();
+            // Honest fallback: an empty text box would read as a broken
+            // import, so a missing transcript says so in the box.
+            final String text = (transcript == null || transcript.isEmpty)
+                ? '(no transcript for "${dump?.title ?? dumpId}")'
+                : transcript;
+            final String id = _uuid.v4();
+            _controllerFor(id, text);
+            newBlocks.add(
+              NotebookTextBlock(
+                id: id,
+                text: text,
+                x: _pagePadding + 4,
+                y: insertY,
+              ),
+            );
+            // Transcripts vary in length; leave room proportional to the
+            // text so consecutive imports do not overlap each other.
+            insertY += _importSpacing + (text.length / 40).ceil() * 24.0;
+        }
+      }
+      _blocks = <NotebookBlock>[..._blocks, ...newBlocks];
       _dirty = true;
     });
+  }
+
+  /// Asks whether the import lands as audio bubbles or transcript text.
+  Future<_ImportShape?> _askImportShape() => showModalBottomSheet<_ImportShape>(
+        context: context,
+        builder: (BuildContext sheetContext) => SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              ListTile(
+                key: const ValueKey<String>('import-as-card'),
+                leading: const Icon(Icons.graphic_eq),
+                title: const Text('Audio bubble'),
+                subtitle: const Text('A playable card you can drag around'),
+                onTap: () => Navigator.of(sheetContext).pop(_ImportShape.card),
+              ),
+              ListTile(
+                key: const ValueKey<String>('import-as-text'),
+                leading: const Icon(Icons.notes),
+                title: const Text('Text'),
+                subtitle: const Text('The transcript, in an editable text box'),
+                onTap: () => Navigator.of(sheetContext).pop(_ImportShape.text),
+              ),
+            ],
+          ),
+        ),
+      );
+
+  /// The lowest edge of everything currently on the page: placed blocks
+  /// (plus a nominal footprint height), flow-laid blocks at their computed
+  /// slots, and every ink point.
+  double _contentBottom() {
+    double lowest = 0;
+    double flowY = _pagePadding;
+    for (final NotebookBlock block in _blocks) {
+      switch (block) {
+        case NotebookTextBlock t:
+          lowest = math.max(lowest, (t.y ?? flowY) + _importBlockHeight);
+          if (t.y == null) flowY += _unplacedBlockSpacing;
+        case NotebookCheckboxBlock c:
+          lowest = math.max(lowest, (c.y ?? flowY) + _importBlockHeight);
+          if (c.y == null) flowY += _unplacedBlockSpacing;
+        case NotebookDumpCardBlock d:
+          lowest = math.max(lowest, d.y + _importBlockHeight);
+        case NotebookBlock():
+          break;
+      }
+    }
+    for (final InkStroke stroke in _strokes) {
+      for (final InkPoint point in stroke.points) {
+        lowest = math.max(lowest, point.y);
+      }
+    }
+    return lowest;
   }
 
   // -------------------------------------------------------------------
@@ -560,7 +666,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                     child: TextField(
                       key: ValueKey<String>('notebook-text-block-${t.id}'),
                       controller: _controllerFor(t.id, t.text),
-                    maxLines: null,
+                      maxLines: null,
                       style: _pageTextStyle,
                       cursorColor: NotebookInkCanvas.inkColor,
                       decoration: _pageInput('Write something…'),
@@ -835,8 +941,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
     final Map<String, DumpRow> rowsById = <String, DumpRow>{
       for (final DumpRow row in rows) row.id: row,
     };
-    final List<Dump> dumps =
-        rows.map(dumpFromRow).toList(growable: false);
+    final List<Dump> dumps = rows.map(dumpFromRow).toList(growable: false);
 
     return PopScope(
       canPop: !_dirty && !_saving,
@@ -918,9 +1023,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                               // when you meant to draw, so the active tool is
                               // always shown as selected.
                               icon: Icon(
-                                _erasing
-                                    ? Icons.edit
-                                    : Icons.auto_fix_normal,
+                                _erasing ? Icons.edit : Icons.auto_fix_normal,
                               ),
                               tooltip:
                                   _erasing ? 'Switch to pen' : 'Erase lines',
@@ -1171,103 +1274,104 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                 height: pageHeight,
                 width: canonicalWidth,
                 child: Stack(
-              children: <Widget>[
-                // Bottom: the page itself -- black, per the ink contract.
-                const Positioned.fill(
-                  child: ColoredBox(color: NotebookInkCanvas.backgroundColor),
-                ),
-                // Rule lines, directly above the page colour and beneath every
-                // piece of content. This fills the whole scrollable surface,
-                // not the viewport, so the ruling extends with the page as it
-                // grows and stays put while scrolling rather than sliding
-                // against the writing.
-                Positioned.fill(
-                  child: IgnorePointer(
-                    child: RepaintBoundary(
-                      child: CustomPaint(
-                        key: const ValueKey('notebook-ruling'),
-                        painter: NotebookRulingPainter(ruling: _ruling),
+                  children: <Widget>[
+                    // Bottom: the page itself -- black, per the ink contract.
+                    const Positioned.fill(
+                      child:
+                          ColoredBox(color: NotebookInkCanvas.backgroundColor),
+                    ),
+                    // Rule lines, directly above the page colour and beneath every
+                    // piece of content. This fills the whole scrollable surface,
+                    // not the viewport, so the ruling extends with the page as it
+                    // grows and stays put while scrolling rather than sliding
+                    // against the writing.
+                    Positioned.fill(
+                      child: IgnorePointer(
+                        child: RepaintBoundary(
+                          child: CustomPaint(
+                            key: const ValueKey('notebook-ruling'),
+                            painter: NotebookRulingPainter(ruling: _ruling),
+                          ),
+                        ),
                       ),
                     ),
-                  ),
-                ),
-                // Typed blocks, each positioned where it was left. Laid out
-                // in canonical space; the FittedBox above scales them.
-                ..._buildPositionedBlocks(canonicalWidth),
-                // Floating recording cards. Each is a Positioned, so they
-                // MUST be direct children of this Stack.
-                for (final NotebookBlock block in _blocks)
-                  if (block is NotebookDumpCardBlock)
-                    NotebookDumpCard(
-                      key: ValueKey<String>('notebook-card-${block.id}'),
-                      dump: rowsById[block.dumpId] == null
-                          ? null
-                          : dumpFromRow(rowsById[block.dumpId]!),
-                      position: Offset(block.x, block.y),
-                      onPositionChanged: (Offset position) =>
-                          _onCardMoved(block.id, position),
-                      onTap: rowsById[block.dumpId] == null
-                          ? null
-                          : () => _openDump(rowsById[block.dumpId]!),
-                      onRemove: () => _removeBlock(block.id),
-                      onDragActive: (bool dragging) {
-                        if (_draggingCard == dragging) return;
-                        setState(() => _draggingCard = dragging);
-                      },
+                    // Typed blocks, each positioned where it was left. Laid out
+                    // in canonical space; the FittedBox above scales them.
+                    ..._buildPositionedBlocks(canonicalWidth),
+                    // Floating recording cards. Each is a Positioned, so they
+                    // MUST be direct children of this Stack.
+                    for (final NotebookBlock block in _blocks)
+                      if (block is NotebookDumpCardBlock)
+                        NotebookDumpCard(
+                          key: ValueKey<String>('notebook-card-${block.id}'),
+                          dump: rowsById[block.dumpId] == null
+                              ? null
+                              : dumpFromRow(rowsById[block.dumpId]!),
+                          position: Offset(block.x, block.y),
+                          onPositionChanged: (Offset position) =>
+                              _onCardMoved(block.id, position),
+                          onTap: rowsById[block.dumpId] == null
+                              ? null
+                              : () => _openDump(rowsById[block.dumpId]!),
+                          onRemove: () => _removeBlock(block.id),
+                          onDragActive: (bool dragging) {
+                            if (_draggingCard == dragging) return;
+                            setState(() => _draggingCard = dragging);
+                          },
+                        ),
+                    // Top: the ink layer. It ignores pointers unless draw mode is
+                    // on, so typing and card dragging work normally otherwise.
+                    Positioned.fill(
+                      child: RepaintBoundary(
+                        child: NotebookInkCanvas(
+                          key: _canvasKey,
+                          strokes: _strokes,
+                          drawingEnabled: _drawing,
+                          erasing: _erasing,
+                          lassoing: _lassoing,
+                          onSelectionChanged: (bool has) {
+                            if (_lassoSelection == has) return;
+                            setState(() {
+                              _lassoSelection = has;
+                              // The canvas dropping its selection (mode exit,
+                              // empty loop) drops the block half too — they are
+                              // one selection to the user.
+                              if (!has) _lassoBlockIds.clear();
+                            });
+                          },
+                          onLassoLoop: (List<Offset> loop) {
+                            _lassoBlockIds
+                              ..clear()
+                              ..addAll(_blocksInLoop(loop));
+                            return _lassoBlockIds.length;
+                          },
+                          hitsExternalSelection: _lassoHitsBlock,
+                          onSelectionDragStep: _lassoDragBlocks,
+                          penWidth: _penWidth,
+                          penStyle: _penStyle,
+                          // Palm rejection, page half: while the pen is present
+                          // the scroll physics lock so a resting hand cannot
+                          // shove the page mid-word. The canvas half (touch not
+                          // inking) lives inside the widget itself.
+                          onStylusPresence: (bool present) {
+                            if (_stylusActive == present) return;
+                            setState(() => _stylusActive = present);
+                          },
+                          // The page below already painted the backdrop, so the
+                          // ink layer composites directly instead of painting
+                          // black and filtering it back out.
+                          opaqueBackground: false,
+                          onStrokesChanged: (List<InkStroke> strokes) {
+                            setState(() {
+                              _strokes = List<InkStroke>.of(strokes);
+                              _dirty = true;
+                            });
+                          },
+                        ),
+                      ),
                     ),
-                // Top: the ink layer. It ignores pointers unless draw mode is
-                // on, so typing and card dragging work normally otherwise.
-                Positioned.fill(
-                  child: RepaintBoundary(
-                    child: NotebookInkCanvas(
-                      key: _canvasKey,
-                      strokes: _strokes,
-                      drawingEnabled: _drawing,
-                      erasing: _erasing,
-                      lassoing: _lassoing,
-                      onSelectionChanged: (bool has) {
-                        if (_lassoSelection == has) return;
-                        setState(() {
-                          _lassoSelection = has;
-                          // The canvas dropping its selection (mode exit,
-                          // empty loop) drops the block half too — they are
-                          // one selection to the user.
-                          if (!has) _lassoBlockIds.clear();
-                        });
-                      },
-                      onLassoLoop: (List<Offset> loop) {
-                        _lassoBlockIds
-                          ..clear()
-                          ..addAll(_blocksInLoop(loop));
-                        return _lassoBlockIds.length;
-                      },
-                      hitsExternalSelection: _lassoHitsBlock,
-                      onSelectionDragStep: _lassoDragBlocks,
-                      penWidth: _penWidth,
-                      penStyle: _penStyle,
-                      // Palm rejection, page half: while the pen is present
-                      // the scroll physics lock so a resting hand cannot
-                      // shove the page mid-word. The canvas half (touch not
-                      // inking) lives inside the widget itself.
-                      onStylusPresence: (bool present) {
-                        if (_stylusActive == present) return;
-                        setState(() => _stylusActive = present);
-                      },
-                      // The page below already painted the backdrop, so the
-                      // ink layer composites directly instead of painting
-                      // black and filtering it back out.
-                      opaqueBackground: false,
-                      onStrokesChanged: (List<InkStroke> strokes) {
-                        setState(() {
-                          _strokes = List<InkStroke>.of(strokes);
-                          _dirty = true;
-                        });
-                      },
-                    ),
-                  ),
+                  ],
                 ),
-              ],
-            ),
               ),
             ),
           ),
