@@ -14,6 +14,10 @@ import 'package:tangent/screens/settings/settings_screen.dart';
 
 class _FakeSecureStore implements SecureStore {
   @override
+  Future<String?> getDeviceId() async => null;
+  @override
+  Future<void> setDeviceId(String id) async {}
+  @override
   Future<String?> getServerUrl() async => null;
   @override
   Future<String?> getToken() async => null;

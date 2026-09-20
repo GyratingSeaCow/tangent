@@ -4,6 +4,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 class SecureStore {
   static const _kToken = 'api_token';
   static const _kServerUrl = 'server_url';
+  static const _kDeviceId = 'device_id';
 
   final FlutterSecureStorage _storage;
 
@@ -16,6 +17,14 @@ class SecureStore {
 
   Future<String?> getToken() => _storage.read(key: _kToken);
   Future<String?> getServerUrl() => _storage.read(key: _kServerUrl);
+
+  /// Stable per-install device identity, minted at first pairing/sync and
+  /// reused forever after — the server must see ONE device per install,
+  /// not one per pairing attempt.
+  Future<String?> getDeviceId() => _storage.read(key: _kDeviceId);
+
+  Future<void> setDeviceId(String id) =>
+      _storage.write(key: _kDeviceId, value: id);
 
   Future<void> setToken(String token) =>
       _storage.write(key: _kToken, value: token);
