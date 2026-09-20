@@ -435,6 +435,143 @@ void main() {
       expect(harness.reports, isEmpty);
     });
 
+    testWidgets('a redone action can be undone again (ping-pong)',
+        (tester) async {
+      final _CanvasHarness harness = _CanvasHarness();
+      await harness.pump(tester);
+
+      await _drawStroke(
+        tester,
+        path: <Offset>[const Offset(5, 5), const Offset(30, 5)],
+      );
+      expect(harness.state.undoLastStroke(), isTrue);
+      expect(harness.state.redo(), isTrue);
+      await tester.pump();
+      expect(harness.state.strokes, hasLength(1));
+
+      // The redo must have re-armed undo: walking back works again.
+      expect(harness.state.undoLastStroke(), isTrue);
+      await tester.pump();
+      expect(
+        harness.state.strokes,
+        isEmpty,
+        reason: 'undo after redo must step back over the redone action',
+      );
+
+      // The stroke fallback can fake the above; an erase sweep cannot.
+      // Redo twice more lands on the redone ERASE state (empty), and undo
+      // from there must bring the ink back — impossible without the redo
+      // path re-arming the undo stack.
+      expect(harness.state.redo(), isTrue);
+      await tester.pump();
+      expect(harness.state.strokes, hasLength(1));
+      await harness.setErasing(tester, true);
+      await _drawStroke(
+        tester,
+        path: <Offset>[const Offset(15, 5), const Offset(16, 5)],
+      );
+      await harness.setErasing(tester, false);
+      expect(harness.state.strokes, isEmpty);
+      expect(harness.state.undoLastStroke(), isTrue);
+      expect(harness.state.redo(), isTrue);
+      await tester.pump();
+      expect(harness.state.strokes, isEmpty, reason: 'redone erase');
+      expect(
+        harness.state.undoLastStroke(),
+        isTrue,
+        reason: 'undoing a redone erase must be possible',
+      );
+      await tester.pump();
+      expect(
+        harness.state.strokes,
+        hasLength(1),
+        reason: 'the ink erased by the redone sweep must return',
+      );
+    });
+
+    testWidgets('undo and redo walk multiple steps', (tester) async {
+      final _CanvasHarness harness = _CanvasHarness();
+      await harness.pump(tester);
+
+      for (final double y in const <double>[5, 30, 55]) {
+        await _drawStroke(
+          tester,
+          path: <Offset>[Offset(5, y), Offset(30, y)],
+        );
+      }
+      final List<String> ids =
+          harness.state.strokes.map((InkStroke s) => s.id).toList();
+      expect(ids, hasLength(3));
+
+      // Walk all the way back...
+      expect(harness.state.undoLastStroke(), isTrue);
+      expect(harness.state.undoLastStroke(), isTrue);
+      expect(harness.state.undoLastStroke(), isTrue);
+      await tester.pump();
+      expect(harness.state.strokes, isEmpty);
+      expect(harness.state.undoLastStroke(), isFalse);
+
+      // ...and all the way forward again, in order.
+      expect(harness.state.redo(), isTrue);
+      await tester.pump();
+      expect(
+        harness.state.strokes.map((InkStroke s) => s.id),
+        <String>[ids[0]],
+      );
+      expect(harness.state.redo(), isTrue);
+      expect(harness.state.redo(), isTrue);
+      await tester.pump();
+      expect(harness.state.strokes.map((InkStroke s) => s.id), ids);
+      expect(harness.state.redo(), isFalse);
+    });
+
+    testWidgets('history steps through strokes AND an erase sweep',
+        (tester) async {
+      final _CanvasHarness harness = _CanvasHarness();
+      await harness.pump(tester);
+
+      await _drawStroke(
+        tester,
+        path: <Offset>[const Offset(5, 5), const Offset(30, 5)],
+      );
+      await _drawStroke(
+        tester,
+        path: <Offset>[const Offset(5, 30), const Offset(30, 30)],
+      );
+      // Erase the second stroke as one sweep.
+      await harness.setErasing(tester, true);
+      await _drawStroke(
+        tester,
+        path: <Offset>[const Offset(15, 30), const Offset(16, 30)],
+      );
+      await harness.setErasing(tester, false);
+      expect(harness.state.strokes, hasLength(1));
+
+      // Undo 1: the sweep comes back. Undo 2: second stroke gone.
+      // Undo 3: first stroke gone.
+      expect(harness.state.undoLastStroke(), isTrue);
+      await tester.pump();
+      expect(harness.state.strokes, hasLength(2));
+      expect(harness.state.undoLastStroke(), isTrue);
+      await tester.pump();
+      expect(harness.state.strokes, hasLength(1));
+      expect(harness.state.undoLastStroke(), isTrue);
+      await tester.pump();
+      expect(harness.state.strokes, isEmpty);
+
+      // Redo all three actions lands back on the post-erase state.
+      expect(harness.state.redo(), isTrue);
+      expect(harness.state.redo(), isTrue);
+      expect(harness.state.redo(), isTrue);
+      await tester.pump();
+      expect(
+        harness.state.strokes,
+        hasLength(1),
+        reason: 'the redone erase sweep must leave one stroke, as it did',
+      );
+      expect(harness.state.redo(), isFalse);
+    });
+
     testWidgets('redo restores what undo removed', (tester) async {
       final _CanvasHarness harness = _CanvasHarness();
       await harness.pump(tester);
