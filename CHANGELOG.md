@@ -5,6 +5,35 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-09-20
+
+### Added
+- **Folders for dumps** — the Dumps list groups into the same folders as
+  notebooks: collapsible headers with counts, unfiled items under
+  "No folder". It is one folder system: file a dump into "Work" and it is
+  the same "Work" your notebooks use; deleting a folder from either screen
+  safely unfiles contents from both. Search results stay flat.
+- **Folder rename and delete** — long-press a folder header (in either
+  list) for rename/delete. Deleting a folder never deletes its contents;
+  they move to "No folder" and the change syncs to other devices.
+- **Export to PDF** — the ⋮ menu on any notebook renders it to a PDF
+  (ink drawn by the editor's own painter, so pen styles export
+  pixel-true; text and checkbox blocks at their positions; page sized to
+  the content) and hands it to the system share sheet.
+- **Import as audio bubble or text** — confirming the dump picker in a
+  notebook now asks how the batch should land: as the draggable playable
+  card, or as the transcript in an ordinary editable text block (with an
+  honest "(no transcript)" placeholder when there is none).
+
+### Changed
+- **Unified list gestures** — long-press on a notebook (row or cover)
+  enters the same multi-select mode dumps have (select-all, bulk delete);
+  the ⋮ button carries the per-item menu (open, rename, move to folder,
+  export, delete).
+- **Content-aware insert** — items imported into a notebook land below
+  the lowest existing content (blocks and ink), stacking downward,
+  instead of cascading from the page top over what is already there.
+
 ## [1.4.0] - 2026-09-20
 
 ### Added
