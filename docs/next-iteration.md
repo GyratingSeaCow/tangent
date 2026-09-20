@@ -4,42 +4,39 @@ Work agreed but deliberately not started, so it is not carried in conversation
 alone. Each item states what is already true, so the next session does not
 re-derive it.
 
-Status sweep 2026-09-19 (Jeff's answers):
-- Amplified-capture item REMOVED at Jeff's direction (the code shipped in
-  `8b65a6f` + `baa6a7f`; this doc's "uncommitted" status was stale).
-- Pen-writes-without-draw-mode (`dea6b39`): verified by Jeff on the S10 —
-  "functions pretty much flawlessly".
-- Lined page templates: already implemented (`f0916cb`, schema v10).
-- Dumps filter dropdown bar: shipped `523bc47`.
-
 ---
 
-## 1. Pen input, remaining phases (ACTIVE 2026-09-19)
+## 1. Open items
 
-Design: `docs/design/pen-vs-finger-input.md` (measurements real; phases 1–2
-shipped and hardware-verified). In scope now, per Jeff:
+None. The board is clear as of 2026-09-20.
 
-- **Palm rejection** (phase 3): pen-present window (~500 ms trailing after the
-  last stylus event) during which touch neither draws, drags cards, nor
-  scrolls. Engages only on devices that have actually produced stylus events —
-  a phone with no pen must never suppress touch.
-- **Pressure-varying stroke width** (phase 4): optional `p` on `InkPoint`,
-  tapered rendering, legacy notebooks (no `p`) load and render flat.
-- **NEW (Jeff, 2026-09-19): fountain pen option, similar to Samsung Notes.**
-  A pen-style picker: the current uniform stroke stays the default, fountain
-  renders pressure-tapered with stroke character. This is where the phase-4
-  pressure data surfaces in UI.
-- Side-button eraser (phase 5) and hover cursor (phase 6) remain later polish;
-  flip-to-erase stays deferred (no `invertedStylus` observed on this pen).
+Candidate follow-ups discussed but NOT committed to:
 
----
+- **Pairing-code display on connected devices**: `/v1/pair/pending` exists
+  server-side (authenticated, returns pending pairings with codes), but no
+  client UI consumes it — the docker log is currently the only place to read
+  a pairing code. Small client-side follow-up if the PowerShell step annoys.
+- **Pen polish, later phases**: side-button eraser (phase 5), hover cursor
+  (phase 6); flip-to-erase stays deferred (no `invertedStylus` observed on
+  this pen).
+- **Lasso block footprint**: blocks are caught via a nominal 300×90 footprint;
+  real render-box measurement is the next step only if wide text blocks
+  annoy in practice.
 
-## 2. Carried, not started
+## 2. Done (2026-09 arc)
 
-- Multi-device sync server discovery/pairing (designs in `docs/design/`,
-  untracked and unreviewed).
-
-## 3. Done
-
-- ~~Back up `tangent-signing\` keystore~~ — DONE 2026-09-19, copied to the
-  local NAS.
+- Pen input phases 1–4: palm rejection, pressure width, fountain pen
+  (`f238d3a`), italic nib + gamma (`2b98407`) — hardware-verified.
+- Smart lasso: ink + blocks/recordings, 40% catch threshold, drag/delete/
+  undo (`3a06581`, `add5ce4`, `a11ebb1`, `4c8f349`).
+- Multi-step undo/redo, 100 deep (`09a9b73`).
+- Save-on-back everywhere, replacing discard dialogs (`e13ea6e`).
+- DEBUG banner removed (`4c8f349`).
+- Multi-device sync discovery/pairing (`4f352bc` server, `e01ad1e` client):
+  unauthenticated `/v1/server/info/public` beacon, client /24 sweep ("Find
+  my server"), 6-digit log-code pairing minting device-bound revocable
+  tokens. E2E-verified against the live container and by Jeff on hardware.
+- Pen-writes-without-draw-mode (`dea6b39`), lined page templates
+  (`f0916cb`), dumps filter bar (`523bc47`), amplified capture
+  (`8b65a6f` + `baa6a7f`) — all verified per 2026-09-19 status sweep.
+- Keystore backed up to local NAS (2026-09-19).
