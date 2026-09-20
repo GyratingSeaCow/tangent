@@ -7,6 +7,7 @@ import 'package:path/path.dart' as p;
 import 'package:record/record.dart';
 
 import 'audio_gain.dart';
+import 'capture_evidence.dart';
 import 'communication_routing.dart';
 
 class RecordingResult {
@@ -232,8 +233,13 @@ class DefaultRecordingService implements RecordingService {
   /// the end of a previous recording).
   String? _routedDeviceId;
 
-  InputAwareAudioRecorder get _ensureRecorder =>
-      _recorder ??= PlatformAudioRecorder();
+  InputAwareAudioRecorder get _ensureRecorder => _recorder ??= Platform.isLinux
+      // record_linux reports started as soon as parecord is spawned, but the
+      // PipeWire source connects ~120-190ms later — early speech is lost
+      // while the UI already says recording. Hold "started" until the stream
+      // shows real amplitude (bounded; see CaptureEvidenceRecorder).
+      ? CaptureEvidenceRecorder(PlatformAudioRecorder())
+      : PlatformAudioRecorder();
 
   @override
   bool get isRecording => _isRecording;
@@ -375,11 +381,11 @@ class DefaultRecordingService implements RecordingService {
       _routedDeviceId = device.id;
       unawaited(
         _routing.route(device.id).catchError(
-          // Belt and braces: CommunicationRouting already swallows platform
-          // faults, but a throw escaping an unawaited future would become an
-          // unhandled async error and could crash in debug builds.
-          (_) => CommunicationRoute.unavailable,
-        ),
+              // Belt and braces: CommunicationRouting already swallows platform
+              // faults, but a throw escaping an unawaited future would become an
+              // unhandled async error and could crash in debug builds.
+              (_) => CommunicationRoute.unavailable,
+            ),
       );
     }
     final double gain = clampMicGain(_micGain());
@@ -543,7 +549,9 @@ class DefaultRecordingService implements RecordingService {
   }
 }
 
-class StubRecordingService with NoInputDeviceSelection implements RecordingService {
+class StubRecordingService
+    with NoInputDeviceSelection
+    implements RecordingService {
   bool _isRecording = false;
   String? _path;
   bool _disposed = false;
