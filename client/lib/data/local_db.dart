@@ -222,7 +222,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   LocalDb.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 13;
+  int get schemaVersion => 14;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -510,6 +510,29 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
               await customStatement(
                 'UPDATE dumps SET folder_id = ?1 WHERE folder_id = ?2',
                 <Object>[good, bad],
+              );
+            }
+          }
+          if (from < 14) {
+            // One-time filing re-push. Notebooks filed BEFORE folder sync
+            // existed are clean (sync_dirty = 0), so their folder_id never
+            // travels: the peer sees the folder arrive empty. Marking every
+            // filed, live notebook dirty makes the next sync carry its
+            // filing. Harmless on fresh installs (no rows match) and cheap
+            // on upgrades — a re-push of an identical body is idempotent.
+            // Ask the database first: on ancient fixtures the earlier steps
+            // may have built notebooks without these columns yet.
+            final Set<String> nbColumns = <String>{
+              for (final QueryRow row
+                  in await customSelect('PRAGMA table_info(notebooks)').get())
+                row.data['name'] as String,
+            };
+            if (nbColumns.containsAll(
+              const <String>['folder_id', 'sync_dirty', 'deleted_at'],
+            )) {
+              await customStatement(
+                'UPDATE notebooks SET sync_dirty = 1 '
+                'WHERE folder_id IS NOT NULL AND deleted_at IS NULL',
               );
             }
           }

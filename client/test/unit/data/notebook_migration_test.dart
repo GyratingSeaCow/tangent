@@ -45,8 +45,8 @@ void main() {
 
     await db.listDumps();
 
-    expect(db.schemaVersion, 13);
-    expect(sql.userVersion, 13);
+    expect(db.schemaVersion, 14);
+    expect(sql.userVersion, 14);
     expect(_columnNames(sql, 'notebooks'), _notebookColumns);
     expect(
       sql.select('PRAGMA foreign_key_list(notebooks)'),
@@ -72,7 +72,7 @@ void main() {
 
     await db.listDumps();
 
-    expect(sql.userVersion, 13);
+    expect(sql.userVersion, 14);
     expect(_columnNames(sql, 'notebooks'), _notebookColumns);
     // v8 adds folder_id to dumps, so compare the columns the fixture had:
     // this test is about existing rows surviving, not about the column list.
@@ -126,7 +126,7 @@ void main() {
 
     sql = sqlite3.open(file.path);
     addTearDown(sql.dispose);
-    expect(sql.userVersion, 13);
+    expect(sql.userVersion, 14);
     expect(_columnNames(sql, 'notebooks'), _notebookColumns);
     // v8 adds folder_id to dumps, so compare the columns the fixture had:
     // this test is about existing rows surviving, not about the column list.
@@ -153,5 +153,50 @@ void main() {
       reason: 'The v6 step must not re-run catalog bootstrap',
     );
     expect(sql.select('PRAGMA integrity_check').single.values.single, 'ok');
+  });
+
+  test('the v14 step re-pushes existing filings and nothing else', () async {
+    // Build a current-schema database, then wind the version back to 13 and
+    // reopen: the v14 data-only step must run against these rows.
+    final sql = sqlite3.openInMemory();
+    final seed = LocalDb.forTesting(
+      NativeDatabase.opened(sql, closeUnderlyingOnClose: false),
+    );
+    await seed.listDumps();
+    await seed.close();
+    sql.execute(
+      'INSERT INTO folders(id, name, created_at, sync_dirty) '
+      "VALUES('f1','Field Notes',1,0)",
+    );
+    sql.execute(
+      'INSERT INTO notebooks'
+      '(id,title,created_at,updated_at,doc_json,ink_json,folder_id,'
+      'sync_dirty,deleted_at) VALUES '
+      "('filed','A',1,2,'{}','{}','f1',0,NULL),"
+      "('unfiled','B',1,2,'{}','{}',NULL,0,NULL),"
+      "('trashed','C',1,2,'{}','{}','f1',0,5)",
+    );
+    sql.userVersion = 13;
+
+    final db = LocalDb.forTesting(NativeDatabase.opened(sql));
+    addTearDown(db.close);
+    await db.listDumps();
+
+    expect(sql.userVersion, 14);
+    final rows = <String, int>{
+      for (final r in sql.select('SELECT id, sync_dirty FROM notebooks'))
+        r['id'] as String: r['sync_dirty'] as int,
+    };
+    expect(
+      rows['filed'],
+      1,
+      reason: 'a pre-folder-sync filing must push once so peers learn it',
+    );
+    expect(rows['unfiled'], 0, reason: 'nothing to re-announce');
+    expect(
+      rows['trashed'],
+      0,
+      reason: 'pushing a trashed body would resurrect it on the peer',
+    );
   });
 }
