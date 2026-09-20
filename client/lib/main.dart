@@ -228,6 +228,9 @@ class _TranscriptionLifecycleHostState
     // whole session. Without this read the notifier is never constructed and
     // the feature silently does nothing while every test still passes.
     ref.read(transcriptionNotificationOwnerProvider);
+    // Auto-sync: from here on, edits push themselves a few seconds after the
+    // user pauses — the sync button is a manual override, not a requirement.
+    ref.read(autoSyncOwnerProvider);
     unawaited(ref.read(serverTranscriptionServiceProvider).reconcilePending());
     // The scheduler's registration comment promises "a foreground sync at
     // startup" — this is it. Cold launch must not show yesterday's notebooks

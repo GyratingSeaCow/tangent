@@ -12,6 +12,7 @@ import '../../data/storage/storage_providers.dart';
 import '../../services/audio_file_picker.dart';
 import '../../services/audio_import.dart';
 import '../../services/android_transcription_notification_port.dart';
+import '../../services/auto_sync_coordinator.dart';
 import '../../services/connectivity_service.dart';
 import '../../services/document_sync_engine.dart';
 import '../../services/note_persistence.dart';
@@ -117,6 +118,20 @@ final documentSyncEngineProvider = Provider<DocumentSyncEngine>((ref) {
   );
   ref.onDispose(engine.dispose);
   return engine;
+});
+
+/// Owns the auto-sync watcher: local edits (write, rename, file, delete)
+/// push to the server a few seconds after the user pauses, so the sync
+/// button becomes a manual override rather than a chore. Read once at
+/// startup, like the other owner providers — never watched.
+final autoSyncOwnerProvider = Provider<void>((ref) {
+  final AutoSyncCoordinator coordinator = AutoSyncCoordinator(
+    db: ref.watch(localDbProvider),
+    syncNow: () async {
+      await ref.read(documentSyncEngineProvider).syncNow();
+    },
+  )..start();
+  ref.onDispose(coordinator.dispose);
 });
 
 /// A human-readable name for this replica, shown in the server's device list.

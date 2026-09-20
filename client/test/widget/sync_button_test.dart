@@ -6,11 +6,118 @@
 /// button did anything. A wrong word here is a wrong feature.
 library;
 
+import 'dart:async';
+
+import 'package:drift/native.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:tangent/data/local_db.dart';
+import 'package:tangent/models/sync_change.dart';
+import 'package:tangent/services/connectivity_service.dart';
 import 'package:tangent/services/document_sync_engine.dart';
+import 'package:tangent/services/transcription_client.dart';
 import 'package:tangent/widgets/sync_button.dart';
 
+/// A client whose pull blocks until the test releases it, so the widget can
+/// be observed while the engine is genuinely mid-sync.
+class _GatedClient implements TranscriptionClient {
+  final Completer<void> gate = Completer<void>();
+
+  @override
+  Future<void> registerDevice({
+    required String deviceId,
+    required String displayName,
+    required String platform,
+  }) async {}
+
+  @override
+  Future<SyncPullPage> pullChanges({
+    required String deviceId,
+    required int sinceSeq,
+  }) async {
+    await gate.future;
+    return SyncPullPage(changes: const [], headSeq: sinceSeq, hasMore: false);
+  }
+
+  @override
+  Future<List<PushResult>> pushChanges({
+    required String deviceId,
+    required List<Map<String, dynamic>> changes,
+  }) async =>
+      const <PushResult>[];
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw UnimplementedError('unexpected call: ${invocation.memberName}');
+}
+
+class _OnlineConnectivity implements ConnectivityService {
+  @override
+  Future<ConnectivityStatus> currentStatus() async => ConnectivityStatus.wifi;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw UnimplementedError('unexpected call: ${invocation.memberName}');
+}
+
 void main() {
+  group('SyncButton spinner', () {
+    testWidgets('clears when the engine finishes even if nothing else '
+        'rebuilds the screen', (tester) async {
+      // The Fold bug: on a screen where the sync pulls nothing, no stream
+      // fires, nothing rebuilds, and an unwatched spinner spins forever.
+      // The button itself must listen to the engine it is showing.
+      final _GatedClient client = _GatedClient();
+      final LocalDb db = LocalDb.forTesting(NativeDatabase.memory());
+      addTearDown(db.close);
+      final DocumentSyncEngine engine = DocumentSyncEngine(
+        db: () => db,
+        client: () => client,
+        connectivity: _OnlineConnectivity(),
+        deviceLabel: () async => 'test-device',
+        newDeviceId: 'device-1',
+      );
+      addTearDown(engine.dispose);
+      final Provider<DocumentSyncEngine> engineProvider =
+          Provider<DocumentSyncEngine>((ref) => engine);
+
+      await tester.pumpWidget(
+        ProviderScope(
+          child: MaterialApp(
+            home: Scaffold(
+              appBar: AppBar(
+                actions: [SyncButton(engineProvider: engineProvider)],
+              ),
+            ),
+          ),
+        ),
+      );
+
+      expect(find.byIcon(Icons.sync), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey<String>('sync-button')));
+      await tester.pump();
+      expect(
+        find.byType(CircularProgressIndicator),
+        findsOneWidget,
+        reason: 'mid-sync the button must show it is working',
+      );
+
+      client.gate.complete();
+      await tester.pump();
+      await tester.pump();
+
+      expect(
+        find.byType(CircularProgressIndicator),
+        findsNothing,
+        reason: 'the sync ended; a spinner that outlives it reads as a hang',
+      );
+      expect(find.byIcon(Icons.sync), findsOneWidget);
+      await tester.pumpAndSettle();
+    });
+  });
+
   group('syncMessageFor', () {
     test('a sync that moved nothing says so plainly', () {
       // "Synced: " with no numbers reads like something happened. It did not.

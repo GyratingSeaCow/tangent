@@ -52,33 +52,43 @@ class SyncButton extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final DocumentSyncEngine engine = ref.watch(engineProvider);
-    final bool busy = engine.isSyncing;
 
-    return IconButton(
-      key: const ValueKey<String>('sync-button'),
-      tooltip: busy ? 'Syncing…' : 'Sync now',
-      // Disabled while running rather than queueing a second pass: the engine
-      // refuses reentrant cycles anyway, and a button that silently does
-      // nothing is worse than one that visibly cannot be pressed.
-      onPressed: busy
-          ? null
-          : () async {
-              final ScaffoldMessengerState messenger =
-                  ScaffoldMessenger.of(context);
-              final SyncReport report = await engine.syncNow();
-              // The screen can be gone by the time the server answers.
-              if (!context.mounted) return;
-              messenger.showSnackBar(
-                SnackBar(content: Text(syncMessageFor(report))),
-              );
-            },
-      icon: busy
-          ? const SizedBox(
-              width: 20,
-              height: 20,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            )
-          : const Icon(Icons.sync),
+    // The engine is a ChangeNotifier and this button is its display: it must
+    // repaint when the engine starts and stops, not whenever some unrelated
+    // stream happens to rebuild the screen. On a screen where a sync moves
+    // nothing, nothing else rebuilds — an unwatched spinner spins forever.
+    return ListenableBuilder(
+      listenable: engine,
+      builder: (BuildContext context, _) {
+        final bool busy = engine.isSyncing;
+        return IconButton(
+          key: const ValueKey<String>('sync-button'),
+          tooltip: busy ? 'Syncing…' : 'Sync now',
+          // Disabled while running rather than queueing a second pass: the
+          // engine refuses reentrant cycles anyway, and a button that
+          // silently does nothing is worse than one that visibly cannot be
+          // pressed.
+          onPressed: busy
+              ? null
+              : () async {
+                  final ScaffoldMessengerState messenger =
+                      ScaffoldMessenger.of(context);
+                  final SyncReport report = await engine.syncNow();
+                  // The screen can be gone by the time the server answers.
+                  if (!context.mounted) return;
+                  messenger.showSnackBar(
+                    SnackBar(content: Text(syncMessageFor(report))),
+                  );
+                },
+          icon: busy
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.sync),
+        );
+      },
     );
   }
 }
