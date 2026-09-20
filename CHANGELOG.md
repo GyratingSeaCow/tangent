@@ -5,6 +5,22 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.1] - 2026-09-20
+
+### Changed
+- **One unified notebook toolbar** — draw toggle, eraser, nib, lasso,
+  undo, redo and the pen-size slider share a single always-visible row
+  under the title; the second drop-down row is gone. Outside draw mode
+  the tools are disabled (grayed), never hidden, so the row never
+  reshuffles and a stray tap can't erase or lasso.
+
+### Fixed
+- **Eraser performance on full pages** — erasing (and repainting while
+  writing) slowed down as a page filled. Stroke hit-testing now rejects
+  distant ink with a cached bounding-box check, and a fountain stroke
+  renders as one native draw call instead of one per segment. Same
+  pixels, verified at the paint level.
+
 ## [1.5.0] - 2026-09-20
 
 ### Added

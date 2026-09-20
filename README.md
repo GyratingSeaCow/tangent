@@ -5,7 +5,7 @@
 > Built for ADHD minds. Self-hosted. Offline-first. No subscriptions.
 
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](./LICENSE)
-[![Version: 1.5.0](https://img.shields.io/badge/version-1.5.0-blue.svg)](./CHANGELOG.md)
+[![Version: 1.5.1](https://img.shields.io/badge/version-1.5.1-blue.svg)](./CHANGELOG.md)
 [![Client tests: 1424 passing](https://img.shields.io/badge/client_tests-1424%20passing-brightgreen.svg)]()
 [![Server tests: 180 passing](https://img.shields.io/badge/server_tests-180%20passing-brightgreen.svg)]()
 
@@ -40,10 +40,13 @@ write around it, and tap it to play it back. Handwriting is pressure-aware
 with a **pen-style picker** (uniform, fountain, italic nib), palm rejection,
 a stroke eraser, **multi-step undo/redo**, and a **smart lasso** that
 circle-selects ink, text blocks and recording cards together so you can drag
-or delete them as one. Backing out of any editor **saves automatically** —
-the back button never discards work. File notebooks into **folders**,
-collapse a folder by tapping its name, and switch between a named list and a
-cover-grid view.
+or delete them as one — all on **one unified toolbar** that never reshuffles.
+Backing out of any editor **saves automatically** — the back button never
+discards work. Any notebook can be **exported to PDF** (pen strokes render
+exactly as drawn) straight into the system share sheet. File notebooks —
+**and dumps** — into the same **folders**, collapse a folder by tapping its
+name, rename or delete it with a long-press, and switch between a named list
+and a cover-grid view.
 
 **Multi-device sync** keeps notebooks, notes and recordings consistent across
 your devices through the server: each device pairs once (a 6-digit code, no
@@ -345,6 +348,9 @@ requires a one-time uninstall, which deletes local data. Stick to one flavor.
 | Self-hosted Docker Compose | ✅ |
 | Notebooks (handwriting + typed blocks + embedded recordings) | ✅ |
 | Notebook folders with collapsible sections (list + cover views) | ✅ |
+| Dump folders (same folder system as notebooks; rename/delete) | ✅ |
+| Notebook export to PDF (share sheet) | ✅ |
+| Import dumps as audio bubble or transcript text, placed below existing content | ✅ |
 | Pen styles (uniform / fountain / italic nib), pressure-aware | ✅ device-verified |
 | Palm rejection + stroke eraser | ✅ device-verified |
 | Smart lasso (ink + blocks + recordings; drag, delete) | ✅ device-verified |
@@ -370,7 +376,7 @@ python -m pytest                # 180 passed, 1 skipped
 
 # Client (Flutter)
 cd client
-flutter test                    # 1397 widget + unit tests
+flutter test                    # 1424 widget + unit tests
 flutter analyze                 # No issues found
 
 # Android native (Kotlin) — from client/android
