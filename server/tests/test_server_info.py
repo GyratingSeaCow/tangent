@@ -78,3 +78,24 @@ def test_pull_model_requires_auth(client):
     cli, _ = client
     resp = cli.post("/v1/models/large-v3/pull")
     assert resp.status_code == 401
+
+
+def test_discovery_info_needs_no_auth(client):
+    """The sweep identifies a server without credentials: minimal fields only."""
+    c, _token = client
+    resp = c.get("/v1/server/info/public")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["service"] == "tangent"
+    assert body["version"] == __version__
+    assert body["requires_auth"] is True
+    assert "name" in body
+    # Nothing private may leak on the unauthenticated form.
+    for forbidden in ("storage_used_bytes", "dump_count", "available_models"):
+        assert forbidden not in body
+
+
+def test_discovery_info_reports_server_name(client):
+    c, _token = client
+    resp = c.get("/v1/server/info/public")
+    assert resp.json()["name"] == "TestUser"

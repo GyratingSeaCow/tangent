@@ -11,11 +11,32 @@ from fastapi import APIRouter, Depends
 from app.auth import require_auth
 from app.config import get_settings
 from app.db import get_db
-from app.models import ServerInfo
+from app.models import PublicServerInfo, ServerInfo
 from app.services.storage import SUPPORTED_MODELS, get_storage_used_bytes
 from app.version import __version__
 
 router = APIRouter()
+
+
+@router.get("/v1/server/info/public", response_model=PublicServerInfo)
+def get_public_server_info(
+    db: Annotated[sqlite3.Connection, Depends(get_db)],
+) -> PublicServerInfo:
+    """Unauthenticated discovery form.
+
+    A client sweeping its subnet needs a cheap way to tell "Tangent server"
+    from "some other web thing on the same port". This answers that and
+    NOTHING else: name, version, whether auth is required. Every private
+    field stays on the authenticated endpoint above.
+    """
+    row = db.execute("SELECT display_name FROM auth WHERE id = 1").fetchone()
+    return PublicServerInfo(
+        # Setup names the server; before setup it introduces itself
+        # generically and requires_auth=False tells the client to run setup.
+        name=(row["display_name"] if row else None) or "Tangent",
+        version=__version__,
+        requires_auth=row is not None,
+    )
 
 
 @router.get("/v1/server/info", response_model=ServerInfo)

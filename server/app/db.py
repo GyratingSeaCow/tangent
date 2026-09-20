@@ -102,6 +102,32 @@ CREATE TABLE IF NOT EXISTS devices (
     last_seen_at INTEGER
 );
 
+-- Pairing: how a second device earns a token by reading the 6-digit code
+-- off the server's output. Rows are 120-second ephemera; the raw code is
+-- NEVER stored (only its hash), and a restart voids pending pairings.
+CREATE TABLE IF NOT EXISTS pairings (
+    pair_id TEXT PRIMARY KEY,
+    code_hash TEXT NOT NULL,
+    device_id TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    platform TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    consumed_at INTEGER
+);
+
+-- Per-device bearer tokens minted by pairing. The original single-token
+-- auth row stays untouched as the primary credential; these ADD devices
+-- and can be revoked one at a time without re-pairing everything else.
+CREATE TABLE IF NOT EXISTS device_tokens (
+    device_id TEXT PRIMARY KEY,
+    token_hash TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    revoked_at INTEGER
+);
+
 -- Notebooks and text notes: the things the user actually asked to sync.
 -- The document body travels as opaque JSON so the server never has to
 -- understand ink, and a client-side schema change does not require a server

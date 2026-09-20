@@ -61,6 +61,16 @@ def require_auth(
     ).fetchone()
 
     if row is None:
+        # Not the primary credential — try the per-device tokens minted by
+        # pairing. Revoked rows stay in the table (auditable) but never
+        # authenticate.
+        row = db.execute(
+            "SELECT display_name FROM device_tokens "
+            "WHERE token_hash = ? AND revoked_at IS NULL",
+            (token_hash,),
+        ).fetchone()
+
+    if row is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token",

@@ -109,6 +109,54 @@ class ServerInfo(BaseModel):
     dump_count: int
 
 
+class PublicServerInfo(BaseModel):
+    """The UNAUTHENTICATED discovery form. Only what a subnet sweep needs to
+    say "that host is a Tangent server named X" — never storage, counts,
+    models, or anything else the full form carries behind auth."""
+
+    service: str = "tangent"
+    name: str
+    version: str
+    requires_auth: bool
+
+
+# --- Pairing ----------------------------------------------------------------
+
+
+class PairRequest(BaseModel):
+    device_id: str = Field(min_length=8, max_length=64)
+    display_name: str = Field(min_length=1, max_length=80)
+    platform: str = Field(min_length=1, max_length=32)
+
+
+class PairRequestResponse(BaseModel):
+    pair_id: str
+    expires_at: datetime
+
+
+class PairClaim(BaseModel):
+    pair_id: str = Field(min_length=1, max_length=64)
+    code: str = Field(min_length=1, max_length=16)
+
+
+class PairClaimResponse(BaseModel):
+    token: str
+    server_name: str
+    device_id: str
+
+
+class PairPendingEntry(BaseModel):
+    pair_id: str
+    display_name: str
+    platform: str
+    requested_at: datetime
+    code: str
+
+
+class PairPendingResponse(BaseModel):
+    pending: list[PairPendingEntry]
+
+
 # --- Multi-device sync ----------------------------------------------------
 
 
