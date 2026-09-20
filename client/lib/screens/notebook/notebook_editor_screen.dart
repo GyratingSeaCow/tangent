@@ -789,66 +789,6 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
             ),
             if (_drawing)
               IconButton(
-                // An unlabelled mode is how you end up erasing when you meant
-                // to draw, so the active tool is always shown as selected.
-                icon: Icon(_erasing ? Icons.edit : Icons.auto_fix_normal),
-                tooltip: _erasing ? 'Switch to pen' : 'Erase lines',
-                isSelected: _erasing,
-                onPressed: () => setState(() => _erasing = !_erasing),
-              ),
-            if (_drawing)
-              IconButton(
-                key: const ValueKey('notebook-pen-style'),
-                // The nib: fountain tapers with pen pressure like Samsung
-                // Notes; ballpoint is the original uniform stroke. Selected
-                // state shows fountain is active, matching the eraser's
-                // labelled-mode convention above.
-                icon: Icon(
-                  _penStyle == PenStyle.fountain
-                      ? Icons.brush
-                      : Icons.mode_edit_outline,
-                ),
-                tooltip: _penStyle == PenStyle.fountain
-                    ? 'Fountain pen (pressure). Tap for ballpoint'
-                    : 'Ballpoint. Tap for fountain pen (pressure)',
-                isSelected: _penStyle == PenStyle.fountain,
-                onPressed: () => setState(() {
-                  _penStyle = _penStyle == PenStyle.fountain
-                      ? PenStyle.ballpoint
-                      : PenStyle.fountain;
-                }),
-              ),
-            if (_drawing)
-              IconButton(
-                key: const ValueKey('notebook-lasso'),
-                // The smart lasso: circle ink to select it, drag the
-                // selection anywhere, delete it from the toolbar. Selected
-                // state marks the mode, same convention as the eraser.
-                icon: const Icon(Icons.gesture),
-                tooltip: _lassoing ? 'Exit lasso' : 'Lasso select',
-                isSelected: _lassoing,
-                onPressed: () => setState(() {
-                  _lassoing = !_lassoing;
-                  // Lasso and eraser are exclusive: a gesture can select or
-                  // erase, never ambiguously both.
-                  if (_lassoing) _erasing = false;
-                  if (!_lassoing) _lassoSelection = false;
-                }),
-              ),
-            if (_drawing && _lassoing)
-              IconButton(
-                key: const ValueKey('notebook-lasso-delete'),
-                icon: const Icon(Icons.delete_outline),
-                tooltip: 'Delete selection',
-                // Enabled only while something is circled — a dead delete
-                // button reads as broken, a live one with nothing selected
-                // would surprise.
-                onPressed: _lassoSelection
-                    ? () => _canvasKey.currentState?.deleteSelection()
-                    : null,
-              ),
-            if (_drawing)
-              IconButton(
                 icon: const Icon(Icons.undo),
                 tooltip: 'Undo stroke',
                 onPressed: () => _canvasKey.currentState?.undoLastStroke(),
@@ -861,13 +801,96 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
           ],
           bottom: _drawing
               ? PreferredSize(
-                  preferredSize: const Size.fromHeight(56),
+                  preferredSize: const Size.fromHeight(104),
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
-                    child: PenSizeControl(
-                      value: _penWidth,
-                      onChanged: (double width) =>
-                          setState(() => _penWidth = width),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        // The tool row lives HERE, below the title bar, so
+                        // entering draw mode never reshuffles the row up
+                        // top — the permanent actions stay where the hand
+                        // knows them (user call).
+                        Row(
+                          children: <Widget>[
+                            IconButton(
+                              // An unlabelled mode is how you end up erasing
+                              // when you meant to draw, so the active tool is
+                              // always shown as selected.
+                              icon: Icon(
+                                _erasing
+                                    ? Icons.edit
+                                    : Icons.auto_fix_normal,
+                              ),
+                              tooltip:
+                                  _erasing ? 'Switch to pen' : 'Erase lines',
+                              isSelected: _erasing,
+                              onPressed: () => setState(() {
+                                _erasing = !_erasing;
+                                if (_erasing) _lassoing = false;
+                              }),
+                            ),
+                            IconButton(
+                              key: const ValueKey('notebook-pen-style'),
+                              // The nib: fountain tapers with pen pressure
+                              // like Samsung Notes; ballpoint is the original
+                              // uniform stroke.
+                              icon: Icon(
+                                _penStyle == PenStyle.fountain
+                                    ? Icons.brush
+                                    : Icons.mode_edit_outline,
+                              ),
+                              tooltip: _penStyle == PenStyle.fountain
+                                  ? 'Fountain pen (pressure). Tap for '
+                                      'ballpoint'
+                                  : 'Ballpoint. Tap for fountain pen '
+                                      '(pressure)',
+                              isSelected: _penStyle == PenStyle.fountain,
+                              onPressed: () => setState(() {
+                                _penStyle = _penStyle == PenStyle.fountain
+                                    ? PenStyle.ballpoint
+                                    : PenStyle.fountain;
+                              }),
+                            ),
+                            IconButton(
+                              key: const ValueKey('notebook-lasso'),
+                              // The smart lasso: circle ink to select it,
+                              // drag the selection anywhere, delete it from
+                              // this row.
+                              icon: const Icon(Icons.gesture),
+                              tooltip:
+                                  _lassoing ? 'Exit lasso' : 'Lasso select',
+                              isSelected: _lassoing,
+                              onPressed: () => setState(() {
+                                _lassoing = !_lassoing;
+                                // Lasso and eraser are exclusive: a gesture
+                                // can select or erase, never both.
+                                if (_lassoing) _erasing = false;
+                                if (!_lassoing) _lassoSelection = false;
+                              }),
+                            ),
+                            if (_lassoing)
+                              IconButton(
+                                key: const ValueKey('notebook-lasso-delete'),
+                                icon: const Icon(Icons.delete_outline),
+                                tooltip: 'Delete selection',
+                                // Enabled only while something is circled —
+                                // a dead delete button reads as broken, a
+                                // live one with nothing selected would
+                                // surprise.
+                                onPressed: _lassoSelection
+                                    ? () => _canvasKey.currentState
+                                        ?.deleteSelection()
+                                    : null,
+                              ),
+                          ],
+                        ),
+                        PenSizeControl(
+                          value: _penWidth,
+                          onChanged: (double width) =>
+                              setState(() => _penWidth = width),
+                        ),
+                      ],
                     ),
                   ),
                 )

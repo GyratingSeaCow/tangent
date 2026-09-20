@@ -215,6 +215,34 @@ void main() {
     );
   });
 
+  testWidgets('a cancelled gesture does not wedge the lasso',
+      (WidgetTester tester) async {
+    // The latch bug: a PointerCancel (system gesture, palm claim, second
+    // finger) used to leave _activePointer set, silently killing every
+    // later lasso gesture on the page.
+    final List<InkStroke> captured = <InkStroke>[];
+    final List<bool> selection = <bool>[];
+    await mount(tester, captured: captured, selectionEvents: selection);
+
+    final TestGesture doomed = await tester.createGesture();
+    await doomed.down(const Offset(80, 80));
+    await tester.pump();
+    await doomed.moveTo(const Offset(140, 80));
+    await tester.pump();
+    await doomed.cancel();
+    await tester.pump();
+
+    // The next loop must work exactly as if the cancelled one never was.
+    await lassoAroundA(tester);
+    expect(
+      selection,
+      isNotEmpty,
+      reason: 'a cancelled gesture must release the pointer latch',
+    );
+    expect(selection.last, isTrue);
+    expect(canvasKey.currentState!.selectedCount, 1);
+  });
+
   testWidgets('lasso mode never inks even over empty space',
       (WidgetTester tester) async {
     final List<InkStroke> captured = <InkStroke>[];

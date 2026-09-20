@@ -586,8 +586,13 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
     if (isStylus) _markStylusPresent();
     // Palm rejection: while the pen is present (in contact, or within the
     // trailing window after lifting), a touch contact is a resting hand,
-    // not intent — even in draw mode.
-    if (!isStylus && event.kind == PointerDeviceKind.touch && _stylusPresent) {
+    // not intent — even in draw mode. Lasso mode is exempt: a selection
+    // gesture cannot scribble, and eating the touch here made finger
+    // lassos silently dead for half a second after every pen stroke.
+    if (!isStylus &&
+        event.kind == PointerDeviceKind.touch &&
+        _stylusPresent &&
+        !widget.lassoing) {
       return;
     }
     if (!_acceptsDevice(event.kind)) return;
@@ -682,9 +687,23 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
   }
 
   void _onPointerCancel(PointerCancelEvent event) {
-    if (_activePoints == null || event.pointer != _activePointer) return;
+    if (event.pointer != _activePointer) return;
     setState(() {
+      // A cancelled gesture must release EVERY mode's claim on the pointer,
+      // not just the pen's. Leaving _activePointer latched after a cancelled
+      // lasso gesture made every later lasso attempt a silent no-op.
       _cancelActiveStroke();
+      _lassoPath = null;
+      // A cancelled drag restores the pre-drag ink exactly.
+      final List<InkStroke>? snapshot = _dragUndoSnapshot;
+      if (_dragStart != null && snapshot != null) {
+        _strokes
+          ..clear()
+          ..addAll(snapshot);
+      }
+      _dragStart = null;
+      _dragDelta = Offset.zero;
+      _dragUndoSnapshot = null;
       _revision++;
     });
   }
