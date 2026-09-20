@@ -3,9 +3,14 @@
 /// Deterministic, extractive meeting-note formatter.
 ///
 /// It never calls a model or network service. Every content sentence in the
-/// output is copied from the transcript; missing categories are stated plainly
-/// with [emptyMarker] (defaults to `None stated`). The subject heading is
-/// always the caller-supplied [title], never inferred from transcript text.
+/// output is copied from the transcript. Sections with nothing extracted are
+/// OMITTED rather than rendered with a filler line; only the Summary falls
+/// back to [emptyMarker] (defaults to `None stated`) so the notes are never
+/// empty. The transcript itself is NOT repeated in the notes — the dump
+/// already displays it — and `[MM:SS]` / `[H:MM:SS]` paragraph markers from
+/// the meeting transcript format are stripped before sentence analysis so
+/// they never bleed into bullets. The subject heading is always the
+/// caller-supplied [title], never inferred from transcript text.
 ///
 /// Sentence splitting respects URLs, decimal numbers, and common
 /// abbreviations so transcripts that mention `https://example.com`,
@@ -14,6 +19,13 @@ final class MeetingNotesProcessor {
   const MeetingNotesProcessor();
 
   static const String defaultEmptyMarker = 'None stated';
+
+  /// `[MM:SS]`, `[H:MM:SS]`, or legacy `HH:MM:SS` markers produced by the
+  /// meeting transcript formatter, at a line start or after whitespace.
+  static final RegExp _timestampMarker = RegExp(
+    r'(?:^|(?<=\s))(?:\[\d{1,2}:\d{2}(?::\d{2})?\]|\d{2}:\d{2}:\d{2})\s*',
+    multiLine: true,
+  );
 
   /// Action verbs that signify a real commitment. Anything not in this list is
   /// not picked up as an action item.
@@ -31,9 +43,17 @@ final class MeetingNotesProcessor {
     if (raw.isEmpty) {
       throw const FormatException('Meeting transcript is empty');
     }
-    final subject =
-        title.trim().isEmpty ? raw.split(RegExp(r'[.!?]')).first : title.trim();
-    final sentences = _sentences(raw);
+    // Strip transcript-format timestamp markers. Speaker prefixes have no
+    // reliable shape, so only markers are removed; the text keeps reading as
+    // sentences for the splitter.
+    final plain = raw
+        .replaceAll(_timestampMarker, '')
+        .replaceAll(RegExp(r'\s+\n'), '\n')
+        .trim();
+    final subject = title.trim().isEmpty
+        ? plain.split(RegExp(r'[.!?]')).first
+        : title.trim();
+    final sentences = _sentences(plain);
     final decisions = sentences.where(_isDecision).toList(growable: false);
     final actions = sentences.where(_isAction).toList(growable: false);
     final questions = sentences
@@ -50,12 +70,10 @@ final class MeetingNotesProcessor {
     return [
       '# ${subject.replaceFirst(RegExp(r'[.!?]$'), '')}',
       '## Summary\n\n${discussion.isEmpty ? emptyMarker : discussion.take(2).join(' ')}',
-      _section('Key Discussion Points', discussion, emptyMarker),
-      _section('Decisions', decisions, emptyMarker),
-      _actionSection(actions, emptyMarker),
-      _section('Open Questions', questions, emptyMarker),
-      '## Raw Transcript\n\n$raw',
-    ].join('\n\n');
+      _section('Decisions', decisions),
+      _actionSection(actions),
+      _section('Open Questions', questions),
+    ].whereType<String>().join('\n\n');
   }
 
   /// Split on sentence terminators while keeping URLs, decimals, and common
@@ -190,17 +208,16 @@ final class MeetingNotesProcessor {
     return explicit.hasMatch(lower);
   }
 
-  String _section(String heading, List<String> values, String emptyMarker) {
-    final body = values.isEmpty
-        ? emptyMarker
-        : values.map((value) => '- $value').join('\n');
+  /// A section renders only when it has content; an empty category is omitted
+  /// entirely rather than printed with a filler line.
+  String? _section(String heading, List<String> values) {
+    if (values.isEmpty) return null;
+    final body = values.map((value) => '- $value').join('\n');
     return '## $heading\n\n$body';
   }
 
-  String _actionSection(List<String> actions, String emptyMarker) {
-    if (actions.isEmpty) {
-      return '## Action Items\n\n$emptyMarker';
-    }
+  String? _actionSection(List<String> actions) {
+    if (actions.isEmpty) return null;
     final lines = actions.map((action) {
       final owner = _owner(action) ?? 'Not stated';
       final date = _date(action) ?? 'Not stated';

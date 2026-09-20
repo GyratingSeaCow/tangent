@@ -69,13 +69,17 @@ List<TranscriptSegment> parseTranscriptSegments(Object? raw) {
   return segments;
 }
 
-/// Renders [segments] as timestamped speaker blocks.
+/// Renders [segments] as timestamped paragraphs.
 ///
-/// Consecutive segments carrying the same speaker label merge into one block
-/// headed by the first of them. Unattributed segments never merge, so their
-/// timestamps stay navigable, and their heading is the timestamp alone — a
-/// speaker label is never invented. Returns null when nothing is renderable,
-/// which leaves the caller on its existing plain-text path.
+/// Consecutive segments merge into one paragraph while the speaker label is
+/// unchanged (both-null counts as unchanged): named speakers merge for their
+/// whole turn, and unattributed segments merge until a minute boundary passes
+/// (the paragraph's first segment and the candidate segment fall in different
+/// whole minutes), so a solo recording reads as prose with a `[MM:SS]` marker
+/// roughly once a minute instead of a heading every few seconds. A speaker
+/// label is never invented; attributed paragraphs render as
+/// `[MM:SS] Name: text`. Returns null when nothing is renderable, which
+/// leaves the caller on its existing plain-text path.
 String? formatMeetingTranscript(List<TranscriptSegment> segments) {
   final blocks = <_Block>[];
   for (final segment in segments) {
@@ -83,18 +87,23 @@ String? formatMeetingTranscript(List<TranscriptSegment> segments) {
     if (text.isEmpty) continue;
     final speaker = _label(segment.speaker);
     final last = blocks.isEmpty ? null : blocks.last;
-    if (last != null && speaker != null && last.speaker == speaker) {
-      last.texts.add(text);
-      continue;
+    if (last != null && last.speaker == speaker) {
+      final sameMinute =
+          _seconds(segment.start) ~/ 60 == _seconds(last.start) ~/ 60;
+      if (speaker != null || sameMinute) {
+        last.texts.add(text);
+        continue;
+      }
     }
-    blocks.add(_Block(_timestamp(segment.start), speaker, [text]));
+    blocks.add(_Block(segment.start, speaker, [text]));
   }
   if (blocks.isEmpty) return null;
   return blocks.map((block) {
-    final heading = block.speaker == null
-        ? block.timestamp
-        : '${block.timestamp} ${block.speaker}';
-    return '$heading\n${block.texts.join(' ')}';
+    final marker = '[${_timestamp(block.start)}]';
+    final body = block.texts.join(' ');
+    return block.speaker == null
+        ? '$marker $body'
+        : '$marker ${block.speaker}: $body';
   }).join('\n\n');
 }
 
@@ -104,21 +113,23 @@ String? formatMeetingTranscriptFromResult(Object? raw) =>
     formatMeetingTranscript(parseTranscriptSegments(raw));
 
 final class _Block {
-  _Block(this.timestamp, this.speaker, this.texts);
-  final String timestamp;
+  _Block(this.start, this.speaker, this.texts);
+  final double start;
   final String? speaker;
   final List<String> texts;
 }
 
-/// Zero-padded elapsed `HH:MM:SS`. Fractional seconds floor rather than round
-/// so a heading never points past the audio it introduces.
+/// Elapsed `MM:SS` below one hour, `H:MM:SS` (hours unpadded) at or above it.
+/// Fractional seconds floor rather than round so a marker never points past
+/// the audio it introduces.
 String _timestamp(double start) {
   final total = _seconds(start).floor();
   final hours = total ~/ 3600;
   final minutes = (total % 3600) ~/ 60;
   final seconds = total % 60;
   String pad(int value) => value.toString().padLeft(2, '0');
-  return '${pad(hours)}:${pad(minutes)}:${pad(seconds)}';
+  if (hours == 0) return '${pad(minutes)}:${pad(seconds)}';
+  return '$hours:${pad(minutes)}:${pad(seconds)}';
 }
 
 double _seconds(Object? value) {

@@ -82,12 +82,48 @@ void main() {
     });
   });
 
-  group('formatMeetingTranscript', () {
+  group('formatMeetingTranscript (paragraph style)', () {
     test('returns null when there are no segments', () {
       expect(formatMeetingTranscript(const []), isNull);
     });
 
-    test('renders one timestamped speaker block per speaker turn', () {
+    test('merges all null-speaker segments within one minute into a single '
+        'paragraph with one leading marker', () {
+      final formatted = formatMeetingTranscript(const [
+        TranscriptSegment(start: 0, text: 'First chunk.'),
+        TranscriptSegment(start: 6, text: 'Second chunk.'),
+        TranscriptSegment(start: 22, text: 'Third chunk.'),
+      ]);
+
+      expect(formatted, '[00:00] First chunk. Second chunk. Third chunk.');
+    });
+
+    test('starts a new paragraph when a minute boundary passes', () {
+      final formatted = formatMeetingTranscript(const [
+        TranscriptSegment(start: 0, text: 'First chunk.'),
+        TranscriptSegment(start: 30, text: 'Same minute.'),
+        TranscriptSegment(start: 61, text: 'Second chunk.'),
+      ]);
+
+      expect(
+        formatted,
+        '[00:00] First chunk. Same minute.\n'
+        '\n'
+        '[01:01] Second chunk.',
+      );
+    });
+
+    test('marker carries the start of the paragraph, not the boundary', () {
+      final formatted = formatMeetingTranscript(const [
+        TranscriptSegment(start: 59, text: 'one'),
+        TranscriptSegment(start: 125.7, text: 'two'),
+      ]);
+
+      expect(formatted, '[00:59] one\n\n[02:05] two');
+    });
+
+    test('renders speaker turns as their own paragraphs with the label '
+        'after the marker', () {
       final formatted = formatMeetingTranscript(const [
         TranscriptSegment(start: 0, speaker: 'Speaker 1', text: 'Hello there.'),
         TranscriptSegment(
@@ -99,26 +135,24 @@ void main() {
 
       expect(
         formatted,
-        '00:00:00 Speaker 1\n'
-        'Hello there.\n'
+        '[00:00] Speaker 1: Hello there.\n'
         '\n'
-        '00:04:07 Speaker 2\n'
-        'Follow up later.',
+        '[04:07] Speaker 2: Follow up later.',
       );
     });
 
-    test('merges consecutive segments of the same speaker under the first '
-        'timestamp', () {
+    test('merges consecutive same-speaker segments across minute boundaries',
+        () {
       final formatted = formatMeetingTranscript(const [
         TranscriptSegment(start: 5, speaker: 'Speaker 1', text: 'One.'),
-        TranscriptSegment(start: 9, speaker: 'Speaker 1', text: 'Two.'),
-        TranscriptSegment(start: 13, speaker: 'Speaker 1', text: 'Three.'),
+        TranscriptSegment(start: 40, speaker: 'Speaker 1', text: 'Two.'),
+        TranscriptSegment(start: 80, speaker: 'Speaker 1', text: 'Three.'),
       ]);
 
-      expect(formatted, '00:00:05 Speaker 1\nOne. Two. Three.');
+      expect(formatted, '[00:05] Speaker 1: One. Two. Three.');
     });
 
-    test('starts a new block when the speaker changes back and forth', () {
+    test('breaks the paragraph when the speaker changes back and forth', () {
       final formatted = formatMeetingTranscript(const [
         TranscriptSegment(start: 0, speaker: 'Ada', text: 'a1'),
         TranscriptSegment(start: 10, speaker: 'Bob', text: 'b1'),
@@ -127,93 +161,67 @@ void main() {
 
       expect(
         formatted,
-        '00:00:00 Ada\n'
-        'a1\n'
+        '[00:00] Ada: a1\n'
         '\n'
-        '00:00:10 Bob\n'
-        'b1\n'
+        '[00:10] Bob: b1\n'
         '\n'
-        '00:00:20 Ada\n'
-        'a2',
+        '[00:20] Ada: a2',
       );
     });
 
-    test('uses timestamp-only headings when every speaker is null', () {
-      final formatted = formatMeetingTranscript(const [
-        TranscriptSegment(start: 0, text: 'First chunk.'),
-        TranscriptSegment(start: 61, text: 'Second chunk.'),
-      ]);
-
-      expect(
-        formatted,
-        '00:00:00\n'
-        'First chunk.\n'
-        '\n'
-        '00:01:01\n'
-        'Second chunk.',
-      );
-      expect(formatted, isNot(contains('Speaker')));
-    });
-
-    test('never merges null-speaker segments so timestamps stay navigable', () {
-      final formatted = formatMeetingTranscript(const [
-        TranscriptSegment(start: 0, text: 'one'),
-        TranscriptSegment(start: 30, text: 'two'),
-      ]);
-
-      expect(formatted, '00:00:00\none\n\n00:00:30\ntwo');
-    });
-
-    test('keeps named labels and timestamp-only headings side by side', () {
+    test('breaks between attributed and unattributed runs without inventing '
+        'a label', () {
       final formatted = formatMeetingTranscript(const [
         TranscriptSegment(start: 0, speaker: 'Speaker 1', text: 'named'),
         TranscriptSegment(start: 7, text: 'unnamed'),
       ]);
 
-      expect(
-        formatted,
-        '00:00:00 Speaker 1\n'
-        'named\n'
-        '\n'
-        '00:00:07\n'
-        'unnamed',
-      );
+      expect(formatted, '[00:00] Speaker 1: named\n\n[00:07] unnamed');
+      expect(formatted, isNot(contains('null')));
     });
 
-    test('zero-pads and rolls hours over for long recordings', () {
+    test('drops the hours field below one hour and shows it unpadded above',
+        () {
       final formatted = formatMeetingTranscript(const [
-        TranscriptSegment(start: 3661.9, speaker: 'S', text: 'late'),
-        TranscriptSegment(start: 36000, speaker: 'T', text: 'later'),
+        TranscriptSegment(start: 3540, text: 'before the hour'),
+        TranscriptSegment(start: 3661.9, text: 'after the hour'),
+        TranscriptSegment(start: 36000, text: 'ten hours in'),
       ]);
 
-      expect(formatted, startsWith('01:01:01 S\n'));
-      expect(formatted, contains('10:00:00 T\n'));
+      expect(
+        formatted,
+        '[59:00] before the hour\n'
+        '\n'
+        '[1:01:01] after the hour\n'
+        '\n'
+        '[10:00:00] ten hours in',
+      );
     });
 
     test('floors fractional seconds rather than rounding up', () {
       final formatted = formatMeetingTranscript(const [
-        TranscriptSegment(start: 59.99, speaker: 'S', text: 'x'),
+        TranscriptSegment(start: 59.99, text: 'x'),
       ]);
 
-      expect(formatted, '00:00:59 S\nx');
+      expect(formatted, '[00:59] x');
     });
 
     test('trims each segment text before joining', () {
       final formatted = formatMeetingTranscript(const [
-        TranscriptSegment(start: 0, speaker: 'S', text: '  one  '),
-        TranscriptSegment(start: 2, speaker: 'S', text: '\ttwo\n'),
+        TranscriptSegment(start: 0, text: '  one  '),
+        TranscriptSegment(start: 2, text: '\ttwo\n'),
       ]);
 
-      expect(formatted, '00:00:00 S\none two');
+      expect(formatted, '[00:00] one two');
     });
 
     test('skips segments whose text is blank after trimming', () {
       final formatted = formatMeetingTranscript(const [
-        TranscriptSegment(start: 0, speaker: 'S', text: '   '),
-        TranscriptSegment(start: 4, speaker: 'S', text: 'kept'),
+        TranscriptSegment(start: 0, text: '   '),
+        TranscriptSegment(start: 4, text: 'kept'),
       ]);
 
-      expect(formatted, '00:00:04 S\nkept');
+      expect(formatted, '[00:04] kept');
     });
 
     test('returns null when every segment is blank', () {
@@ -236,11 +244,9 @@ void main() {
 
       expect(
         formatted,
-        '00:00:00 Speaker 1\n'
-        'Hi. Again.\n'
+        '[00:00] Speaker 1: Hi. Again.\n'
         '\n'
-        '00:02:05 Speaker 2\n'
-        'Bye.',
+        '[02:05] Speaker 2: Bye.',
       );
     });
 

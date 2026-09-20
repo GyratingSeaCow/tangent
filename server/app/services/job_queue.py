@@ -126,23 +126,25 @@ def run_job_inline(job_id: str, audio_path: str) -> None:
             # transcribed and are NOT rewritten by mode-specific formatting.
             segments_json = json.dumps(result.segments)
 
-            # For 'meeting' mode, extract action items and format as a summary.
+            # For 'meeting' mode, store the transcript in the same
+            # timestamped-paragraph format the client renders, so a synced
+            # device and an on-device completion read identically. Segment
+            # timings stay as transcribed either way.
             dump_row = db.execute(
                 "SELECT mode FROM dumps WHERE id = "
                 "(SELECT dump_id FROM jobs WHERE id = ?)",
                 (job_id,),
             ).fetchone()
             if dump_row and dump_row["mode"] == "meeting":
-                from app.services.secretary import (
-                    extract_action_items,
-                    format_meeting_summary,
-                )
-                action_items = extract_action_items(transcript)
-                transcript = format_meeting_summary(transcript, action_items)
+                from app.services.secretary import format_meeting_transcript
+
+                formatted = format_meeting_transcript(result.segments)
+                if formatted:
+                    transcript = formatted
                 log.info(
                     "job.meeting_formatted",
                     job_id=job_id,
-                    action_items=len(action_items),
+                    formatted=formatted is not None,
                 )
 
             db.execute(

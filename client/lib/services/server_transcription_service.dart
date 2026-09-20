@@ -14,7 +14,6 @@ import '../data/manual_transcript_publication.dart';
 import '../data/recording_metadata.dart';
 import '../models/api_exception.dart';
 import '../models/transcription_status.dart';
-import 'meeting_notes_processor.dart';
 import 'meeting_transcript_formatter.dart';
 import 'transcription_client.dart';
 
@@ -59,7 +58,6 @@ class ServerTranscriptionService extends ChangeNotifier {
     required LocalDb db,
     required RecordingAccess recordingAccess,
     required RecordingMutationCoordinator mutations,
-    MeetingNotesProcessor meetingNotesProcessor = const MeetingNotesProcessor(),
     String Function()? requestIdFactory,
     DateTime Function()? now,
     Future<void> Function(BoundRecording, Map<String, dynamic>)? metadataWriter,
@@ -72,7 +70,6 @@ class ServerTranscriptionService extends ChangeNotifier {
         _db = db,
         _access = recordingAccess,
         _mutations = mutations,
-        _meetingNotesProcessor = meetingNotesProcessor,
         _requestIdFactory = requestIdFactory ?? const Uuid().v4,
         _now = now ?? (() => DateTime.now().toUtc()),
         _metadataWriterOverride = metadataWriter,
@@ -87,7 +84,6 @@ class ServerTranscriptionService extends ChangeNotifier {
   final RecordingAccess _access;
   final RecordingMutationCoordinator _mutations;
   int _transportSequence = 0;
-  final MeetingNotesProcessor _meetingNotesProcessor;
   final String Function() _requestIdFactory;
   final DateTime Function() _now;
   final Future<void> Function(BoundRecording, Map<String, dynamic>)?
@@ -717,7 +713,7 @@ class ServerTranscriptionService extends ChangeNotifier {
     String transcript,
   ) async {
     _throwIfDisposed();
-    final meetingNotes = _meetingNotesForCompletion(row, transcript);
+    final meetingNotes = _meetingNotesForCompletion(row);
     final completed = await _db.completeTranscriptionAttempt(
       row.id,
       storageKey: use.key,
@@ -756,14 +752,14 @@ class ServerTranscriptionService extends ChangeNotifier {
     return formatted;
   }
 
-  String? _meetingNotesForCompletion(DumpRow row, String transcript) {
+  /// Meeting notes are generated ON DEMAND from the detail screen's
+  /// Generate/Regenerate buttons — a completion never auto-writes them, so a
+  /// fresh transcription shows one clean transcript instead of notes that
+  /// restate it. Notes the user already generated survive retranscription
+  /// unchanged (regenerating stays a deliberate act).
+  String? _meetingNotesForCompletion(DumpRow row) {
     if (row.mode != 'meeting') return null;
-    final isReplacement = row.transcript?.trim().isNotEmpty ?? false;
-    if (isReplacement) return row.meetingNotes;
-    return _meetingNotesProcessor.process(
-      title: row.title,
-      transcript: transcript,
-    );
+    return row.meetingNotes;
   }
 
   Future<void> _repairCompletedSidecar(UseLease use, DumpRow row) async {
@@ -1071,7 +1067,7 @@ class ServerTranscriptionService extends ChangeNotifier {
       }
 
       final stored = _presentedTranscript(row, transcript, segments);
-      final meetingNotes = _meetingNotesForCompletion(row, stored);
+      final meetingNotes = _meetingNotesForCompletion(row);
       bool completionWon;
       try {
         completionWon = await _db.completeTranscriptionAttempt(

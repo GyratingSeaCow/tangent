@@ -4736,8 +4736,7 @@ void main() {
     expect(storage.pathFor('err-1').existsSync(), isTrue);
   });
 
-  test('meeting transcripts run through the secretary notes processor',
-      () async {
+  test('meeting completions do not auto-generate notes', () async {
     await seedRow(row(id: 'meet-1', mode: 'meeting'));
     final fake = _FakeTranscriptionClient(
       completedTranscript: 'Alice will send the notes by Friday.',
@@ -4754,8 +4753,12 @@ void main() {
 
     final saved = await db.getDump('meet-1');
     expect(saved!.transcript, 'Alice will send the notes by Friday.');
-    expect(saved.meetingNotes, isNotNull);
-    expect(saved.meetingNotes, contains('Action Items'));
+    expect(
+      saved.meetingNotes,
+      isNull,
+      reason: 'Notes are generated on demand from the detail screen, '
+          'never written by a completion.',
+    );
   });
 
   for (final recovered in [false, true]) {
@@ -5657,14 +5660,16 @@ void main() {
     final saved = (await db.getDump('meet-segments'))!;
     expect(
       saved.transcript,
-      '00:00:00 Speaker 1\n'
-      'Hello there. Still me.\n'
+      '[00:00] Speaker 1: Hello there. Still me.\n'
       '\n'
-      '00:04:07 Speaker 2\n'
-      'Follow up later.',
+      '[04:07] Speaker 2: Follow up later.',
     );
     expect(saved.transcriptionStatus, 'completed');
-    expect(saved.meetingNotes, isNotNull);
+    expect(
+      saved.meetingNotes,
+      isNull,
+      reason: 'Completions never auto-write notes.',
+    );
     final metadata = jsonDecode(
       await storage.metaPathFor('meet-segments').readAsString(),
     ) as Map<String, dynamic>;
@@ -5699,11 +5704,9 @@ void main() {
     final saved = (await db.getDump('meet-anon'))!;
     expect(
       saved.transcript,
-      '00:00:00\n'
-      'First part.\n'
+      '[00:00] First part.\n'
       '\n'
-      '00:01:01\n'
-      'Second part.',
+      '[01:01] Second part.',
     );
     expect(saved.transcript, isNot(contains('Speaker')));
   });
@@ -5820,11 +5823,9 @@ void main() {
     final saved = (await db.getDump('meet-recovered-segments'))!;
     expect(
       saved.transcript,
-      '00:00:12 Speaker 1\n'
-      'Recovered one.\n'
+      '[00:12] Speaker 1: Recovered one.\n'
       '\n'
-      '01:01:01 Speaker 2\n'
-      'Recovered two.',
+      '[1:01:01] Speaker 2: Recovered two.',
     );
   });
 

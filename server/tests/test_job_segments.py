@@ -129,10 +129,30 @@ def test_run_job_inline_keeps_raw_segments_for_meeting_mode(
 
     row = _row(temp_data_dir)
     assert row["status"] == "completed"
-    # Meeting mode reformats the transcript...
-    assert row["result_transcript"] != "I will send the report. Second part."
+    # Meeting mode stores the client's paragraph format: one [MM:SS] marker
+    # per paragraph, same-minute null-speaker segments merged into prose.
+    assert row["result_transcript"] == "[00:00] Hello world. Second part."
     # ...but segments stay as transcribed.
     assert json.loads(row["result_segments"]) == SEGMENTS
+
+
+def test_run_job_inline_meeting_without_segments_keeps_plain_text(
+    temp_data_dir: Path, monkeypatch
+) -> None:
+    """No segments -> nothing to format; the plain transcript is stored as-is."""
+    audio_path = _seed(temp_data_dir, mode="meeting")
+    monkeypatch.setattr(
+        "app.services.job_queue.get_transcription_service",
+        lambda: _FakeService(
+            TranscriptionResult(text="Plain text only.", segments=[])
+        ),
+    )
+
+    run_job_inline("job-seg", audio_path)
+
+    row = _row(temp_data_dir)
+    assert row["status"] == "completed"
+    assert row["result_transcript"] == "Plain text only."
 
 
 def test_run_job_inline_leaves_segments_null_on_failure(
