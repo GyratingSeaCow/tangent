@@ -2256,6 +2256,55 @@ void main() {
       await tester.pump();
     }
 
+    testWidgets('a loop over ~half the card selects; a corner clip does not',
+        (WidgetTester tester) async {
+      await mountEditor(
+        tester,
+        notebook: seeded(),
+        dumps: <DumpRow>[_dumpRow('d1', 'Standup notes')],
+      );
+      await enterLasso(tester);
+      final Finder deleteButton =
+          find.byKey(const ValueKey<String>('notebook-lasso-delete'));
+      final Offset origin = canvasOrigin(tester);
+
+      // Card b3 spans canonical x 24-324. A loop out to x=130 covers only
+      // ~33% of its area -- under the 40% threshold, so no selection.
+      Future<void> loopTo(double rightEdge) async {
+        final TestGesture g = await tester.createGesture();
+        await g.down(origin + const Offset(5, 90));
+        await tester.pump();
+        for (final Offset p in <Offset>[
+          Offset(rightEdge, 90),
+          Offset(rightEdge, 260),
+          const Offset(5, 260),
+          const Offset(5, 95),
+        ]) {
+          await g.moveTo(origin + p);
+          await tester.pump();
+        }
+        await g.up();
+        await tester.pump();
+      }
+
+      await loopTo(130);
+      expect(
+        tester.widget<IconButton>(deleteButton).onPressed,
+        isNull,
+        reason: 'a third of the card is a clipped corner, not a grab',
+      );
+
+      // Out to x=180 the loop holds ~50% of the card: past the 40%
+      // threshold, so the card is caught.
+      await loopTo(180);
+      expect(
+        tester.widget<IconButton>(deleteButton).onPressed,
+        isNotNull,
+        reason: 'half the card inside the loop must select it',
+      );
+      await unmount(tester);
+    });
+
     testWidgets('circling a recording card arms delete and removes it',
         (WidgetTester tester) async {
       await mountEditor(

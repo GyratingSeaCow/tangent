@@ -474,7 +474,10 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
     for (final InkPoint p in s.points) {
       if (_pointInLoop(Offset(p.x, p.y), loop)) inside++;
     }
-    return inside * 2 > s.points.length;
+    // > 40% of the stroke inside counts as caught — matching the block
+    // threshold, so ink and cards respond to the same sloppiness of loop.
+    // Jeff tuned this on hardware: a majority rule missed half-hooked ink.
+    return inside > s.points.length * 0.4;
   }
 
   /// True when the gesture at [position] should DRAG the current selection:

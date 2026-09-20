@@ -182,6 +182,9 @@ class TangentApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return _TranscriptionLifecycleHost(
       child: MaterialApp(
+        // The stock DEBUG ribbon reads as a defect on a device in hand;
+        // debug builds are self-evident to us without it.
+        debugShowCheckedModeBanner: false,
         title: 'Tangent',
         // Tangent ships one theme: an instrument does not restyle itself
         // with the system setting.

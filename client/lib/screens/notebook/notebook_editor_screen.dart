@@ -661,24 +661,32 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
         NotebookBlock() => null,
       };
 
-  /// Blocks the loop caught. A block counts as circled when its anchor or
-  /// the centre of its nominal footprint falls inside the loop — matching
-  /// how a hand circles a card without tracing its exact outline.
+  /// Blocks the loop caught. A block counts as circled when more than 40%
+  /// of its footprint area lies inside the loop (sampled on a grid) — a
+  /// hand that hooks half a card meant to grab it, while a loop that only
+  /// clips a corner did not. Threshold set by Jeff on hardware.
   List<String> _blocksInLoop(List<Offset> loop) {
     final List<String> caught = <String>[];
     for (final NotebookBlock block in _blocks) {
       final Offset? anchor = _blockAnchor(block);
       if (anchor == null) continue;
       // A representative footprint rather than a measured one: text rows
-      // and cards are ~300x90 canonical px. Probing anchor + centre keeps
-      // partial circles working without a per-widget layout query.
+      // and cards are ~300x90 canonical px.
       const Size footprint = Size(300, 90);
-      final Offset centre =
-          anchor + Offset(footprint.width / 2, footprint.height / 2);
-      if (NotebookInkCanvasState.pointInLoop(anchor, loop) ||
-          NotebookInkCanvasState.pointInLoop(centre, loop)) {
-        caught.add(block.id);
+      // 6x4 grid = 24 samples across the footprint; > 40% inside selects.
+      int inside = 0;
+      const int cols = 6, rows = 4;
+      for (int cx = 0; cx < cols; cx++) {
+        for (int cy = 0; cy < rows; cy++) {
+          final Offset sample = anchor +
+              Offset(
+                footprint.width * (cx + 0.5) / cols,
+                footprint.height * (cy + 0.5) / rows,
+              );
+          if (NotebookInkCanvasState.pointInLoop(sample, loop)) inside++;
+        }
       }
+      if (inside > cols * rows * 0.4) caught.add(block.id);
     }
     return caught;
   }
