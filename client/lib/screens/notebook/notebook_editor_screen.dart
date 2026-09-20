@@ -116,6 +116,10 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
 
   /// True while the lasso selection is non-empty; enables the delete action.
   bool _lassoSelection = false;
+
+  /// Ids of blocks (text, checkbox, recording cards) caught by the last
+  /// lasso loop. They move and delete together with the selected ink.
+  final Set<String> _lassoBlockIds = <String>{};
   double _penWidth = PenSizeControl.defaultPenWidth;
   PenStyle _penStyle = PenStyle.ballpoint;
 
@@ -642,6 +646,97 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
     return out;
   }
 
+  // -------------------------------------------------------------------
+  // Lasso over blocks
+  // -------------------------------------------------------------------
+
+  /// Where each block anchors in canonical page space, or null for a block
+  /// that has no position of its own yet (flow-laid text).
+  Offset? _blockAnchor(NotebookBlock block) => switch (block) {
+        NotebookTextBlock t =>
+          t.x == null && t.y == null ? null : Offset(t.x ?? 0, t.y ?? 0),
+        NotebookCheckboxBlock c =>
+          c.x == null && c.y == null ? null : Offset(c.x ?? 0, c.y ?? 0),
+        NotebookDumpCardBlock d => Offset(d.x, d.y),
+        NotebookBlock() => null,
+      };
+
+  /// Blocks the loop caught. A block counts as circled when its anchor or
+  /// the centre of its nominal footprint falls inside the loop — matching
+  /// how a hand circles a card without tracing its exact outline.
+  List<String> _blocksInLoop(List<Offset> loop) {
+    final List<String> caught = <String>[];
+    for (final NotebookBlock block in _blocks) {
+      final Offset? anchor = _blockAnchor(block);
+      if (anchor == null) continue;
+      // A representative footprint rather than a measured one: text rows
+      // and cards are ~300x90 canonical px. Probing anchor + centre keeps
+      // partial circles working without a per-widget layout query.
+      const Size footprint = Size(300, 90);
+      final Offset centre =
+          anchor + Offset(footprint.width / 2, footprint.height / 2);
+      if (NotebookInkCanvasState.pointInLoop(anchor, loop) ||
+          NotebookInkCanvasState.pointInLoop(centre, loop)) {
+        caught.add(block.id);
+      }
+    }
+    return caught;
+  }
+
+  /// The canvas asks whether a lasso drag begins on a selected block.
+  bool _lassoHitsBlock(Offset position) {
+    const Size footprint = Size(300, 90);
+    for (final NotebookBlock block in _blocks) {
+      if (!_lassoBlockIds.contains(block.id)) continue;
+      final Offset? anchor = _blockAnchor(block);
+      if (anchor == null) continue;
+      if ((anchor & footprint).inflate(16).contains(position)) return true;
+    }
+    return false;
+  }
+
+  /// Applies one selection-drag step to every selected block, mirroring the
+  /// translation the canvas applies to the selected ink.
+  void _lassoDragBlocks(Offset step) {
+    if (_lassoBlockIds.isEmpty) return;
+    setState(() {
+      _blocks = <NotebookBlock>[
+        for (final NotebookBlock block in _blocks)
+          if (!_lassoBlockIds.contains(block.id))
+            block
+          else
+            switch (block) {
+              NotebookTextBlock t => t.copyWith(
+                  x: (t.x ?? _pagePadding) + step.dx,
+                  y: (t.y ?? _flowTopOf(t.id)) + step.dy,
+                ),
+              NotebookCheckboxBlock c => c.copyWith(
+                  x: (c.x ?? _pagePadding) + step.dx,
+                  y: (c.y ?? _flowTopOf(c.id)) + step.dy,
+                ),
+              NotebookDumpCardBlock d =>
+                d.copyWith(x: d.x + step.dx, y: d.y + step.dy),
+              NotebookBlock() => block,
+            },
+      ];
+      _dirty = true;
+    });
+  }
+
+  /// Deletes the lasso's catch: selected ink through the canvas, selected
+  /// blocks here. Either half may be empty.
+  void _deleteLassoSelection() {
+    // Captured FIRST: the canvas's deleteSelection reports the selection
+    // dead via onSelectionChanged, which clears _lassoBlockIds.
+    final List<String> blockIds = List<String>.of(_lassoBlockIds);
+    _canvasKey.currentState?.deleteSelection();
+    for (final String id in blockIds) {
+      _removeBlock(id);
+    }
+    _lassoBlockIds.clear();
+    _canvasKey.currentState?.clearSelection();
+  }
+
   /// Moves a typed block by [delta], resolving its first position from where
   /// it was actually laid out so an unplaced block does not jump.
   void _onBlockMoved(String id, Offset delta) {
@@ -879,8 +974,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                                 // live one with nothing selected would
                                 // surprise.
                                 onPressed: _lassoSelection
-                                    ? () => _canvasKey.currentState
-                                        ?.deleteSelection()
+                                    ? _deleteLassoSelection
                                     : null,
                               ),
                           ],
@@ -1128,8 +1222,22 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                       lassoing: _lassoing,
                       onSelectionChanged: (bool has) {
                         if (_lassoSelection == has) return;
-                        setState(() => _lassoSelection = has);
+                        setState(() {
+                          _lassoSelection = has;
+                          // The canvas dropping its selection (mode exit,
+                          // empty loop) drops the block half too — they are
+                          // one selection to the user.
+                          if (!has) _lassoBlockIds.clear();
+                        });
                       },
+                      onLassoLoop: (List<Offset> loop) {
+                        _lassoBlockIds
+                          ..clear()
+                          ..addAll(_blocksInLoop(loop));
+                        return _lassoBlockIds.length;
+                      },
+                      hitsExternalSelection: _lassoHitsBlock,
+                      onSelectionDragStep: _lassoDragBlocks,
                       penWidth: _penWidth,
                       penStyle: _penStyle,
                       // Palm rejection, page half: while the pen is present

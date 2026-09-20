@@ -66,6 +66,24 @@ class NotebookInkCanvas extends StatefulWidget {
   /// (false). The editor uses it to enable its delete action.
   final ValueChanged<bool>? onSelectionChanged;
 
+  /// Fired when a lasso loop completes, with the loop's polygon in canvas
+  /// coordinates. The host tests its own content (text blocks, recording
+  /// cards) against the polygon — [NotebookInkCanvasState.pointInLoop] is
+  /// the same ray-cast the strokes use — and returns how many of its items
+  /// the loop caught. A non-zero return keeps the selection alive even when
+  /// no INK was circled, so a blocks-only lasso still arms delete/drag.
+  final int Function(List<Offset> loop)? onLassoLoop;
+
+  /// Asked on a lasso-mode pointer-down whether [position] falls inside the
+  /// host's selected content, so a drag can begin from a selected block just
+  /// as it can from selected ink.
+  final bool Function(Offset position)? hitsExternalSelection;
+
+  /// Fired for each movement step of a selection drag, in canvas
+  /// coordinates. The host applies the same delta to its selected blocks so
+  /// ink and blocks travel together.
+  final ValueChanged<Offset>? onSelectionDragStep;
+
   /// Whether this canvas paints its own opaque backdrop.
   ///
   /// False when it is layered over a page that already painted one: the ink
@@ -94,6 +112,9 @@ class NotebookInkCanvas extends StatefulWidget {
     this.erasing = false,
     this.lassoing = false,
     this.onSelectionChanged,
+    this.onLassoLoop,
+    this.hitsExternalSelection,
+    this.onSelectionDragStep,
     this.opaqueBackground = true,
     required this.penWidth,
     this.penStyle = PenStyle.ballpoint,
@@ -177,25 +198,57 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
   /// Number of strokes currently selected.
   int get selectedCount => _selected.length;
 
+  /// How many of the HOST's items (blocks, cards) the last loop caught, per
+  /// its [NotebookInkCanvas.onLassoLoop] return. The selection is "live"
+  /// while either ink or external items are held.
+  int _externalSelected = 0;
+
+  bool get _selectionLive => _selected.isNotEmpty || _externalSelected > 0;
+
+  /// The stroke-selection ray-cast, exposed so the host can test its own
+  /// content against the reported loop with identical geometry.
+  static bool pointInLoop(Offset p, List<Offset> loop) =>
+      _pointInLoop(p, loop);
+
+  /// Drops the whole selection (ink and external). The host calls this after
+  /// consuming a selection — e.g. deleting its selected blocks.
+  void clearSelection() {
+    if (!_selectionLive) return;
+    setState(() {
+      // Zeroing the external count first would make _setSelection see the
+      // selection as already dead and swallow the notification.
+      _selected.clear();
+      _externalSelected = 0;
+      widget.onSelectionChanged?.call(false);
+      _revision++;
+    });
+  }
+
   void _setSelection(Iterable<String> ids) {
-    final bool wasEmpty = _selected.isEmpty;
+    final bool wasLive = _selectionLive;
     _selected
       ..clear()
       ..addAll(ids);
-    if (wasEmpty != _selected.isEmpty) {
-      widget.onSelectionChanged?.call(_selected.isNotEmpty);
+    if (wasLive != _selectionLive) {
+      widget.onSelectionChanged?.call(_selectionLive);
     }
   }
 
   /// Deletes every selected stroke as ONE undoable action. Returns false
   /// when nothing was selected.
   bool deleteSelection() {
-    if (_selected.isEmpty) return false;
+    if (_selected.isEmpty) {
+      // Blocks-only selection: the ink canvas has nothing to remove, but the
+      // selection state still ends here (the host deletes its own blocks).
+      if (_externalSelected > 0) clearSelection();
+      return false;
+    }
     // Reuses the eraser's snapshot slot: undo restores the whole deletion,
     // exactly like undoing an eraser sweep.
     _eraseUndoSnapshot = List<InkStroke>.of(_strokes);
     setState(() {
       _strokes.removeWhere((InkStroke s) => _selected.contains(s.id));
+      _externalSelected = 0;
       _setSelection(const <String>[]);
       _revision++;
     });
@@ -240,7 +293,13 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
       _lassoPath = null;
       _dragStart = null;
       _dragUndoSnapshot = null;
+      // Order matters: _setSelection's liveness comparison must still see
+      // the external half, or a blocks-only selection dies silently.
       _setSelection(const <String>[]);
+      if (_externalSelected > 0) {
+        _externalSelected = 0;
+        widget.onSelectionChanged?.call(false);
+      }
       _revision++;
     }
     if (!listEquals(oldWidget.strokes, widget.strokes)) {
@@ -440,8 +499,12 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
   }
 
   void _lassoDown(PointerDownEvent event) {
-    if (_selected.isNotEmpty && _hitsSelection(event.localPosition)) {
-      // Grabbed the selection: this gesture moves it.
+    final bool hitsExternal = _externalSelected > 0 &&
+        (widget.hitsExternalSelection?.call(event.localPosition) ?? false);
+    if (_selectionLive &&
+        (hitsExternal ||
+            (_selected.isNotEmpty && _hitsSelection(event.localPosition)))) {
+      // Grabbed the selection: this gesture moves it (ink and blocks alike).
       _dragStart = event.localPosition;
       _dragDelta = Offset.zero;
       _dragUndoSnapshot = List<InkStroke>.of(_strokes);
@@ -464,6 +527,9 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
       // Live-move the selected strokes by the delta since the last event.
       final Offset step = event.localPosition - dragStart - _dragDelta;
       _dragDelta = event.localPosition - dragStart;
+      // Selected blocks ride along: the host applies this same step to its
+      // own selected items.
+      widget.onSelectionDragStep?.call(step);
       setState(() {
         for (int i = 0; i < _strokes.length; i++) {
           final InkStroke s = _strokes[i];
@@ -511,14 +577,26 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
     setState(() {
       _lassoPath = null;
       // A loop needs area; a stray tap (too few points) selects nothing.
-      _setSelection(
-        path.length < 3
-            ? const <String>[]
-            : <String>[
-                for (final InkStroke s in _strokes)
-                  if (_strokeInLoop(s, path)) s.id,
-              ],
-      );
+      if (path.length < 3) {
+        _externalSelected = 0;
+        _setSelection(const <String>[]);
+      } else {
+        // Liveness is captured BEFORE either half mutates: _setSelection
+        // compares against it to decide whether to fire, so setting the
+        // external count first would swallow the became-live transition of
+        // a blocks-only catch.
+        final bool wasLive = _selectionLive;
+        _externalSelected = widget.onLassoLoop?.call(path) ?? 0;
+        _selected
+          ..clear()
+          ..addAll(<String>[
+            for (final InkStroke s in _strokes)
+              if (_strokeInLoop(s, path)) s.id,
+          ]);
+        if (wasLive != _selectionLive) {
+          widget.onSelectionChanged?.call(_selectionLive);
+        }
+      }
       _revision++;
     });
   }

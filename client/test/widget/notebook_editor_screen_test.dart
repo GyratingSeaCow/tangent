@@ -2221,4 +2221,105 @@ void main() {
       await unmount(tester);
     });
   });
+
+  group('smart lasso over blocks', () {
+    // The dump card 'b3' anchors at canonical (24, 120). The viewport is
+    // 1080 wide (>= 720), so canonical space renders 1:1 and screen taps
+    // inside the editor Stack map straight onto canonical coordinates.
+    Future<void> enterLasso(WidgetTester tester) async {
+      await tester.tap(find.byIcon(Icons.draw));
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey<String>('notebook-lasso')));
+      await tester.pump();
+    }
+
+    Offset canvasOrigin(WidgetTester tester) => tester.getTopLeft(
+          find.byKey(NotebookInkCanvas.backgroundKey),
+        );
+
+    /// Draws a loop around the dump card's anchor region.
+    Future<void> lassoAroundCard(WidgetTester tester) async {
+      final Offset origin = canvasOrigin(tester);
+      final TestGesture g = await tester.createGesture();
+      await g.down(origin + const Offset(5, 90));
+      await tester.pump();
+      for (final Offset p in const <Offset>[
+        Offset(400, 90),
+        Offset(400, 260),
+        Offset(5, 260),
+        Offset(5, 95),
+      ]) {
+        await g.moveTo(origin + p);
+        await tester.pump();
+      }
+      await g.up();
+      await tester.pump();
+    }
+
+    testWidgets('circling a recording card arms delete and removes it',
+        (WidgetTester tester) async {
+      await mountEditor(
+        tester,
+        notebook: seeded(),
+        dumps: <DumpRow>[_dumpRow('d1', 'Standup notes')],
+      );
+      await enterLasso(tester);
+
+      final Finder deleteButton =
+          find.byKey(const ValueKey<String>('notebook-lasso-delete'));
+      expect(
+        tester.widget<IconButton>(deleteButton).onPressed,
+        isNull,
+        reason: 'nothing selected yet',
+      );
+
+      await lassoAroundCard(tester);
+      expect(
+        tester.widget<IconButton>(deleteButton).onPressed,
+        isNotNull,
+        reason: 'a blocks-only catch must arm delete',
+      );
+
+      await tester.tap(deleteButton);
+      await tester.pump();
+      expect(
+        find.byKey(const ValueKey<String>('notebook-card-b3')),
+        findsNothing,
+        reason: 'the circled card is deleted',
+      );
+      // Ink-less delete must not touch the other blocks.
+      expect(textBlocks(), findsOneWidget);
+      await unmount(tester);
+    });
+
+    testWidgets('dragging the selection moves the circled card',
+        (WidgetTester tester) async {
+      await mountEditor(
+        tester,
+        notebook: seeded(),
+        dumps: <DumpRow>[_dumpRow('d1', 'Standup notes')],
+      );
+      await enterLasso(tester);
+      await lassoAroundCard(tester);
+
+      final Finder card =
+          find.byKey(const ValueKey<String>('notebook-card-b3'));
+      final Offset before = tester.getTopLeft(card);
+
+      final Offset origin = canvasOrigin(tester);
+      final TestGesture g = await tester.createGesture();
+      // Down inside the card's footprint (anchor 24,120 + padding).
+      await g.down(origin + const Offset(100, 150));
+      await tester.pump();
+      await g.moveTo(origin + const Offset(180, 250));
+      await tester.pump();
+      await g.up();
+      await tester.pump();
+
+      final Offset after = tester.getTopLeft(card);
+      expect(after.dx - before.dx, moreOrLessEquals(80, epsilon: 1));
+      expect(after.dy - before.dy, moreOrLessEquals(100, epsilon: 1));
+      await unmount(tester);
+    });
+  });
 }

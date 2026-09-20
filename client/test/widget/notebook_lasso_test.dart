@@ -260,4 +260,113 @@ void main() {
     expect(captured, isEmpty);
     expect(canvasKey.currentState!.strokes, hasLength(2));
   });
+
+  group('external (block) selection', () {
+    Future<void> mountWithBlocks(
+      WidgetTester tester, {
+      required List<bool> selectionEvents,
+      required List<Offset> dragSteps,
+      required List<List<Offset>> loops,
+      int externalMatches = 1,
+      bool Function(Offset)? hitsExternal,
+    }) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: NotebookInkCanvas(
+              key: canvasKey,
+              // No strokes at all: the selection below is blocks-only.
+              strokes: const <InkStroke>[],
+              drawingEnabled: true,
+              erasing: false,
+              lassoing: true,
+              penWidth: 4,
+              opaqueBackground: false,
+              onSelectionChanged: selectionEvents.add,
+              onLassoLoop: (List<Offset> loop) {
+                loops.add(List<Offset>.of(loop));
+                return externalMatches;
+              },
+              hitsExternalSelection:
+                  hitsExternal ?? (Offset p) => p.dx < 200 && p.dy < 200,
+              onSelectionDragStep: dragSteps.add,
+              onStrokesChanged: (_) {},
+            ),
+          ),
+        ),
+      );
+    }
+
+    testWidgets('a loop that catches only blocks still counts as a selection',
+        (WidgetTester tester) async {
+      final List<bool> selection = <bool>[];
+      final List<Offset> steps = <Offset>[];
+      final List<List<Offset>> loops = <List<Offset>>[];
+      await mountWithBlocks(
+        tester,
+        selectionEvents: selection,
+        dragSteps: steps,
+        loops: loops,
+      );
+
+      await lassoAroundA(tester);
+
+      expect(
+        loops,
+        hasLength(1),
+        reason: 'the completed loop is reported outward',
+      );
+      expect(
+        selection.last,
+        isTrue,
+        reason: 'blocks-only selections must enable the delete action',
+      );
+    });
+
+    testWidgets('dragging a blocks-only selection reports its deltas',
+        (WidgetTester tester) async {
+      final List<bool> selection = <bool>[];
+      final List<Offset> steps = <Offset>[];
+      final List<List<Offset>> loops = <List<Offset>>[];
+      await mountWithBlocks(
+        tester,
+        selectionEvents: selection,
+        dragSteps: steps,
+        loops: loops,
+      );
+
+      await lassoAroundA(tester);
+      // Drag from inside the external selection's claimed area.
+      final TestGesture g = await tester.createGesture();
+      await g.down(const Offset(100, 100));
+      await tester.pump();
+      await g.moveTo(const Offset(150, 130));
+      await tester.pump();
+      await g.up();
+      await tester.pump();
+
+      final Offset total =
+          steps.fold(Offset.zero, (Offset a, Offset b) => a + b);
+      expect(total.dx, closeTo(50, 0.001));
+      expect(total.dy, closeTo(30, 0.001));
+    });
+
+    testWidgets('clearSelection empties the selection and says so',
+        (WidgetTester tester) async {
+      final List<bool> selection = <bool>[];
+      await mountWithBlocks(
+        tester,
+        selectionEvents: selection,
+        dragSteps: <Offset>[],
+        loops: <List<Offset>>[],
+      );
+
+      await lassoAroundA(tester);
+      expect(selection.last, isTrue);
+
+      canvasKey.currentState!.clearSelection();
+      await tester.pump();
+      expect(selection.last, isFalse);
+    });
+  });
 }
