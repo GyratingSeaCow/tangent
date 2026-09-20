@@ -222,8 +222,7 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
 
   /// The stroke-selection ray-cast, exposed so the host can test its own
   /// content against the reported loop with identical geometry.
-  static bool pointInLoop(Offset p, List<Offset> loop) =>
-      _pointInLoop(p, loop);
+  static bool pointInLoop(Offset p, List<Offset> loop) => _pointInLoop(p, loop);
 
   /// Drops the whole selection (ink and external). The host calls this after
   /// consuming a selection — e.g. deleting its selected blocks.
@@ -1125,7 +1124,10 @@ class NotebookInkPainter extends CustomPainter {
 /// top toolbar. Pure presentation: it holds no state and never self-updates.
 class PenSizeControl extends StatelessWidget {
   final double value;
-  final ValueChanged<double> onChanged;
+
+  /// Null disables the slider (grayed out) — a live slider that silently
+  /// ignores drags would read as broken.
+  final ValueChanged<double>? onChanged;
 
   const PenSizeControl({
     super.key,

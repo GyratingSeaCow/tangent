@@ -207,12 +207,31 @@ void main() {
   });
 
   testWidgets(
-      'draw mode reveals the page pen toolbar and blocks text interaction',
-      (tester) async {
+      'one unified toolbar: every tool is visible before draw mode, '
+      'and draw mode enables rather than reveals them', (tester) async {
     await mountEditor(tester, notebook: seeded());
 
-    expect(find.byType(PenSizeControl), findsNothing);
-    expect(find.byIcon(Icons.undo), findsNothing);
+    // The whole kit is on screen from the start — no second row drops down.
+    expect(find.byType(PenSizeControl), findsOneWidget);
+    expect(find.byIcon(Icons.undo), findsOneWidget);
+    expect(find.byKey(const ValueKey<String>('notebook-redo')), findsOneWidget);
+    expect(find.byKey(const ValueKey('notebook-lasso')), findsOneWidget);
+    expect(find.byKey(const ValueKey('notebook-pen-style')), findsOneWidget);
+
+    // But outside draw mode the tools are disabled, not live: a stray tap
+    // must not erase or lasso anything.
+    IconButton toolButton(Key key) =>
+        tester.widget<IconButton>(find.byKey(key));
+    expect(
+      toolButton(const ValueKey<String>('notebook-lasso')).onPressed,
+      isNull,
+      reason: 'lasso is a draw-mode tool',
+    );
+    expect(
+      toolButton(const ValueKey<String>('notebook-pen-style')).onPressed,
+      isNull,
+      reason: 'the nib is a draw-mode tool',
+    );
     expect(
       tester
           .widget<NotebookInkCanvas>(find.byType(NotebookInkCanvas))
@@ -223,8 +242,15 @@ void main() {
     await tester.tap(find.byIcon(Icons.draw));
     await tester.pump();
 
-    expect(find.byType(PenSizeControl), findsOneWidget);
-    expect(find.byIcon(Icons.undo), findsOneWidget);
+    // Same toolbar, same places — now live.
+    expect(
+      toolButton(const ValueKey<String>('notebook-lasso')).onPressed,
+      isNotNull,
+    );
+    expect(
+      toolButton(const ValueKey<String>('notebook-pen-style')).onPressed,
+      isNotNull,
+    );
     expect(
       tester
           .widget<NotebookInkCanvas>(find.byType(NotebookInkCanvas))
@@ -242,7 +268,14 @@ void main() {
 
     await tester.tap(find.byIcon(Icons.draw));
     await tester.pump();
-    expect(find.byType(PenSizeControl), findsNothing);
+    // Leaving draw mode must NOT collapse the toolbar: the row stays put so
+    // the hand always finds the tools in the same place.
+    expect(find.byType(PenSizeControl), findsOneWidget);
+    expect(find.byIcon(Icons.undo), findsOneWidget);
+    expect(
+      toolButton(const ValueKey<String>('notebook-lasso')).onPressed,
+      isNull,
+    );
 
     await tester.tap(textBlocks().first);
     await tester.pump();
