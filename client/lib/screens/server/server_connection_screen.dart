@@ -67,8 +67,24 @@ class _ServerConnectionScreenState
 
   Future<void> _loadStoredValues() async {
     final store = ref.read(secureStoreProvider);
-    final url = await store.getServerUrl();
-    final token = await store.getToken();
+    String? url;
+    String? token;
+    try {
+      url = await store.getServerUrl();
+      token = await store.getToken();
+    } catch (e) {
+      // Linux: flutter_secure_storage needs a running Secret Service
+      // (KWallet >= 5.97 or gnome-keyring). Without one, every read throws.
+      // The screen must still stand — but silently empty fields would read
+      // as "never paired", so say what actually happened.
+      if (mounted) {
+        setState(() {
+          _error = 'Could not read secure storage (saved server/token '
+              'unavailable): $e';
+        });
+      }
+      return;
+    }
     if (!mounted) return;
     // Only set the URL if the user hasn't typed anything yet. This avoids a
     // race where async load clobbers the user's typed value (which used to
