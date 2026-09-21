@@ -281,13 +281,21 @@ void main() {
       );
       expect(background.color, TangentColors.sunken);
 
-      final CustomPaint paint = tester.widget<CustomPaint>(
+      // Two painters are mounted — the ink and the hover ring — so the
+      // finder collects them all and the assertion names the INK painter
+      // explicitly (exactly one, ever: the exporter depends on that).
+      final Iterable<CustomPaint> paints = tester.widgetList<CustomPaint>(
         find.descendant(
           of: find.byType(NotebookInkCanvas),
           matching: find.byType(CustomPaint),
         ),
       );
-      expect(paint.painter, isA<NotebookInkPainter>());
+      expect(
+        paints
+            .map((CustomPaint p) => p.painter)
+            .whereType<NotebookInkPainter>(),
+        hasLength(1),
+      );
     });
 
     testWidgets('stylus drag produces one stroke with the drawn points',

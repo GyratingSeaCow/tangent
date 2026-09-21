@@ -213,6 +213,24 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
   /// the gap between strokes when the nib lifts briefly mid-word.
   static const Duration _stylusWindow = Duration(milliseconds: 500);
 
+  // ---- Hover cursor ----
+
+  /// The ring following a hovering pen, or null when no pen hovers. A
+  /// ValueNotifier rather than setState: the measured digitizer delivers
+  /// ~93 hover events before one contact, and only the ring's own tiny
+  /// painter should repaint for each of them, never the full ink canvas.
+  final ValueNotifier<HoverRing?> _hoverRing = ValueNotifier<HoverRing?>(null);
+  Timer? _hoverRingTimer;
+
+  /// How long after the last hover event before the ring is dropped. The
+  /// measured EMR digitizer delivered no out-of-range exit event in
+  /// characterisation (docs/design/pen-vs-finger-input.md), so the ring is
+  /// cleared by this trailing window instead — the same shape as the
+  /// pen-present window, but short enough that a pen pulled away does not
+  /// leave a phantom nib on the page.
+  static const Duration _hoverRingLinger = Duration(milliseconds: 250);
+
+
   // ---- Lasso selection ----
 
   /// Ids of the currently selected strokes. Non-empty only in lasso mode.
@@ -303,9 +321,63 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
     }
   }
 
+  /// A stylus is hovering (in range, no contact): position the ring under
+  /// it. Scoped to stylus kinds — a mouse hovers constantly on a desktop,
+  /// and a permanent ring under every laptop cursor would be noise.
+  void _onPointerHover(PointerHoverEvent event) {
+    if (event.kind != PointerDeviceKind.stylus &&
+        event.kind != PointerDeviceKind.invertedStylus) {
+      return;
+    }
+    if (widget.lassoing) {
+      // A lasso pen selects rather than inks; a nib-width ring would be
+      // dishonest about what landing will do, so no ring in lasso mode.
+      _clearHoverRing();
+      return;
+    }
+    _hoverRingTimer?.cancel();
+    _hoverRingTimer = Timer(_hoverRingLinger, _clearHoverRing);
+    _hoverRing.value = HoverRing(
+      position: event.localPosition,
+      radius: _hoverRadiusFor(event),
+    );
+  }
+
+  /// The HONEST radius of what the nib will produce where it lands.
+  ///
+  /// Read from the live widget selection, not a latch: nothing is being
+  /// committed yet, so the ring must follow a toolbar change immediately.
+  double _hoverRadiusFor(PointerHoverEvent event) {
+    // The side button is measured to be visible on hover, before contact,
+    // so the eraser's reach is legible before committing to a swipe.
+    final bool erasing =
+        widget.erasing || (event.buttons & kPrimaryStylusButton) != 0;
+    if (erasing) {
+      // Erase reach is per-stroke — tolerance + THAT stroke's rendered
+      // half-width (see _strokeHitSegment) — and the ring cannot know which
+      // stroke a sweep will meet. Show the guaranteed minimum instead: the
+      // tolerance circle around the tip itself (tolerance + 0).
+      return _eraseTolerance;
+    }
+    return widget.tool == InkTool.highlighter
+        ? widget.penWidth * kHighlighterWidthFactor / 2
+        : widget.penWidth / 2;
+  }
+
+  /// Drops the ring and its trailing window. Called on expiry, on contact
+  /// (the live stroke preview takes over) and on dispose — a timer left
+  /// running past dispose fails flutter_test and fires on a dead notifier.
+  void _clearHoverRing() {
+    _hoverRingTimer?.cancel();
+    _hoverRingTimer = null;
+    _hoverRing.value = null;
+  }
+
   @override
   void dispose() {
     _stylusWindowTimer?.cancel();
+    _hoverRingTimer?.cancel();
+    _hoverRing.dispose();
     super.dispose();
   }
 
@@ -780,7 +852,12 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
     // "stylus input is always honoured".
     final bool isStylus = event.kind == PointerDeviceKind.stylus ||
         event.kind == PointerDeviceKind.invertedStylus;
-    if (isStylus) _markStylusPresent();
+    if (isStylus) {
+      _markStylusPresent();
+      // Contact: the nib has landed, so the live stroke preview (or the
+      // eraser's effect) takes over from the hover ring.
+      _clearHoverRing();
+    }
     // Palm rejection: while the pen is present (in contact, or within the
     // trailing window after lifting), a touch contact is a resting hand,
     // not intent — even in draw mode. Lasso mode is exempt: a selection
@@ -963,6 +1040,7 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
             onPointerMove: _onPointerMove,
             onPointerUp: _onPointerUp,
             onPointerCancel: _onPointerCancel,
+            onPointerHover: _onPointerHover,
             // The painted surface takes no hits of its own. A ColoredBox plus
             // an expanded child is hit-testable even when fully transparent,
             // and it was absorbing the finger taps that must reach the blocks
@@ -995,7 +1073,19 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
                           ),
                     revision: _revision,
                   ),
-                  child: const SizedBox.expand(),
+                  // The hover ring rides in its OWN painter behind its own
+                  // repaint boundary: the digitizer delivers ~93 hover
+                  // events per approach, and each must repaint this one
+                  // circle, never the page of ink beneath. It also keeps
+                  // the ring out of NotebookInkPainter, which the PDF
+                  // exporter drives directly — a hovering pen can never
+                  // print.
+                  child: RepaintBoundary(
+                    child: CustomPaint(
+                      painter: NotebookHoverRingPainter(ring: _hoverRing),
+                      child: const SizedBox.expand(),
+                    ),
+                  ),
                 ),
               ),
             ),
@@ -1240,6 +1330,63 @@ class NotebookInkPainter extends CustomPainter {
       oldDelegate.revision != revision ||
       !identical(oldDelegate.strokes, strokes) ||
       !identical(oldDelegate.activeStroke, activeStroke);
+}
+
+/// Where a hovering nib would land and how wide its mark would be.
+@immutable
+class HoverRing {
+  const HoverRing({required this.position, required this.radius});
+
+  /// The nib's projected landing point, in canvas coordinates.
+  final Offset position;
+
+  /// HONEST radius: what landing will actually produce. Pen width/2,
+  /// highlighter band half-width, or the eraser's tolerance circle.
+  final double radius;
+
+  @override
+  bool operator ==(Object other) =>
+      other is HoverRing &&
+      other.position == position &&
+      other.radius == radius;
+
+  @override
+  int get hashCode => Object.hash(position, radius);
+}
+
+/// Paints the hover cursor: one thin translucent ring under a hovering pen.
+///
+/// Deliberately SEPARATE from [NotebookInkPainter]:
+///  * repainting is driven by [ring] (a [Listenable]), so ~93 hover events
+///    per pen approach repaint one circle instead of the page of ink;
+///  * the PDF exporter drives [NotebookInkPainter.paint] directly, so a
+///    ring painted there would print — here it structurally cannot.
+class NotebookHoverRingPainter extends CustomPainter {
+  NotebookHoverRingPainter({required this.ring}) : super(repaint: ring);
+
+  /// The ring to draw, or null (draw nothing) when no pen is hovering.
+  final ValueNotifier<HoverRing?> ring;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final HoverRing? value = ring.value;
+    if (value == null) return;
+    canvas.drawCircle(
+      value.position,
+      value.radius,
+      Paint()
+        // The canvas's own ink colour, translucent and stroked — never a
+        // fill or shadow, so the ring cannot obscure ink beneath it.
+        ..color = NotebookInkCanvas.inkColor.withValues(alpha: 0.4)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5
+        ..isAntiAlias = true,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant NotebookHoverRingPainter oldDelegate) =>
+      !identical(oldDelegate.ring, ring);
 }
 
 /// Pen-size slider with a live round preview dot, for the notebook page's own
