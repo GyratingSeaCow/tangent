@@ -85,14 +85,27 @@ jobs:
 
       - name: Rename APK to carry the version
         run: |
+          # On a manual run GITHUB_REF_NAME is the branch, which still makes
+          # a usable, self-describing filename.
           cp client/build/app/outputs/flutter-apk/app-release.apk \
-             "tangent-${GITHUB_REF_NAME}.apk"
+             "tangent-${GITHUB_REF_NAME//\//-}.apk"
 
       - name: Create release and attach APK
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: tangent-*.apk
           generate_release_notes: true
+
+      # A manual run has no tag to attach to, so the APK ships as a build
+      # artifact instead of failing the job on "GitHub Releases requires a tag".
+      - name: Upload APK as a build artifact
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: tangent-apk
+          path: tangent-*.apk
+          if-no-files-found: error
 
   appimage:
     name: Build + attach Linux AppImage
@@ -113,7 +126,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev \
-            libmpv-dev desktop-file-utils
+            libmpv-dev desktop-file-utils \
+            libsecret-1-dev libjsoncpp-dev
+          # libsecret backs flutter_secure_storage on Linux and jsoncpp comes
+          # with it; without their -dev packages CMake fails the configure
+          # step with "required packages were not found", long before any
+          # Dart code compiles.
           # FUSE is only needed to RUN an AppImage by mounting it. This job
           # extracts instead (both for appimagetool and for verification),
           # so a missing/renamed package here is not fatal — 24.04 renamed
