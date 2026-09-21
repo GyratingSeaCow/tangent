@@ -159,7 +159,7 @@ services:
 ```bash
 cd server
 uv sync --extra dev        # lean: just the server + test tools
-uv run pytest                                             # 180 passed, 1 skipped
+uv run pytest                                             # 185 passed, 3 skipped
 uv run uvicorn app.main:create_app --factory --reload     # http://127.0.0.1:8000
 ```
 

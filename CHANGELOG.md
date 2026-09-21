@@ -5,13 +5,26 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.6.0] - 2026-09-21
 
-Linux desktop companion (verified on CachyOS, KDE Plasma 6 Wayland).
-The client now runs natively on Linux with the full notebook/dump
-feature set, packaged as `Tangent-x86_64.AppImage`.
+Linux desktop companion (verified on CachyOS, KDE Plasma 6 Wayland) and
+notebook pen upgrades. The client now runs natively on Linux with the
+full notebook/dump feature set, packaged as `Tangent-x86_64.AppImage` —
+now built and verified in CI rather than by hand.
 
 ### Added
+- **Pen colours** — long-press the pen for its palette (white, blue,
+  red, amber). The pen keeps its colour for the session and the toolbar
+  icon tints itself to match.
+- **Highlighter** — a real highlighter beside the pen: a wide,
+  translucent chisel band that always paints *beneath* handwriting, so
+  ink stays crisp on top. Its own long-press palette (yellow, lime,
+  blue, pink) and its own colour memory. Highlights export pixel-true
+  to PDF, and notebooks keep their exact on-disk format — files with no
+  colours re-encode byte-identical.
+- **Insert images into notebooks** — the notebook ⋮ menu places a photo
+  or image file on the page as a movable block; lasso, drag and undo
+  treat it like any other block. (Linux desktop port included.)
 - **Linux desktop support** — the Flutter client builds and runs
   natively on Linux. Storage uses real directories
   (`~/Documents/Tangent/`, no folder-authorization step); playback of
@@ -41,6 +54,12 @@ feature set, packaged as `Tangent-x86_64.AppImage`.
   into a self-contained `Tangent-x86_64.AppImage`.
 
 ### Fixed
+- **Notebook toolbar tools tappable any time** — the draw-mode tools no
+  longer require entering draw mode first; tapping eraser, nib or lasso
+  from cold activates draw mode with that tool, matching the pen.
+- **Wide highlighter marks near the page edge no longer clip in PDF
+  export** — content bounds now pad for the highlighter's full band
+  width instead of a fixed margin.
 - **First words clipped on Linux** — record_linux reports "started"
   when `parecord` spawns, ~120–190 ms before the PipeWire stream is
   live. The recorder now holds "recording" until the mic stream shows

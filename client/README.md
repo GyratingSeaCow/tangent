@@ -32,7 +32,7 @@ expect several minutes and a few GB. Later builds take well under a minute.
 
 ```bash
 flutter analyze                # No issues found
-flutter test                   # 1424 tests
+flutter test                   # 1527 tests
 cd android && ./gradlew :app:testDebugUnitTest    # Kotlin storage layer
 ```
 

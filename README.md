@@ -5,9 +5,9 @@
 > Built for ADHD minds. Self-hosted. Offline-first. No subscriptions.
 
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](./LICENSE)
-[![Version: 1.5.1](https://img.shields.io/badge/version-1.5.1-blue.svg)](./CHANGELOG.md)
-[![Client tests: 1424 passing](https://img.shields.io/badge/client_tests-1424%20passing-brightgreen.svg)]()
-[![Server tests: 180 passing](https://img.shields.io/badge/server_tests-180%20passing-brightgreen.svg)]()
+[![Version: 1.6.0](https://img.shields.io/badge/version-1.6.0-blue.svg)](./CHANGELOG.md)
+[![Client tests: 1527 passing](https://img.shields.io/badge/client_tests-1527%20passing-brightgreen.svg)]()
+[![Server tests: 185 passing](https://img.shields.io/badge/server_tests-185%20passing-brightgreen.svg)]()
 
 ---
 
@@ -405,11 +405,11 @@ requires a one-time uninstall, which deletes local data. Stick to one flavor.
 ```bash
 # Server (Python)
 cd server
-python -m pytest                # 180 passed, 1 skipped
+python -m pytest                # 185 passed, 3 skipped
 
 # Client (Flutter)
 cd client
-flutter test                    # 1424 widget + unit tests
+flutter test                    # 1527 widget + unit tests
 flutter analyze                 # No issues found
 
 # Android native (Kotlin) — from client/android
