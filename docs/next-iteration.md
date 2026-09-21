@@ -8,22 +8,31 @@ re-derive it.
 
 ## 1. Open items
 
-None. The board is clear as of 2026-09-20.
+None. The board is clear as of 2026-09-21 — every candidate from the last
+sweep shipped in v1.6.0/v1.6.1.
 
-Candidate follow-ups discussed but NOT committed to:
+Remaining ideas are all **hardware-feedback-gated** (Jeff drives, no work
+queued): hover-ring linger/thickness tuning if 250 ms feels wrong on device;
+toolbar `visualDensity.compact` eyeball; flip-to-erase only if this pen ever
+emits `invertedStylus`. New arcs come from daily-use annoyances.
 
-- **Pairing-code display on connected devices**: `/v1/pair/pending` exists
-  server-side (authenticated, returns pending pairings with codes), but no
-  client UI consumes it — the docker log is currently the only place to read
-  a pairing code. Small client-side follow-up if the PowerShell step annoys.
-- **Pen polish, later phases**: side-button eraser (phase 5), hover cursor
-  (phase 6); flip-to-erase stays deferred (no `invertedStylus` observed on
-  this pen).
-- **Lasso block footprint**: blocks are caught via a nominal 300×90 footprint;
-  real render-box measurement is the next step only if wide text blocks
-  annoy in practice.
+## 2. Done (2026-09-21, v1.6.0 → v1.6.1)
 
-## 2. Done (2026-09 arc)
+- v1.6.0 cut: pen colours + highlighter (6-task SDD arc), notebook image
+  import, Linux desktop AppImage via CI, all version sites reconciled.
+- Eraser reach follows the rendered highlighter band (`d298386`).
+- PDF export renders imported images, corrupt-bytes fallback (`9b5bdf3`).
+- Pairing codes in Settings — no more docker-log reading (`117a305`);
+  server display_name renamed "Tangent Server" (was "Jeff"), setup hint
+  now says to name the machine, not yourself.
+- Pen hover cursor, phase 6 (`ebaf43e`): honest-radius ring (pen width /
+  highlighter band / eraser reach), stylus-only, cleared on contact,
+  lasso-mode exempt (`9f038a2`). Phase 5 (side-button eraser) discovered
+  already shipped in `_isErasing`.
+- Lasso measures real block footprints via RenderBox (`3020553`); dump
+  cards stay on the nominal 300×90 the 40% threshold was tuned against.
+
+## 3. Done (2026-09 arc, earlier)
 
 - Pen input phases 1–4: palm rejection, pressure width, fountain pen
   (`f238d3a`), italic nib + gamma (`2b98407`) — hardware-verified.

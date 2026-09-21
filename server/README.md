@@ -42,10 +42,13 @@ Tangent first-run setup
 
 Server will be available at http://0.0.0.0:8000
 
-Open this URL in a browser to generate your API token:
-  http://localhost:8000/v1/setup
+POST to this endpoint to generate your API token:
+  curl -X POST http://localhost:8000/v1/setup \
+    -H "Content-Type: application/json" \
+    -d '{"display_name": "Tangent Server"}'
 
-POST with JSON body: {"display_name": "Your Name"}
+display_name is what THIS SERVER calls itself to pairing
+devices - name the machine, not yourself.
 Save the returned token; it will not be shown again.
 ============================================================
 ```
@@ -56,7 +59,7 @@ published host port **8765**:
 ```bash
 curl -X POST http://localhost:8765/v1/setup \
   -H "Content-Type: application/json" \
-  -d '{"display_name": "Your Name"}'
+  -d '{"display_name": "Tangent Server"}'
 ```
 
 1. Copy the returned `token` — it is not shown again. It is the server's
