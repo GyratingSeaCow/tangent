@@ -414,7 +414,29 @@ class InkStroke {
     this.style = PenStyle.ballpoint,
     this.tool = InkTool.pen,
     this.colour = InkColor.white,
-  });
+  }) : assert(
+          // The colour must belong to the tool's own palette. A highlighter
+          // carrying an opaque pen ink would round-trip to a *different*
+          // colour — `InkColor.fromWire` is palette-scoped, so it reads back
+          // as yellow — and a 0xFF band would blot out the handwriting it is
+          // painted beneath.
+          //
+          // Spelled out rather than `InkColor.paletteFor(tool).contains(...)`
+          // because a method invocation is not a constant expression and
+          // would make every `const InkStroke` a compile error. Keep this in
+          // step with `paletteFor`; `ink palette`/`an ink outside the tool
+          // palette cannot be constructed` fail loudly if it drifts.
+          tool == InkTool.pen
+              ? (colour == InkColor.white ||
+                  colour == InkColor.blue ||
+                  colour == InkColor.red ||
+                  colour == InkColor.amber)
+              : (colour == InkColor.yellow ||
+                  colour == InkColor.lime ||
+                  colour == InkColor.highlightBlue ||
+                  colour == InkColor.pink),
+          'colour must be one of InkColor.paletteFor(tool)',
+        );
 
   final String id;
   final double width;
@@ -484,7 +506,13 @@ class InkStroke {
         width: width ?? this.width,
         style: style,
         tool: tool ?? this.tool,
-        colour: colour ?? this.colour,
+        // A tool switch that names no colour adopts the new tool's default.
+        // Carrying the old tool's ink across would violate the palette
+        // invariant the constructor asserts.
+        colour: colour ??
+            (tool != null && tool != this.tool
+                ? InkColor.defaultFor(tool)
+                : this.colour),
         points: points ?? this.points,
       );
 
@@ -515,7 +543,8 @@ class InkStroke {
       Object.hash(id, width, style, tool, colour, Object.hashAll(points));
 
   @override
-  String toString() => 'InkStroke($id, w=$width, ${points.length}pts)';
+  String toString() => 'InkStroke($id, w=$width, ${tool.wireValue}, '
+      '${colour.wireValue}, ${points.length}pts)';
 }
 
 /// How a stroke is rendered. Stored per stroke, so a page can mix pens.

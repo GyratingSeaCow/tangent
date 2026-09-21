@@ -443,5 +443,219 @@ void main() {
       expect(moved.tool, InkTool.highlighter);
       expect(moved.colour, InkColor.lime);
     });
+
+    test('copyWith to the highlighter adopts the highlighter default ink', () {
+      // A tool switch that names no colour must land on the new tool's own
+      // ink. Carrying white across would build an opaque highlighter: it
+      // round-trips to yellow through the palette-scoped reader, and as a
+      // 0xFF band it would blot out the handwriting it is painted beneath.
+      const InkStroke pen = InkStroke(
+        id: 's8',
+        width: 3,
+        points: <InkPoint>[InkPoint(x: 1, y: 2)],
+      );
+      final InkStroke marked = pen.copyWith(tool: InkTool.highlighter);
+      expect(marked.tool, InkTool.highlighter);
+      expect(marked.colour, InkColor.yellow);
+      expect(marked.colour, isNot(InkColor.white));
+    });
+
+    test('copyWith keeps an explicit colour across a tool switch', () {
+      const InkStroke pen = InkStroke(
+        id: 's9',
+        width: 3,
+        points: <InkPoint>[InkPoint(x: 1, y: 2)],
+      );
+      final InkStroke marked = pen.copyWith(
+        tool: InkTool.highlighter,
+        colour: InkColor.pink,
+      );
+      expect(marked.tool, InkTool.highlighter);
+      expect(marked.colour, InkColor.pink);
+    });
+
+    test('copyWith without a tool change leaves the colour alone', () {
+      const InkStroke stroke = InkStroke(
+        id: 's10',
+        width: 3,
+        tool: InkTool.highlighter,
+        colour: InkColor.highlightBlue,
+        points: <InkPoint>[InkPoint(x: 1, y: 2)],
+      );
+      final InkStroke wider = stroke.copyWith(width: 9);
+      expect(wider.width, 9);
+      expect(wider.tool, InkTool.highlighter);
+      expect(wider.colour, InkColor.highlightBlue);
+    });
+
+    test('an ink outside the tool palette cannot be constructed', () {
+      // `fromWire` is palette-scoped and can never produce this pairing, so
+      // only a programming error can. The constructor assert catches it in
+      // debug and test builds and costs nothing in release.
+      //
+      // The locals are deliberately non-const: a const InkStroke with an
+      // illegal pairing is rejected at compile time instead, which cannot be
+      // observed from a running test.
+      InkStroke build(InkTool tool, InkColor colour) => InkStroke(
+            id: 'sX',
+            width: 3,
+            tool: tool,
+            colour: colour,
+            points: const <InkPoint>[InkPoint(x: 1, y: 2)],
+          );
+
+      // Every pairing outside the tool's own palette is rejected. Checked
+      // across the whole enum so the assert expression cannot drift away
+      // from `paletteFor`, which is not legal in a const constructor.
+      for (final InkTool tool in InkTool.values) {
+        final List<InkColor> palette = InkColor.paletteFor(tool);
+        for (final InkColor colour in InkColor.values) {
+          if (palette.contains(colour)) continue;
+          expect(
+            () => build(tool, colour),
+            throwsA(isA<AssertionError>()),
+            reason: '${tool.wireValue} must reject ${colour.wireValue}',
+          );
+        }
+      }
+
+      // ...and every legal pairing still constructs.
+      for (final InkTool tool in InkTool.values) {
+        for (final InkColor colour in InkColor.paletteFor(tool)) {
+          expect(build(tool, colour).colour, colour);
+        }
+      }
+    });
+
+    test('== and hashCode notice a colour-only difference', () {
+      const List<InkPoint> pts = <InkPoint>[InkPoint(x: 1, y: 2)];
+      const InkStroke white = InkStroke(id: 's12', width: 3, points: pts);
+      const InkStroke blue = InkStroke(
+        id: 's12',
+        width: 3,
+        colour: InkColor.blue,
+        points: pts,
+      );
+      expect(white, isNot(blue));
+      expect(white.hashCode, isNot(blue.hashCode));
+
+      const InkStroke yellow = InkStroke(
+        id: 's13',
+        width: 4,
+        tool: InkTool.highlighter,
+        colour: InkColor.yellow,
+        points: pts,
+      );
+      const InkStroke pink = InkStroke(
+        id: 's13',
+        width: 4,
+        tool: InkTool.highlighter,
+        colour: InkColor.pink,
+        points: pts,
+      );
+      expect(yellow, isNot(pink));
+      expect(yellow.hashCode, isNot(pink.hashCode));
+    });
+
+    test('== and hashCode notice the tool', () {
+      // A tool-ONLY difference is unconstructable while the palettes stay
+      // disjoint (pinned in 'ink palette'), so the strongest legal pair is
+      // each tool sitting at its own default ink.
+      const List<InkPoint> pts = <InkPoint>[InkPoint(x: 1, y: 2)];
+      const InkStroke pen = InkStroke(id: 's14', width: 3, points: pts);
+      const InkStroke marker = InkStroke(
+        id: 's14',
+        width: 3,
+        tool: InkTool.highlighter,
+        colour: InkColor.yellow,
+        points: pts,
+      );
+      expect(pen, isNot(marker));
+      expect(pen.hashCode, isNot(marker.hashCode));
+    });
+
+    test('toString names the tool and the colour', () {
+      // Tasks 2-4 diff strokes in widget tests; two strokes that differ only
+      // by ink must not print as the same string.
+      const List<InkPoint> pts = <InkPoint>[InkPoint(x: 1, y: 2)];
+      const InkStroke marker = InkStroke(
+        id: 's15',
+        width: 4,
+        tool: InkTool.highlighter,
+        colour: InkColor.lime,
+        points: pts,
+      );
+      expect(marker.toString(), contains('highlighter'));
+      expect(marker.toString(), contains('lime'));
+
+      const InkStroke pen = InkStroke(id: 's15', width: 4, points: pts);
+      expect(pen.toString(), isNot(marker.toString()));
+    });
+  });
+
+  group('ink palette', () {
+    test('the pen palette is white, blue, red, amber in that order', () {
+      // Task 3 renders the swatch row in palette order, so the order is part
+      // of the contract rather than an implementation detail.
+      expect(InkColor.paletteFor(InkTool.pen), <InkColor>[
+        InkColor.white,
+        InkColor.blue,
+        InkColor.red,
+        InkColor.amber,
+      ]);
+    });
+
+    test('the highlighter palette is yellow, lime, highlightBlue, pink', () {
+      expect(InkColor.paletteFor(InkTool.highlighter), <InkColor>[
+        InkColor.yellow,
+        InkColor.lime,
+        InkColor.highlightBlue,
+        InkColor.pink,
+      ]);
+    });
+
+    test('pen ink is opaque and highlighter ink is translucent', () {
+      // Task 2 paints highlighter strokes beneath pen ink on exactly this
+      // guarantee: an opaque band would hide the handwriting above it.
+      for (final InkColor colour in InkColor.paletteFor(InkTool.pen)) {
+        expect(
+          colour.argb >> 24,
+          0xFF,
+          reason: 'pen ink ${colour.wireValue} must be opaque',
+        );
+      }
+      for (final InkColor colour in InkColor.paletteFor(InkTool.highlighter)) {
+        expect(
+          colour.argb >> 24,
+          lessThan(0xFF),
+          reason: 'highlighter ink ${colour.wireValue} must be translucent',
+        );
+      }
+    });
+
+    test('the two palettes partition every InkColor', () {
+      // Without this, the opacity invariant above could be satisfied by a
+      // palette that quietly drops a colour — and an overlapping palette
+      // would make a tool-only stroke difference constructable again.
+      expect(
+        <InkColor>{
+          ...InkColor.paletteFor(InkTool.pen),
+          ...InkColor.paletteFor(InkTool.highlighter),
+        },
+        InkColor.values.toSet(),
+      );
+      expect(
+        InkColor.paletteFor(InkTool.pen)
+            .toSet()
+            .intersection(InkColor.paletteFor(InkTool.highlighter).toSet()),
+        isEmpty,
+      );
+    });
+
+    test('defaultFor names the first swatch of each palette', () {
+      for (final InkTool tool in InkTool.values) {
+        expect(InkColor.defaultFor(tool), InkColor.paletteFor(tool).first);
+      }
+    });
   });
 }
