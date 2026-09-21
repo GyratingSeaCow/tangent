@@ -27,6 +27,11 @@ import 'package:uuid/uuid.dart';
 
 import '../models/notebook.dart';
 
+/// How much wider a highlighter is than the pen width the slider gives it.
+/// Four is wide enough that a mark is unmistakably a band, while the slider
+/// still governs its size.
+const double kHighlighterWidthFactor = 4.0;
+
 /// White-on-black handwriting canvas driven by stylus or (in draw mode) touch.
 ///
 /// Drive imperative actions through a `GlobalKey<NotebookInkCanvasState>`:
@@ -992,37 +997,81 @@ class NotebookInkPainter extends CustomPainter {
     this.lassoPath,
   });
 
-  /// The "round pen": round caps and round joins at the stroke's own width.
-  Paint buildStrokePaint(double width) => Paint()
-    ..color = NotebookInkCanvas.inkColor
-    ..style = PaintingStyle.stroke
-    ..strokeWidth = width
-    ..strokeCap = StrokeCap.round
-    ..strokeJoin = StrokeJoin.round
-    ..isAntiAlias = true;
+  /// The order strokes are painted in: every highlighter first, then every
+  /// pen. This is what guarantees a mark can never cover handwriting,
+  /// whatever order they were drawn in. Insertion order is preserved within
+  /// each pass, so a later highlight still covers an earlier one, and the
+  /// in-progress [active] stroke lands last inside its own pass so drawing
+  /// a highlight over existing ink shows the ink staying on top live.
+  static List<InkStroke> paintOrder(
+    List<InkStroke> strokes, {
+    InkStroke? active,
+  }) {
+    final List<InkStroke> ordered = <InkStroke>[];
+    // Explicit, not InkTool.values: declaration order is [pen, highlighter],
+    // which is exactly the reverse of what painting needs.
+    for (final InkTool pass in const <InkTool>[
+      InkTool.highlighter,
+      InkTool.pen,
+    ]) {
+      for (final InkStroke stroke in strokes) {
+        if (stroke.tool == pass) ordered.add(stroke);
+      }
+      if (active != null && active.tool == pass) ordered.add(active);
+    }
+    return ordered;
+  }
 
-  Paint _buildDotPaint() => Paint()
-    ..color = NotebookInkCanvas.inkColor
+  /// Whether a stroke renders through the tapering fountain path. A
+  /// highlighter never does: a felt tip does not taper, whatever nib the
+  /// toolbar has selected.
+  static bool usesFountainPath(InkStroke stroke) =>
+      stroke.tool != InkTool.highlighter && stroke.style == PenStyle.fountain;
+
+  /// The paint for a stroke. A pen keeps the round nib at its own width; a
+  /// highlighter is a wide chisel in translucent ink.
+  ///
+  /// [stroke] is optional so the legacy one-argument call sites (and any
+  /// caller that only knows a width) still get the default white pen.
+  Paint buildStrokePaint(double width, {InkStroke? stroke}) {
+    final InkTool tool = stroke?.tool ?? InkTool.pen;
+    final InkColor colour = stroke?.colour ?? InkColor.white;
+    final bool marker = tool == InkTool.highlighter;
+    return Paint()
+      ..color = Color(colour.argb)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = marker ? width * kHighlighterWidthFactor : width
+      // A chisel edge, not a round nib: this is what stops a highlight from
+      // reading as merely a fat pen stroke.
+      ..strokeCap = marker ? StrokeCap.square : StrokeCap.round
+      ..strokeJoin = marker ? StrokeJoin.bevel : StrokeJoin.round
+      ..isAntiAlias = true;
+  }
+
+  Paint _buildDotPaint([InkStroke? stroke]) => Paint()
+    ..color = Color((stroke?.colour ?? InkColor.white).argb)
     ..style = PaintingStyle.fill
     ..isAntiAlias = true;
 
   void _paintStroke(Canvas canvas, InkStroke stroke) {
     if (stroke.points.isEmpty) return;
+    final bool marker = stroke.tool == InkTool.highlighter;
     if (stroke.points.length == 1) {
       // Single tap: a round dot of the pen's own diameter (scaled by the
       // point's pressure for a fountain stroke).
       final double? p = stroke.points.first.p;
-      final double diameter = stroke.style == PenStyle.fountain && p != null
+      // A highlighter never tapers, so its dot is always the full band.
+      final double diameter = usesFountainPath(stroke) && p != null
           ? _fountainWidth(stroke.width, p)
-          : stroke.width;
+          : (marker ? stroke.width * kHighlighterWidthFactor : stroke.width);
       canvas.drawCircle(
         stroke.points.first.offset,
         diameter / 2,
-        _buildDotPaint(),
+        _buildDotPaint(stroke),
       );
       return;
     }
-    if (stroke.style == PenStyle.fountain) {
+    if (usesFountainPath(stroke)) {
       _paintFountainStroke(canvas, stroke);
       return;
     }
@@ -1031,7 +1080,7 @@ class NotebookInkPainter extends CustomPainter {
     for (final InkPoint point in stroke.points.skip(1)) {
       path.lineTo(point.x, point.y);
     }
-    canvas.drawPath(path, buildStrokePaint(stroke.width));
+    canvas.drawPath(path, buildStrokePaint(stroke.width, stroke: stroke));
   }
 
   /// A fountain nib never quite vanishes: zero pressure still leaves a hair
@@ -1067,7 +1116,7 @@ class NotebookInkPainter extends CustomPainter {
   /// so a mixed stroke degrades gracefully.
   void _paintFountainStroke(Canvas canvas, InkStroke stroke) {
     final List<InkPoint> points = stroke.points;
-    final Paint fill = _buildDotPaint();
+    final Paint fill = _buildDotPaint(stroke);
     // Every quad goes into ONE path and one drawPath call. A path-per-
     // segment (the original) made each full repaint O(total ink segments)
     // in native draw calls, which is what dragged the eraser once a page
@@ -1094,7 +1143,11 @@ class NotebookInkPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    for (final InkStroke stroke in strokes) {
+    // Highlighters first, then pen ink — see [paintOrder]. The active stroke
+    // is NOT painted separately after this loop: paintOrder places it inside
+    // its own pass, which is what keeps handwriting on top while a highlight
+    // is still being drawn over it.
+    for (final InkStroke stroke in paintOrder(strokes, active: activeStroke)) {
       // Selected ink glows: a soft lime halo behind the stroke, so the
       // selection reads through any ink colour without obscuring it.
       if (selectedIds.contains(stroke.id)) {
@@ -1102,8 +1155,6 @@ class NotebookInkPainter extends CustomPainter {
       }
       _paintStroke(canvas, stroke);
     }
-    final InkStroke? active = activeStroke;
-    if (active != null) _paintStroke(canvas, active);
     final List<Offset>? loop = lassoPath;
     if (loop != null && loop.length > 1) {
       // The marquee: a dashed-feel thin line in the signal colour.
@@ -1127,17 +1178,23 @@ class NotebookInkPainter extends CustomPainter {
   /// both halo correctly.
   void _paintHalo(Canvas canvas, InkStroke stroke) {
     if (stroke.points.isEmpty) return;
+    // A highlighter's visible band is its nominal width times the factor, so
+    // the glow has to track the band or a selected mark would show a halo
+    // buried inside itself.
+    final double base = stroke.tool == InkTool.highlighter
+        ? stroke.width * kHighlighterWidthFactor
+        : stroke.width;
     final Paint halo = Paint()
       ..color = TangentColors.signal.withValues(alpha: 0.35)
       ..style = PaintingStyle.stroke
-      ..strokeWidth = stroke.width + 8
+      ..strokeWidth = base + 8
       ..strokeCap = StrokeCap.round
       ..strokeJoin = StrokeJoin.round
       ..isAntiAlias = true;
     if (stroke.points.length == 1) {
       canvas.drawCircle(
         stroke.points.first.offset,
-        (stroke.width + 8) / 2,
+        (base + 8) / 2,
         halo..style = PaintingStyle.fill,
       );
       return;

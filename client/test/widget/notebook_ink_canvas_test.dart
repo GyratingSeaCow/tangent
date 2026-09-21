@@ -8,6 +8,40 @@ import 'package:tangent/models/notebook.dart';
 import 'package:tangent/theme/tangent_tokens.dart';
 import 'package:tangent/widgets/notebook_ink_canvas.dart';
 
+/// Records the ink [NotebookInkPainter] actually draws, in draw order.
+///
+/// Test-local on purpose: the painter carries no hooks of its own, so the
+/// only way to observe real draw order is to watch the Canvas it is handed.
+/// `drawPath` is the call every multi-point stroke goes through.
+class _RecordingCanvas implements Canvas {
+  final List<Color> strokeColors = <Color>[];
+  final List<double> strokeWidths = <double>[];
+
+  @override
+  void drawPath(Path path, Paint paint) {
+    // Only stroked ink is ink: the lasso marquee and selection halos are
+    // painted with other styles/colours and are not part of stroke order.
+    if (paint.style != PaintingStyle.stroke) return;
+    strokeColors.add(paint.color);
+    strokeWidths.add(paint.strokeWidth);
+  }
+
+  // Everything else the painter might call is irrelevant to draw order.
+  @override
+  dynamic noSuchMethod(Invocation invocation) => null;
+}
+
+/// `Paint.color` round-trips through float channels, so an identical colour
+/// still fails `==`. Match on the channels instead.
+Matcher _isColour(InkColor colour) {
+  final Color expected = Color(colour.argb);
+  return isA<Color>()
+      .having((Color c) => c.r, 'r', closeTo(expected.r, 0.001))
+      .having((Color c) => c.g, 'g', closeTo(expected.g, 0.001))
+      .having((Color c) => c.b, 'b', closeTo(expected.b, 0.001))
+      .having((Color c) => c.a, 'a', closeTo(expected.a, 0.001));
+}
+
 /// Test harness that owns the mutable inputs of [NotebookInkCanvas] so a test
 /// can flip `penWidth` / `drawingEnabled` mid-session and rebuild.
 class _CanvasHarness {
@@ -786,6 +820,219 @@ void main() {
       final Canvas canvas = Canvas(recorder);
       painter.paint(canvas, const Size(100, 100));
       expect(recorder.endRecording(), isNotNull);
+    });
+  });
+
+  group('highlighter rendering', () {
+    test('highlighter strokes paint before pen strokes', () {
+      // Insertion order is pen-then-highlighter; paint order must be the
+      // reverse, or the highlight would cover the handwriting.
+      const InkStroke pen = InkStroke(
+        id: 'pen',
+        width: 3,
+        points: <InkPoint>[InkPoint(x: 0, y: 0), InkPoint(x: 10, y: 10)],
+      );
+      const InkStroke mark = InkStroke(
+        id: 'mark',
+        width: 3,
+        tool: InkTool.highlighter,
+        colour: InkColor.yellow,
+        points: <InkPoint>[InkPoint(x: 0, y: 5), InkPoint(x: 10, y: 5)],
+      );
+
+      final List<String> order = NotebookInkPainter.paintOrder(
+        const <InkStroke>[pen, mark],
+      ).map((InkStroke s) => s.id).toList();
+
+      expect(order, <String>['mark', 'pen']);
+    });
+
+    test('insertion order is preserved within a pass', () {
+      // A later highlight still covers an earlier one.
+      const InkStroke first = InkStroke(
+        id: 'first',
+        width: 3,
+        tool: InkTool.highlighter,
+        colour: InkColor.yellow,
+        points: <InkPoint>[InkPoint(x: 0, y: 5)],
+      );
+      const InkStroke second = InkStroke(
+        id: 'second',
+        width: 3,
+        tool: InkTool.highlighter,
+        colour: InkColor.yellow,
+        points: <InkPoint>[InkPoint(x: 1, y: 5)],
+      );
+
+      expect(
+        NotebookInkPainter.paintOrder(const <InkStroke>[first, second])
+            .map((InkStroke s) => s.id),
+        <String>['first', 'second'],
+      );
+    });
+
+    test('the active stroke paints last within its own pass', () {
+      // Drawing a highlight over existing ink must show the ink staying on
+      // top live, not only after the pen lifts.
+      const InkStroke pen = InkStroke(
+        id: 'pen',
+        width: 3,
+        points: <InkPoint>[InkPoint(x: 0, y: 0)],
+      );
+      const InkStroke mark = InkStroke(
+        id: 'mark',
+        width: 3,
+        tool: InkTool.highlighter,
+        colour: InkColor.yellow,
+        points: <InkPoint>[InkPoint(x: 0, y: 5)],
+      );
+      const InkStroke active = InkStroke(
+        id: 'active',
+        width: 3,
+        tool: InkTool.highlighter,
+        colour: InkColor.yellow,
+        points: <InkPoint>[InkPoint(x: 2, y: 5)],
+      );
+
+      expect(
+        NotebookInkPainter.paintOrder(
+          const <InkStroke>[pen, mark],
+          active: active,
+        ).map((InkStroke s) => s.id),
+        <String>['mark', 'active', 'pen'],
+      );
+    });
+
+    test('a highlighter stroke paints wider than its nominal width', () {
+      const InkStroke mark = InkStroke(
+        id: 'mark',
+        width: 3,
+        tool: InkTool.highlighter,
+        colour: InkColor.yellow,
+        points: <InkPoint>[InkPoint(x: 0, y: 5), InkPoint(x: 10, y: 5)],
+      );
+      final Paint paint = const NotebookInkPainter(
+        strokes: <InkStroke>[],
+        activeStroke: null,
+        revision: 1,
+      ).buildStrokePaint(mark.width, stroke: mark);
+
+      expect(paint.strokeWidth, 3 * kHighlighterWidthFactor);
+      expect(paint.strokeCap, StrokeCap.square);
+      expect(paint.strokeJoin, StrokeJoin.bevel);
+      // Paint.color round-trips through float channels, so `==` fails even
+      // for an identical colour (see 'uses a round pen' above). Compare
+      // channels. Alpha matters most here: a highlighter must stay
+      // translucent or it would blot the ink it is painted beneath.
+      const Color expected = Color(0x38FFE14D);
+      expect(paint.color.r, closeTo(expected.r, 0.001));
+      expect(paint.color.g, closeTo(expected.g, 0.001));
+      expect(paint.color.b, closeTo(expected.b, 0.001));
+      expect(paint.color.a, closeTo(expected.a, 0.001));
+      expect(paint.color.a, lessThan(1.0));
+    });
+
+    test('a pen stroke keeps round caps and its own width', () {
+      const InkStroke pen = InkStroke(
+        id: 'pen',
+        width: 3,
+        colour: InkColor.red,
+        points: <InkPoint>[InkPoint(x: 0, y: 0)],
+      );
+      final Paint paint = const NotebookInkPainter(
+        strokes: <InkStroke>[],
+        activeStroke: null,
+        revision: 1,
+      ).buildStrokePaint(pen.width, stroke: pen);
+
+      expect(paint.strokeWidth, 3);
+      expect(paint.strokeCap, StrokeCap.round);
+      // Channel comparison, as above.
+      const Color expected = Color(0xFFFF6B6B);
+      expect(paint.color.r, closeTo(expected.r, 0.001));
+      expect(paint.color.g, closeTo(expected.g, 0.001));
+      expect(paint.color.b, closeTo(expected.b, 0.001));
+      // Pen ink is fully opaque: that is what makes painting highlighters
+      // beneath it safe.
+      expect(paint.color.a, closeTo(1.0, 0.001));
+    });
+
+    test('a highlighter ignores the fountain nib', () {
+      // A felt tip does not taper, whatever nib the toolbar has selected.
+      // Proven through the paint it builds: a fountain stroke's width comes
+      // from pressure, a highlighter's never does.
+      const InkStroke mark = InkStroke(
+        id: 'mark',
+        width: 3,
+        style: PenStyle.fountain,
+        tool: InkTool.highlighter,
+        colour: InkColor.yellow,
+        points: <InkPoint>[
+          InkPoint(x: 0, y: 5, p: 0.1),
+          InkPoint(x: 10, y: 5, p: 0.9),
+        ],
+      );
+      expect(NotebookInkPainter.usesFountainPath(mark), isFalse);
+
+      const InkStroke pen = InkStroke(
+        id: 'pen',
+        width: 3,
+        style: PenStyle.fountain,
+        points: <InkPoint>[
+          InkPoint(x: 0, y: 5, p: 0.1),
+          InkPoint(x: 10, y: 5, p: 0.9),
+        ],
+      );
+      expect(NotebookInkPainter.usesFountainPath(pen), isTrue);
+    });
+
+    test('paint draws highlighters first, active stroke included', () {
+      // The functions above are only worth anything if `paint` actually
+      // routes through them. Recording the real draw calls is what stops
+      // `paintOrder` from silently becoming dead code while the ordering
+      // tests stay green.
+      const InkStroke pen = InkStroke(
+        id: 'pen',
+        width: 3,
+        colour: InkColor.red,
+        points: <InkPoint>[InkPoint(x: 0, y: 0), InkPoint(x: 10, y: 10)],
+      );
+      const InkStroke mark = InkStroke(
+        id: 'mark',
+        width: 3,
+        tool: InkTool.highlighter,
+        colour: InkColor.yellow,
+        points: <InkPoint>[InkPoint(x: 0, y: 5), InkPoint(x: 10, y: 5)],
+      );
+      const InkStroke active = InkStroke(
+        id: 'active',
+        width: 3,
+        tool: InkTool.highlighter,
+        colour: InkColor.lime,
+        points: <InkPoint>[InkPoint(x: 0, y: 8), InkPoint(x: 10, y: 8)],
+      );
+
+      final _RecordingCanvas canvas = _RecordingCanvas();
+      const NotebookInkPainter(
+        strokes: <InkStroke>[pen, mark],
+        activeStroke: active,
+        revision: 1,
+      ).paint(canvas, const Size(100, 100));
+
+      // Both highlighters land before the pen, and the live stroke is in the
+      // ordered run rather than tacked on at the end where it would cover
+      // the handwriting it is being drawn across.
+      expect(canvas.strokeColors, <Matcher>[
+        _isColour(InkColor.yellow),
+        _isColour(InkColor.lime),
+        _isColour(InkColor.red),
+      ]);
+      // Every mark is painted beneath the ink AND is translucent, which is
+      // the pair of properties that makes a highlight readable over text.
+      expect(canvas.strokeColors.first.a, lessThan(1.0));
+      expect(canvas.strokeColors.last.a, closeTo(1.0, 0.001));
+      // The pen keeps its own width; the marks are full bands.
+      expect(canvas.strokeWidths, <double>[12.0, 12.0, 3.0]);
     });
   });
 
