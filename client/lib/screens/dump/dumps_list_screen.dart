@@ -24,6 +24,7 @@ import '../home/home_providers.dart' show serverTranscriptionServiceProvider;
 import '../../widgets/item_action_sheet.dart';
 import '../../widgets/folder_header_actions.dart';
 import '../../widgets/folder_picker.dart';
+import '../../widgets/press_actions.dart';
 import '../notebook/notebook_grouping.dart' show FolderSummary;
 import '../../data/notebook_repository.dart' show foldersProvider;
 import '../home/home_screen.dart' show localDbProvider;
@@ -994,21 +995,24 @@ class _DumpListState extends State<_DumpList> {
     for (final DumpSection section in sections) {
       final String sectionKey = section.folderId ?? 'unfiled';
       final bool collapsed = _collapsed.contains(sectionKey);
+      // Only real folders have actions; the 'No folder' pseudo-section
+      // is not a folder and cannot be renamed or deleted.
+      final VoidCallback? headerActions =
+          section.folderId == null || widget.onHeaderLongPress == null
+              ? null
+              : () => widget.onHeaderLongPress!(
+                    section.folderId!,
+                    section.title!,
+                  );
       children.add(
         InkWell(
           key: ValueKey<String>('dump-section-$sectionKey'),
           onTap: () => setState(() {
             if (!_collapsed.remove(sectionKey)) _collapsed.add(sectionKey);
           }),
-          // Only real folders have actions; the 'No folder' pseudo-section
-          // is not a folder and cannot be renamed or deleted.
-          onLongPress:
-              section.folderId == null || widget.onHeaderLongPress == null
-                  ? null
-                  : () => widget.onHeaderLongPress!(
-                        section.folderId!,
-                        section.title!,
-                      ),
+          onLongPress: headerActions,
+          // Desktop: right-click is this app's long-press.
+          onSecondaryTap: secondaryTapFor(headerActions),
           child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
             child: Row(
@@ -1109,82 +1113,90 @@ class _DumpListState extends State<_DumpList> {
                 ),
               ],
             );
-            return ListTile(
-              key: ValueKey('dump-row-${dump.id}'),
-              selected: widget.selection.selectedIds.contains(dump.id),
-              leading: widget.selection.active
-                  ? Tooltip(
-                      message: 'Select ${dump.title}; $reason',
-                      child: SizedBox.square(
-                        dimension: 48,
-                        child: Checkbox(
-                          key: ValueKey('dump-select-${dump.id}'),
-                          shape: const CircleBorder(),
-                          semanticLabel: 'Select ${dump.title}; $reason',
-                          value: widget.selection.selectedIds.contains(dump.id),
-                          // Selection is action-agnostic: any presented row
-                          // may be selected. Delete/download/transcribe each
-                          // decide widget.eligibility at execution and report skips.
-                          onChanged: widget.enabled
-                              ? (_) => widget.onToggle(dump.id)
-                              : null,
-                        ),
-                      ),
-                    )
-                  : null,
-              title: Text(
-                dump.title.isEmpty ? '(untitled)' : dump.title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+            // Desktop: right-click is this app's long-press. GestureDetector
+            // wrapper because ListTile exposes no onSecondaryTap of its own.
+            return GestureDetector(
+              onSecondaryTap: secondaryTapFor(
+                widget.enabled ? () => widget.onEnter(dump.id) : null,
               ),
-              subtitle: compact
-                  ? Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [subtitle, const SizedBox(height: 4), pill],
-                    )
-                  : subtitle,
-              // The ⋮ button carries per-item actions, so long-press can stay
-              // multi-select. Hidden during selection: a menu that mutates one
-              // row while several are selected is ambiguous, and the toolbar
-              // already owns bulk actions.
-              trailing: widget.selection.active
-                  ? (compact ? null : pill)
-                  : Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: <Widget>[
-                        if (!compact) pill,
-                        IconButton(
-                          key: ValueKey<String>('dump-more-${dump.id}'),
-                          icon: const Icon(Icons.more_vert),
-                          tooltip: 'More actions',
-                          onPressed: !widget.enabled ||
-                                  widget.onLongPressItem == null
-                              ? null
-                              : () => widget.onLongPressItem!(context, dump),
-                        ),
-                      ],
-                    ),
-              // Long-press stays multi-select here. It is the entry point to
-              // the audited bulk local-deletion flow, and 28 tests encode that
-              // contract deliberately ("long press selects; row and circular
-              // control never navigate"). Per-item actions get their own ⋮
-              // button instead — the same split Drive, Files and Samsung's
-              // own apps use, so the gesture is not overloaded.
-              onLongPress:
-                  widget.enabled ? () => widget.onEnter(dump.id) : null,
-              onTap: widget.selection.active
-                  ? (widget.enabled ? () => widget.onToggle(dump.id) : null)
-                  : () => widget.onOpen != null
-                      ? widget.onOpen!(context, dump)
-                      : Navigator.of(context).push<void>(
-                          MaterialPageRoute<void>(
-                            builder: (_) => DumpDetailScreen(
-                              dumpId: dump.id,
-                              audioPath: dump.audioPath,
-                              durationSeconds: dump.durationSeconds,
-                            ),
+              child: ListTile(
+                key: ValueKey('dump-row-${dump.id}'),
+                selected: widget.selection.selectedIds.contains(dump.id),
+                leading: widget.selection.active
+                    ? Tooltip(
+                        message: 'Select ${dump.title}; $reason',
+                        child: SizedBox.square(
+                          dimension: 48,
+                          child: Checkbox(
+                            key: ValueKey('dump-select-${dump.id}'),
+                            shape: const CircleBorder(),
+                            semanticLabel: 'Select ${dump.title}; $reason',
+                            value:
+                                widget.selection.selectedIds.contains(dump.id),
+                            // Selection is action-agnostic: any presented row
+                            // may be selected. Delete/download/transcribe each
+                            // decide widget.eligibility at execution and report skips.
+                            onChanged: widget.enabled
+                                ? (_) => widget.onToggle(dump.id)
+                                : null,
                           ),
                         ),
+                      )
+                    : null,
+                title: Text(
+                  dump.title.isEmpty ? '(untitled)' : dump.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                subtitle: compact
+                    ? Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [subtitle, const SizedBox(height: 4), pill],
+                      )
+                    : subtitle,
+                // The ⋮ button carries per-item actions, so long-press can stay
+                // multi-select. Hidden during selection: a menu that mutates one
+                // row while several are selected is ambiguous, and the toolbar
+                // already owns bulk actions.
+                trailing: widget.selection.active
+                    ? (compact ? null : pill)
+                    : Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: <Widget>[
+                          if (!compact) pill,
+                          IconButton(
+                            key: ValueKey<String>('dump-more-${dump.id}'),
+                            icon: const Icon(Icons.more_vert),
+                            tooltip: 'More actions',
+                            onPressed: !widget.enabled ||
+                                    widget.onLongPressItem == null
+                                ? null
+                                : () => widget.onLongPressItem!(context, dump),
+                          ),
+                        ],
+                      ),
+                // Long-press stays multi-select here. It is the entry point to
+                // the audited bulk local-deletion flow, and 28 tests encode that
+                // contract deliberately ("long press selects; row and circular
+                // control never navigate"). Per-item actions get their own ⋮
+                // button instead — the same split Drive, Files and Samsung's
+                // own apps use, so the gesture is not overloaded.
+                onLongPress:
+                    widget.enabled ? () => widget.onEnter(dump.id) : null,
+                onTap: widget.selection.active
+                    ? (widget.enabled ? () => widget.onToggle(dump.id) : null)
+                    : () => widget.onOpen != null
+                        ? widget.onOpen!(context, dump)
+                        : Navigator.of(context).push<void>(
+                            MaterialPageRoute<void>(
+                              builder: (_) => DumpDetailScreen(
+                                dumpId: dump.id,
+                                audioPath: dump.audioPath,
+                                durationSeconds: dump.durationSeconds,
+                              ),
+                            ),
+                          ),
+              ),
             );
           },
         );

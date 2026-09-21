@@ -28,12 +28,18 @@ import 'screens/recording/recording_controller.dart';
 import 'screens/server/server_connection_screen.dart';
 import 'screens/settings/settings_screen.dart';
 import 'package:workmanager/workmanager.dart';
+import 'package:window_manager/window_manager.dart';
 
 import 'package:device_info_plus/device_info_plus.dart';
 
 import 'services/background_sync_scheduler.dart';
+import 'services/close_to_tray.dart';
 import 'services/connectivity_service.dart';
 import 'services/document_sync_engine.dart';
+import 'services/instance_commands.dart';
+import 'services/platform_audio.dart';
+import 'services/single_instance.dart';
+import 'services/tray_service.dart';
 import 'services/transcription_client.dart';
 
 /// Device label for the background isolate, which cannot reach the app's
@@ -96,8 +102,39 @@ void backgroundSyncDispatcher() {
   });
 }
 
-Future<void> main() async {
+Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Desktop playback backend. Must precede any AudioPlayer construction,
+  // which providers below can trigger.
+  initPlatformAudio();
+  // window_manager backs the tray's Open App (show/focus); it requires an
+  // explicit init before any call and is desktop-only.
+  if (Platform.isLinux) {
+    await windowManager.ensureInitialized();
+  }
+
+  // Desktop single-instance + hotkey plumbing. A KDE global shortcut runs
+  // `tangent --record`: when an instance already owns the socket this
+  // process forwards the command and exits without ever showing a window;
+  // otherwise this process becomes the instance and serves the socket.
+  SingleInstanceServer? instance;
+  final wantsRecord = args.contains('--record');
+  if (Platform.isLinux) {
+    final socketPath = defaultInstanceSocketPath();
+    instance = await SingleInstanceServer.bind(socketPath);
+    if (instance == null) {
+      final delivered = await sendInstanceCommand(
+        socketPath,
+        wantsRecord ? 'toggle-record' : 'show',
+      );
+      // Failure means the owner died between probe and send; starting a
+      // second full app here would race it, so report and exit either way.
+      // Hard exit(), deliberately: returning from Dart main() leaves the
+      // GTK embedder's event loop running forever with no window doing
+      // anything — the forwarder process must die here.
+      exit(delivered ? 0 : 1);
+    }
+  }
 
   final appDocuments = await getApplicationDocumentsDirectory();
   final temp = await getTemporaryDirectory();
@@ -107,8 +144,17 @@ Future<void> main() async {
   );
 
   final secureStore = SecureStore();
-  final url = await secureStore.getServerUrl();
-  final token = await secureStore.getToken();
+  String? url;
+  String? token;
+  try {
+    url = await secureStore.getServerUrl();
+    token = await secureStore.getToken();
+  } catch (e) {
+    // Linux without a Secret Service (KWallet/gnome-keyring): reads throw.
+    // Startup must not die before runApp — launch unpaired; the connect
+    // screen surfaces the same failure with an explanation when opened.
+    debugPrint('tangent.secure-storage unavailable at startup: $e');
+  }
   final client = TranscriptionClient(
     baseUrl: url ?? 'http://10.0.2.2:8000',
     token: token,
@@ -169,10 +215,53 @@ Future<void> main() async {
         recordingImporterProvider.overrideWithValue(importer),
         localDeletionServiceProvider.overrideWithValue(deletion),
         settingsStoreProvider.overrideWithValue(settings),
+        if (instance != null)
+          instanceCommandsProvider.overrideWithValue(instance.commands),
       ],
       child: const TangentApp(),
     ),
   );
+  // Launched via the hotkey with no instance running: the app is up, now
+  // honour the intent. Deliver through the same socket the running-instance
+  // path uses so there is exactly one code path for the command.
+  if (instance != null && wantsRecord) {
+    unawaited(sendInstanceCommand(instance.path, 'toggle-record'));
+  }
+  if (instance != null) {
+    // 'show' arrives when a second launch (no --record) found us running:
+    // the user double-clicked the AppImage again expecting the window.
+    instance.commands.listen((command) {
+      if (command == 'show') unawaited(raiseAppWindow());
+    });
+    // Tray icon: Tangent living in the bottom-right. Start Recording rides
+    // the same socket command as the global hotkey — one code path. The
+    // window survives while the icon does; Exit is the tray's own and only
+    // quit. Failure to install (no StatusNotifierItem host) must not take
+    // the app down; the tray is a convenience, not a dependency.
+    final ownedInstance = instance;
+    // Close-to-tray: the X button hides the window (the tray icon keeps
+    // the app alive for the hotkey); Exit in the tray menu is the one
+    // true quit, routed around the close interception.
+    final closeToTray = CloseToTray(
+      hideWindow: windowManager.hide,
+      quitApp: exitApp,
+    );
+    final trayService = TrayService(
+      onOpenApp: raiseAppWindow,
+      onStartRecording: () =>
+          sendInstanceCommand(ownedInstance.path, 'toggle-record'),
+      onExit: closeToTray.exitForReal,
+    );
+    try {
+      await trayService.install();
+      await closeToTray.install();
+    } catch (e) {
+      // No tray host means no icon to reopen from — hiding the window
+      // would strand the user, so close-to-tray only arms after the tray
+      // is confirmed present.
+      debugPrint('tangent.tray unavailable: $e');
+    }
+  }
 }
 
 class TangentApp extends StatelessWidget {

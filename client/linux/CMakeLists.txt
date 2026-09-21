@@ -42,6 +42,18 @@ endif()
 function(APPLY_STANDARD_SETTINGS TARGET)
   target_compile_features(${TARGET} PUBLIC cxx_std_14)
   target_compile_options(${TARGET} PRIVATE -Wall -Werror)
+  # Vendored/plugin code trips modern-clang diagnostics that -Werror turns
+  # fatal: flutter_secure_storage_linux's old json.hpp (deprecated-literal-
+  # operator) and tray_manager's use of the deprecated-but-supported
+  # app_indicator API (deprecated-declarations). Downgrade exactly those,
+  # guarded so older compilers without the flags don't choke.
+  include(CheckCXXCompilerFlag)
+  check_cxx_compiler_flag(
+    -Wno-deprecated-literal-operator HAVE_NO_DEPRECATED_LITERAL_OPERATOR)
+  if(HAVE_NO_DEPRECATED_LITERAL_OPERATOR)
+    target_compile_options(${TARGET} PRIVATE -Wno-deprecated-literal-operator)
+  endif()
+  target_compile_options(${TARGET} PRIVATE -Wno-error=deprecated-declarations)
   target_compile_options(${TARGET} PRIVATE "$<$<NOT:$<CONFIG:Debug>>:-O3>")
   target_compile_definitions(${TARGET} PRIVATE "$<$<NOT:$<CONFIG:Debug>>:NDEBUG>")
 endfunction()

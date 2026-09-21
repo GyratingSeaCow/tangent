@@ -5,6 +5,61 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Linux desktop companion (verified on CachyOS, KDE Plasma 6 Wayland).
+The client now runs natively on Linux with the full notebook/dump
+feature set, packaged as `Tangent-x86_64.AppImage`.
+
+### Added
+- **Linux desktop support** — the Flutter client builds and runs
+  natively on Linux. Storage uses real directories
+  (`~/Documents/Tangent/`, no folder-authorization step); playback of
+  recorded and synced audio is bridged to libmpv via media_kit
+  (just_audio has no Linux backend); recording captures through
+  PipeWire (`parecord` + `ffmpeg`) with the same 16 kHz mono Opus
+  pipeline as Android.
+- **System tray icon** — Tangent lives in the tray (StatusNotifierItem
+  spoken directly over D-Bus). Left-click opens the app window;
+  right-click offers Open App / Start Recording / Exit. Implemented
+  without libappindicator, which hardcodes menu-on-left-click.
+- **Close-to-tray** — the window's X button hides to the tray instead
+  of quitting (the global hotkey needs a living instance); the tray's
+  Exit is the one real quit. Only armed when a tray host exists, so a
+  trayless desktop keeps normal close-to-quit.
+- **Global record hotkey** — `tangent --record` from a second process
+  forwards a toggle to the running instance over a Unix socket in
+  `XDG_RUNTIME_DIR` and exits; bind it to a key (e.g. Meta+R via KDE
+  custom shortcuts) to start/stop a capture from anywhere on the
+  desktop. A plain second launch raises the existing window instead.
+- **Right-click = long-press** — every long-press context gesture
+  (multi-select on dump/notebook rows and covers, folder header
+  rename/delete) also fires on mouse right-click, derived from the same
+  handler so the two inputs cannot drift.
+- **AppImage packaging** — `packaging/build-appimage.sh` wraps the
+  Flutter bundle plus libmpv and its non-baseline dependency closure
+  into a self-contained `Tangent-x86_64.AppImage`.
+
+### Fixed
+- **First words clipped on Linux** — record_linux reports "started"
+  when `parecord` spawns, ~120–190 ms before the PipeWire stream is
+  live. The recorder now holds "recording" until the mic stream shows
+  real amplitude (bounded at 700 ms so a hardware-muted mic can't hang
+  the button).
+- **PDF export crashed on Linux** — the share sheet path ends in
+  share_plus's `shareXFiles`, which is unimplemented on Linux. Desktop
+  exports now land in `Documents/Tangent/Exports/` (collision-safe
+  names, never overwrites) and open in the system viewer, with the
+  path shown either way.
+- **Missing Secret Service no longer breaks startup** — without
+  KWallet/gnome-keyring, secure-storage reads throw; startup now
+  launches unpaired and the connect screen states the problem instead
+  of crashing or showing silently empty fields.
+- **Linux build with clang ≥ 18** — vendored plugin code
+  (flutter_secure_storage's json.hpp, appindicator headers) tripped
+  `-Werror` on newer diagnostics; those exact warnings are downgraded,
+  guarded by compiler capability checks.
+
 ## [1.5.1] - 2026-09-20
 
 ### Changed

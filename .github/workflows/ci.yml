@@ -22,6 +22,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The Linux desktop playback test dlopens libmpv through media_kit;
+      # without it MediaKit.ensureInitialized throws and the test fails.
+      - name: Linux desktop test dependencies
+        run: sudo apt-get update && sudo apt-get install -y libmpv-dev
+
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: "3.27.1"

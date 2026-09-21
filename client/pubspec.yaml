@@ -36,6 +36,10 @@ dependencies:
   device_info_plus: ^11.3.0
   pdf: ^3.11.1
   share_plus: ^10.1.2
+  just_audio_media_kit: ^2.1.0
+  media_kit_libs_linux: ^1.2.1
+  window_manager: ^0.5.2
+  dbus: ^0.7.12
 
 dev_dependencies:
   flutter_test:
@@ -49,6 +53,9 @@ dev_dependencies:
   sqlite3: ^2.9.4
   integration_test:
     sdk: flutter
+  just_audio_platform_interface: ^4.6.0
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/tray/tray_icon.png
