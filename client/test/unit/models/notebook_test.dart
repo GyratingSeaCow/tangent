@@ -309,4 +309,139 @@ void main() {
       expect(renamed.document.encode(), notebook.document.encode());
     });
   });
+
+  group('ink tool and colour', () {
+    test('a legacy stroke re-encodes byte-identical', () {
+      // The expensive regression: a stroke written before this feature must
+      // not gain keys, or every notebook on disk rewrites at the next save
+      // and floods sync with a spurious diff.
+      const String legacy =
+          '{"id":"s1","width":3.0,"points":[{"x":1.0,"y":2.0}]}';
+      final InkStroke stroke =
+          InkStroke.fromJson(jsonDecode(legacy) as Map<String, dynamic>);
+
+      expect(stroke.tool, InkTool.pen);
+      expect(stroke.colour, InkColor.white);
+      expect(jsonEncode(stroke.toJson()), legacy);
+    });
+
+    test('a default pen stroke omits both new keys', () {
+      const InkStroke stroke = InkStroke(
+        id: 's1',
+        width: 3,
+        points: <InkPoint>[InkPoint(x: 1, y: 2)],
+      );
+      final Map<String, dynamic> json = stroke.toJson();
+      expect(json.containsKey('tool'), isFalse);
+      expect(json.containsKey('colour'), isFalse);
+    });
+
+    test('a highlighter stroke round-trips tool and colour', () {
+      const InkStroke stroke = InkStroke(
+        id: 's2',
+        width: 4,
+        tool: InkTool.highlighter,
+        colour: InkColor.pink,
+        points: <InkPoint>[InkPoint(x: 1, y: 2), InkPoint(x: 3, y: 4)],
+      );
+      final Map<String, dynamic> json = stroke.toJson();
+      expect(json['tool'], 'highlighter');
+      expect(json['colour'], 'pink');
+
+      final InkStroke back = InkStroke.fromJson(json);
+      expect(back.tool, InkTool.highlighter);
+      expect(back.colour, InkColor.pink);
+    });
+
+    test('a highlighter at ITS default omits colour but keeps tool', () {
+      // Yellow is the highlighter's default, so it is not written — but the
+      // tool is, or the stroke would read back as a pen.
+      const InkStroke stroke = InkStroke(
+        id: 's3',
+        width: 4,
+        tool: InkTool.highlighter,
+        colour: InkColor.yellow,
+        points: <InkPoint>[InkPoint(x: 1, y: 2)],
+      );
+      final Map<String, dynamic> json = stroke.toJson();
+      expect(json['tool'], 'highlighter');
+      expect(json.containsKey('colour'), isFalse);
+      expect(InkStroke.fromJson(json).colour, InkColor.yellow);
+    });
+
+    test('unknown tool and colour degrade instead of dropping the stroke', () {
+      final InkStroke stroke = InkStroke.fromJson(<String, dynamic>{
+        'id': 's4',
+        'width': 3.0,
+        'tool': 'crayon',
+        'colour': 'chartreuse',
+        'points': <dynamic>[
+          <String, dynamic>{'x': 1.0, 'y': 2.0},
+        ],
+      });
+      expect(stroke.tool, InkTool.pen);
+      expect(stroke.colour, InkColor.white);
+      expect(stroke.points, hasLength(1));
+    });
+
+    test('an unknown colour on a highlighter falls back to yellow', () {
+      final InkStroke stroke = InkStroke.fromJson(<String, dynamic>{
+        'id': 's5',
+        'width': 3.0,
+        'tool': 'highlighter',
+        'colour': 'chartreuse',
+        'points': <dynamic>[
+          <String, dynamic>{'x': 1.0, 'y': 2.0},
+        ],
+      });
+      expect(stroke.tool, InkTool.highlighter);
+      expect(stroke.colour, InkColor.yellow);
+    });
+
+    test('tryFromJson carries tool and colour', () {
+      final InkStroke? stroke = InkStroke.tryFromJson(<String, dynamic>{
+        'id': 's6',
+        'width': 3.0,
+        'tool': 'highlighter',
+        'colour': 'highlightBlue',
+        'points': <dynamic>[
+          <String, dynamic>{'x': 1.0, 'y': 2.0},
+        ],
+      });
+      expect(stroke, isNotNull);
+      expect(stroke!.tool, InkTool.highlighter);
+      expect(stroke.colour, InkColor.highlightBlue);
+    });
+
+    test('a highlighter cannot inherit an opaque pen ink by name', () {
+      // `blue` is a pen ink at full alpha. A highlighter naming it must fall
+      // back to its own default rather than resolving to opaque ink, or a
+      // translucent mark would paint over the handwriting it sits beneath.
+      final InkStroke? stroke = InkStroke.tryFromJson(<String, dynamic>{
+        'id': 's6b',
+        'width': 3.0,
+        'tool': 'highlighter',
+        'colour': 'blue',
+        'points': <dynamic>[
+          <String, dynamic>{'x': 1.0, 'y': 2.0},
+        ],
+      });
+      expect(stroke!.colour, InkColor.yellow);
+      expect(stroke.colour.argb >> 24, lessThan(0xFF));
+    });
+
+    test('copyWith preserves tool and colour when not overridden', () {
+      const InkStroke stroke = InkStroke(
+        id: 's7',
+        width: 3,
+        tool: InkTool.highlighter,
+        colour: InkColor.lime,
+        points: <InkPoint>[InkPoint(x: 1, y: 2)],
+      );
+      final InkStroke moved =
+          stroke.copyWith(points: <InkPoint>[const InkPoint(x: 9, y: 9)]);
+      expect(moved.tool, InkTool.highlighter);
+      expect(moved.colour, InkColor.lime);
+    });
+  });
 }

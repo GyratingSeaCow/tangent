@@ -412,6 +412,8 @@ class InkStroke {
     required this.width,
     required this.points,
     this.style = PenStyle.ballpoint,
+    this.tool = InkTool.pen,
+    this.colour = InkColor.white,
   });
 
   final String id;
@@ -422,17 +424,29 @@ class InkStroke {
   /// tapers with the pressure recorded in each point.
   final PenStyle style;
 
+  /// Which instrument drew this. Highlighter strokes paint beneath pen ink.
+  final InkTool tool;
+
+  /// The ink. Defaults to white, which is also the pen's default, so a
+  /// legacy stroke constructs correctly without naming a colour.
+  final InkColor colour;
+
   /// Tolerant reader: missing fields fall back to defaults.
-  factory InkStroke.fromJson(Map<String, dynamic> json) => InkStroke(
-        id: json['id'] as String? ?? '',
-        width: (json['width'] as num?)?.toDouble() ?? kDefaultPenWidth,
-        style: PenStyle.fromWire(json['style']),
-        points: <InkPoint>[
-          for (final Object? point
-              in (json['points'] as List<dynamic>? ?? const <dynamic>[]))
-            if (point is Map<String, dynamic>) InkPoint.fromJson(point),
-        ],
-      );
+  factory InkStroke.fromJson(Map<String, dynamic> json) {
+    final InkTool tool = InkTool.fromWire(json['tool']);
+    return InkStroke(
+      id: json['id'] as String? ?? '',
+      width: (json['width'] as num?)?.toDouble() ?? kDefaultPenWidth,
+      style: PenStyle.fromWire(json['style']),
+      tool: tool,
+      colour: InkColor.fromWire(json['colour'], tool),
+      points: <InkPoint>[
+        for (final Object? point
+            in (json['points'] as List<dynamic>? ?? const <dynamic>[]))
+          if (point is Map<String, dynamic>) InkPoint.fromJson(point),
+      ],
+    );
+  }
 
   /// Strict reader used when decoding storage: unusable rows become null so
   /// they can be dropped instead of materialising an empty stroke.
@@ -447,19 +461,30 @@ class InkStroke {
         .whereType<InkPoint>()
         .toList(growable: false);
     if (decoded.isEmpty) return null;
+    final InkTool tool = InkTool.fromWire(raw['tool']);
     return InkStroke(
       id: id,
       width: width.toDouble(),
       style: PenStyle.fromWire(raw['style']),
+      tool: tool,
+      colour: InkColor.fromWire(raw['colour'], tool),
       points: decoded,
     );
   }
 
-  InkStroke copyWith({String? id, double? width, List<InkPoint>? points}) =>
+  InkStroke copyWith({
+    String? id,
+    double? width,
+    List<InkPoint>? points,
+    InkTool? tool,
+    InkColor? colour,
+  }) =>
       InkStroke(
         id: id ?? this.id,
         width: width ?? this.width,
         style: style,
+        tool: tool ?? this.tool,
+        colour: colour ?? this.colour,
         points: points ?? this.points,
       );
 
@@ -469,6 +494,8 @@ class InkStroke {
         // Written only when set: a legacy file must re-encode byte-comparable,
         // without gaining fields it never had.
         if (style != PenStyle.ballpoint) 'style': style.wireValue,
+        if (tool != InkTool.pen) 'tool': tool.wireValue,
+        if (colour != InkColor.defaultFor(tool)) 'colour': colour.wireValue,
         'points': points.map((p) => p.toJson()).toList(growable: false),
       };
 
@@ -479,10 +506,13 @@ class InkStroke {
           other.id == id &&
           other.width == width &&
           other.style == style &&
+          other.tool == tool &&
+          other.colour == colour &&
           listEquals(other.points, points);
 
   @override
-  int get hashCode => Object.hash(id, width, style, Object.hashAll(points));
+  int get hashCode =>
+      Object.hash(id, width, style, tool, colour, Object.hashAll(points));
 
   @override
   String toString() => 'InkStroke($id, w=$width, ${points.length}pts)';
@@ -506,6 +536,84 @@ enum PenStyle {
         'fountain' => PenStyle.fountain,
         _ => PenStyle.ballpoint,
       };
+}
+
+/// Which instrument drew a stroke. Stored per stroke, so a page can mix them.
+enum InkTool {
+  /// Opaque handwriting. The default: every stroke written before this
+  /// feature existed is a pen stroke.
+  pen('pen'),
+
+  /// A wide translucent mark, painted beneath every pen stroke so it can
+  /// never obscure handwriting.
+  highlighter('highlighter');
+
+  const InkTool(this.wireValue);
+  final String wireValue;
+
+  /// Unknown or absent tools read as pen: showing a mark as handwriting
+  /// beats dropping it because a newer build named an instrument this one
+  /// has never heard of.
+  static InkTool fromWire(Object? raw) => switch (raw) {
+        'highlighter' => InkTool.highlighter,
+        _ => InkTool.pen,
+      };
+}
+
+/// The ink a stroke is drawn in.
+///
+/// Pen colours are opaque; highlighter colours carry their translucency in
+/// the stored alpha, so the value round-trips through JSON unchanged rather
+/// than depending on a painter applying an opacity at draw time.
+///
+/// Pen ink is never lime: `TangentColors.signal` means "live or selected"
+/// everywhere else in the app, and opaque lime handwriting would compete
+/// with it. Lime IS offered as a highlighter — at 22% alpha as a wide band
+/// it reads as a mark, not a selection.
+enum InkColor {
+  // Pen inks.
+  white('white', 0xFFEDF1F3),
+  blue('blue', 0xFF5AB4FF),
+  red('red', 0xFFFF6B6B),
+  amber('amber', 0xFFFFB347),
+
+  // Highlighter marks. Alpha is baked in.
+  yellow('yellow', 0x38FFE14D),
+  lime('lime', 0x38D4FF47),
+  highlightBlue('highlightBlue', 0x425AB4FF),
+  pink('pink', 0x3DFF78DC);
+
+  const InkColor(this.wireValue, this.argb);
+  final String wireValue;
+
+  /// Packed 32-bit ARGB, ready for `Color(...)`.
+  final int argb;
+
+  /// The ink a tool uses when a stroke names no colour.
+  static InkColor defaultFor(InkTool tool) => switch (tool) {
+        InkTool.pen => InkColor.white,
+        InkTool.highlighter => InkColor.yellow,
+      };
+
+  /// The swatches offered for a tool, in palette order.
+  static List<InkColor> paletteFor(InkTool tool) => switch (tool) {
+        InkTool.pen => const <InkColor>[white, blue, red, amber],
+        InkTool.highlighter => const <InkColor>[
+            yellow,
+            lime,
+            highlightBlue,
+            pink,
+          ],
+      };
+
+  /// Unknown or absent colours read as the tool's default, so a stroke from
+  /// a newer build still draws rather than vanishing.
+  static InkColor fromWire(Object? raw, InkTool tool) {
+    for (final InkColor colour in paletteFor(tool)) {
+      if (colour.wireValue == raw) return colour;
+    }
+    return defaultFor(tool);
+  }
 }
 
 /// One sampled point of a stroke, in canvas logical pixels.
