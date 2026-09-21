@@ -33,6 +33,7 @@ import 'package:window_manager/window_manager.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 
 import 'services/background_sync_scheduler.dart';
+import 'services/close_to_tray.dart';
 import 'services/connectivity_service.dart';
 import 'services/document_sync_engine.dart';
 import 'services/instance_commands.dart';
@@ -238,15 +239,26 @@ Future<void> main(List<String> args) async {
     // quit. Failure to install (no StatusNotifierItem host) must not take
     // the app down; the tray is a convenience, not a dependency.
     final ownedInstance = instance;
+    // Close-to-tray: the X button hides the window (the tray icon keeps
+    // the app alive for the hotkey); Exit in the tray menu is the one
+    // true quit, routed around the close interception.
+    final closeToTray = CloseToTray(
+      hideWindow: windowManager.hide,
+      quitApp: exitApp,
+    );
     final trayService = TrayService(
       onOpenApp: raiseAppWindow,
       onStartRecording: () =>
           sendInstanceCommand(ownedInstance.path, 'toggle-record'),
-      onExit: exitApp,
+      onExit: closeToTray.exitForReal,
     );
     try {
       await trayService.install();
+      await closeToTray.install();
     } catch (e) {
+      // No tray host means no icon to reopen from — hiding the window
+      // would strand the user, so close-to-tray only arms after the tray
+      // is confirmed present.
       debugPrint('tangent.tray unavailable: $e');
     }
   }
