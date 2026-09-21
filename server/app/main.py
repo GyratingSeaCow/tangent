@@ -13,6 +13,7 @@ from fastapi import FastAPI
 from app.api.dumps import router as dumps_router
 from app.api.jobs import router as jobs_router
 from app.api.models import router as models_router
+from app.api.ocr import router as ocr_router
 from app.api.pairing import router as pairing_router
 from app.api.server_info import router as info_router
 from app.api.setup import router as setup_router
@@ -92,6 +93,7 @@ def create_app() -> FastAPI:
     app.include_router(info_router)   # /v1/server/info
     app.include_router(sync_router)   # /v1/devices, /v1/sync/pull, /v1/sync/push
     app.include_router(pairing_router)  # /v1/pair/*, /v1/devices/{id}/token
+    app.include_router(ocr_router)    # /v1/ocr/*
 
     register_exception_handlers(app)
     return app
