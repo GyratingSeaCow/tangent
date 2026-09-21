@@ -13,6 +13,8 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  # Build a Linux AppImage on demand from any branch, without cutting a tag.
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -84,6 +86,90 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: tangent-*.apk
+          generate_release_notes: true
+
+  appimage:
+    name: Build + attach Linux AppImage
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      # Flutter's Linux desktop toolchain, plus libmpv: media_kit dlopens it
+      # at runtime and build-appimage.sh copies the system copy (and its
+      # non-baseline dependency closure) into the AppDir.
+      - name: Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev \
+            libstdc++-12-dev libmpv-dev libfuse2 desktop-file-utils
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.27.1"
+          channel: stable
+          cache: true
+
+      - name: Pub get
+        working-directory: client
+        run: flutter pub get
+
+      # The same gates the APK job runs: a release must not ship a Linux
+      # binary built from code that never passed analyze and test.
+      - name: Analyze
+        working-directory: client
+        run: flutter analyze
+
+      - name: Test
+        working-directory: client
+        run: flutter test
+
+      - name: Build Linux release bundle
+        working-directory: client
+        run: flutter build linux --release
+
+      # appimagetool ships as an AppImage. GitHub runners have no FUSE for
+      # it to mount itself with, so extract it and call its AppRun directly.
+      - name: Fetch appimagetool
+        run: |
+          curl -fsSL -o /tmp/appimagetool \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x /tmp/appimagetool
+          ( cd /tmp && ./appimagetool --appimage-extract >/dev/null )
+          sudo install -m 0755 /tmp/squashfs-root/AppRun /usr/local/bin/appimagetool
+
+      - name: Build the AppImage
+        run: packaging/build-appimage.sh
+
+      # A packaging bug that drops libmpv or mangles AppRun produces a file
+      # that looks fine and dies on launch. Prove the payload is intact.
+      - name: Verify the AppImage payload
+        run: |
+          IMG=packaging/out/Tangent-x86_64.AppImage
+          test -x "$IMG"
+          ./"$IMG" --appimage-extract >/dev/null
+          test -x squashfs-root/usr/bundle/tangent \
+            || { echo "no Flutter binary inside the AppImage"; exit 1; }
+          test -f squashfs-root/usr/lib/libmpv.so.2 \
+            || { echo "libmpv missing — playback would fail at runtime"; exit 1; }
+          test -L squashfs-root/usr/lib/libmpv.so \
+            || { echo "unversioned libmpv symlink missing — dlopen probe fails"; exit 1; }
+          echo "AppImage payload verified ($(du -h "$IMG" | cut -f1))"
+
+      - name: Upload as a build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Tangent-x86_64.AppImage
+          path: packaging/out/Tangent-x86_64.AppImage
+          if-no-files-found: error
+
+      # Only a tag push has a release to attach to; a manual run stops at
+      # the artifact above.
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: packaging/out/Tangent-x86_64.AppImage
           generate_release_notes: true
 
   server-image:
