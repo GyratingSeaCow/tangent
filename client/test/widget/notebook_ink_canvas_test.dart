@@ -102,13 +102,10 @@ class _CanvasHarness {
         // A tool holding another tool's ink is not a state a real toolbar
         // can reach, and InkStroke asserts on it. Catch a mis-staged test
         // here, where the message names the harness, instead of inside the
-        // model where it reads as a production bug.
+        // model where it reads as a production bug. Sourced from the model's
+        // own palette so a future swatch cannot drift this copy.
         assert(
-          (tool == InkTool.pen) ==
-              (colour == InkColor.white ||
-                  colour == InkColor.blue ||
-                  colour == InkColor.red ||
-                  colour == InkColor.amber),
+          InkColor.paletteFor(tool).contains(colour),
           'colour must belong to tool\'s palette (InkColor.paletteFor)',
         );
 
@@ -186,6 +183,11 @@ class _CanvasHarness {
     // stage a pairing the model would reject.
     this.colour =
         colour ?? (switchedTool ? InkColor.defaultFor(this.tool) : this.colour);
+    assert(
+      InkColor.paletteFor(this.tool).contains(this.colour),
+      'setInstrument staged an illegal pairing: ${this.tool} with '
+      '${this.colour} — name a colour from InkColor.paletteFor(tool)',
+    );
     _setState(() {});
     await tester.pump();
   }
@@ -541,6 +543,23 @@ void main() {
       await harness.setInstrument(tester, tool: InkTool.pen);
       await gesture.moveTo(_at(tester, const Offset(60, 10)));
       await tester.pump();
+
+      // The LIVE PREVIEW must hold the latch too — not just the committed
+      // stroke. If the preview re-reads the widget selection, the ink
+      // visibly recolours under the finger while drawing, then snaps back
+      // on lift; the committed-stroke assertions below would stay green.
+      final InkStroke active = _livePainter(tester).activeStroke!;
+      expect(
+        active.tool,
+        InkTool.highlighter,
+        reason: 'the in-progress ink keeps the tool it started with',
+      );
+      expect(
+        active.colour,
+        InkColor.lime,
+        reason: 'the in-progress ink keeps the colour it started with',
+      );
+
       await gesture.up();
       await tester.pump();
 
@@ -559,9 +578,12 @@ void main() {
 
     testWidgets('the live preview stroke carries the selected tool and colour',
         (tester) async {
+      // Deliberately a NON-default swatch: yellow is defaultFor(highlighter),
+      // so a preview that collapsed colour to the tool default would pass
+      // with yellow and this test would defend nothing.
       final _CanvasHarness harness = _CanvasHarness(
         tool: InkTool.highlighter,
-        colour: InkColor.yellow,
+        colour: InkColor.pink,
       );
       await harness.pump(tester);
 
@@ -575,7 +597,7 @@ void main() {
       final NotebookInkPainter painter = _livePainter(tester);
       final InkStroke active = painter.activeStroke!;
       expect(active.tool, InkTool.highlighter);
-      expect(active.colour, InkColor.yellow);
+      expect(active.colour, InkColor.pink);
 
       await gesture.up();
       await tester.pump();
