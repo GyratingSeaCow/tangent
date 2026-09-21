@@ -1031,14 +1031,13 @@ class NotebookInkPainter extends CustomPainter {
   /// The paint for a stroke. A pen keeps the round nib at its own width; a
   /// highlighter is a wide chisel in translucent ink.
   ///
-  /// [stroke] is optional so the legacy one-argument call sites (and any
-  /// caller that only knows a width) still get the default white pen.
-  Paint buildStrokePaint(double width, {InkStroke? stroke}) {
-    final InkTool tool = stroke?.tool ?? InkTool.pen;
-    final InkColor colour = stroke?.colour ?? InkColor.white;
-    final bool marker = tool == InkTool.highlighter;
+  /// [stroke] is required: every visible property of the mark comes from it,
+  /// so a caller that could omit it would silently get a default white pen
+  /// instead of a compile error.
+  Paint buildStrokePaint(double width, {required InkStroke stroke}) {
+    final bool marker = stroke.tool == InkTool.highlighter;
     return Paint()
-      ..color = Color(colour.argb)
+      ..color = Color(stroke.colour.argb)
       ..style = PaintingStyle.stroke
       ..strokeWidth = marker ? width * kHighlighterWidthFactor : width
       // A chisel edge, not a round nib: this is what stops a highlight from

@@ -12,23 +12,70 @@ import 'package:tangent/widgets/notebook_ink_canvas.dart';
 ///
 /// Test-local on purpose: the painter carries no hooks of its own, so the
 /// only way to observe real draw order is to watch the Canvas it is handed.
-/// `drawPath` is the call every multi-point stroke goes through.
+/// Strokes and fills are recorded into separate lists because they answer
+/// different questions — `drawPath` in [PaintingStyle.stroke] is every
+/// multi-point ballpoint stroke, every highlighter band and every selection
+/// halo, while the fills are the fountain ribbon and the single-tap dot,
+/// where the fill IS the whole visible mark.
 class _RecordingCanvas implements Canvas {
+  /// Stroked `drawPath` calls: ballpoint/highlighter strokes, the selection
+  /// halo and the lasso marquee, in draw order.
   final List<Color> strokeColors = <Color>[];
   final List<double> strokeWidths = <double>[];
 
+  /// Filled `drawPath` calls — the fountain ribbon.
+  final List<_RecordedFill> fills = <_RecordedFill>[];
+
+  /// `drawCircle` calls — single-point dots and a single-point halo.
+  final List<_RecordedCircle> circles = <_RecordedCircle>[];
+
   @override
   void drawPath(Path path, Paint paint) {
-    // Only stroked ink is ink: the lasso marquee and selection halos are
-    // painted with other styles/colours and are not part of stroke order.
-    if (paint.style != PaintingStyle.stroke) return;
+    if (paint.style == PaintingStyle.fill) {
+      fills.add(_RecordedFill(paint.color));
+      return;
+    }
     strokeColors.add(paint.color);
     strokeWidths.add(paint.strokeWidth);
   }
 
-  // Everything else the painter might call is irrelevant to draw order.
   @override
-  dynamic noSuchMethod(Invocation invocation) => null;
+  void drawCircle(Offset c, double radius, Paint paint) =>
+      circles.add(_RecordedCircle(c, radius, paint.color, paint.style));
+
+  /// Anything that draws and is not recorded above is a hole in these tests:
+  /// the painter would be putting ink on the page that every assertion here
+  /// is blind to. Fail loudly instead, per the sister recorder in
+  /// `test/unit/models/notebook_fountain_painter_test.dart`. Non-`draw`
+  /// members (save/restore/transform/clip) carry no ink and stay permissive.
+  @override
+  dynamic noSuchMethod(Invocation invocation) {
+    // `Symbol("drawOval")` — dart:mirrors is unavailable in a Flutter test,
+    // so the name is read back off the Symbol's own toString.
+    final String member =
+        RegExp(r'"(.*)"').firstMatch('${invocation.memberName}')?.group(1) ??
+            '';
+    if (member.startsWith('draw')) {
+      throw UnimplementedError('unrecorded canvas draw call: $member');
+    }
+    return null;
+  }
+}
+
+/// A filled `drawPath` the painter made.
+class _RecordedFill {
+  const _RecordedFill(this.colour);
+  final Color colour;
+}
+
+/// A `drawCircle` the painter made. [radius] is what proves a highlighter
+/// tap is a band rather than a nib-sized dot.
+class _RecordedCircle {
+  const _RecordedCircle(this.centre, this.radius, this.colour, this.paintStyle);
+  final Offset centre;
+  final double radius;
+  final Color colour;
+  final PaintingStyle paintStyle;
 }
 
 /// `Paint.color` round-trips through float channels, so an identical colour
@@ -761,7 +808,14 @@ void main() {
         activeStroke: null,
         revision: 0,
       );
-      final Paint paint = painter.buildStrokePaint(5);
+      // The paint's every property comes from the stroke, so the stroke is
+      // required — a default-pen stroke is what makes this the pen case.
+      const InkStroke pen = InkStroke(
+        id: 'pen',
+        width: 5,
+        points: <InkPoint>[InkPoint(x: 0, y: 0), InkPoint(x: 5, y: 5)],
+      );
+      final Paint paint = painter.buildStrokePaint(5, stroke: pen);
       expect(paint.strokeCap, StrokeCap.round);
       expect(paint.strokeJoin, StrokeJoin.round);
       expect(paint.style, PaintingStyle.stroke);
@@ -1033,6 +1087,163 @@ void main() {
       expect(canvas.strokeColors.last.a, closeTo(1.0, 0.001));
       // The pen keeps its own width; the marks are full bands.
       expect(canvas.strokeWidths, <double>[12.0, 12.0, 3.0]);
+    });
+
+    test('a single-point highlighter dot draws in its own translucent ink',
+        () {
+      // The dot fill never goes through `buildStrokePaint`, so the paint
+      // tests above say nothing about it. A tap is the whole mark here: if
+      // the dot fill lost the stroke's colour it would render opaque white
+      // and blot the page instead of tinting it.
+      const InkStroke mark = InkStroke(
+        id: 'mark',
+        width: 3,
+        tool: InkTool.highlighter,
+        colour: InkColor.yellow,
+        points: <InkPoint>[InkPoint(x: 10, y: 10)],
+      );
+
+      final _RecordingCanvas canvas = _RecordingCanvas();
+      const NotebookInkPainter(
+        strokes: <InkStroke>[mark],
+        activeStroke: null,
+        revision: 1,
+      ).paint(canvas, const Size(100, 100));
+
+      expect(canvas.circles, hasLength(1));
+      expect(canvas.circles.single.paintStyle, PaintingStyle.fill);
+      expect(canvas.circles.single.colour, _isColour(InkColor.yellow));
+      expect(
+        canvas.circles.single.colour.a,
+        lessThan(1.0),
+        reason: 'an opaque dot would blot the ink a highlight sits beneath',
+      );
+    });
+
+    test('a highlighter dot is a full band, a pen dot is nib-sized', () {
+      // One tap with the marker must still read as a band. Without the
+      // factor a highlighter tap would be indistinguishable from a pen dot
+      // of the same slider width.
+      const InkStroke mark = InkStroke(
+        id: 'mark',
+        width: 3,
+        tool: InkTool.highlighter,
+        colour: InkColor.yellow,
+        points: <InkPoint>[InkPoint(x: 10, y: 10)],
+      );
+      const InkStroke dot = InkStroke(
+        id: 'dot',
+        width: 3,
+        points: <InkPoint>[InkPoint(x: 20, y: 20)],
+      );
+
+      final _RecordingCanvas canvas = _RecordingCanvas();
+      const NotebookInkPainter(
+        strokes: <InkStroke>[dot, mark],
+        activeStroke: null,
+        revision: 1,
+      ).paint(canvas, const Size(100, 100));
+
+      // Highlighter first (paintOrder), pen second — same nominal width, and
+      // only the mark is scaled to the band.
+      expect(
+        canvas.circles.map((_RecordedCircle c) => c.radius).toList(),
+        <double>[3 * kHighlighterWidthFactor / 2, 1.5],
+      );
+    });
+
+    test('a fountain stroke fills its ribbon in its own ink', () {
+      // The ribbon IS the entire visible mark of a fountain stroke, and it
+      // is filled by the same dot paint — red, so a silent fall back to the
+      // default white ink cannot pass by accident.
+      const InkStroke pen = InkStroke(
+        id: 'pen',
+        width: 4,
+        style: PenStyle.fountain,
+        colour: InkColor.red,
+        points: <InkPoint>[
+          InkPoint(x: 0, y: 0, p: 0.2),
+          InkPoint(x: 10, y: 0, p: 0.8),
+          InkPoint(x: 20, y: 0, p: 0.5),
+        ],
+      );
+
+      final _RecordingCanvas canvas = _RecordingCanvas();
+      const NotebookInkPainter(
+        strokes: <InkStroke>[pen],
+        activeStroke: null,
+        revision: 1,
+      ).paint(canvas, const Size(100, 100));
+
+      expect(
+        canvas.strokeColors,
+        isEmpty,
+        reason: 'the italic nib fills a ribbon, it never strokes a line',
+      );
+      expect(canvas.fills, hasLength(1));
+      expect(canvas.fills.single.colour, _isColour(InkColor.red));
+      expect(canvas.fills.single.colour.a, closeTo(1.0, 0.001));
+    });
+
+    test('a selected highlighter haloes around its full band', () {
+      // The glow has to track the band, not the nominal width, or a selected
+      // mark would show its halo buried inside itself.
+      const InkStroke pen = InkStroke(
+        id: 'pen',
+        width: 3,
+        points: <InkPoint>[InkPoint(x: 0, y: 0), InkPoint(x: 10, y: 10)],
+      );
+      const InkStroke mark = InkStroke(
+        id: 'mark',
+        width: 3,
+        tool: InkTool.highlighter,
+        colour: InkColor.yellow,
+        points: <InkPoint>[InkPoint(x: 0, y: 5), InkPoint(x: 10, y: 5)],
+      );
+
+      final _RecordingCanvas canvas = _RecordingCanvas();
+      const NotebookInkPainter(
+        strokes: <InkStroke>[pen, mark],
+        activeStroke: null,
+        revision: 1,
+        selectedIds: <String>{'pen', 'mark'},
+      ).paint(canvas, const Size(100, 100));
+
+      // Halo then ink, per stroke, in paint order: the mark's halo clears
+      // its 12-wide band while the pen — identical nominal width — gets a
+      // halo around 3.
+      expect(canvas.strokeWidths, <double>[
+        3 * kHighlighterWidthFactor + 8,
+        3 * kHighlighterWidthFactor,
+        3 + 8,
+        3,
+      ]);
+    });
+  });
+
+  group('_RecordingCanvas', () {
+    test('throws on a draw call it does not record', () {
+      // Hardening, not behaviour: if the painter ever draws ink through a
+      // method this fixture ignores, every order and colour test above would
+      // silently observe less than was drawn. Fail loudly instead.
+      final _RecordingCanvas canvas = _RecordingCanvas();
+      expect(
+        () => canvas.drawLine(Offset.zero, const Offset(1, 1), Paint()),
+        throwsUnimplementedError,
+      );
+      expect(
+        () => canvas.drawRect(const Rect.fromLTWH(0, 0, 1, 1), Paint()),
+        throwsUnimplementedError,
+      );
+      // Structural calls carry no ink and stay permissive.
+      expect(
+        () {
+          canvas.save();
+          canvas.translate(1, 1);
+          canvas.restore();
+        },
+        returnsNormally,
+      );
     });
   });
 
