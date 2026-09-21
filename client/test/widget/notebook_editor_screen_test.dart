@@ -1895,11 +1895,41 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('notebook-ink-swatch-red')));
     await tester.pumpAndSettle();
 
+    final NotebookInkCanvas canvas =
+        tester.widget<NotebookInkCanvas>(find.byType(NotebookInkCanvas));
+    expect(canvas.colour, InkColor.red);
+    // Picking a colour IS choosing to draw: from cold, the pick must land
+    // in draw mode or the very next stroke silently does nothing.
+    expect(canvas.drawingEnabled, isTrue);
+    expect(canvas.tool, InkTool.pen);
+
+    await unmount(tester);
+  });
+
+  testWidgets('a dismissed palette leaves the colour alone', (tester) async {
+    await mountEditor(tester, notebook: seeded());
+    NotebookInkCanvas canvas() =>
+        tester.widget<NotebookInkCanvas>(find.byType(NotebookInkCanvas));
+
+    // Put a NON-default colour on the pen first, so a sneaky reset to the
+    // default is visible.
+    await tester.longPress(find.byIcon(Icons.draw));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('notebook-ink-swatch-red')));
+    await tester.pumpAndSettle();
+    expect(canvas().colour, InkColor.red);
+
+    // Open the palette again and dismiss it without choosing: tap outside
+    // the menu. The colour must survive untouched.
+    await tester.longPress(find.byIcon(Icons.draw));
+    await tester.pumpAndSettle();
+    await tester.tapAt(const Offset(5, 5));
+    await tester.pumpAndSettle();
+
     expect(
-      tester
-          .widget<NotebookInkCanvas>(find.byType(NotebookInkCanvas))
-          .colour,
+      canvas().colour,
       InkColor.red,
+      reason: 'dismissing the palette must never reset the colour',
     );
 
     await unmount(tester);
