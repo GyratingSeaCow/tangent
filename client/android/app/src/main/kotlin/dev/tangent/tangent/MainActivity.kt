@@ -35,6 +35,7 @@ class MainActivity : FlutterActivity() {
     private val audioChannelName = "dev.tangent.tangent/audio"
     private val requestTree = 7301
     private val requestAudioFile = 7302
+    private val requestImageFile = 7303
     private var storageOwner: StorageChannel? = null
     private val communicationRouting by lazy {
         CommunicationRouting(AndroidCommunicationDevices(this))
@@ -58,6 +59,20 @@ class MainActivity : FlutterActivity() {
             launch = ::pickAudioFile,
             takeGrant = { _, _ -> },
             candidate = { selected -> copyIntoCache(selected) },
+            grantMask = Intent.FLAG_GRANT_READ_URI_PERMISSION,
+        )
+    }
+    /// Picks one image and returns its bytes plus intrinsic size.
+    ///
+    /// The bytes come back over the channel directly (no cache file): the
+    /// notebook stores images inline, so a path would only add a second
+    /// copy to clean up. Oversized images are downscaled to keep one photo
+    /// from ballooning the notebook document.
+    private val imageFilePicker by lazy {
+        CandidatePicker<Uri>(
+            launch = ::pickImageFile,
+            takeGrant = { _, _ -> },
+            candidate = { selected -> readImageBytes(selected) },
             grantMask = Intent.FLAG_GRANT_READ_URI_PERMISSION,
         )
     }
@@ -91,6 +106,11 @@ class MainActivity : FlutterActivity() {
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "pickAudioFile" -> audioFilePicker.start(object : StorageReply {
+                        override fun success(value: Any?) = result.success(value)
+                        override fun error(code: String, message: String?) = result.error(code, message, null)
+                        override fun notImplemented() = result.notImplemented()
+                    })
+                    "pickImageFile" -> imageFilePicker.start(object : StorageReply {
                         override fun success(value: Any?) = result.success(value)
                         override fun error(code: String, message: String?) = result.error(code, message, null)
                         override fun notImplemented() = result.notImplemented()
@@ -150,6 +170,78 @@ class MainActivity : FlutterActivity() {
         startActivityForResult(intent, requestAudioFile)
     }
 
+    private fun pickImageFile() {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "image/*"
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        startActivityForResult(intent, requestImageFile)
+    }
+
+    /// Reads the picked image, downscaling when its longest edge exceeds
+    /// [maxImageEdge], and reports bytes + final pixel size + MIME.
+    ///
+    /// Downscaled images are re-encoded (PNG keeps transparency, everything
+    /// else becomes JPEG 90); images already within bounds pass through
+    /// byte-for-byte so a small PNG's exact pixels survive.
+    private fun readImageBytes(uri: Uri): Map<String, Any> {
+        val maxImageEdge = 2048
+        val source = contentResolver.openInputStream(uri)?.use { it.readBytes() }
+            ?: throw IllegalStateException("Cannot read the selected image")
+        if (source.isEmpty()) throw IllegalStateException("The selected image is empty")
+
+        val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        android.graphics.BitmapFactory.decodeByteArray(source, 0, source.size, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+            throw IllegalStateException("The selected file is not a decodable image")
+        }
+        val mime = bounds.outMimeType ?: "image/jpeg"
+        val longest = maxOf(bounds.outWidth, bounds.outHeight)
+        if (longest <= maxImageEdge) {
+            return mapOf(
+                "bytes" to source,
+                "mime" to mime,
+                "width" to bounds.outWidth,
+                "height" to bounds.outHeight,
+            )
+        }
+
+        // Power-of-two subsample close to the target, then exact scale.
+        var sample = 1
+        while (longest / (sample * 2) >= maxImageEdge) sample *= 2
+        val options = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
+        val decoded = android.graphics.BitmapFactory.decodeByteArray(source, 0, source.size, options)
+            ?: throw IllegalStateException("The selected image could not be decoded")
+        val scale = maxImageEdge.toFloat() / maxOf(decoded.width, decoded.height)
+        val bitmap = if (scale < 1f) {
+            android.graphics.Bitmap.createScaledBitmap(
+                decoded,
+                (decoded.width * scale).toInt().coerceAtLeast(1),
+                (decoded.height * scale).toInt().coerceAtLeast(1),
+                true,
+            ).also { if (it !== decoded) decoded.recycle() }
+        } else {
+            decoded
+        }
+        val keepPng = mime == "image/png"
+        val output = java.io.ByteArrayOutputStream()
+        bitmap.compress(
+            if (keepPng) android.graphics.Bitmap.CompressFormat.PNG
+            else android.graphics.Bitmap.CompressFormat.JPEG,
+            90,
+            output,
+        )
+        val result = mapOf(
+            "bytes" to output.toByteArray(),
+            "mime" to if (keepPng) "image/png" else "image/jpeg",
+            "width" to bitmap.width,
+            "height" to bitmap.height,
+        )
+        bitmap.recycle()
+        return result
+    }
+
     /// Copies the picked document into cache and reports its path and name.
     private fun copyIntoCache(uri: Uri): Map<String, Any> {
         val name = contentResolver.query(uri, null, null, null, null)?.use { cursor ->
@@ -195,6 +287,7 @@ class MainActivity : FlutterActivity() {
         super.onActivityResult(requestCode, resultCode, data)
         candidatePicker.complete(requestCode == requestTree, resultCode == Activity.RESULT_OK, data?.data, data?.flags ?: 0)
         audioFilePicker.complete(requestCode == requestAudioFile, resultCode == Activity.RESULT_OK, data?.data, data?.flags ?: 0)
+        imageFilePicker.complete(requestCode == requestImageFile, resultCode == Activity.RESULT_OK, data?.data, data?.flags ?: 0)
     }
 
     private fun decodeOpusToWav(inputPath: String, outputPath: String): Map<String, Any> {
@@ -394,6 +487,7 @@ class MainActivity : FlutterActivity() {
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         candidatePicker.interrupt()
         audioFilePicker.interrupt()
+        imageFilePicker.interrupt()
         super.onDestroy()
     }
 

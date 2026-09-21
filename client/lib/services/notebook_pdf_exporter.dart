@@ -135,11 +135,16 @@ ui.Rect _contentBounds(NotebookExportSource source) {
           y ?? fallbackY
         ),
       NotebookDumpCardBlock(:final double x, :final double y) => (x, y),
+      NotebookImageBlock(:final double x, :final double y) => (x, y),
       NotebookUnknownBlock() => (16, fallbackY),
     };
     fallbackY += _kBlockFallbackSize.height + 12;
     include(x, y);
     include(x + _kBlockFallbackSize.width, y + _kBlockFallbackSize.height);
+    // An image's real footprint can exceed the nominal block size.
+    if (block is NotebookImageBlock) {
+      include(block.x + block.width, block.y + block.height);
+    }
   }
 
   if (left == null) {
@@ -171,6 +176,13 @@ void _paintBlocks(ui.Canvas canvas, NotebookDocument document) {
       // The dump's title lives in another table; the export marks the spot.
       NotebookDumpCardBlock(:final double x, :final double y) => (
           '\u{1F399} Recording',
+          x,
+          y
+        ),
+      // Decoding bytes to a ui.Image is async and this painter is not;
+      // the export marks the picture's place and true footprint for now.
+      NotebookImageBlock(:final double x, :final double y) => (
+          '\u{1F5BC} Picture',
           x,
           y
         ),

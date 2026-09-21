@@ -142,6 +142,30 @@ sealed class NotebookBlock {
           x: x.toDouble(),
           y: y.toDouble(),
         );
+      case 'image':
+        final data = raw['data'];
+        final mime = raw['mime'];
+        final x = raw['x'];
+        final y = raw['y'];
+        final width = raw['width'];
+        final height = raw['height'];
+        if (data is! String ||
+            mime is! String ||
+            x is! num ||
+            y is! num ||
+            width is! num ||
+            height is! num) {
+          return NotebookUnknownBlock(raw);
+        }
+        return NotebookImageBlock(
+          id: id,
+          data: data,
+          mime: mime,
+          x: x.toDouble(),
+          y: y.toDouble(),
+          width: width.toDouble(),
+          height: height.toDouble(),
+        );
       default:
         return NotebookUnknownBlock(raw);
     }
@@ -265,6 +289,71 @@ class NotebookDumpCardBlock extends NotebookBlock {
         'dumpId': dumpId,
         'x': x,
         'y': y,
+      };
+}
+
+/// An imported picture, floating on the page like a dump card.
+///
+/// The image bytes live INSIDE the document as base64 [data]: the notebook
+/// file stays one self-contained durable JSON object (no sidecar to lose),
+/// and sync carries the picture with the page. [width]/[height] are the
+/// rendered size in canonical page pixels; resizing rewrites them and never
+/// touches the bytes.
+class NotebookImageBlock extends NotebookBlock {
+  const NotebookImageBlock({
+    required this.id,
+    required this.data,
+    required this.mime,
+    required this.x,
+    required this.y,
+    required this.width,
+    required this.height,
+  });
+
+  @override
+  final String id;
+
+  /// Base64-encoded image bytes, exactly as imported.
+  final String data;
+
+  /// The picked file's MIME type (image/jpeg, image/png, ...).
+  final String mime;
+
+  /// Logical pixels from the canvas top-left, canonical page space.
+  final double x;
+  final double y;
+
+  /// Rendered size in canonical page pixels. Aspect ratio is the importer's
+  /// concern; the model stores whatever the editor committed.
+  final double width;
+  final double height;
+
+  NotebookImageBlock copyWith({
+    double? x,
+    double? y,
+    double? width,
+    double? height,
+  }) =>
+      NotebookImageBlock(
+        id: id,
+        data: data,
+        mime: mime,
+        x: x ?? this.x,
+        y: y ?? this.y,
+        width: width ?? this.width,
+        height: height ?? this.height,
+      );
+
+  @override
+  Map<String, dynamic> toJson() => {
+        'kind': 'image',
+        'id': id,
+        'data': data,
+        'mime': mime,
+        'x': x,
+        'y': y,
+        'width': width,
+        'height': height,
       };
 }
 

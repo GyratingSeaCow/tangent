@@ -11,6 +11,7 @@
 //     notebook never mutates a dump row.
 //   * Saving is explicit (Text Note convention); backing out dirty asks first.
 import 'dart:async';
+import 'dart:convert' show base64Encode;
 import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart';
@@ -27,9 +28,11 @@ import '../../models/dump_mode.dart';
 import '../../models/notebook.dart';
 import '../../models/notebook_ruling.dart';
 import '../../models/sync_status.dart';
+import '../../services/image_file_picker.dart';
 import '../../services/notebook_persistence.dart';
 import '../../widgets/dump_picker_sheet.dart';
 import '../../widgets/notebook_dump_card.dart';
+import '../../widgets/notebook_image_block.dart';
 import '../../widgets/notebook_ink_canvas.dart';
 import '../dump/dump_detail_screen.dart';
 import '../dump/dumps_providers.dart';
@@ -83,6 +86,7 @@ enum _InsertAction {
   dump,
   meeting,
   textNote,
+  image,
   cycleRuling,
   recentre
 }
@@ -138,6 +142,11 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
   /// Ids of blocks (text, checkbox, recording cards) caught by the last
   /// lasso loop. They move and delete together with the selected ink.
   final Set<String> _lassoBlockIds = <String>{};
+
+  /// The image whose move/resize chrome is showing, or null. One at a time:
+  /// the chrome is modal enough that two selected images would fight over
+  /// the page's gesture space.
+  String? _selectedImageId;
   double _penWidth = PenSizeControl.defaultPenWidth;
   PenStyle _penStyle = PenStyle.ballpoint;
 
@@ -198,6 +207,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
         case NotebookCheckboxBlock c:
           _controllerFor(c.id, c.text);
         case NotebookDumpCardBlock():
+        case NotebookImageBlock():
         case NotebookUnknownBlock():
           break;
       }
@@ -519,6 +529,79 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
         ),
       );
 
+  /// Imports one picture from the system picker onto the page.
+  ///
+  /// The image lands below existing content at its intrinsic aspect ratio,
+  /// fitted to the typed column's width, and arrives SELECTED so the
+  /// move/resize affordances teach themselves.
+  Future<void> _importImage() async {
+    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+    final PickedImage? picked;
+    try {
+      picked = await ImageFilePicker().pick();
+    } catch (e) {
+      messenger.showSnackBar(
+        SnackBar(content: Text('Could not import the image: $e')),
+      );
+      return;
+    }
+    if (picked == null || !mounted) return;
+    final double aspect = picked.width / picked.height;
+    final double width =
+        math.min(picked.width.toDouble(), _pageColumnWidth / 2);
+    final double height = width / aspect;
+    final NotebookImageBlock block = NotebookImageBlock(
+      id: _uuid.v4(),
+      data: base64Encode(picked.bytes),
+      mime: picked.mime,
+      x: _pagePadding + 4,
+      y: _contentBottom() + _importSpacing,
+      width: width,
+      height: height,
+    );
+    setState(() {
+      _blocks = <NotebookBlock>[..._blocks, block];
+      _selectedImageId = block.id;
+      _dirty = true;
+    });
+  }
+
+  /// Moves the selected image by one drag step, in canonical page space.
+  void _moveImage(String id, Offset delta) {
+    setState(() {
+      _blocks = <NotebookBlock>[
+        for (final NotebookBlock block in _blocks)
+          if (block is NotebookImageBlock && block.id == id)
+            block.copyWith(
+              x: math.max(0, block.x + delta.dx),
+              y: math.max(0, block.y + delta.dy),
+            )
+          else
+            block,
+      ];
+      _dirty = true;
+    });
+  }
+
+  /// Replaces the image's geometry wholesale (resize-tab drags).
+  void _resizeImage(String id, Rect geometry) {
+    setState(() {
+      _blocks = <NotebookBlock>[
+        for (final NotebookBlock block in _blocks)
+          if (block is NotebookImageBlock && block.id == id)
+            block.copyWith(
+              x: math.max(0, geometry.left),
+              y: math.max(0, geometry.top),
+              width: geometry.width,
+              height: geometry.height,
+            )
+          else
+            block,
+      ];
+      _dirty = true;
+    });
+  }
+
   /// The lowest edge of everything currently on the page: placed blocks
   /// (plus a nominal footprint height), flow-laid blocks at their computed
   /// slots, and every ink point.
@@ -535,6 +618,8 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
           if (c.y == null) flowY += _unplacedBlockSpacing;
         case NotebookDumpCardBlock d:
           lowest = math.max(lowest, d.y + _importBlockHeight);
+        case NotebookImageBlock i:
+          lowest = math.max(lowest, i.y + i.height);
         case NotebookBlock():
           break;
       }
@@ -751,6 +836,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
         NotebookCheckboxBlock c =>
           c.x == null && c.y == null ? null : Offset(c.x ?? 0, c.y ?? 0),
         NotebookDumpCardBlock d => Offset(d.x, d.y),
+        NotebookImageBlock i => Offset(i.x, i.y),
         NotebookBlock() => null,
       };
 
@@ -764,8 +850,10 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
       final Offset? anchor = _blockAnchor(block);
       if (anchor == null) continue;
       // A representative footprint rather than a measured one: text rows
-      // and cards are ~300x90 canonical px.
-      const Size footprint = Size(300, 90);
+      // and cards are ~300x90 canonical px. Images know their real size.
+      final Size footprint = block is NotebookImageBlock
+          ? Size(block.width, block.height)
+          : const Size(300, 90);
       // 6x4 grid = 24 samples across the footprint; > 40% inside selects.
       int inside = 0;
       const int cols = 6, rows = 4;
@@ -786,11 +874,13 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
 
   /// The canvas asks whether a lasso drag begins on a selected block.
   bool _lassoHitsBlock(Offset position) {
-    const Size footprint = Size(300, 90);
     for (final NotebookBlock block in _blocks) {
       if (!_lassoBlockIds.contains(block.id)) continue;
       final Offset? anchor = _blockAnchor(block);
       if (anchor == null) continue;
+      final Size footprint = block is NotebookImageBlock
+          ? Size(block.width, block.height)
+          : const Size(300, 90);
       if ((anchor & footprint).inflate(16).contains(position)) return true;
     }
     return false;
@@ -817,6 +907,8 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                 ),
               NotebookDumpCardBlock d =>
                 d.copyWith(x: d.x + step.dx, y: d.y + step.dy),
+              NotebookImageBlock i =>
+                i.copyWith(x: i.x + step.dx, y: i.y + step.dy),
               NotebookBlock() => block,
             },
       ];
@@ -992,6 +1084,10 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                         ? null
                         : () => setState(() {
                               _drawing = !_drawing;
+                              // Entering draw mode drops the image chrome:
+                              // the page belongs to the pen, and tabs left
+                              // under ink would swallow stroke starts.
+                              if (_drawing) _selectedImageId = null;
                               // The pen is the safe default whenever drawing
                               // resumes: a stranded eraser would make the
                               // next stroke delete work instead of adding
@@ -1123,6 +1219,8 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                             unawaited(_importDumps(dumps, DumpMode.meeting));
                           case _InsertAction.textNote:
                             unawaited(_importDumps(dumps, DumpMode.textNote));
+                          case _InsertAction.image:
+                            unawaited(_importImage());
                           case _InsertAction.cycleRuling:
                             _cycleRuling();
                           case _InsertAction.recentre:
@@ -1169,6 +1267,15 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                           child: ListTile(
                             leading: Icon(dumpModeIcon(DumpMode.textNote)),
                             title: const Text('Text note'),
+                            contentPadding: EdgeInsets.zero,
+                          ),
+                        ),
+                        const PopupMenuItem<_InsertAction>(
+                          key: ValueKey('notebook-insert-image'),
+                          value: _InsertAction.image,
+                          child: ListTile(
+                            leading: Icon(Icons.image_outlined),
+                            title: Text('Image'),
                             contentPadding: EdgeInsets.zero,
                           ),
                         ),
@@ -1274,9 +1381,18 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                 child: Stack(
                   children: <Widget>[
                     // Bottom: the page itself -- black, per the ink contract.
-                    const Positioned.fill(
-                      child:
-                          ColoredBox(color: NotebookInkCanvas.backgroundColor),
+                    // Tapping bare page deselects any selected image.
+                    Positioned.fill(
+                      child: GestureDetector(
+                        key: const ValueKey('notebook-page-background'),
+                        behavior: HitTestBehavior.opaque,
+                        onTap: _selectedImageId == null
+                            ? null
+                            : () => setState(() => _selectedImageId = null),
+                        child: const ColoredBox(
+                          color: NotebookInkCanvas.backgroundColor,
+                        ),
+                      ),
                     ),
                     // Rule lines, directly above the page colour and beneath every
                     // piece of content. This fills the whole scrollable surface,
@@ -1296,6 +1412,49 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                     // Typed blocks, each positioned where it was left. Laid out
                     // in canonical space; the FittedBox above scales them.
                     ..._buildPositionedBlocks(canonicalWidth),
+                    // Imported images float like cards. Positioned children
+                    // must be direct children of this Stack. They sit above
+                    // typed blocks (imported later = laid on top, like a
+                    // photo dropped onto a desk) and below the ink layer so
+                    // handwriting annotates them.
+                    for (final NotebookBlock block in _blocks)
+                      if (block is NotebookImageBlock)
+                        Positioned(
+                          key: ValueKey<String>(
+                            'notebook-image-pos-${block.id}',
+                          ),
+                          // The selected widget grows by the chrome inset on
+                          // every side (tabs must sit INSIDE its hit-test
+                          // bounds); offsetting here keeps the image pixels
+                          // at (x, y) in both states.
+                          left: _selectedImageId == block.id
+                              ? block.x - kNotebookImageChromeInset
+                              : block.x,
+                          top: _selectedImageId == block.id
+                              ? block.y - kNotebookImageChromeInset
+                              : block.y,
+                          child: NotebookImageBlockWidget(
+                            block: block,
+                            selected: _selectedImageId == block.id,
+                            interactive: !_drawing,
+                            onSelect: () => setState(
+                              () => _selectedImageId = block.id,
+                            ),
+                            onMoved: (Offset delta) =>
+                                _moveImage(block.id, delta),
+                            onResized: (Rect geometry) =>
+                                _resizeImage(block.id, geometry),
+                            onCommit: () {},
+                            onRemove: () {
+                              setState(() => _selectedImageId = null);
+                              _removeBlock(block.id);
+                            },
+                            onDragActive: (bool dragging) {
+                              if (_draggingCard == dragging) return;
+                              setState(() => _draggingCard = dragging);
+                            },
+                          ),
+                        ),
                     // Floating recording cards. Each is a Positioned, so they
                     // MUST be direct children of this Stack.
                     for (final NotebookBlock block in _blocks)

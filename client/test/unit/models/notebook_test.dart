@@ -57,6 +57,58 @@ void main() {
       expect(card.y, 340.0);
     });
 
+    test('round trips an image block with position, size and bytes', () {
+      const source = '{"blocks":['
+          '{"kind":"image","id":"img-1","data":"aGVsbG8=",'
+          '"mime":"image/jpeg","x":40.0,"y":120.0,'
+          '"width":320.0,"height":240.0}'
+          ']}';
+      final document = NotebookDocument.decode(source);
+
+      final image = document.blocks.single as NotebookImageBlock;
+      expect(image.id, 'img-1');
+      expect(image.data, 'aGVsbG8=');
+      expect(image.mime, 'image/jpeg');
+      expect(image.x, 40.0);
+      expect(image.y, 120.0);
+      expect(image.width, 320.0);
+      expect(image.height, 240.0);
+
+      expect(_decode(document.encode()), _decode(source));
+    });
+
+    test('image copyWith moves and resizes without touching the bytes', () {
+      const image = NotebookImageBlock(
+        id: 'img-2',
+        data: 'aGVsbG8=',
+        mime: 'image/png',
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 50,
+      );
+      final moved = image.copyWith(x: 30, y: 60, width: 200, height: 100);
+      expect(moved.id, 'img-2');
+      expect(moved.data, 'aGVsbG8=');
+      expect(moved.mime, 'image/png');
+      expect(moved.x, 30);
+      expect(moved.y, 60);
+      expect(moved.width, 200);
+      expect(moved.height, 100);
+    });
+
+    test('a malformed image block is preserved verbatim, not dropped', () {
+      // width missing: this build cannot render it, but the bytes and every
+      // other field must survive a load/save cycle untouched.
+      const source = '{"blocks":['
+          '{"kind":"image","id":"img-3","data":"aGVsbG8=",'
+          '"mime":"image/jpeg","x":1.0,"y":2.0}'
+          ']}';
+      final document = NotebookDocument.decode(source);
+      expect(document.blocks.single, isA<NotebookUnknownBlock>());
+      expect(_decode(document.encode()), _decode(source));
+    });
+
     test('checkbox defaults to unchecked when the flag is absent', () {
       final document = NotebookDocument.decode(
         '{"blocks":[{"kind":"checkbox","id":"b","text":"t"}]}',
