@@ -180,14 +180,22 @@ jobs:
           exit 1
 
       # appimagetool ships as an AppImage. GitHub runners have no FUSE for
-      # it to mount itself with, so extract it and call its AppRun directly.
+      # it to mount itself with, so extract it and run it from the extracted
+      # tree. Its AppRun resolves the real binary RELATIVE to its own
+      # location, so the whole squashfs-root must be kept together — copying
+      # AppRun alone to /usr/local/bin makes it look for
+      # /usr/local/bin/usr/bin/appimagetool and die with exit 127.
       - name: Fetch appimagetool
         run: |
-          curl -fsSL -o /tmp/appimagetool \
+          curl -fsSL -o /tmp/appimagetool.AppImage \
             https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
-          chmod +x /tmp/appimagetool
-          ( cd /tmp && ./appimagetool --appimage-extract >/dev/null )
-          sudo install -m 0755 /tmp/squashfs-root/AppRun /usr/local/bin/appimagetool
+          chmod +x /tmp/appimagetool.AppImage
+          ( cd /tmp && ./appimagetool.AppImage --appimage-extract >/dev/null )
+          sudo mv /tmp/squashfs-root /opt/appimagetool
+          printf '#!/bin/sh\nexec /opt/appimagetool/AppRun "$@"\n' \
+            | sudo tee /usr/local/bin/appimagetool >/dev/null
+          sudo chmod 0755 /usr/local/bin/appimagetool
+          appimagetool --version
 
       - name: Build the AppImage
         run: packaging/build-appimage.sh
