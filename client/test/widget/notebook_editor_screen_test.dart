@@ -207,8 +207,8 @@ void main() {
   });
 
   testWidgets(
-      'one unified toolbar: every tool is visible before draw mode, '
-      'and draw mode enables rather than reveals them', (tester) async {
+      'one unified toolbar: every tool is visible AND live before draw mode; '
+      'tapping a tool activates draw mode with that tool', (tester) async {
     await mountEditor(tester, notebook: seeded());
 
     // The whole kit is on screen from the start — no second row drops down.
@@ -218,19 +218,20 @@ void main() {
     expect(find.byKey(const ValueKey('notebook-lasso')), findsOneWidget);
     expect(find.byKey(const ValueKey('notebook-pen-style')), findsOneWidget);
 
-    // But outside draw mode the tools are disabled, not live: a stray tap
-    // must not erase or lasso anything.
+    // Contract change (Jeff): every tool is tappable at ANY time — tapping
+    // one activates draw mode with that tool, instead of being dead until
+    // the Draw toggle is pressed first.
     IconButton toolButton(Key key) =>
         tester.widget<IconButton>(find.byKey(key));
     expect(
       toolButton(const ValueKey<String>('notebook-lasso')).onPressed,
-      isNull,
-      reason: 'lasso is a draw-mode tool',
+      isNotNull,
+      reason: 'lasso must be tappable outside draw mode',
     );
     expect(
       toolButton(const ValueKey<String>('notebook-pen-style')).onPressed,
-      isNull,
-      reason: 'the nib is a draw-mode tool',
+      isNotNull,
+      reason: 'the nib must be tappable outside draw mode',
     );
     expect(
       tester
@@ -239,43 +240,39 @@ void main() {
       isFalse,
     );
 
-    await tester.tap(find.byIcon(Icons.draw));
+    // Tapping the lasso from cold enters draw mode, lassoing.
+    await tester.tap(find.byKey(const ValueKey('notebook-lasso')));
     await tester.pump();
-
-    // Same toolbar, same places — now live.
+    NotebookInkCanvas canvas() =>
+        tester.widget<NotebookInkCanvas>(find.byType(NotebookInkCanvas));
     expect(
-      toolButton(const ValueKey<String>('notebook-lasso')).onPressed,
-      isNotNull,
-    );
-    expect(
-      toolButton(const ValueKey<String>('notebook-pen-style')).onPressed,
-      isNotNull,
-    );
-    expect(
-      tester
-          .widget<NotebookInkCanvas>(find.byType(NotebookInkCanvas))
-          .drawingEnabled,
+      canvas().drawingEnabled,
       isTrue,
+      reason: 'a tool tap activates draw mode itself',
     );
+    expect(canvas().lassoing, isTrue);
 
-    await tester.tap(textBlocks().first, warnIfMissed: false);
-    await tester.pump();
-    expect(
-      anyFieldFocused(tester),
-      isFalse,
-      reason: 'the ink layer owns the pointer while draw mode is on',
-    );
-
+    // Draw toggle still exits, and the toolbar stays put (disabled tools
+    // never disappear — same row, same places).
     await tester.tap(find.byIcon(Icons.draw));
     await tester.pump();
-    // Leaving draw mode must NOT collapse the toolbar: the row stays put so
-    // the hand always finds the tools in the same place.
+    expect(canvas().drawingEnabled, isFalse);
     expect(find.byType(PenSizeControl), findsOneWidget);
     expect(find.byIcon(Icons.undo), findsOneWidget);
+
+    // Tapping the eraser from cold enters draw mode, erasing.
+    await tester.tap(find.byIcon(Icons.auto_fix_normal));
+    await tester.pump();
+    expect(canvas().drawingEnabled, isTrue);
+    expect(canvas().erasing, isTrue);
     expect(
-      toolButton(const ValueKey<String>('notebook-lasso')).onPressed,
-      isNull,
+      canvas().lassoing,
+      isFalse,
+      reason: 'eraser and lasso stay exclusive',
     );
+
+    await tester.tap(find.byIcon(Icons.draw));
+    await tester.pump();
 
     await tester.tap(textBlocks().first);
     await tester.pump();

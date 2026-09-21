@@ -916,6 +916,21 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
     });
   }
 
+  /// Ensures draw mode is on before a tool tap takes effect.
+  ///
+  /// Every toolbar tool is live at any time (Jeff's contract): tapping the
+  /// eraser, nib, or lasso outside draw mode ENTERS draw mode with that
+  /// tool, instead of the icons sitting dead until Draw is pressed first.
+  /// Call inside setState. No-op when already drawing, so a tap in draw
+  /// mode keeps its plain toggle meaning.
+  void _enterDrawMode() {
+    if (_drawing) return;
+    _drawing = true;
+    // Same as the Draw toggle: the page belongs to the pen now, and image
+    // tabs left under ink would swallow stroke starts.
+    _selectedImageId = null;
+  }
+
   /// Deletes the lasso's catch: selected ink through the canvas, selected
   /// blocks here. Either half may be empty.
   void _deleteLassoSelection() {
@@ -1108,9 +1123,13 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                     ),
                     tooltip: _erasing ? 'Switch to pen' : 'Erase lines',
                     isSelected: _erasing,
-                    onPressed: !_drawing
+                    // Every tool is live at any time (Jeff's contract): a
+                    // tap outside draw mode ENTERS draw mode with this tool
+                    // instead of being dead until Draw is pressed first.
+                    onPressed: _notebook == null
                         ? null
                         : () => setState(() {
+                              _enterDrawMode();
                               _erasing = !_erasing;
                               if (_erasing) _lassoing = false;
                             }),
@@ -1129,9 +1148,10 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                         ? 'Fountain pen (pressure). Tap for ballpoint'
                         : 'Ballpoint. Tap for fountain pen (pressure)',
                     isSelected: _penStyle == PenStyle.fountain,
-                    onPressed: !_drawing
+                    onPressed: _notebook == null
                         ? null
                         : () => setState(() {
+                              _enterDrawMode();
                               _penStyle = _penStyle == PenStyle.fountain
                                   ? PenStyle.ballpoint
                                   : PenStyle.fountain;
@@ -1144,9 +1164,10 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                     icon: const Icon(Icons.gesture),
                     tooltip: _lassoing ? 'Exit lasso' : 'Lasso select',
                     isSelected: _lassoing,
-                    onPressed: !_drawing
+                    onPressed: _notebook == null
                         ? null
                         : () => setState(() {
+                              _enterDrawMode();
                               _lassoing = !_lassoing;
                               // Lasso and eraser are exclusive: a gesture
                               // can select or erase, never both.
@@ -1167,7 +1188,9 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                   IconButton(
                     icon: const Icon(Icons.undo),
                     tooltip: 'Undo stroke',
-                    onPressed: !_drawing
+                    // Undo/redo act on ink history and are safe any time;
+                    // they do not flip modes.
+                    onPressed: _notebook == null
                         ? null
                         : () => _canvasKey.currentState?.undoLastStroke(),
                   ),
@@ -1175,14 +1198,14 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                     key: const ValueKey<String>('notebook-redo'),
                     icon: const Icon(Icons.redo),
                     tooltip: 'Redo',
-                    onPressed: !_drawing
+                    onPressed: _notebook == null
                         ? null
                         : () => _canvasKey.currentState?.redo(),
                   ),
                   Expanded(
                     child: PenSizeControl(
                       value: _penWidth,
-                      onChanged: !_drawing
+                      onChanged: _notebook == null
                           ? null
                           : (double width) => setState(() => _penWidth = width),
                     ),
