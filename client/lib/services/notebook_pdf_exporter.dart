@@ -7,6 +7,7 @@
 // the italic nib export pixel-true), text and dump blocks drawn at their
 // canvas positions. Vectorising the strokes separately would inevitably
 // drift from the on-screen renderer; fidelity beats file size here.
+import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -41,6 +42,10 @@ const Size _kBlockFallbackSize = Size(300, 90);
 /// whole — nothing is cropped to a viewport the exporter cannot see.
 Future<Uint8List> renderNotebookPdf(NotebookExportSource source) async {
   final ui.Rect bounds = _contentBounds(source);
+  // Image bytes are decoded UP FRONT (the block painter is synchronous);
+  // a block whose bytes fail to decode simply has no entry here and keeps
+  // the text placeholder instead of killing the whole export.
+  final Map<String, ui.Image> images = await _decodeImages(source.document);
   // Rasterise at 2x for crisp print; PDF page keeps logical size.
   const double scale = 2;
   final ui.PictureRecorder recorder = ui.PictureRecorder();
@@ -60,13 +65,16 @@ Future<Uint8List> renderNotebookPdf(NotebookExportSource source) async {
     revision: 0,
   ).paint(canvas, bounds.size);
 
-  _paintBlocks(canvas, source.document);
+  _paintBlocks(canvas, source.document, images);
 
   final ui.Picture picture = recorder.endRecording();
   final ui.Image image = await picture.toImage(
     (bounds.width * scale).ceil().clamp(1, 8000),
     (bounds.height * scale).ceil().clamp(1, 8000),
   );
+  for (final ui.Image decoded in images.values) {
+    decoded.dispose();
+  }
   final ByteData? png = await image.toByteData(format: ui.ImageByteFormat.png);
   image.dispose();
   if (png == null) {
@@ -107,6 +115,28 @@ Future<Uint8List> renderNotebookPdf(NotebookExportSource source) async {
 
 const double _kPagePad = 24;
 const double _kTitleBand = 30;
+
+/// Decodes every image block's bytes to a [ui.Image], keyed by block id.
+///
+/// Corrupt bytes (a failed base64 or codec) skip the block instead of
+/// throwing: one damaged picture must not lose the rest of the page, and
+/// [_paintBlocks] keeps the text placeholder for any id missing here.
+Future<Map<String, ui.Image>> _decodeImages(NotebookDocument document) async {
+  final Map<String, ui.Image> images = <String, ui.Image>{};
+  for (final NotebookBlock block in document.blocks) {
+    if (block is! NotebookImageBlock) continue;
+    try {
+      final Uint8List bytes = base64Decode(block.data);
+      final ui.Codec codec = await ui.instantiateImageCodec(bytes);
+      final ui.FrameInfo frame = await codec.getNextFrame();
+      codec.dispose();
+      images[block.id] = frame.image;
+    } catch (_) {
+      // Undecodable: fall back to this block's placeholder.
+    }
+  }
+  return images;
+}
 
 /// Union of every stroke point and block footprint, padded, never empty.
 ui.Rect _contentBounds(NotebookExportSource source) {
@@ -165,10 +195,35 @@ ui.Rect _contentBounds(NotebookExportSource source) {
 }
 
 /// Text and dump blocks, drawn like the editor draws them: a rounded card
-/// with the block's text (or the dump's title line) inside.
-void _paintBlocks(ui.Canvas canvas, NotebookDocument document) {
+/// with the block's text (or the dump's title line) inside. Image blocks
+/// draw their decoded pixels from [images], stretched to the block's stored
+/// geometry exactly like the editor's BoxFit.fill; a block whose bytes did
+/// not decode keeps the text placeholder so the page never loses its spot.
+void _paintBlocks(
+  ui.Canvas canvas,
+  NotebookDocument document,
+  Map<String, ui.Image> images,
+) {
   double fallbackY = 0;
   for (final NotebookBlock block in document.blocks) {
+    if (block is NotebookImageBlock) {
+      final ui.Image? decoded = images[block.id];
+      if (decoded != null) {
+        canvas.drawImageRect(
+          decoded,
+          ui.Rect.fromLTWH(
+            0,
+            0,
+            decoded.width.toDouble(),
+            decoded.height.toDouble(),
+          ),
+          ui.Rect.fromLTWH(block.x, block.y, block.width, block.height),
+          ui.Paint()..filterQuality = ui.FilterQuality.medium,
+        );
+        fallbackY += _kBlockFallbackSize.height + 12;
+        continue;
+      }
+    }
     final (String text, double? bx, double? by) = switch (block) {
       NotebookTextBlock(
         :final String text,
@@ -189,8 +244,8 @@ void _paintBlocks(ui.Canvas canvas, NotebookDocument document) {
           x,
           y
         ),
-      // Decoding bytes to a ui.Image is async and this painter is not;
-      // the export marks the picture's place and true footprint for now.
+      // Reached only when the block's bytes failed to decode upfront:
+      // the placeholder still marks the picture's place and footprint.
       NotebookImageBlock(:final double x, :final double y) => (
           '\u{1F5BC} Picture',
           x,
