@@ -160,9 +160,24 @@ jobs:
         working-directory: client
         run: flutter test
 
+      # media_kit_libs_linux downloads mimalloc at configure time and MD5s
+      # it. A truncated fetch leaves the bad tarball in the build tree and
+      # every retry re-checks the same corrupt file, so the tarball must be
+      # deleted between attempts for a retry to mean anything.
       - name: Build Linux release bundle
         working-directory: client
-        run: flutter build linux --release
+        run: |
+          for attempt in 1 2 3; do
+            if flutter build linux --release; then
+              echo "Linux bundle built on attempt $attempt"
+              exit 0
+            fi
+            echo "::warning::Linux build attempt $attempt failed; clearing cached downloads"
+            rm -f build/linux/x64/release/*.tar.gz
+            sleep 10
+          done
+          echo "::error::flutter build linux failed three times"
+          exit 1
 
       # appimagetool ships as an AppImage. GitHub runners have no FUSE for
       # it to mount itself with, so extract it and call its AppRun directly.
