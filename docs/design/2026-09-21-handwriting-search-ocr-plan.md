@@ -6,7 +6,7 @@
 
 **Architecture:** The server already receives full notebook stroke JSON via sync. A background worker segments strokes into lines/words geometrically, renders clean line bitmaps, runs TrOCR, and writes a word-level `ink_index` (text + bbox + stroke ids). The index syncs to devices as a new sync entity; search is a local text lookup; highlighting repaints the matched strokes. The ML stack installs on demand into a persistent venv — the base container stays lean.
 
-**Tech Stack:** Python/FastAPI + SQLite (server), transformers TrOCR (`microsoft/trocr-base-handwritten` CPU / `trocr-large-handwritten` GPU), Pillow for rendering, Flutter + Drift (client).
+**Tech Stack:** Python/FastAPI + SQLite (server), transformers TrOCR (`microsoft/trocr-base-handwritten` for BOTH flavours — Task 0 ruling, Jeff: "base everywhere"; GPU flavour = same model on CUDA), Pillow for rendering, Flutter + Drift (client).
 
 **Spec:** `docs/design/2026-09-21-handwriting-search-ocr.md` — binding. Where this plan and the spec disagree, the spec wins; update the spec first if reality forces a change.
 
@@ -14,7 +14,7 @@
 
 - Feature is OFF by default; while off there are no search icons, no indexing, no model downloads (spec §1).
 - Base container image must not grow: torch/transformers/weights live in `/data/ocr-env`, installed on demand (spec §3.2).
-- CPU flavour = `microsoft/trocr-base-handwritten`; GPU flavour = `microsoft/trocr-large-handwritten`. RTX 50-series needs torch ≥ 2.7 cu128 wheels (spec §3.2).
+- CPU flavour AND GPU flavour = `microsoft/trocr-base-handwritten` (Task 0 ruling: base beat large on Jeff's real ink; "base everywhere"). GPU flavour differs only in torch build — RTX 50-series needs torch cu128 wheels. Pin `transformers>=4.46,<5` and include `sentencepiece` + `protobuf` (bake-off-proven; transformers 5.x breaks TrOCR tokenizer loading) (spec §3.2).
 - Recognition ahead-of-time; query time is a pure text lookup (spec §2).
 - OCR inference runs in a subprocess from the OCR venv, never in the server process (spec §3.2).
 - Durable-format discipline: new client-side fields/tables must not change how existing entities encode (repo standing rule).
