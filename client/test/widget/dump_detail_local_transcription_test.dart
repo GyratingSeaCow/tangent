@@ -678,6 +678,9 @@ void main() {
         .writeAsStringSync(jsonEncode(dumpMetadata(row)));
 
     await _mountDetail(tester, db, storage, fake, service, bound, row);
+    // Option B: meeting transcripts start collapsed — expand before editing.
+    await tester.tap(find.byKey(ValueKey('transcript-header-${row.id}')));
+    await tester.pump();
     final editorFinder = find.byKey(ValueKey('transcript-editor-${row.id}'));
     final editor = tester.widget<TextField>(editorFinder);
     expect(editor.maxLines, isNull);
@@ -731,6 +734,9 @@ void main() {
 
     await _disposeDetail(tester);
     await _mountDetail(tester, db, storage, fake, service, bound, saved);
+    // Fresh mount resets Option B's collapsed state — expand to verify.
+    await tester.tap(find.byKey(ValueKey('transcript-header-${row.id}')));
+    await tester.pump();
     expect(_editorText(tester, row.id), corrected);
     expect(
       tester.widget<FilledButton>(saveFinder).onPressed,
@@ -1403,6 +1409,9 @@ void main() {
         .writeAsStringSync(jsonEncode(dumpMetadata(row)));
 
     await _mountDetail(tester, db, storage, fake, service, bound, row);
+    // Option B: expand the collapsed meeting transcript before drafting.
+    await tester.tap(find.byKey(ValueKey('transcript-header-${row.id}')));
+    await tester.pump();
     final editorFinder = find.byKey(ValueKey('transcript-editor-${row.id}'));
     await tester.enterText(editorFinder, 'Unsaved stale draft');
     await tester.pump();
@@ -1551,6 +1560,11 @@ void main() {
 
     expect(find.text('Meeting Notes'), findsOneWidget);
     expect(find.textContaining('Quoted summary.'), findsOneWidget);
+    // Option B: the transcript is collapsed until the header is tapped.
+    await tester.tap(
+      find.byKey(const ValueKey('transcript-header-meeting-detail')),
+    );
+    await tester.pumpAndSettle();
     final transcriptEditor = tester.widget<TextField>(
       find.byKey(const ValueKey('transcript-editor-meeting-detail')),
     );
@@ -1630,6 +1644,151 @@ void main() {
     expect(metadata['transcriptionRequestId'], 'request-meeting-detail');
     expect(metadata['transcriptionJobId'], 'job-meeting-detail');
     expect(metadata['transcriptionAttempt'], 2);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(milliseconds: 1));
+  });
+
+  testWidgets(
+      'meeting detail collapses the transcript behind a summary header',
+      (tester) async {
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    final temp = Directory.systemTemp.createTempSync('tangent-collapse-');
+    final db = LocalDb.forTesting(NativeDatabase.memory());
+    final storage = AudioStorage.test(temp);
+    final bound = await createBoundServiceFixture(db, registerDrain: false);
+    final fake = _FakeTranscriptionClient(completedTranscript: 'unused');
+    final service = ServerTranscriptionService(
+      client: fake,
+      db: db,
+      recordingAccess: bound.access,
+      mutations: bound.mutations,
+    );
+    addTearDown(() async {
+      service.dispose();
+      await disposeBoundWidget(tester, bound);
+      await db.close();
+      temp.deleteSync(recursive: true);
+    });
+    final row = _completedRow(
+      storage,
+      id: 'collapse-meeting',
+      mode: 'meeting',
+      transcript: '[00:00] Sixteen words of paragraph one here now. '
+          'Words continue.\n\n[01:00] Final four more words.',
+      meetingNotes: null,
+      attempt: 1,
+      requestId: 'request-collapse',
+      jobId: 'job-collapse',
+    );
+    await seedFileFixtureRow(db, row);
+    storage.pathFor(row.id).writeAsBytesSync([1, 2, 3]);
+    storage
+        .metaPathFor(row.id)
+        .writeAsStringSync(jsonEncode(dumpMetadata(row)));
+
+    await _mountDetail(tester, db, storage, fake, service, bound, row);
+
+    // Collapsed by default: header visible with duration + word count,
+    // editor not built.
+    final header = find.byKey(ValueKey('transcript-header-${row.id}'));
+    expect(header, findsOneWidget);
+    expect(
+      find.textContaining('13 words'),
+      findsOneWidget,
+      reason: 'header summarises the transcript size, markers excluded',
+    );
+    expect(
+      find.byKey(ValueKey('transcript-editor-${row.id}')),
+      findsNothing,
+      reason: 'transcript starts collapsed for meeting dumps',
+    );
+    expect(
+      find.byKey(ValueKey('save-transcript-${row.id}')),
+      findsNothing,
+    );
+    // Notes are absent, so no Meeting Notes heading and no filler.
+    expect(find.text('Meeting Notes'), findsNothing);
+    // Generate stays reachable without expanding the transcript.
+    expect(
+      find.byKey(ValueKey('generate-notes-${row.id}')),
+      findsOneWidget,
+    );
+
+    // Expanding reveals the standard editor and save button.
+    await tester.tap(header);
+    await tester.pumpAndSettle();
+    final editor = tester.widget<TextField>(
+      find.byKey(ValueKey('transcript-editor-${row.id}')),
+    );
+    expect(editor.controller!.text, row.transcript);
+    expect(editor.maxLines, isNull);
+    expect(
+      find.byKey(ValueKey('save-transcript-${row.id}')),
+      findsOneWidget,
+    );
+
+    // Collapsing again removes the editor without losing the dump.
+    await tester.tap(header);
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(ValueKey('transcript-editor-${row.id}')),
+      findsNothing,
+    );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(milliseconds: 1));
+  });
+
+  testWidgets(
+      'non-meeting detail keeps the transcript editor expanded inline',
+      (tester) async {
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    final temp = Directory.systemTemp.createTempSync('tangent-inline-');
+    final db = LocalDb.forTesting(NativeDatabase.memory());
+    final storage = AudioStorage.test(temp);
+    final bound = await createBoundServiceFixture(db, registerDrain: false);
+    final fake = _FakeTranscriptionClient(completedTranscript: 'unused');
+    final service = ServerTranscriptionService(
+      client: fake,
+      db: db,
+      recordingAccess: bound.access,
+      mutations: bound.mutations,
+    );
+    addTearDown(() async {
+      service.dispose();
+      await disposeBoundWidget(tester, bound);
+      await db.close();
+      temp.deleteSync(recursive: true);
+    });
+    final row = _completedRow(
+      storage,
+      id: 'inline-dump',
+      mode: 'brain_dump',
+      transcript: 'Plain dump transcript.',
+      meetingNotes: null,
+      attempt: 1,
+      requestId: 'request-inline',
+      jobId: 'job-inline',
+    );
+    await seedFileFixtureRow(db, row);
+    storage.pathFor(row.id).writeAsBytesSync([1, 2, 3]);
+    storage
+        .metaPathFor(row.id)
+        .writeAsStringSync(jsonEncode(dumpMetadata(row)));
+
+    await _mountDetail(tester, db, storage, fake, service, bound, row);
+
+    expect(
+      find.byKey(ValueKey('transcript-header-${row.id}')),
+      findsNothing,
+      reason: 'only meeting dumps collapse the transcript',
+    );
+    expect(_editorText(tester, row.id), 'Plain dump transcript.');
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump(const Duration(milliseconds: 1));

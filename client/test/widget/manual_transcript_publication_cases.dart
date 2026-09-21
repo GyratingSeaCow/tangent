@@ -522,6 +522,11 @@ Future<void> scenario(
         container.read(dumpByIdProvider(id)).valueOrNull != null &&
         find.byIcon(Icons.play_arrow).evaluate().isNotEmpty,
   );
+  // Option B: meeting transcripts start collapsed — expand before editing.
+  await tester.tap(
+    find.byKey(const ValueKey('transcript-header-isolated-r2-s1')),
+  );
+  await tester.pump();
   await tester.enterText(
     find.byKey(const ValueKey('transcript-editor-isolated-r2-s1')),
     'Committed corrected transcript',

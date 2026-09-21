@@ -64,6 +64,24 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
   bool _saving = false;
   bool _savingTranscript = false;
   bool _transcriptDirty = false;
+
+  /// Option B: meeting transcripts start collapsed behind a summary header.
+  bool _transcriptExpanded = false;
+
+  /// Header summary for the collapsed transcript: duration + word count,
+  /// with `[MM:SS]`-style paragraph markers excluded from the count.
+  String _transcriptSummary(DumpRow row, String transcript) {
+    final words = transcript
+        .replaceAll(RegExp(r'\[\d{1,2}:\d{2}(?::\d{2})?\]'), ' ')
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((w) => w.isNotEmpty)
+        .length;
+    final minutes = row.durationSeconds ~/ 60;
+    final seconds = row.durationSeconds % 60;
+    final duration = '$minutes:${seconds.toString().padLeft(2, '0')}';
+    return '$duration · $words words';
+  }
   String? _editorBaseTranscript;
   int? _editorBaseAttempt;
   String? _editorBaseRequestId;
@@ -734,17 +752,65 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
             ),
           const SizedBox(height: 16),
         ],
-        if (displayTranscript != null && displayTranscript.isNotEmpty) ...[
-          Text(
-            isNote
-                ? 'Note'
-                : mode == DumpMode.meeting
-                    ? 'Raw Transcript'
-                    : 'Transcript',
-            style: Theme.of(context).textTheme.titleMedium,
+        if (mode == DumpMode.meeting &&
+            (row.meetingNotes == null || row.meetingNotes!.trim().isEmpty) &&
+            displayTranscript != null &&
+            displayTranscript.isNotEmpty) ...[
+          Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton.icon(
+              key: ValueKey('generate-notes-${widget.dumpId}'),
+              icon: const Icon(Icons.auto_awesome),
+              label: const Text('Generate meeting notes'),
+              onPressed: () => _regenerateMeetingNotes(displayTranscript),
+            ),
           ),
-          const SizedBox(height: 8),
-          TextField(
+          const SizedBox(height: 16),
+        ],
+        if (displayTranscript != null && displayTranscript.isNotEmpty) ...[
+          if (mode == DumpMode.meeting) ...[
+            // Option B: the transcript lives behind a collapsible header so
+            // meeting dumps lead with notes/actions instead of a text wall.
+            InkWell(
+              key: ValueKey('transcript-header-${widget.dumpId}'),
+              onTap: () =>
+                  setState(() => _transcriptExpanded = !_transcriptExpanded),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Row(
+                  children: [
+                    Icon(
+                      _transcriptExpanded
+                          ? Icons.expand_more
+                          : Icons.chevron_right,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      'Transcript',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _transcriptSummary(row, displayTranscript),
+                        style: Theme.of(context).textTheme.bodySmall,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+          ] else ...[
+            Text(
+              isNote ? 'Note' : 'Transcript',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 8),
+          ],
+          if (mode != DumpMode.meeting || _transcriptExpanded) ...[
+            TextField(
             key: ValueKey('transcript-editor-${widget.dumpId}'),
             controller: _transcriptController,
             keyboardType: TextInputType.multiline,
@@ -782,16 +848,6 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
                   : null,
             ),
           ),
-          if (mode == DumpMode.meeting &&
-              (row.meetingNotes == null ||
-                  row.meetingNotes!.trim().isEmpty)) ...[
-            const SizedBox(height: 8),
-            OutlinedButton.icon(
-              key: ValueKey('generate-notes-${widget.dumpId}'),
-              icon: const Icon(Icons.auto_awesome),
-              label: const Text('Generate meeting notes'),
-              onPressed: () => _regenerateMeetingNotes(displayTranscript),
-            ),
           ],
         ] else ...[
           Card(
