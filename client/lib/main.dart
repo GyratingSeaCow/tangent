@@ -41,6 +41,7 @@ import 'services/platform_audio.dart';
 import 'services/single_instance.dart';
 import 'services/tray_service.dart';
 import 'services/transcription_client.dart';
+import 'widgets/mouse_back_navigation.dart';
 
 /// Device label for the background isolate, which cannot reach the app's
 /// providers. Duplicated deliberately rather than shared: the UI copy lives
@@ -267,21 +268,30 @@ Future<void> main(List<String> args) async {
 class TangentApp extends StatelessWidget {
   const TangentApp({super.key});
 
+  /// The root navigator, shared with [MouseBackNavigation] so the mouse's
+  /// back side-button can pop the same stack the AppBar arrow does.
+  static final GlobalKey<NavigatorState> navigatorKey =
+      GlobalKey<NavigatorState>();
+
   @override
   Widget build(BuildContext context) {
     return _TranscriptionLifecycleHost(
-      child: MaterialApp(
-        // The stock DEBUG ribbon reads as a defect on a device in hand;
-        // debug builds are self-evident to us without it.
-        debugShowCheckedModeBanner: false,
-        title: 'Tangent',
-        // Tangent ships one theme: an instrument does not restyle itself
-        // with the system setting.
-        theme: tangentTheme(),
-        darkTheme: tangentTheme(),
-        themeMode: ThemeMode.dark,
-        home: const _Router(),
-        routes: {'/home': (_) => const HomeScreen()},
+      child: MouseBackNavigation(
+        navigatorKey: navigatorKey,
+        child: MaterialApp(
+          navigatorKey: navigatorKey,
+          // The stock DEBUG ribbon reads as a defect on a device in hand;
+          // debug builds are self-evident to us without it.
+          debugShowCheckedModeBanner: false,
+          title: 'Tangent',
+          // Tangent ships one theme: an instrument does not restyle itself
+          // with the system setting.
+          theme: tangentTheme(),
+          darkTheme: tangentTheme(),
+          themeMode: ThemeMode.dark,
+          home: const _Router(),
+          routes: {'/home': (_) => const HomeScreen()},
+        ),
       ),
     );
   }
