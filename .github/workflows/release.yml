@@ -27,6 +27,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The Linux desktop playback test dlopens libmpv through media_kit;
+      # without it MediaKit.ensureInitialized throws and `flutter test`
+      # fails here even though this job only ships the Android APK.
+      - name: Linux desktop test dependencies
+        run: sudo apt-get update && sudo apt-get install -y libmpv-dev
+
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
@@ -90,19 +96,31 @@ jobs:
 
   appimage:
     name: Build + attach Linux AppImage
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       # Flutter's Linux desktop toolchain, plus libmpv: media_kit dlopens it
       # at runtime and build-appimage.sh copies the system copy (and its
       # non-baseline dependency closure) into the AppDir.
+      #
+      # Runner pinning matters twice over: 22.04's libmpv-dev provides
+      # libmpv.so.1, which the packaging script (and media_kit's probe)
+      # will not accept — only 24.04 ships .so.2. It also sets the glibc
+      # floor of the resulting AppImage, so it must not move backwards.
       - name: Linux build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev \
-            libstdc++-12-dev libmpv-dev libfuse2 desktop-file-utils
+            libmpv-dev desktop-file-utils
+          # FUSE is only needed to RUN an AppImage by mounting it. This job
+          # extracts instead (both for appimagetool and for verification),
+          # so a missing/renamed package here is not fatal — 24.04 renamed
+          # libfuse2 to libfuse2t64.
+          sudo apt-get install -y libfuse2t64 || sudo apt-get install -y libfuse2 || true
+          ldconfig -p | grep -q 'libmpv\.so\.2' \
+            || { echo "libmpv.so.2 absent — the AppImage would ship unplayable"; exit 1; }
 
       - uses: subosito/flutter-action@v2
         with:
