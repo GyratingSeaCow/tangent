@@ -118,7 +118,17 @@ ui.Rect _contentBounds(NotebookExportSource source) {
     bottom = bottom == null ? y : (y > bottom! ? y : bottom);
   }
 
+  // Base padding. Ample for any pen (the slider tops out at 24, so even a
+  // fountain swell stays inside), but a highlighter's band is
+  // width * kHighlighterWidthFactor — its half-band overhangs a flat 20 well
+  // before the slider's maximum, and a wide mark at the content edge was
+  // clipped. Pad for the widest band on the page instead, never less than 20.
+  double pad = 20;
   for (final InkStroke stroke in source.strokes) {
+    if (stroke.tool == InkTool.highlighter) {
+      final double halfBand = stroke.width * kHighlighterWidthFactor / 2;
+      if (halfBand + 4 > pad) pad = halfBand + 4;
+    }
     for (final InkPoint point in stroke.points) {
       include(point.x, point.y);
     }
@@ -151,7 +161,7 @@ ui.Rect _contentBounds(NotebookExportSource source) {
     // An empty notebook still exports: one blank card-sized page.
     return const ui.Rect.fromLTWH(0, 0, 400, 300);
   }
-  return ui.Rect.fromLTRB(left!, top!, right!, bottom!).inflate(20);
+  return ui.Rect.fromLTRB(left!, top!, right!, bottom!).inflate(pad);
 }
 
 /// Text and dump blocks, drawn like the editor draws them: a rounded card
