@@ -104,6 +104,14 @@ class NotebookInkCanvas extends StatefulWidget {
   /// byte-comparable).
   final PenStyle penStyle;
 
+  /// Instrument applied to the NEXT stroke started: pen ink or a wide
+  /// translucent highlighter band. Existing ink is untouched.
+  final InkTool tool;
+
+  /// Ink applied to the NEXT stroke started. Must belong to [tool]'s own
+  /// palette — `InkStroke` asserts on a cross-palette pairing.
+  final InkColor colour;
+
   /// Reports pen presence: true when a stylus is in contact (and through a
   /// short trailing window after it lifts), false once the window lapses.
   /// The editor uses it to hold the page still under a resting palm.
@@ -123,6 +131,8 @@ class NotebookInkCanvas extends StatefulWidget {
     this.opaqueBackground = true,
     required this.penWidth,
     this.penStyle = PenStyle.ballpoint,
+    this.tool = InkTool.pen,
+    this.colour = InkColor.white,
     this.onStylusPresence,
   });
 
@@ -180,6 +190,13 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
 
   /// Pen style sampled when the active stroke STARTED.
   PenStyle _activeStyle = PenStyle.ballpoint;
+
+  /// Instrument sampled when the active stroke STARTED, so a toolbar change
+  /// mid-stroke cannot change the ink already flowing.
+  InkTool _activeTool = InkTool.pen;
+
+  /// Ink sampled when the active stroke STARTED.
+  InkColor _activeColour = InkColor.white;
 
   /// Pointer owning the active stroke; other pointers are ignored (no
   /// multi-touch scribbling).
@@ -792,6 +809,8 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
       _activePointer = event.pointer;
       _activeWidth = widget.penWidth;
       _activeStyle = widget.penStyle;
+      _activeTool = widget.tool;
+      _activeColour = widget.colour;
       _activePoints = <InkPoint>[];
       _appendPoint(_activePoints!, event.localPosition, event: event);
       _revision++;
@@ -854,6 +873,8 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
       id: _uuid.v4(),
       width: _activeWidth,
       style: _activeStyle,
+      tool: _activeTool,
+      colour: _activeColour,
       points: List<InkPoint>.unmodifiable(points),
     );
     setState(() {
@@ -962,6 +983,8 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
                             id: '_active',
                             width: _activeWidth,
                             style: _activeStyle,
+                            tool: _activeTool,
+                            colour: _activeColour,
                             points: active,
                           ),
                     revision: _revision,

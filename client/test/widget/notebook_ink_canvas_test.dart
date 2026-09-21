@@ -95,8 +95,22 @@ class _CanvasHarness {
   _CanvasHarness({
     this.drawingEnabled = true,
     this.penWidth = 3,
+    this.tool = InkTool.pen,
+    this.colour = InkColor.white,
     List<InkStroke>? initialStrokes,
-  }) : strokes = initialStrokes ?? const <InkStroke>[];
+  })  : strokes = initialStrokes ?? const <InkStroke>[],
+        // A tool holding another tool's ink is not a state a real toolbar
+        // can reach, and InkStroke asserts on it. Catch a mis-staged test
+        // here, where the message names the harness, instead of inside the
+        // model where it reads as a production bug.
+        assert(
+          (tool == InkTool.pen) ==
+              (colour == InkColor.white ||
+                  colour == InkColor.blue ||
+                  colour == InkColor.red ||
+                  colour == InkColor.amber),
+          'colour must belong to tool\'s palette (InkColor.paletteFor)',
+        );
 
   final GlobalKey<NotebookInkCanvasState> canvasKey =
       GlobalKey<NotebookInkCanvasState>();
@@ -105,6 +119,10 @@ class _CanvasHarness {
   bool drawingEnabled;
   bool erasing = false;
   double penWidth;
+
+  /// The toolbar selection. Always a legal pairing — see [setInstrument].
+  InkTool tool;
+  InkColor colour;
   List<InkStroke> strokes;
   late StateSetter _setState;
 
@@ -127,6 +145,8 @@ class _CanvasHarness {
                     drawingEnabled: drawingEnabled,
                     erasing: erasing,
                     penWidth: penWidth,
+                    tool: tool,
+                    colour: colour,
                     onStrokesChanged: reports.add,
                   );
                 },
@@ -149,10 +169,45 @@ class _CanvasHarness {
     _setState(() {});
     await tester.pump();
   }
+
+  /// Moves the toolbar selection. Tool and colour move together because the
+  /// palette is tool-scoped: `InkColor.paletteFor(tool)` is the only legal
+  /// source of a swatch, and an unnamed colour falls to that tool's default
+  /// rather than carrying the old tool's ink across.
+  Future<void> setInstrument(
+    WidgetTester tester, {
+    InkTool? tool,
+    InkColor? colour,
+  }) async {
+    final bool switchedTool = tool != null && tool != this.tool;
+    if (tool != null) this.tool = tool;
+    // A tool switch that names no colour adopts the new tool's default —
+    // the same rule InkStroke.copyWith applies, so the harness can never
+    // stage a pairing the model would reject.
+    this.colour =
+        colour ?? (switchedTool ? InkColor.defaultFor(this.tool) : this.colour);
+    _setState(() {});
+    await tester.pump();
+  }
 }
 
 Offset _at(WidgetTester tester, Offset local) =>
     tester.getTopLeft(find.byType(NotebookInkCanvas)) + local;
+
+/// The ink painter currently mounted inside the canvas — the one with the
+/// live in-progress stroke, found by its type rather than an invented key.
+NotebookInkPainter _livePainter(WidgetTester tester) {
+  final Iterable<CustomPaint> paints = tester.widgetList<CustomPaint>(
+    find.descendant(
+      of: find.byType(NotebookInkCanvas),
+      matching: find.byType(CustomPaint),
+    ),
+  );
+  return paints
+      .map((CustomPaint p) => p.painter)
+      .whereType<NotebookInkPainter>()
+      .single;
+}
 
 List<Offset> _offsetsOf(InkStroke stroke) =>
     stroke.points.map((InkPoint p) => Offset(p.x, p.y)).toList();
@@ -444,6 +499,86 @@ void main() {
       await tester.pump();
 
       expect(harness.state.strokes.single.width, 6.0);
+    });
+
+    testWidgets('a stroke is born with the canvas tool and colour',
+        (tester) async {
+      final _CanvasHarness harness = _CanvasHarness(
+        tool: InkTool.highlighter,
+        colour: InkColor.pink,
+      );
+      await harness.pump(tester);
+
+      final TestGesture gesture =
+          await tester.startGesture(_at(tester, const Offset(10, 10)));
+      await gesture.moveTo(_at(tester, const Offset(60, 10)));
+      await tester.pump();
+      await gesture.up();
+      await tester.pump();
+
+      final InkStroke stroke = harness.state.strokes.single;
+      expect(stroke.tool, InkTool.highlighter);
+      expect(stroke.colour, InkColor.pink);
+      // The committed stroke reaches the host too — the durable list, not
+      // just the canvas's private state.
+      expect(harness.reports.single.single.tool, InkTool.highlighter);
+      expect(harness.reports.single.single.colour, InkColor.pink);
+    });
+
+    testWidgets('a stroke keeps the tool and colour active when it STARTED',
+        (tester) async {
+      final _CanvasHarness harness = _CanvasHarness(
+        tool: InkTool.highlighter,
+        colour: InkColor.lime,
+      );
+      await harness.pump(tester);
+
+      final TestGesture gesture =
+          await tester.startGesture(_at(tester, const Offset(10, 10)));
+      await tester.pump();
+      // The toolbar changes instrument mid-stroke: the ink already flowing
+      // must not change under the finger.
+      await harness.setInstrument(tester, tool: InkTool.pen);
+      await gesture.moveTo(_at(tester, const Offset(60, 10)));
+      await tester.pump();
+      await gesture.up();
+      await tester.pump();
+
+      final InkStroke stroke = harness.state.strokes.single;
+      expect(
+        stroke.tool,
+        InkTool.highlighter,
+        reason: 'the stroke keeps the tool it started with',
+      );
+      expect(
+        stroke.colour,
+        InkColor.lime,
+        reason: 'the stroke keeps the ink it started with',
+      );
+    });
+
+    testWidgets('the live preview stroke carries the selected tool and colour',
+        (tester) async {
+      final _CanvasHarness harness = _CanvasHarness(
+        tool: InkTool.highlighter,
+        colour: InkColor.yellow,
+      );
+      await harness.pump(tester);
+
+      final TestGesture gesture =
+          await tester.startGesture(_at(tester, const Offset(10, 10)));
+      await gesture.moveTo(_at(tester, const Offset(60, 10)));
+      await tester.pump();
+
+      // Mid-stroke: the in-progress ink must already render as a highlighter
+      // band, not turn into one only on lift.
+      final NotebookInkPainter painter = _livePainter(tester);
+      final InkStroke active = painter.activeStroke!;
+      expect(active.tool, InkTool.highlighter);
+      expect(active.colour, InkColor.yellow);
+
+      await gesture.up();
+      await tester.pump();
     });
 
     testWidgets('onStrokesChanged fires with the accumulated stroke list',
