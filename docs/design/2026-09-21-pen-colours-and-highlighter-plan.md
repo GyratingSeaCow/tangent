@@ -389,7 +389,7 @@ git commit -m "Ink model: tool and colour, omitted at their defaults"
 
 **Interfaces:**
 - Consumes: `InkTool`, `InkColor`, `InkStroke.tool`, `InkStroke.colour` from Task 1.
-- Produces: `NotebookInkPainter.buildStrokePaint(double width, {InkStroke? stroke})` — the existing single-argument call sites keep working; `static List<InkStroke> NotebookInkPainter.paintOrder(List<InkStroke> strokes, {InkStroke? active})`; `const double kHighlighterWidthFactor = 4.0` exported from the canvas library.
+- Produces: `NotebookInkPainter.buildStrokePaint(double width, {required InkStroke stroke})` — the `stroke` argument is REQUIRED (a review round removed the optional form, because an omitted stroke silently produced a white pen; omitting it is now a compile error); `static List<InkStroke> NotebookInkPainter.paintOrder(List<InkStroke> strokes, {InkStroke? active})`; `const double kHighlighterWidthFactor = 4.0` exported from the canvas library.
 
 **Note on testability:** the paint order is exposed as a real, pure function
 (`paintOrder`) that `paint` itself calls, NOT as a test-only callback hook.
@@ -594,11 +594,13 @@ Replace `buildStrokePaint` so it derives everything from the stroke, while keepi
   /// The paint for a stroke. A pen keeps the round nib at its own width; a
   /// highlighter is a wide chisel in translucent ink.
   ///
-  /// [stroke] is optional so the legacy one-argument call sites (and any
-  /// caller that only knows a width) still get the default white pen.
-  Paint buildStrokePaint(double width, {InkStroke? stroke}) {
-    final InkTool tool = stroke?.tool ?? InkTool.pen;
-    final InkColor colour = stroke?.colour ?? InkColor.white;
+  /// [stroke] is REQUIRED: an omitted stroke used to fall back to a white
+  /// pen, which meant a caller that forgot it silently drew the wrong
+  /// colour instead of failing. A review round made it required so the
+  /// mistake is a compile error.
+  Paint buildStrokePaint(double width, {required InkStroke stroke}) {
+    final InkTool tool = stroke.tool;
+    final InkColor colour = stroke.colour;
     final bool marker = tool == InkTool.highlighter;
     return Paint()
       ..color = Color(colour.argb)
