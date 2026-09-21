@@ -683,6 +683,24 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
         ref.read(serverTranscriptionServiceProvider);
     final List<DumpRow> rows = _selectedRows();
     setState(() => _batchBusy = true);
+    // Announce the run BEFORE any work: each transcription is a real
+    // upload-and-wait (minutes on long audio) and the run is sequential,
+    // so with only the end receipt a long-press → transcribe read as a
+    // dead button. Long duration: the receipt below replaces it on finish.
+    final int candidates = rows.where(bulkTranscribeEligible).length;
+    messenger.showSnackBar(
+      SnackBar(
+        key: const ValueKey('bulk-transcribe-started'),
+        content: Text(
+          candidates == 0
+              ? 'Nothing eligible to transcribe — completed and '
+                  'remote-only recordings are skipped'
+              : 'Transcribing $candidates recording'
+                  '${candidates == 1 ? '' : 's'}…',
+        ),
+        duration: const Duration(minutes: 30),
+      ),
+    );
     BulkActionSummary summary;
     try {
       summary = await runBulkTranscribe(
@@ -694,6 +712,7 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
     }
     if (!mounted) return;
     _change(_selection.cancel);
+    messenger.hideCurrentSnackBar();
     _showBulkReceipt(messenger, summary, resultKey: 'bulk-transcribe-result');
   }
 

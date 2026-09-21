@@ -7,6 +7,8 @@
 // The eligibility rules they apply are proven in bulk_dump_actions_test;
 // this file proves the toolbar actually offers them — a bulk service with
 // no button is the same defect as a download service with no menu entry.
+import 'dart:async';
+
 import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart' show NativeDatabase;
 import 'package:flutter/material.dart';
@@ -15,8 +17,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:tangent/data/local_db.dart';
 import 'package:tangent/data/storage/filesystem_storage_backend.dart';
 import 'package:tangent/screens/dump/dumps_providers.dart';
+import 'package:tangent/screens/home/home_providers.dart'
+    show serverTranscriptionServiceProvider;
+import 'package:tangent/services/server_transcription_service.dart';
 import 'package:tangent/services/synced_audio_download.dart';
+import 'package:tangent/services/transcription_client.dart';
 
+import '../support/bound_service_fixture.dart';
 import '../support/dump_selection_fixture.dart';
 import '../support/dump_view_fixture.dart';
 import '../support/storage_fixture.dart';
@@ -29,6 +36,25 @@ DumpRow remoteRow(String id) => viewRow(id).copyWith(
       remoteOnly: const Value<bool?>(true),
       audioOnServer: const Value<bool?>(true),
     );
+
+/// Holds every transcribeDump call open until [gate] completes, so a test
+/// can assert what the screen shows WHILE the bulk run is still working.
+class _GatedTranscriptionService extends ServerTranscriptionService {
+  _GatedTranscriptionService({
+    required super.db,
+    required super.recordingAccess,
+    required super.mutations,
+  }) : super(client: TranscriptionClient(baseUrl: 'http://test'));
+
+  final Completer<void> gate = Completer<void>();
+  final List<String> requested = <String>[];
+
+  @override
+  Future<void> transcribeDump(String dumpId) {
+    requested.add(dumpId);
+    return gate.future;
+  }
+}
 
 void main() {
   testWidgets('bulk toolbar offers download and transcribe beside delete',
@@ -129,5 +155,62 @@ void main() {
     );
     expect(find.textContaining('fixture-a'), findsWidgets);
     expect(find.textContaining('Recording is missing'), findsOneWidget);
+  });
+
+  testWidgets('bulk transcribe announces the run while work is in flight',
+      (WidgetTester tester) async {
+    // The bulk run is sequential and each large-v3 job takes minutes; the
+    // old flow's only feedback was the END receipt, so a long-press →
+    // transcribe looked like a dead button. The announcement must appear
+    // IMMEDIATELY — while transcribeDump futures are still open.
+    final LocalDb db = LocalDb.forTesting(NativeDatabase.memory());
+    final BoundServiceFixture bound = await tester.runAsync(
+      () => createBoundServiceFixture(db, registerDrain: false),
+    ) as BoundServiceFixture;
+    addTearDown(() async {
+      await bound.mutations.drain();
+      await db.close();
+    });
+    final _GatedTranscriptionService service = _GatedTranscriptionService(
+      db: db,
+      recordingAccess: bound.access,
+      mutations: bound.mutations,
+    );
+    await mountSelection(
+      tester,
+      CountingDeletion(),
+      extraOverrides: <Override>[
+        serverTranscriptionServiceProvider.overrideWith((ref) => service),
+      ],
+    );
+
+    await tester.longPress(find.byKey(const ValueKey('dump-row-fixture-a')));
+    await pumpSelection(tester);
+    await tester.tap(find.byKey(const ValueKey('dump-select-fixture-b')));
+    await pumpSelection(tester);
+    await tester.tap(find.byKey(const ValueKey('selection-transcribe')));
+    await tester.pump();
+
+    // The run has started (first row requested, future still open) and the
+    // screen SAYS so — before any completion.
+    expect(service.requested, isNotEmpty);
+    expect(
+      find.descendant(
+        of: find.byType(SnackBar),
+        matching: find.textContaining('Transcribing 2'),
+      ),
+      findsOneWidget,
+      reason: 'starting a bulk transcribe must be announced immediately, '
+          'not only in the end receipt',
+    );
+
+    // Release the gate: the run completes and the receipt replaces the
+    // announcement as before.
+    service.gate.complete();
+    await pumpSelection(tester);
+    expect(
+      find.byKey(const ValueKey('bulk-transcribe-result')),
+      findsOneWidget,
+    );
   });
 }
