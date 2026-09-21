@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import 'dart:async';
 import 'dart:io';
 
-import 'package:tray_manager/tray_manager.dart' as tray;
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:window_manager/window_manager.dart';
+
+import 'sni_tray.dart';
 
 /// One tray menu row: stable key + visible label.
 class TrayMenuItem {
@@ -17,9 +18,13 @@ class TrayMenuItem {
 ///
 /// The menu contract is deliberately tiny — Open App, Start Recording,
 /// Exit — and the click handling is pure logic behind a seam so tests can
-/// drive it without the tray_manager platform channel. [install] is the
-/// only method that touches the real plugin.
-class TrayService with tray.TrayListener {
+/// drive it without a bus. [install] is the only method that touches D-Bus.
+///
+/// Click contract: LEFT click activates (opens the app), RIGHT click shows
+/// the menu. This rules out libappindicator (tray_manager's backend),
+/// which hardcodes ItemIsMenu=true and turns left-click into the menu too;
+/// instead the tray speaks StatusNotifierItem directly (see sni_tray.dart).
+class TrayService {
   TrayService({
     required Future<void> Function() onOpenApp,
     required Future<void> Function() onStartRecording,
@@ -58,46 +63,22 @@ class TrayService with tray.TrayListener {
   /// A plain left-click on the icon: open the app, same as Discord.
   Future<void> handleIconClick() => _onOpenApp();
 
-  // ---- tray_manager integration (not unit-tested; exercised live) ----
+  // ---- D-Bus integration (protocol logic tested in sni_tray_test) ----
+
+  SniTray? _sni;
 
   /// Puts the icon in the tray and wires the context menu.
   Future<void> install() async {
-    await tray.trayManager.setIcon('assets/tray/tray_icon.png');
-    // No setToolTip here: tray_manager's Linux plugin doesn't implement it
-    // (appindicators have no tooltip), and the MissingPluginException would
-    // abort install before the menu is wired.
-    await tray.trayManager.setContextMenu(
-      tray.Menu(
-        items: [
-          for (final item in menuItems)
-            tray.MenuItem(key: item.key, label: item.label),
-        ],
-      ),
-    );
-    tray.trayManager.addListener(this);
+    final iconBytes = await rootBundle.load('assets/tray/tray_icon.png');
+    final iconDir = await materializeTrayIcon(iconBytes.buffer.asUint8List());
+    final sni = SniTray(service: this);
+    _sni = sni;
+    await sni.install(iconDir: iconDir);
   }
 
   Future<void> dispose() async {
-    tray.trayManager.removeListener(this);
-    await tray.trayManager.destroy();
-  }
-
-  @override
-  void onTrayIconMouseDown() {
-    unawaited(handleIconClick());
-  }
-
-  @override
-  void onTrayIconRightMouseDown() {
-    // KDE's StatusNotifierItem shows the context menu on right-click by
-    // itself; this hook exists for platforms that don't.
-    unawaited(tray.trayManager.popUpContextMenu());
-  }
-
-  @override
-  void onTrayMenuItemClick(tray.MenuItem menuItem) {
-    final key = menuItem.key;
-    if (key != null) unawaited(handleMenuClick(key));
+    await _sni?.dispose();
+    _sni = null;
   }
 }
 
