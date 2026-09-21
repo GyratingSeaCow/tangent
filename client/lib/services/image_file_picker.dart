@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import 'dart:io';
+
 import 'package:flutter/services.dart';
+
+import 'desktop_image_pick.dart';
 
 /// An image the user chose to import into a notebook.
 class PickedImage {
@@ -37,6 +41,10 @@ class ImageFilePicker {
 
   /// Returns the picked image, or null if the user cancelled.
   Future<PickedImage?> pick() async {
+    // Desktop: no platform channel exists — the Android side implements
+    // pickImageFile in MainActivity.kt. Linux uses the GTK file dialog
+    // and decodes/caps in Dart with the same 2048 longest-edge rule.
+    if (Platform.isLinux) return pickImageDesktop();
     final Map<Object?, Object?>? picked =
         await _channel.invokeMapMethod<Object?, Object?>('pickImageFile');
     if (picked == null) return null;
