@@ -30,6 +30,19 @@ import 'package:tangent/models/sync_change.dart';
 import 'package:tangent/services/transcription_client.dart';
 import 'package:tangent/services/transcription_notifications.dart';
 
+/// How long a test waits before declaring an await deadlocked.
+///
+/// These timeouts are deadlock guards, not behavioural assertions — the real
+/// assertions are the `expect`s that follow each one. The budget therefore
+/// only has to be shorter than a human's patience, not tight: every one of
+/// these awaits resolves in microseconds when the code is correct, so a
+/// generous ceiling costs a passing run nothing.
+///
+/// It was 200ms, which is plenty on a developer machine but not on a
+/// contended CI runner doing real SQLite I/O, where it produced
+/// `TimeoutException after 0:00:00.200000` on code that was working fine.
+const Duration kDeadlockGuard = Duration(seconds: 5);
+
 /// Captures what reached the notification platform, so the seam test asserts
 /// on the observable effect rather than on the notifier's internal state.
 class _RecordingNotificationPort implements TranscriptionNotificationPort {
@@ -814,11 +827,11 @@ void main() {
 
     service.dispose();
     disposed = true;
-    await streamCanceled.future.timeout(const Duration(milliseconds: 200));
+    await streamCanceled.future.timeout(kDeadlockGuard);
     stream.add(
       const JobEvent('completed', {'transcript': 'must be ignored'}),
     );
-    await operation.timeout(const Duration(milliseconds: 200));
+    await operation.timeout(kDeadlockGuard);
     await Future<void>.delayed(const Duration(milliseconds: 10));
 
     final afterLateEvent = (await db.getDump('r1'))!;
@@ -873,7 +886,7 @@ void main() {
         model: 'large-v3',
       ),
     );
-    await operation.timeout(const Duration(milliseconds: 200));
+    await operation.timeout(kDeadlockGuard);
     await Future<void>.delayed(const Duration(milliseconds: 10));
 
     final afterLateResponse = (await db.getDump('r1'))!;
@@ -1008,9 +1021,9 @@ void main() {
 
     final first = service.transcribeDump('r1');
     final second = service.transcribeDump('r2');
-    await writerStarted.future.timeout(const Duration(milliseconds: 200));
+    await writerStarted.future.timeout(kDeadlockGuard);
     await Future.wait([first, second])
-        .timeout(const Duration(milliseconds: 300));
+        .timeout(kDeadlockGuard);
 
     var firstRow = (await db.getDump('r1'))!;
     final secondRow = (await db.getDump('r2'))!;
@@ -1448,7 +1461,7 @@ void main() {
     await activeStreamStarted.future;
     final activeBeforeResume = (await db.getDump('active'))!;
 
-    await service.reconcilePending().timeout(const Duration(milliseconds: 200));
+    await service.reconcilePending().timeout(kDeadlockGuard);
 
     final activeAfterResume = (await db.getDump('active'))!;
     final recovered = (await db.getDump('recoverable'))!;
@@ -1475,7 +1488,7 @@ void main() {
     activeStream.add(
       const JobEvent('completed', {'transcript': 'active completed once'}),
     );
-    await operation.timeout(const Duration(milliseconds: 200));
+    await operation.timeout(kDeadlockGuard);
   });
 
   test('recoverable local exit automatically hands ownership to reconciliation',
@@ -1518,16 +1531,16 @@ void main() {
 
     final operation = service.transcribeDump('active');
     await localStreamStarted.future;
-    await service.reconcilePending().timeout(const Duration(milliseconds: 200));
+    await service.reconcilePending().timeout(kDeadlockGuard);
     expect(fake.getJobCalls, 0);
     expect(fake.streamJobCalls, 1);
 
     localStream.add(
       const JobEvent('error', {'error': 'local observer disconnected'}),
     );
-    await operation.timeout(const Duration(milliseconds: 200));
+    await operation.timeout(kDeadlockGuard);
     await recoveryStreamStarted.future
-        .timeout(const Duration(milliseconds: 200));
+        .timeout(kDeadlockGuard);
 
     final deadline = DateTime.now().add(const Duration(seconds: 2));
     late DumpRow recovered;
@@ -1612,7 +1625,7 @@ void main() {
     final queued = service.transcribeDump('queued');
     expect(service.queuedDumpIds, ['queued']);
     releaseGet.complete();
-    await scan.timeout(const Duration(milliseconds: 200));
+    await scan.timeout(kDeadlockGuard);
     await Future<void>.delayed(Duration.zero);
 
     expect(fake.getJobIds, ['job-queued']);
@@ -1685,7 +1698,7 @@ void main() {
     final queuedTarget = service.transcribeDump('target');
     expect(service.queuedDumpIds, ['target']);
     releaseTargetGet.complete();
-    await scan.timeout(const Duration(milliseconds: 200));
+    await scan.timeout(kDeadlockGuard);
 
     final recoveredBeforeQueueRelease = (await db.getDump('target'))!;
     expect(recoveredBeforeQueueRelease.transcriptionStatus, 'completed');
@@ -1698,9 +1711,7 @@ void main() {
     blockerStream.add(
       const JobEvent('completed', {'transcript': 'blocker complete'}),
     );
-    await Future.wait([blocker, queuedTarget]).timeout(
-      const Duration(milliseconds: 200),
-    );
+    await Future.wait([blocker, queuedTarget]).timeout(kDeadlockGuard);
 
     final recovered = (await db.getDump('target'))!;
     expect(fake.createCalls, 1);
@@ -1794,17 +1805,13 @@ void main() {
 
     final queuedTarget = service.transcribeDump('target');
     releaseFirstTargetGet.complete();
-    await scan.timeout(const Duration(milliseconds: 200));
+    await scan.timeout(kDeadlockGuard);
 
     blockerStream.add(
       const JobEvent('completed', {'transcript': 'blocker complete'}),
     );
-    await Future.wait([blocker, queuedTarget]).timeout(
-      const Duration(milliseconds: 200),
-    );
-    await secondTargetGetStarted.future.timeout(
-      const Duration(milliseconds: 200),
-    );
+    await Future.wait([blocker, queuedTarget]).timeout(kDeadlockGuard);
+    await secondTargetGetStarted.future.timeout(kDeadlockGuard);
 
     final deadline = DateTime.now().add(const Duration(seconds: 2));
     late DumpRow recovered;
@@ -1884,13 +1891,11 @@ void main() {
     final queuedTarget = service.transcribeDump('target');
     expect(service.queuedDumpIds, ['target']);
 
-    await service.reconcilePending().timeout(const Duration(milliseconds: 200));
+    await service.reconcilePending().timeout(kDeadlockGuard);
     expect(fake.getJobCalls, 0);
     service.cancel('target');
-    await queuedTarget.timeout(const Duration(milliseconds: 200));
-    await targetRecoveryStarted.future.timeout(
-      const Duration(milliseconds: 200),
-    );
+    await queuedTarget.timeout(kDeadlockGuard);
+    await targetRecoveryStarted.future.timeout(kDeadlockGuard);
 
     final deadline = DateTime.now().add(const Duration(seconds: 2));
     late DumpRow recovered;
@@ -1919,7 +1924,7 @@ void main() {
     expect(await storage.pathFor('target').readAsBytes(), [1, 2, 3]);
 
     service.dispose();
-    await blocker.timeout(const Duration(milliseconds: 200));
+    await blocker.timeout(kDeadlockGuard);
   });
 
   test('local handoff waits for an in-flight scan before adopting the job',
@@ -2019,14 +2024,12 @@ void main() {
     blockerStream.add(
       const JobEvent('completed', {'transcript': 'blocker complete'}),
     );
-    await Future.wait([blocker, queued]).timeout(
-      const Duration(milliseconds: 200),
-    );
+    await Future.wait([blocker, queued]).timeout(kDeadlockGuard);
     expect(handoffGetStarted.isCompleted, isFalse);
 
     releaseScanBlockerGet.complete();
-    await initialScan.timeout(const Duration(milliseconds: 200));
-    await handoffGetStarted.future.timeout(const Duration(milliseconds: 200));
+    await initialScan.timeout(kDeadlockGuard);
+    await handoffGetStarted.future.timeout(kDeadlockGuard);
 
     final deadline = DateTime.now().add(const Duration(seconds: 2));
     late DumpRow recovered;
@@ -2075,8 +2078,8 @@ void main() {
     );
     addTearDown(service.dispose);
 
-    await service.reconcilePending().timeout(const Duration(milliseconds: 200));
-    await service.reconcilePending().timeout(const Duration(milliseconds: 200));
+    await service.reconcilePending().timeout(kDeadlockGuard);
+    await service.reconcilePending().timeout(kDeadlockGuard);
 
     final flakyDb = db as _FlakyRecoveryQueryDb;
     final recovered = (await db.getDump('r1'))!;
@@ -2114,7 +2117,7 @@ void main() {
 
     service.dispose();
     pausedDb.releaseQuery.complete();
-    await scan.timeout(const Duration(milliseconds: 200));
+    await scan.timeout(kDeadlockGuard);
 
     final afterDispose = (await db.getDump('r1'))!;
     expect(fake.calls, isEmpty);
@@ -2177,7 +2180,7 @@ void main() {
 
     service.dispose();
     releaseGet.complete();
-    await scan.timeout(const Duration(milliseconds: 200));
+    await scan.timeout(kDeadlockGuard);
 
     final afterDispose = (await db.getDump('r1'))!;
     expect(fake.getJobCalls, 1);
@@ -2232,7 +2235,7 @@ void main() {
 
     service.dispose();
     releaseEnqueue.complete();
-    await scan.timeout(const Duration(milliseconds: 200));
+    await scan.timeout(kDeadlockGuard);
 
     final afterDispose = (await db.getDump('r1'))!;
     expect(fake.enqueueCalls, 1);
@@ -2284,8 +2287,8 @@ void main() {
     final throwingDb = db as _ThrowingRecoveryStatusDb;
     throwingDb.failStatusWrites = true;
 
-    await service.reconcilePending().timeout(const Duration(milliseconds: 200));
-    await service.reconcilePending().timeout(const Duration(milliseconds: 200));
+    await service.reconcilePending().timeout(kDeadlockGuard);
+    await service.reconcilePending().timeout(kDeadlockGuard);
 
     final uncaught = <Object>[];
     final zoned = runZonedGuarded<Future<void>>(
@@ -2447,7 +2450,7 @@ void main() {
     addTearDown(stream.close);
 
     await service.reconcilePending();
-    await streamStarted.future.timeout(const Duration(milliseconds: 200));
+    await streamStarted.future.timeout(kDeadlockGuard);
 
     expect(fake.getJobCalls, 1);
     expect(fake.streamJobIds, ['job-existing']);
@@ -2491,7 +2494,7 @@ void main() {
     addTearDown(stream.close);
 
     await service.reconcilePending();
-    await streamStarted.future.timeout(const Duration(milliseconds: 200));
+    await streamStarted.future.timeout(kDeadlockGuard);
 
     final recovered = (await db.getDump('r1'))!;
     expect(recovered.transcriptionStatus, 'running');
@@ -2593,7 +2596,7 @@ void main() {
 
     service.dispose();
     disposed = true;
-    await streamCanceled.future.timeout(const Duration(milliseconds: 200));
+    await streamCanceled.future.timeout(kDeadlockGuard);
     stream.add(
       const JobEvent('completed', {'transcript': 'must be ignored'}),
     );
@@ -3119,15 +3122,15 @@ void main() {
     addTearDown(firstStream.close);
 
     await service.reconcilePending();
-    await firstStreamStarted.future.timeout(const Duration(milliseconds: 200));
-    await service.reconcilePending().timeout(const Duration(milliseconds: 200));
+    await firstStreamStarted.future.timeout(kDeadlockGuard);
+    await service.reconcilePending().timeout(kDeadlockGuard);
     expect(getCalls, 2);
     expect(streamCalls, 1);
 
     firstStream.add(
       const JobEvent('error', {'error': 'first watcher disconnected'}),
     );
-    await handoffGetStarted.future.timeout(const Duration(milliseconds: 200));
+    await handoffGetStarted.future.timeout(kDeadlockGuard);
     final disconnected = (await db.getDump('r1'))!;
     expect(
       disconnected.transcriptionError,
@@ -3208,7 +3211,7 @@ void main() {
     addTearDown(service.dispose);
     addTearDown(firstStream.close);
 
-    await service.reconcilePending().timeout(const Duration(milliseconds: 200));
+    await service.reconcilePending().timeout(kDeadlockGuard);
 
     final second = (await db.getDump('r2'))!;
     expect(second.transcriptionStatus, 'completed');
@@ -3285,7 +3288,7 @@ void main() {
           await Future<void>.delayed(const Duration(milliseconds: 1));
         }
       })()
-          .timeout(const Duration(milliseconds: 200));
+          .timeout(kDeadlockGuard);
     } finally {
       releaseFirstGet.complete();
       await scan;
@@ -3332,7 +3335,7 @@ void main() {
     );
     addTearDown(service.dispose);
 
-    await service.reconcilePending().timeout(const Duration(milliseconds: 200));
+    await service.reconcilePending().timeout(kDeadlockGuard);
 
     final timedOut = (await db.getDump('r1'))!;
     expect(timedOut.transcriptionStatus, 'running');
@@ -3341,7 +3344,7 @@ void main() {
     expect(timedOut.transcriptionAttempt, 2);
     expect(timedOut.transcriptionError, startsWith('reconciliation_pending:'));
 
-    await service.reconcilePending().timeout(const Duration(milliseconds: 200));
+    await service.reconcilePending().timeout(kDeadlockGuard);
 
     final recovered = (await db.getDump('r1'))!;
     expect(fake.getJobCalls, 2);
@@ -3386,7 +3389,7 @@ void main() {
     );
     addTearDown(service.dispose);
 
-    await service.reconcilePending().timeout(const Duration(milliseconds: 200));
+    await service.reconcilePending().timeout(kDeadlockGuard);
     final replayDeadline =
         DateTime.now().add(const Duration(milliseconds: 200));
     while (fake.enqueueCalls < 2) {
@@ -3452,7 +3455,7 @@ void main() {
 
     final scan = service.reconcilePending();
     try {
-      await scan.timeout(const Duration(milliseconds: 200));
+      await scan.timeout(kDeadlockGuard);
     } finally {
       stalledCreate.complete();
       await scan;
@@ -3499,7 +3502,7 @@ void main() {
 
     final scan = service.reconcilePending();
     try {
-      await scan.timeout(const Duration(milliseconds: 200));
+      await scan.timeout(kDeadlockGuard);
     } finally {
       stalledUpload.complete();
       await scan;
@@ -3643,8 +3646,8 @@ void main() {
     addTearDown(service.dispose);
 
     final firstScan = service.reconcilePending();
-    await writerStarted.future.timeout(const Duration(milliseconds: 200));
-    await firstScan.timeout(const Duration(milliseconds: 300));
+    await writerStarted.future.timeout(kDeadlockGuard);
+    await firstScan.timeout(kDeadlockGuard);
 
     await seedRow(
       row(
@@ -3655,7 +3658,7 @@ void main() {
         transcriptionAttempt: 1,
       ),
     );
-    await service.reconcilePending().timeout(const Duration(milliseconds: 300));
+    await service.reconcilePending().timeout(kDeadlockGuard);
 
     final secondRow = (await db.getDump('r2'))!;
     expect(fake.getJobIds, ['job-r2']);
@@ -4390,8 +4393,8 @@ void main() {
 
       final first = service.transcribeDump('r1');
       final second = service.transcribeDump('r2');
-      await second.timeout(const Duration(milliseconds: 300));
-      await first.timeout(const Duration(milliseconds: 300));
+      await second.timeout(kDeadlockGuard);
+      await first.timeout(kDeadlockGuard);
 
       service.dispose();
       never.complete();
@@ -4954,10 +4957,7 @@ void main() {
     final accepted = await db
         .watchDump('fifo-second')
         .firstWhere((r) => r?.transcriptionStatus == 'uploading')
-        .timeout(
-          const Duration(milliseconds: 300),
-          onTimeout: () => row(id: 'fifo-second'),
-        );
+        .timeout(kDeadlockGuard);
     expect(accepted!.transcriptionStatus, 'uploading');
     expect(accepted.transcriptionRequestId, isNotNull);
     expect(accepted.transcriptionAttempt, 1);
