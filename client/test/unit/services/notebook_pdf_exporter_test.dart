@@ -10,6 +10,7 @@
 import 'dart:convert';
 import 'dart:io' show zlib;
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 import 'dart:ui' show Color;
 
 import 'package:flutter_test/flutter_test.dart';
@@ -154,6 +155,24 @@ int _ry(_PageRaster raster, double y, double contentTop, double contentBottom) {
 (double, double, double) _bgRgb() {
   final Color bg = NotebookInkCanvas.backgroundColor;
   return (bg.r * 255, bg.g * 255, bg.b * 255);
+}
+
+/// A solid-colour [w]x[h] PNG, base64-encoded the way the model stores it.
+///
+/// Built through the engine's own encoder so the test controls the expected
+/// pixel exactly — a red fixture on the dark page background, never a
+/// background-coloured one.
+Future<String> _solidPngBase64(Color colour, int w, int h) async {
+  final ui.PictureRecorder recorder = ui.PictureRecorder();
+  final ui.Canvas canvas = ui.Canvas(recorder);
+  canvas.drawRect(
+    ui.Rect.fromLTWH(0, 0, w.toDouble(), h.toDouble()),
+    ui.Paint()..color = colour,
+  );
+  final ui.Image image = await recorder.endRecording().toImage(w, h);
+  final ByteData? png = await image.toByteData(format: ui.ImageByteFormat.png);
+  image.dispose();
+  return base64Encode(png!.buffer.asUint8List());
 }
 
 void _expectPixel(
@@ -353,6 +372,148 @@ void main() {
       raster.at(_rx(raster, 50, 10, 90), _ry(raster, 50, 50, 50)),
       _blendOverBackground(InkColor.pink),
       reason: 'band centre must be translucent pink over the background',
+    );
+  });
+
+  test('an image block renders its actual pixels into the page raster',
+      () async {
+    // A solid red 4x4 PNG stretched to an 80x60 block at (40, 60). The
+    // content box is decided by the block's NOMINAL footprint (300x90 from
+    // its origin), which exceeds the image itself: x 40..340, y 60..150.
+    final String red = await _solidPngBase64(const Color(0xFFFF0000), 4, 4);
+    final bytes = await renderNotebookPdf(
+      NotebookExportSource(
+        title: 'picture',
+        document: NotebookDocument(<NotebookBlock>[
+          NotebookImageBlock(
+            id: 'img-1',
+            data: red,
+            mime: 'image/png',
+            x: 40,
+            y: 60,
+            width: 80,
+            height: 60,
+          ),
+        ]),
+        strokes: const <InkStroke>[],
+      ),
+    );
+
+    final _PageRaster raster = _pageRasterOf(Uint8List.fromList(bytes));
+    // Image centre, canvas (80, 90): the fixture's own red, not the page
+    // background and not the old '\u{1F5BC} Picture' placeholder.
+    _expectPixel(
+      raster.at(_rx(raster, 80, 40, 340), _ry(raster, 90, 60, 150)),
+      (255, 0, 0),
+      reason: 'image-centre pixel should be the fixture red',
+    );
+    // Interior near the image's bottom-right, well inside the dest rect but
+    // away from its centre: red everywhere the block claims, proving the
+    // image fills its stored width x height (the editor's BoxFit.fill).
+    _expectPixel(
+      raster.at(_rx(raster, 110, 40, 340), _ry(raster, 115, 60, 150)),
+      (255, 0, 0),
+      reason: 'image interior near bottom-right should be the fixture red',
+    );
+    // Clear of the image (canvas 200, 130): page background — the control
+    // that proves the samples above are not reading a red-flooded page.
+    _expectPixel(
+      raster.at(_rx(raster, 200, 40, 340), _ry(raster, 130, 60, 150)),
+      _bgRgb(),
+      reason: 'off-image pixel should be the page background',
+    );
+  });
+
+  test('a corrupt image block falls back to the placeholder, export survives',
+      () async {
+    // Valid base64, but the bytes are no image any codec accepts: the block
+    // must keep its placeholder card and the rest of the export must live.
+    final String garbage =
+        base64Encode(Uint8List.fromList(List<int>.generate(64, (i) => i)));
+    final bytes = await renderNotebookPdf(
+      NotebookExportSource(
+        title: 'broken picture',
+        document: NotebookDocument(<NotebookBlock>[
+          NotebookImageBlock(
+            id: 'img-bad',
+            data: garbage,
+            mime: 'image/png',
+            x: 40,
+            y: 60,
+            width: 80,
+            height: 60,
+          ),
+        ]),
+        strokes: const <InkStroke>[],
+      ),
+    );
+
+    // The export completed and produced a real PDF, not a crash.
+    expect(utf8.decode(bytes.sublist(0, 5)), '%PDF-');
+    final _PageRaster raster = _pageRasterOf(Uint8List.fromList(bytes));
+    // Inside the image's claimed rect but below the placeholder's text line
+    // and inside its unfilled card: background, not image pixels — the
+    // block fell back instead of painting garbage.
+    _expectPixel(
+      raster.at(_rx(raster, 80, 40, 340), _ry(raster, 100, 60, 150)),
+      _bgRgb(),
+      reason: 'a corrupt image paints no pixels where the image would be',
+    );
+  });
+
+  test('an image block and ink strokes coexist on the exported page',
+      () async {
+    // The red image from the pixel test plus a blue pen line above it:
+    // content box x 40..340 (stroke and nominal footprint agree),
+    // y 20..150 (stroke top, block nominal bottom).
+    final String red = await _solidPngBase64(const Color(0xFFFF0000), 4, 4);
+    final bytes = await renderNotebookPdf(
+      NotebookExportSource(
+        title: 'picture and ink',
+        document: NotebookDocument(<NotebookBlock>[
+          NotebookImageBlock(
+            id: 'img-1',
+            data: red,
+            mime: 'image/png',
+            x: 40,
+            y: 60,
+            width: 80,
+            height: 60,
+          ),
+        ]),
+        strokes: const <InkStroke>[
+          InkStroke(
+            id: 'pen-blue',
+            width: 6,
+            colour: InkColor.blue,
+            points: <InkPoint>[
+              InkPoint(x: 40, y: 20),
+              InkPoint(x: 340, y: 20),
+            ],
+          ),
+        ],
+      ),
+    );
+
+    final _PageRaster raster = _pageRasterOf(Uint8List.fromList(bytes));
+    // Mid-stroke: the pen's opaque blue still renders with an image on the
+    // page — drawing pictures must not eat the ink pass.
+    _expectPixel(
+      raster.at(_rx(raster, 190, 40, 340), _ry(raster, 20, 20, 150)),
+      _opaqueRgb(InkColor.blue),
+      reason: 'ink must still render when an image block is present',
+    );
+    // Image centre: the fixture's red still renders alongside the ink.
+    _expectPixel(
+      raster.at(_rx(raster, 80, 40, 340), _ry(raster, 90, 20, 150)),
+      (255, 0, 0),
+      reason: 'the image must still render alongside ink',
+    );
+    // Between the two (canvas 200, 130): background — neither flooded.
+    _expectPixel(
+      raster.at(_rx(raster, 200, 40, 340), _ry(raster, 130, 20, 150)),
+      _bgRgb(),
+      reason: 'clear ground between ink and image should be background',
     );
   });
 }
