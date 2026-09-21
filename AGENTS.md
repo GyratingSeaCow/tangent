@@ -50,11 +50,13 @@ ADH2/
 
 ## Status
 
-Shipping — **v1.5.1 on `main`** (see CHANGELOG.md). Client and server are
-both implemented and tested (1424 Flutter tests, 180 server tests, 100
-Kotlin tests). No known defects; open work candidates live in
-`docs/next-iteration.md`. Active effort: Linux desktop companion — see
-`docs/HANDOFF-linux-desktop.md`.
+Shipping — **v1.5.1 + unreleased Linux desktop arc** (see CHANGELOG.md,
+Unreleased). Client and server are both implemented and tested (1456
+Flutter tests, 180 server tests, 100 Kotlin tests). The client now runs
+natively on Linux (tray icon, global record hotkey, close-to-tray,
+right-click = long-press, AppImage packaging under `packaging/`) —
+verified on CachyOS/KDE Plasma Wayland; see the README's Desktop
+section. Open work candidates live in `docs/next-iteration.md`.
 
 ---
 

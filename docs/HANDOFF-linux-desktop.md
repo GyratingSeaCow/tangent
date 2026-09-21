@@ -1,5 +1,16 @@
 # Handoff: Tangent Linux desktop companion (CachyOS)
 
+> **Status (2026-09-20): substantially complete.** The client runs
+> natively on CachyOS, packaged as an AppImage, with desktop features
+> beyond the original brief (tray icon, global record hotkey,
+> close-to-tray, right-click = long-press). See CHANGELOG.md
+> `[Unreleased]` for the delivered list and the README Desktop section
+> for user-facing docs. Delivered on `feature/linux-desktop`.
+> Known deltas from the brief: the suite baseline moved from 1397 to
+> 1456 tests (upstream v1.5.x landed mid-effort and desktop work added
+> its own); `record_linux` 1.3.x uses parecord+ffmpeg, not fmedia, so
+> the fmedia concern is moot.
+
 You are picking up work on **Tangent**, a self-hosted voice/notebook app.
 This document is self-contained — you need nothing from any prior
 conversation. The human you are working with is **Jeff** (GitHub:

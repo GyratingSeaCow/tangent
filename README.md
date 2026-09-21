@@ -222,12 +222,45 @@ Enter `http://<server-address>:8765` plus the token from setup.
 
 ### Desktop (Linux)
 
-Build (must be on a Linux host — Flutter doesn't cross-compile desktop):
+The easiest path is the **AppImage** from
+[Releases](https://github.com/GyratingSeaCow/tangent/releases): download
+`Tangent-x86_64.AppImage`, `chmod +x` it, and run. Requires `fuse2` on
+Arch-family distros; GTK3 is assumed present. libmpv and its codec stack
+ride inside the AppImage.
+
+What the Linux desktop build does (verified on CachyOS/KDE Plasma
+Wayland):
+
+- **Recording** via PipeWire (`parecord` + `ffmpeg`, both required on
+  PATH) with the same Opus pipeline as Android, and playback of synced
+  audio via libmpv. The record button waits for mic-stream evidence
+  before reporting "recording", so first words aren't clipped.
+- **System tray**: Tangent lives in the tray. Left-click opens the
+  window, right-click gives Open App / Start Recording / Exit. Closing
+  the window (X) hides to the tray; Exit in the tray menu quits.
+- **Global record hotkey**: a second invocation `tangent --record`
+  forwards a toggle to the running instance over a Unix socket — bind
+  that command to a key (KDE: System Settings → Shortcuts → Add
+  Command) and you can start/stop a capture from anywhere.
+- **Right-click = long-press** everywhere in the app (multi-select,
+  folder actions), and PDF export lands in `Documents/Tangent/Exports/`
+  and opens in your viewer (no share sheets on desktop).
+- **Storage** uses real directories (`~/Documents/Tangent/`) — no
+  folder-authorization step. Secure credential storage needs a Secret
+  Service (KWallet ≥ 5.97 or gnome-keyring); without one the app still
+  runs, unpaired, and says why.
+
+Build from source (must be on a Linux host — Flutter doesn't
+cross-compile desktop):
 
 ```bash
 cd client
 flutter build linux
 # Output: client/build/linux/x64/release/bundle/tangent
+
+# Optional: package it as an AppImage (needs appimagetool)
+../packaging/build-appimage.sh
+# Output: packaging/out/Tangent-x86_64.AppImage
 ```
 
 ---
