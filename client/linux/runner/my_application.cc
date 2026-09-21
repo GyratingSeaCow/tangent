@@ -14,6 +14,26 @@ struct _MyApplication {
 
 G_DEFINE_TYPE(MyApplication, my_application, GTK_TYPE_APPLICATION)
 
+// Forwards mouse side-button presses to Dart.
+//
+// Flutter's GTK embedder only maps buttons 1-3 into the Dart pointer
+// stream; the back/forward thumb buttons (GDK buttons 8/9) are dropped
+// before Dart ever sees them. This handler catches them at the window
+// level and sends 'back' over a method channel, where the app pops the
+// navigator exactly like the AppBar's back arrow.
+static FlMethodChannel* mouse_navigation_channel = nullptr;
+
+static gboolean on_window_button_press(GtkWidget* widget, GdkEventButton* event,
+                                       gpointer user_data) {
+  if (event->type != GDK_BUTTON_PRESS) return FALSE;
+  if (event->button != 8) return FALSE;  // 8 = back thumb button
+  if (mouse_navigation_channel != nullptr) {
+    fl_method_channel_invoke_method(mouse_navigation_channel, "back", nullptr,
+                                    nullptr, nullptr, nullptr);
+  }
+  return TRUE;  // consumed; keep GTK from doing anything else with it
+}
+
 // Implements GApplication::activate.
 static void my_application_activate(GApplication* application) {
   MyApplication* self = MY_APPLICATION(application);
@@ -58,6 +78,17 @@ static void my_application_activate(GApplication* application) {
   gtk_container_add(GTK_CONTAINER(window), GTK_WIDGET(view));
 
   fl_register_plugins(FL_PLUGIN_REGISTRY(view));
+
+  // Mouse side-button forwarding (see on_window_button_press above). The
+  // channel rides the view's messenger; the press signal is watched on the
+  // window so it fires wherever the cursor is inside the app.
+  g_autoptr(FlStandardMethodCodec) codec = fl_standard_method_codec_new();
+  mouse_navigation_channel = fl_method_channel_new(
+      fl_engine_get_binary_messenger(fl_view_get_engine(view)),
+      "tangent/mouse_navigation", FL_METHOD_CODEC(codec));
+  gtk_widget_add_events(GTK_WIDGET(window), GDK_BUTTON_PRESS_MASK);
+  g_signal_connect(window, "button-press-event",
+                   G_CALLBACK(on_window_button_press), nullptr);
 
   gtk_widget_grab_focus(GTK_WIDGET(view));
 }

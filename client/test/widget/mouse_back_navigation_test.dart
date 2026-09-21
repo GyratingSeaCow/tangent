@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tangent/widgets/mouse_back_navigation.dart';
 
@@ -8,6 +9,14 @@ import 'package:tangent/widgets/mouse_back_navigation.dart';
 /// like the AppBar's back arrow. Routed through Navigator.maybePop so
 /// PopScope handlers (the notebook editor's save-on-back) still run —
 /// a hardware back that skipped saving would be data loss.
+///
+/// Two delivery paths, both covered here:
+/// - pointer events carrying kBackMouseButton (Windows; also how tests
+///   drive it)
+/// - the 'back' method call from the Linux GTK runner, which must exist
+///   because Flutter's GTK embedder forwards only buttons 1-3 — side
+///   buttons never reach the Dart pointer stream on Linux (verified with
+///   a live probe: pressing back produced no PointerDownEvent at all).
 void main() {
   Widget app(GlobalKey<NavigatorState> navigator) {
     return MouseBackNavigation(
@@ -42,6 +51,33 @@ void main() {
     await gesture.up();
     await tester.pumpAndSettle();
   }
+
+  /// Injects the platform-side 'back' call the GTK runner sends.
+  Future<void> nativeBack(WidgetTester tester) async {
+    await tester.binding.defaultBinaryMessenger.handlePlatformMessage(
+      'tangent/mouse_navigation',
+      const StandardMethodCodec().encodeMethodCall(const MethodCall('back')),
+      (_) {},
+    );
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('the native back channel pops the current route', (tester) async {
+    final navigator = GlobalKey<NavigatorState>();
+    await tester.pumpWidget(app(navigator));
+
+    await tester.tap(find.byKey(const ValueKey('push')));
+    await tester.pumpAndSettle();
+    expect(find.text('second screen'), findsOneWidget);
+
+    await nativeBack(tester);
+
+    expect(
+      find.text('second screen'),
+      findsNothing,
+      reason: 'the GTK runner back call must pop, like the AppBar arrow',
+    );
+  });
 
   testWidgets('mouse back button pops the current route', (tester) async {
     final navigator = GlobalKey<NavigatorState>();
