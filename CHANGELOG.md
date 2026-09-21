@@ -5,6 +5,39 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.1] - 2026-09-21
+
+Quality-of-life release: the notebook tools now behave the way they look.
+
+### Added
+- **Pairing codes in Settings** — "Pair a new device" on any paired device
+  shows pending 6-digit codes big enough to read across the room, with the
+  requesting device's name, platform and a live 120-second countdown,
+  refreshed every 5 seconds. No more reading codes out of the docker log.
+- **Pen hover cursor** — a thin ring follows the S-Pen while it hovers,
+  showing exactly where the nib will land and how wide the mark will be:
+  pen stroke width, the highlighter's full rendered band, or the eraser's
+  reach when erasing (side button included). Stylus only — a mouse never
+  shows it — and the lasso pen stays ring-free.
+
+### Fixed
+- **Eraser reaches the whole highlighter band** — erase reach followed the
+  nominal stroke width, so most of a wide highlighter band was untouchable;
+  it now follows the rendered ink per tool. Pen erase reach is unchanged.
+- **PDF export renders imported images** — exported pages drew a
+  "🖼 Picture" placeholder where images sat; the actual image pixels now
+  render at the block's position, with the placeholder kept only as the
+  fallback for undecodable image data.
+- **Lasso catches wide rows where you see them** — text and checkbox rows
+  were lassoed against a nominal 300×90 box regardless of rendered width,
+  so circling the right half of a full-width row selected nothing. The
+  lasso now measures the real laid-out size (images already used theirs;
+  the 40% catch threshold is unchanged).
+- **Server setup hint names the server, not the user** — the first-run
+  example suggested `"display_name": "Your Name"`, so servers introduced
+  themselves by their owner's name; the example is now "Tangent Server"
+  with a note that the name is the machine's.
+
 ## [1.6.0] - 2026-09-21
 
 Linux desktop companion (verified on CachyOS, KDE Plasma 6 Wayland) and

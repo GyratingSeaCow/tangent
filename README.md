@@ -5,8 +5,8 @@
 > Built for ADHD minds. Self-hosted. Offline-first. No subscriptions.
 
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](./LICENSE)
-[![Version: 1.6.0](https://img.shields.io/badge/version-1.6.0-blue.svg)](./CHANGELOG.md)
-[![Client tests: 1527 passing](https://img.shields.io/badge/client_tests-1527%20passing-brightgreen.svg)]()
+[![Version: 1.6.1](https://img.shields.io/badge/version-1.6.1-blue.svg)](./CHANGELOG.md)
+[![Client tests: 1562 passing](https://img.shields.io/badge/client_tests-1562%20passing-brightgreen.svg)]()
 [![Server tests: 185 passing](https://img.shields.io/badge/server_tests-185%20passing-brightgreen.svg)]()
 
 ---
@@ -409,7 +409,7 @@ python -m pytest                # 185 passed, 3 skipped
 
 # Client (Flutter)
 cd client
-flutter test                    # 1527 widget + unit tests
+flutter test                    # 1562 widget + unit tests
 flutter analyze                 # No issues found
 
 # Android native (Kotlin) — from client/android
