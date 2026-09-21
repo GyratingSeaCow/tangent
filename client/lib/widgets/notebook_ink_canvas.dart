@@ -721,7 +721,13 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
   bool _strokeHitSegment(InkStroke s, Offset a, Offset b) {
     final List<InkPoint> points = s.points;
     if (points.isEmpty) return false;
-    final double reach = _eraseTolerance + s.width / 2;
+    // Reach follows the RENDERED ink, not the nominal width: a highlighter
+    // paints a band kHighlighterWidthFactor wide, and ink the user can see
+    // must be erasable where they see it.
+    final double halfRendered = s.tool == InkTool.highlighter
+        ? s.width * kHighlighterWidthFactor / 2
+        : s.width / 2;
+    final double reach = _eraseTolerance + halfRendered;
     // Cheap rejection first: a stroke whose (inflated) box never meets the
     // eraser segment's box cannot be hit. This is what keeps a sweep fast
     // on a full page — distant ink costs one rect check, not a walk of all

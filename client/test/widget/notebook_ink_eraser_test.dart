@@ -144,6 +144,83 @@ void main() {
       );
     });
 
+    testWidgets('a highlighter is erasable at its visible band edge',
+        (tester) async {
+      // A width-12 highlighter renders a 12 * kHighlighterWidthFactor = 48px
+      // band (half-band 24). Pen-style reach is 12 + 12/2 = 18 — a tap on
+      // ink the user can SEE at the band's edge would miss. Reach must
+      // follow the rendered band, not the nominal width.
+      final InkStroke mark = InkStroke(
+        id: 'mark',
+        width: 12,
+        tool: InkTool.highlighter,
+        colour: InkColor.yellow,
+        points: <InkPoint>[
+          const InkPoint(x: 20, y: 100),
+          const InkPoint(x: 100, y: 100),
+          const InkPoint(x: 180, y: 100),
+        ],
+      );
+      await pump(tester, <InkStroke>[mark], erasing: true);
+
+      // y=122: 22px off the centerline — inside the 24px half-band, well
+      // outside the old 18px reach.
+      await tester.tapAt(const Offset(100, 122));
+      await tester.pumpAndSettle();
+
+      expect(
+        latest,
+        isEmpty,
+        reason: 'visible band ink must be erasable where the user sees it',
+      );
+    });
+
+    testWidgets('a highlighter far miss still does not erase', (tester) async {
+      final InkStroke mark = InkStroke(
+        id: 'mark',
+        width: 12,
+        tool: InkTool.highlighter,
+        colour: InkColor.yellow,
+        points: <InkPoint>[
+          const InkPoint(x: 20, y: 100),
+          const InkPoint(x: 100, y: 100),
+          const InkPoint(x: 180, y: 100),
+        ],
+      );
+      await pump(tester, <InkStroke>[mark], erasing: true);
+
+      // y=145: 45px off the centerline — beyond half-band 24 + tolerance 12.
+      await tester.tapAt(const Offset(100, 145));
+      await tester.pumpAndSettle();
+
+      expect(
+        latest.map((InkStroke s) => s.id),
+        <String>['mark'],
+        reason: 'the widened reach must scale with the band, not blanket-grow',
+      );
+    });
+
+    testWidgets('pen reach is unchanged by the highlighter fix',
+        (tester) async {
+      // The pen contract above (6px near miss hits, 45px far miss does not)
+      // is pinned separately; this pins the exact boundary unchanged: a pen
+      // width-3 stroke reaches 12 + 1.5 = 13.5, so 14px off must MISS.
+      await pump(
+        tester,
+        <InkStroke>[_horizontal('only', 100)],
+        erasing: true,
+      );
+
+      await tester.tapAt(const Offset(100, 114));
+      await tester.pumpAndSettle();
+
+      expect(
+        latest.map((InkStroke s) => s.id),
+        <String>['only'],
+        reason: 'pen reach must not widen as a side effect',
+      );
+    });
+
     testWidgets('erasing is undoable', (tester) async {
       await pump(
         tester,
