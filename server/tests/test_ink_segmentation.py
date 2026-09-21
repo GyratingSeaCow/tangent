@@ -45,6 +45,9 @@ def test_word_gap_splits_words():
     strokes = _word_at(x=0) + _word_at(x=200)   # helpers build multi-stroke words, height ~40
     lines = segment_ink(strokes)
     assert len(lines) == 1 and len(lines[0].words) == 2
+    # Left-to-right promise: words[0] is the x=0 word, not merely "a" word.
+    assert lines[0].words[0].stroke_ids == ["w0-0-s0", "w0-0-s1", "w0-0-s2"]
+    assert lines[0].words[0].bbox[0] < lines[0].words[1].bbox[0]
 
 
 def test_two_lines_at_distinct_y_bands():
@@ -53,6 +56,22 @@ def test_two_lines_at_distinct_y_bands():
     assert len(lines) == 2
     for line in lines:
         assert len(line.words) == 1
+
+
+def test_lines_ordered_top_to_bottom():
+    """Docstring promise: lines come back in ascending y (reading order)."""
+    strokes = (
+        _word_at(x=0, y=0, prefix="top")
+        + _word_at(x=0, y=100, prefix="mid")
+        + _word_at(x=0, y=200, prefix="bot")
+    )
+    # Feed strokes bottom-first so input order can't accidentally satisfy this.
+    lines = segment_ink(list(reversed(strokes)))
+    assert len(lines) == 3
+    first_ids = [sid for w in lines[0].words for sid in w.stroke_ids]
+    assert set(first_ids) == {"top-s0", "top-s1", "top-s2"}
+    tops = [min(w.bbox[1] for w in line.words) for line in lines]
+    assert tops == sorted(tops), f"lines not in ascending y: {tops}"
 
 
 def test_highlighter_excluded_from_words():

@@ -49,6 +49,9 @@ def render_line(strokes: list[dict], stroke_ids: list[str], scale: float = 2.0) 
             (MARGIN + (p["x"] - x0) * scale, MARGIN + (p["y"] - y0) * scale)
             for p in s["points"]
         ]
+        # Deliberate deviation from the brief's "stroke width x scale":
+        # floor the drawn width at 2px so hairline strokes survive the
+        # height-cap resample and stay legible to OCR.
         lw = max(2, int(s.get("width", 3) * scale))
         if len(pts) == 1:
             x, y = pts[0]

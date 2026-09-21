@@ -56,6 +56,13 @@ def test_render_height_cap_384():
     img = render_line(tall, ["t"])
     assert img.height <= 384
     assert img.mode == "L"
+    # Aspect ratio must survive the cap: pre-cap canvas is
+    # int(10*2)+32 = 52 wide by int(1000*2)+32 = 2032 high, so the capped
+    # width must be ~ 52 * (384/2032). A width-preserving squash would
+    # leave width at 52 and hand TrOCR a distorted line image.
+    pre_w, pre_h = 52, 2032
+    assert img.height == 384
+    assert abs(img.width - pre_w * 384 / pre_h) <= 1
 
 
 def test_render_scale_parameter():
