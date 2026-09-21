@@ -46,6 +46,7 @@ Future<void> _mount(
   InkColor colour = InkColor.white,
   bool erasing = false,
   bool drawingEnabled = true,
+  bool lassoing = false,
 }) async {
   await tester.pumpWidget(
     MaterialApp(
@@ -58,6 +59,7 @@ Future<void> _mount(
               strokes: const <InkStroke>[],
               drawingEnabled: drawingEnabled,
               erasing: erasing,
+              lassoing: lassoing,
               penWidth: penWidth,
               tool: tool,
               colour: colour,
@@ -198,6 +200,24 @@ void main() {
         _ring(tester),
         isNull,
         reason: 'only a pen rings; a mouse hovers all day',
+      );
+    });
+
+    testWidgets('lasso mode never rings — the pen selects, not inks',
+        (tester) async {
+      // A nib-width ring under a lasso pen would be dishonest about what
+      // landing will do. This pins the widget.lassoing early-return, which
+      // an earlier sabotage proved was otherwise unobserved.
+      await _mount(tester, penWidth: 8, lassoing: true);
+
+      final TestGesture pen = await _hoveringStylus(tester);
+      await pen.moveTo(_at(tester, const Offset(80, 90)));
+      await tester.pump();
+
+      expect(
+        _ring(tester),
+        isNull,
+        reason: 'a lasso pen selects; no nib ring',
       );
     });
 
