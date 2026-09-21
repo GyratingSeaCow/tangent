@@ -389,23 +389,21 @@ git commit -m "Ink model: tool and colour, omitted at their defaults"
 
 **Interfaces:**
 - Consumes: `InkTool`, `InkColor`, `InkStroke.tool`, `InkStroke.colour` from Task 1.
-- Produces: `NotebookInkPainter.buildStrokePaint(double width, {InkStroke? stroke})` — the existing single-argument call sites keep working; `const double kHighlighterWidthFactor = 4.0` exported from the canvas library.
+- Produces: `NotebookInkPainter.buildStrokePaint(double width, {InkStroke? stroke})` — the existing single-argument call sites keep working; `static List<InkStroke> NotebookInkPainter.paintOrder(List<InkStroke> strokes, {InkStroke? active})`; `const double kHighlighterWidthFactor = 4.0` exported from the canvas library.
+
+**Note on testability:** the paint order is exposed as a real, pure function
+(`paintOrder`) that `paint` itself calls, NOT as a test-only callback hook.
+Production code must not carry hooks that exist solely for tests. Testing the
+pure function directly is both cleaner and a stronger assertion.
 
 - [ ] **Step 1: Write the failing tests**
 
-Add to `client/test/widget/notebook_ink_canvas_test.dart`. These use a recording canvas rather than a golden, so they assert order and geometry rather than pixels:
+Add to `client/test/widget/notebook_ink_canvas_test.dart`. These assert on the
+pure ordering function and on constructed `Paint` objects, so they need no
+canvas recording at all:
 
 ```dart
   group('highlighter rendering', () {
-    /// Records the order and paint of every draw call the painter makes.
-    List<({String op, Paint paint})> record(NotebookInkPainter painter) {
-      final PictureRecorder recorder = PictureRecorder();
-      final Canvas canvas = Canvas(recorder);
-      painter.paint(canvas, const Size(400, 400));
-      recorder.endRecording();
-      return _drawLog;
-    }
-
     test('highlighter strokes paint before pen strokes', () {
       // Insertion order is pen-then-highlighter; paint order must be the
       // reverse, or the highlight would cover the handwriting.
@@ -421,16 +419,63 @@ Add to `client/test/widget/notebook_ink_canvas_test.dart`. These use a recording
         points: <InkPoint>[InkPoint(x: 0, y: 5), InkPoint(x: 10, y: 5)],
       );
 
-      final List<String> order = <String>[];
-      final NotebookInkPainter painter = NotebookInkPainter(
-        strokes: const <InkStroke>[pen, mark],
-        activeStroke: null,
-        revision: 1,
-        onStrokePainted: order.add,
-      );
-      painter.paint(Canvas(PictureRecorder()), const Size(400, 400));
+      final List<String> order = NotebookInkPainter.paintOrder(
+        const <InkStroke>[pen, mark],
+      ).map((InkStroke s) => s.id).toList();
 
       expect(order, <String>['mark', 'pen']);
+    });
+
+    test('insertion order is preserved within a pass', () {
+      // A later highlight still covers an earlier one.
+      const InkStroke first = InkStroke(
+        id: 'first',
+        width: 3,
+        tool: InkTool.highlighter,
+        points: <InkPoint>[InkPoint(x: 0, y: 5)],
+      );
+      const InkStroke second = InkStroke(
+        id: 'second',
+        width: 3,
+        tool: InkTool.highlighter,
+        points: <InkPoint>[InkPoint(x: 1, y: 5)],
+      );
+
+      expect(
+        NotebookInkPainter.paintOrder(const <InkStroke>[first, second])
+            .map((InkStroke s) => s.id),
+        <String>['first', 'second'],
+      );
+    });
+
+    test('the active stroke paints last within its own pass', () {
+      // Drawing a highlight over existing ink must show the ink staying on
+      // top live, not only after the pen lifts.
+      const InkStroke pen = InkStroke(
+        id: 'pen',
+        width: 3,
+        points: <InkPoint>[InkPoint(x: 0, y: 0)],
+      );
+      const InkStroke mark = InkStroke(
+        id: 'mark',
+        width: 3,
+        tool: InkTool.highlighter,
+        points: <InkPoint>[InkPoint(x: 0, y: 5)],
+      );
+      const InkStroke active = InkStroke(
+        id: 'active',
+        width: 3,
+        tool: InkTool.highlighter,
+        points: <InkPoint>[InkPoint(x: 2, y: 5)],
+      );
+
+      expect(
+        NotebookInkPainter.paintOrder(
+          const <InkStroke>[pen, mark],
+          active: active,
+        ).map((InkStroke s) => s.id),
+        <String>['mark', 'active', 'pen'],
+      );
     });
 
     test('a highlighter stroke paints wider than its nominal width', () {
@@ -472,6 +517,8 @@ Add to `client/test/widget/notebook_ink_canvas_test.dart`. These use a recording
 
     test('a highlighter ignores the fountain nib', () {
       // A felt tip does not taper, whatever nib the toolbar has selected.
+      // Proven through the paint it builds: a fountain stroke's width comes
+      // from pressure, a highlighter's never does.
       const InkStroke mark = InkStroke(
         id: 'mark',
         width: 3,
@@ -482,17 +529,18 @@ Add to `client/test/widget/notebook_ink_canvas_test.dart`. These use a recording
           InkPoint(x: 10, y: 5, p: 0.9),
         ],
       );
-      final List<String> order = <String>[];
-      final NotebookInkPainter painter = NotebookInkPainter(
-        strokes: const <InkStroke>[mark],
-        activeStroke: null,
-        revision: 1,
-        onFountainPainted: order.add,
-      );
-      painter.paint(Canvas(PictureRecorder()), const Size(400, 400));
+      expect(NotebookInkPainter.usesFountainPath(mark), isFalse);
 
-      expect(order, isEmpty,
-          reason: 'the fountain path must not run for a highlighter');
+      const InkStroke pen = InkStroke(
+        id: 'pen',
+        width: 3,
+        style: PenStyle.fountain,
+        points: <InkPoint>[
+          InkPoint(x: 0, y: 5, p: 0.1),
+          InkPoint(x: 10, y: 5, p: 0.9),
+        ],
+      );
+      expect(NotebookInkPainter.usesFountainPath(pen), isTrue);
     });
   });
 ```
@@ -500,21 +548,45 @@ Add to `client/test/widget/notebook_ink_canvas_test.dart`. These use a recording
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `flutter test test/widget/notebook_ink_canvas_test.dart --plain-name "highlighter rendering"`
-Expected: FAIL to compile — `No named parameter with the name 'onStrokePainted'`.
+Expected: FAIL to compile — `The method 'paintOrder' isn't defined for the type 'NotebookInkPainter'`.
 
-- [ ] **Step 3: Add the paint hooks and two-pass ordering**
+- [ ] **Step 3: Add the ordering function and colour-aware paints**
 
-In `NotebookInkPainter`, add two optional test seams next to the existing fields (they cost nothing in production and are how the order assertions above observe the painter):
+In `NotebookInkPainter`, add the two pure functions the tests drive. These are
+real production code — `paint` calls both — not test seams:
 
 ```dart
-  /// Test seam: called with each stroke id as it is painted, in paint order.
-  final void Function(String id)? onStrokePainted;
+  /// The order strokes are painted in: every highlighter first, then every
+  /// pen. This is what guarantees a mark can never cover handwriting,
+  /// whatever order they were drawn in. Insertion order is preserved within
+  /// each pass, so a later highlight still covers an earlier one, and the
+  /// in-progress [active] stroke lands last inside its own pass so drawing
+  /// a highlight over existing ink shows the ink staying on top live.
+  static List<InkStroke> paintOrder(
+    List<InkStroke> strokes, {
+    InkStroke? active,
+  }) {
+    final List<InkStroke> ordered = <InkStroke>[];
+    // Explicit, not InkTool.values: declaration order is [pen, highlighter],
+    // which is exactly the reverse of what painting needs.
+    for (final InkTool pass in const <InkTool>[
+      InkTool.highlighter,
+      InkTool.pen,
+    ]) {
+      for (final InkStroke stroke in strokes) {
+        if (stroke.tool == pass) ordered.add(stroke);
+      }
+      if (active != null && active.tool == pass) ordered.add(active);
+    }
+    return ordered;
+  }
 
-  /// Test seam: called when the fountain path runs for a stroke.
-  final void Function(String id)? onFountainPainted;
+  /// Whether a stroke renders through the tapering fountain path. A
+  /// highlighter never does: a felt tip does not taper, whatever nib the
+  /// toolbar has selected.
+  static bool usesFountainPath(InkStroke stroke) =>
+      stroke.tool != InkTool.highlighter && stroke.style == PenStyle.fountain;
 ```
-
-Add both to the constructor as `this.onStrokePainted, this.onFountainPainted,`.
 
 Replace `buildStrokePaint` so it derives everything from the stroke, while keeping its existing one-argument signature working:
 
@@ -563,14 +635,11 @@ In `_paintStroke`, pass the stroke through, gate the fountain branch on the tool
 ```dart
   void _paintStroke(Canvas canvas, InkStroke stroke) {
     if (stroke.points.isEmpty) return;
-    onStrokePainted?.call(stroke.id);
     final bool marker = stroke.tool == InkTool.highlighter;
     if (stroke.points.length == 1) {
       final double? p = stroke.points.first.p;
       // A highlighter never tapers, so its dot is always the full band.
-      final double diameter = !marker &&
-              stroke.style == PenStyle.fountain &&
-              p != null
+      final double diameter = usesFountainPath(stroke) && p != null
           ? _fountainWidth(stroke.width, p)
           : (marker ? stroke.width * kHighlighterWidthFactor : stroke.width);
       canvas.drawCircle(
@@ -580,7 +649,7 @@ In `_paintStroke`, pass the stroke through, gate the fountain branch on the tool
       );
       return;
     }
-    if (!marker && stroke.style == PenStyle.fountain) {
+    if (usesFountainPath(stroke)) {
       _paintFountainStroke(canvas, stroke);
       return;
     }
@@ -593,35 +662,23 @@ In `_paintStroke`, pass the stroke through, gate the fountain branch on the tool
   }
 ```
 
-In `_paintFountainStroke`, fire the other seam as its first line and colour its fill:
+In `_paintFountainStroke`, colour its fill:
 
 ```dart
   void _paintFountainStroke(Canvas canvas, InkStroke stroke) {
-    onFountainPainted?.call(stroke.id);
     final List<InkPoint> points = stroke.points;
     final Paint fill = _buildDotPaint(stroke);
 ```
 
-Replace the body of `paint` with the two-pass walk:
+Replace the body of `paint` so it walks the ordered list:
 
 ```dart
   void paint(Canvas canvas, Size size) {
-    // Two passes over the same list: every highlighter first, then every
-    // pen. This is what guarantees a mark can never cover handwriting,
-    // whatever order they were drawn in. Insertion order is preserved
-    // within each pass, so a later highlight still covers an earlier one.
-    for (final InkTool pass in InkTool.values) {
-      for (final InkStroke stroke in strokes) {
-        if (stroke.tool != pass) continue;
-        if (selectedIds.contains(stroke.id)) {
-          _paintHalo(canvas, stroke);
-        }
-        _paintStroke(canvas, stroke);
+    for (final InkStroke stroke in paintOrder(strokes, active: activeStroke)) {
+      if (selectedIds.contains(stroke.id)) {
+        _paintHalo(canvas, stroke);
       }
-      final InkStroke? active = activeStroke;
-      // The in-progress stroke paints last inside its own pass, so drawing
-      // a highlight over existing ink shows the ink staying on top live.
-      if (active != null && active.tool == pass) _paintStroke(canvas, active);
+      _paintStroke(canvas, stroke);
     }
     final List<Offset>? loop = lassoPath;
     if (loop != null && loop.length > 1) {
@@ -641,14 +698,8 @@ Replace the body of `paint` with the two-pass walk:
   }
 ```
 
-`InkTool.values` is `[pen, highlighter]` in declaration order, which is the **wrong** order for painting. Declare the loop explicitly instead:
-
-```dart
-    for (final InkTool pass in const <InkTool>[
-      InkTool.highlighter,
-      InkTool.pen,
-    ]) {
-```
+Note the active stroke is no longer painted separately after the loop —
+`paintOrder` places it inside its own pass, which is the whole point.
 
 Also widen the halo for highlighters so a selected mark still shows its glow around the full band — in `_paintHalo`, replace the two `stroke.width + 8` occurrences with:
 
