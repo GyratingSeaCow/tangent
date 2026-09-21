@@ -6,6 +6,7 @@ import 'dart:io';
 import 'package:dio/dio.dart';
 
 import '../models/api_exception.dart';
+import '../models/pair_pending.dart';
 import '../models/sync_change.dart';
 import '../models/server_info.dart';
 import 'meeting_transcript_formatter.dart';
@@ -407,6 +408,21 @@ class TranscriptionClient {
   }
 
   // ---- multi-device sync ---------------------------------------------------
+
+  /// Pending pairing requests with their raw codes, for THIS (already
+  /// paired) device to display so the new device's user can type one in.
+  /// Same auth/throw conventions as every other /v1 call: 401 surfaces as
+  /// [ApiException], because whether this token still works is exactly what
+  /// the caller needs to narrate.
+  Future<List<PairPendingEntry>> pairPending() async {
+    final Map<String, dynamic> resp = await _fetch('/v1/pair/pending');
+    final List<dynamic> raw =
+        (resp['pending'] as List<dynamic>?) ?? const <dynamic>[];
+    return raw
+        .whereType<Map<String, dynamic>>()
+        .map(PairPendingEntry.fromJson)
+        .toList(growable: false);
+  }
 
   /// Registers this replica. Idempotent by device id.
   Future<void> registerDevice({

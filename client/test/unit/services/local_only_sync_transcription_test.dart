@@ -28,6 +28,7 @@ import 'package:tangent/services/server_transcription_service.dart';
 import 'package:tangent/services/sync_engine.dart';
 import 'package:tangent/models/sync_change.dart';
 import 'package:tangent/services/transcription_client.dart';
+import 'package:tangent/models/pair_pending.dart';
 import '../../support/bound_row_fixture.dart';
 
 class _MockConnectivity extends Mock implements ConnectivityService {}
@@ -43,6 +44,10 @@ class _RecordingClient implements TranscriptionClient {
   // visible instead of silently passing.
   @override
   Future<List<int>> downloadAudio(String dumpId) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<List<PairPendingEntry>> pairPending() async =>
       throw UnimplementedError();
 
   @override

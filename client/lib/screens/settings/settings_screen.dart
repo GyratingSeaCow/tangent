@@ -5,6 +5,7 @@ import '../../theme/tangent_tokens.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/settings_store.dart';
+import '../server/pair_new_device_screen.dart';
 import '../server/server_connection_screen.dart';
 import 'input_device_section.dart';
 import 'mic_gain_section.dart';
@@ -136,6 +137,19 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             subtitle: Text(_serverUrl.isEmpty ? '(not set)' : _serverUrl),
             trailing: const Icon(Icons.chevron_right),
             onTap: _serverBusy ? null : _changeServer,
+          ),
+          ListTile(
+            key: const ValueKey<String>('settings-pair-new-device'),
+            title: const Text('Pair a new device'),
+            subtitle: const Text(
+              'Show pairing codes so another device can join this server',
+            ),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (BuildContext context) => const PairNewDeviceScreen(),
+              ),
+            ),
           ),
           ListTile(
             key: const ValueKey<String>('settings-trash'),

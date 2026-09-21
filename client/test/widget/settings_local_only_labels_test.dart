@@ -61,6 +61,10 @@ void main() {
 
     final label = find.text('Keep recordings on this device');
     await tester.scrollUntilVisible(label, 150);
+    // The row can sit exactly at the viewport's bottom edge after the scroll
+    // (its centre off-screen makes tap() a no-op); pull it fully into view.
+    await tester.ensureVisible(label);
+    await tester.pumpAndSettle();
     await tester.tap(label);
     await tester.pumpAndSettle();
     await tester.tap(find.text('SAVE'));

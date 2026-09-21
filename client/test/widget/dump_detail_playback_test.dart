@@ -25,6 +25,7 @@ import 'package:tangent/services/recording_playback.dart';
 import 'package:tangent/services/server_transcription_service.dart';
 import 'package:tangent/models/sync_change.dart';
 import 'package:tangent/services/transcription_client.dart';
+import 'package:tangent/models/pair_pending.dart';
 
 class _NoopTranscriptionClient implements TranscriptionClient {
   @override
@@ -35,6 +36,10 @@ class _NoopTranscriptionClient implements TranscriptionClient {
   // visible instead of silently passing.
   @override
   Future<List<int>> downloadAudio(String dumpId) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<List<PairPendingEntry>> pairPending() async =>
       throw UnimplementedError();
 
   @override
