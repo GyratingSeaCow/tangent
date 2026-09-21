@@ -38,6 +38,26 @@ import '../../widgets/notebook_ink_canvas.dart';
 import '../dump/dump_detail_screen.dart';
 import '../dump/dumps_providers.dart';
 
+/// The footprint the lasso tests [block] against, in canonical page px.
+///
+/// Text and checkbox rows are MEASURED via [measureKey]: the laid-out
+/// [RenderBox] is the row the user actually sees, so a wide row is caught
+/// across its whole width instead of a nominal 300px slice. The rows lay out
+/// inside the FittedBox's canonical-width child, so a RenderBox size is
+/// already canonical — no scale conversion. Images know their real size from
+/// the model. Anything unmeasurable (no key, key not attached to a laid-out
+/// element) and every dump card falls back to [_nominalBlockFootprint] —
+/// the safety net, never a crash.
+@visibleForTesting
+Size lassoBlockFootprint(NotebookBlock block, GlobalKey? measureKey) {
+  if (block is NotebookImageBlock) return Size(block.width, block.height);
+  if (block is NotebookTextBlock || block is NotebookCheckboxBlock) {
+    final RenderObject? box = measureKey?.currentContext?.findRenderObject();
+    if (box is RenderBox && box.hasSize) return box.size;
+  }
+  return _nominalBlockFootprint;
+}
+
 /// Turns the ink canvas's opaque black backdrop into transparency so the layer
 /// composites as "white ink only" over the notebook page.
 ///
@@ -80,6 +100,16 @@ const double _pageColumnWidth = 720;
 /// Floor for a block's width, so a block dragged far right stays usable.
 const double _minBlockWidth = 160;
 
+/// Fallback lasso footprint for a block whose real rendered size cannot be
+/// measured, in canonical page px.
+///
+/// This is the safety net: a row not currently laid out falls back here
+/// rather than crashing. It is also the PINNED footprint for dump cards —
+/// Jeff tuned the 40% catch threshold on hardware against this box, and the
+/// card tests pin loops at its exact 300px span, so cards deliberately have
+/// no measure key.
+const Size _nominalBlockFootprint = Size(300, 90);
+
 /// Insert actions offered by the editor's bottom-left menu.
 enum _InsertAction {
   text,
@@ -110,6 +140,16 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
       <String, TextEditingController>{};
   final GlobalKey<NotebookInkCanvasState> _canvasKey =
       GlobalKey<NotebookInkCanvasState>();
+
+  /// One measurement key per movable text/checkbox row, attached to the
+  /// row's laid-out [SizedBox] so the lasso can read the footprint the user
+  /// actually sees instead of the nominal guess. Images know their size from
+  /// the model and dump cards stay on the nominal box (see
+  /// [_nominalBlockFootprint]), so neither gets a key.
+  final Map<String, GlobalKey> _blockMeasureKeys = <String, GlobalKey>{};
+
+  GlobalKey _measureKeyFor(String id) =>
+      _blockMeasureKeys.putIfAbsent(id, GlobalKey.new);
 
   /// Ordered block list. Text bodies live in [_controllers]; everything else
   /// (checked state, card coordinates, unknown payloads) lives here.
@@ -739,6 +779,9 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
           left: left,
           top: top,
           child: SizedBox(
+            // The lasso measures this box's RenderBox: it is the row the
+            // user sees (grip + content + remove), laid out in canonical px.
+            key: _measureKeyFor(block.id),
             // Never wider than what is left of the page from this block's
             // left edge. A fixed 720 ran the row (and its X) straight off a
             // phone screen, which is why blocks could not be deleted.
@@ -853,6 +896,11 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
         NotebookBlock() => null,
       };
 
+  /// The lasso footprint of [block]: measured for text/checkbox rows, model
+  /// size for images, nominal 300x90 otherwise. See [lassoBlockFootprint].
+  Size _blockFootprint(NotebookBlock block) =>
+      lassoBlockFootprint(block, _blockMeasureKeys[block.id]);
+
   /// Blocks the loop caught. A block counts as circled when more than 40%
   /// of its footprint area lies inside the loop (sampled on a grid) — a
   /// hand that hooks half a card meant to grab it, while a loop that only
@@ -862,11 +910,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
     for (final NotebookBlock block in _blocks) {
       final Offset? anchor = _blockAnchor(block);
       if (anchor == null) continue;
-      // A representative footprint rather than a measured one: text rows
-      // and cards are ~300x90 canonical px. Images know their real size.
-      final Size footprint = block is NotebookImageBlock
-          ? Size(block.width, block.height)
-          : const Size(300, 90);
+      final Size footprint = _blockFootprint(block);
       // 6x4 grid = 24 samples across the footprint; > 40% inside selects.
       int inside = 0;
       const int cols = 6, rows = 4;
@@ -891,9 +935,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
       if (!_lassoBlockIds.contains(block.id)) continue;
       final Offset? anchor = _blockAnchor(block);
       if (anchor == null) continue;
-      final Size footprint = block is NotebookImageBlock
-          ? Size(block.width, block.height)
-          : const Size(300, 90);
+      final Size footprint = _blockFootprint(block);
       if ((anchor & footprint).inflate(16).contains(position)) return true;
     }
     return false;

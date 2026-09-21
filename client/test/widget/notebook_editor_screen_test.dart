@@ -2542,6 +2542,195 @@ void main() {
     });
   });
 
+  group('lasso block footprint is measured, not guessed', () {
+    // A placed text row lays out as wide as the page column allows (720
+    // canonical px here) — far wider than the old nominal 300x90 guess.
+    // The lasso must catch the row the user actually sees.
+    Notebook wideRowNotebook() => testNotebook(
+          id: 'nb-1',
+          blocks: const <NotebookBlock>[
+            NotebookTextBlock(
+              id: 'wt',
+              text: 'a wide row of words that spans the whole page column',
+              x: 24,
+              y: 400,
+            ),
+          ],
+        );
+
+    Future<void> enterLasso(WidgetTester tester) async {
+      await tester.tap(find.byIcon(Icons.draw));
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey<String>('notebook-lasso')));
+      await tester.pump();
+    }
+
+    Finder wideRow() =>
+        find.byKey(const ValueKey<String>('notebook-block-wt'));
+
+    Finder deleteButton() =>
+        find.byKey(const ValueKey<String>('notebook-lasso-delete'));
+
+    /// Drags a rectangular lasso loop, corner to corner, in screen
+    /// coordinates.
+    Future<void> loopRect(WidgetTester tester, Rect r) async {
+      final TestGesture g = await tester.createGesture();
+      await g.down(r.topLeft);
+      await tester.pump();
+      for (final Offset p in <Offset>[
+        r.topRight,
+        r.bottomRight,
+        r.bottomLeft,
+        r.topLeft + const Offset(0, 5),
+      ]) {
+        await g.moveTo(p);
+        await tester.pump();
+      }
+      await g.up();
+      await tester.pump();
+    }
+
+    testWidgets("a loop around a wide row's real right half catches it",
+        (WidgetTester tester) async {
+      await mountEditor(tester, notebook: wideRowNotebook());
+      await enterLasso(tester);
+
+      final Rect row = tester.getRect(wideRow());
+      // The discriminating geometry needs the row to dwarf the nominal
+      // guess: the loop below starts at the row's midpoint, which must lie
+      // beyond the nominal footprint's right edge (anchor.x + 300).
+      expect(
+        row.width,
+        greaterThan(600),
+        reason: 'harness must lay the row out wider than twice the nominal '
+            '300 so the loop below can discriminate real from guessed',
+      );
+
+      // >40% of the REAL footprint (3 of 6 sample columns, every sample
+      // row) is inside this loop, but ZERO samples of a nominal 300x90
+      // footprint are — under the guess this loop selects nothing.
+      await loopRect(
+        tester,
+        Rect.fromLTRB(
+          row.left + row.width / 2,
+          row.top - 30,
+          row.right + 30,
+          row.bottom + 30,
+        ),
+      );
+
+      expect(
+        tester.widget<IconButton>(deleteButton()).onPressed,
+        isNotNull,
+        reason: 'half the row the user sees is inside the loop; the lasso '
+            'must test the measured footprint, not the 300x90 guess',
+      );
+      await unmount(tester);
+    });
+
+    testWidgets('clipping only a corner of the wide row does not catch it',
+        (WidgetTester tester) async {
+      await mountEditor(tester, notebook: wideRowNotebook());
+      await enterLasso(tester);
+      final Rect row = tester.getRect(wideRow());
+
+      // Only the rightmost sample column (at most 4 of 24 samples, ~17%)
+      // can fall inside: under the 40% threshold, a clip is not a grab.
+      await loopRect(
+        tester,
+        Rect.fromLTRB(
+          row.left + row.width * 0.88,
+          row.top - 20,
+          row.right + 20,
+          row.bottom + 20,
+        ),
+      );
+
+      expect(
+        tester.widget<IconButton>(deleteButton()).onPressed,
+        isNull,
+        reason: 'a loop clipping one corner of the row is not a grab: the '
+            '40% threshold holds for measured footprints too',
+      );
+      await unmount(tester);
+    });
+
+    testWidgets('a caught wide row drags from anywhere on its real footprint',
+        (WidgetTester tester) async {
+      await mountEditor(tester, notebook: wideRowNotebook());
+      await enterLasso(tester);
+      final Rect row = tester.getRect(wideRow());
+
+      // Encircle the whole row, then grab it well past the nominal 300x90
+      // region: 70% along the real width. The loop hugs the left edge from
+      // on-screen (x=6) — a down-point at negative x never reaches the page.
+      await loopRect(
+        tester,
+        Rect.fromLTRB(6, row.top - 30, row.right + 30, row.bottom + 30),
+      );
+      expect(
+        tester.widget<IconButton>(deleteButton()).onPressed,
+        isNotNull,
+        reason: 'encircling the whole row must select it',
+      );
+
+      final Offset grab = Offset(row.left + row.width * 0.7, row.center.dy);
+      final TestGesture g = await tester.createGesture();
+      await g.down(grab);
+      await tester.pump();
+      await g.moveTo(grab + const Offset(60, 40));
+      await tester.pump();
+      await g.up();
+      await tester.pump();
+
+      final Rect after = tester.getRect(wideRow());
+      expect(
+        after.left - row.left,
+        moreOrLessEquals(60, epsilon: 1),
+        reason: 'the drag began on the row the user sees; the hit test '
+            'must use the measured footprint',
+      );
+      expect(after.top - row.top, moreOrLessEquals(40, epsilon: 1));
+      await unmount(tester);
+    });
+
+    testWidgets('measurement stays canonical when the page renders scaled',
+        (WidgetTester tester) async {
+      // A 540-wide viewport renders the 720-wide canonical page at 0.75
+      // scale. Block RenderBoxes lay out in canonical space (the FittedBox
+      // scales paint and hit-testing only), so the measured size must be
+      // used as-is: converting it through the screen transform would
+      // shrink the footprint by the scale and drop this catch below 40%.
+      tester.view.physicalSize = const Size(540, 1200);
+      tester.view.devicePixelRatio = 1.0;
+      await mountEditor(
+        tester,
+        notebook: wideRowNotebook(),
+        setViewSize: false,
+      );
+      await enterLasso(tester);
+
+      final Rect row = tester.getRect(wideRow());
+      await loopRect(
+        tester,
+        Rect.fromLTRB(
+          row.left + row.width / 2,
+          row.top - 20,
+          row.right + 6,
+          row.bottom + 20,
+        ),
+      );
+
+      expect(
+        tester.widget<IconButton>(deleteButton()).onPressed,
+        isNotNull,
+        reason: 'the same right-half loop must catch at any page scale: '
+            'RenderBox sizes are already canonical',
+      );
+      await unmount(tester);
+    });
+  });
+
   group('import shape and content-aware insert', () {
     Future<void> importDump(WidgetTester tester, String pickKey) async {
       await tester.tap(find.byKey(const ValueKey('notebook-insert-menu')));
