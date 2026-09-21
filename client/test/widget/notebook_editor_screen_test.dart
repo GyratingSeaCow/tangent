@@ -1878,6 +1878,99 @@ void main() {
     await unmount(tester);
   });
 
+  testWidgets('long-pressing the pen opens its palette and picks a colour',
+      (tester) async {
+    await mountEditor(tester, notebook: seeded());
+
+    await tester.longPress(find.byIcon(Icons.draw));
+    await tester.pumpAndSettle();
+
+    // The pen palette, not the highlighter's.
+    expect(
+      find.byKey(const ValueKey('notebook-ink-swatch-red')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('notebook-ink-swatch-pink')), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('notebook-ink-swatch-red')));
+    await tester.pumpAndSettle();
+
+    expect(
+      tester
+          .widget<NotebookInkCanvas>(find.byType(NotebookInkCanvas))
+          .colour,
+      InkColor.red,
+    );
+
+    await unmount(tester);
+  });
+
+  testWidgets('the highlighter activates draw mode and clears other tools',
+      (tester) async {
+    await mountEditor(tester, notebook: seeded());
+
+    // From cold, per the toolbar contract: a tool tap enters draw mode.
+    await tester.tap(find.byKey(const ValueKey('notebook-highlighter')));
+    await tester.pump();
+
+    NotebookInkCanvas canvas() =>
+        tester.widget<NotebookInkCanvas>(find.byType(NotebookInkCanvas));
+    expect(canvas().drawingEnabled, isTrue);
+    expect(canvas().tool, InkTool.highlighter);
+    expect(canvas().erasing, isFalse);
+    expect(canvas().lassoing, isFalse);
+
+    await unmount(tester);
+  });
+
+  testWidgets('each tool remembers its own colour', (tester) async {
+    await mountEditor(tester, notebook: seeded());
+    NotebookInkCanvas canvas() =>
+        tester.widget<NotebookInkCanvas>(find.byType(NotebookInkCanvas));
+
+    await tester.longPress(find.byIcon(Icons.draw));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('notebook-ink-swatch-blue')));
+    await tester.pumpAndSettle();
+    expect(canvas().colour, InkColor.blue);
+
+    await tester.tap(find.byKey(const ValueKey('notebook-highlighter')));
+    await tester.pump();
+    expect(canvas().colour, InkColor.yellow, reason: 'highlighter default');
+
+    await tester.longPress(find.byKey(const ValueKey('notebook-highlighter')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('notebook-ink-swatch-pink')));
+    await tester.pumpAndSettle();
+    expect(canvas().colour, InkColor.pink);
+
+    // Back to the pen: it still has the blue chosen earlier.
+    await tester.tap(find.byIcon(Icons.draw));
+    await tester.pump();
+    expect(canvas().tool, InkTool.pen);
+    expect(canvas().colour, InkColor.blue);
+
+    await unmount(tester);
+  });
+
+  testWidgets('leaving draw mode resets to the pen', (tester) async {
+    await mountEditor(tester, notebook: seeded());
+    NotebookInkCanvas canvas() =>
+        tester.widget<NotebookInkCanvas>(find.byType(NotebookInkCanvas));
+
+    await tester.tap(find.byKey(const ValueKey('notebook-highlighter')));
+    await tester.pump();
+    expect(canvas().tool, InkTool.highlighter);
+
+    // A stranded highlighter would make the next stroke a wash of colour
+    // when the user expected handwriting — same rule as the eraser.
+    await tester.tap(find.byIcon(Icons.draw));
+    await tester.pump();
+    expect(canvas().tool, InkTool.pen);
+
+    await unmount(tester);
+  });
+
   /// Drags like a real finger: many small steps, each its own move event.
   ///
   /// tester.drag() emits ONE move covering the whole distance, which clears the

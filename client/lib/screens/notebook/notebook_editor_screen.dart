@@ -31,6 +31,7 @@ import '../../models/sync_status.dart';
 import '../../services/image_file_picker.dart';
 import '../../services/notebook_persistence.dart';
 import '../../widgets/dump_picker_sheet.dart';
+import '../../widgets/ink_palette_popup.dart';
 import '../../widgets/notebook_dump_card.dart';
 import '../../widgets/notebook_image_block.dart';
 import '../../widgets/notebook_ink_canvas.dart';
@@ -147,6 +148,18 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
   /// the chrome is modal enough that two selected images would fight over
   /// the page's gesture space.
   String? _selectedImageId;
+
+  /// The instrument the next stroke uses.
+  InkTool _tool = InkTool.pen;
+
+  /// Each tool keeps its own ink for the session, so switching pen →
+  /// highlighter → pen returns to the colour you were writing in.
+  InkColor _penColour = InkColor.white;
+  InkColor _highlighterColour = InkColor.yellow;
+
+  InkColor get _activeColour =>
+      _tool == InkTool.highlighter ? _highlighterColour : _penColour;
+
   double _penWidth = PenSizeControl.defaultPenWidth;
   PenStyle _penStyle = PenStyle.ballpoint;
 
@@ -931,6 +944,31 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
     _selectedImageId = null;
   }
 
+  /// Opens a tool's palette and applies the choice. A dismissed sheet
+  /// returns null and must leave the current colour alone.
+  Future<void> _pickInk(InkTool tool, Offset globalPosition) async {
+    final InkColor current =
+        tool == InkTool.highlighter ? _highlighterColour : _penColour;
+    final InkColor? picked = await showInkPalette(
+      context: context,
+      tool: tool,
+      selected: current,
+      globalPosition: globalPosition,
+    );
+    if (picked == null || !mounted) return;
+    setState(() {
+      if (tool == InkTool.highlighter) {
+        _highlighterColour = picked;
+      } else {
+        _penColour = picked;
+      }
+      // Picking a colour selects that tool: the user just said what they
+      // want to draw with.
+      _enterDrawMode();
+      _tool = tool;
+    });
+  }
+
   /// Deletes the lasso's catch: selected ink through the canvas, selected
   /// blocks here. Either half may be empty.
   void _deleteLassoSelection() {
@@ -1091,28 +1129,77 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
               padding: const EdgeInsets.fromLTRB(4, 0, 12, 4),
               child: Row(
                 children: <Widget>[
-                  IconButton(
-                    icon: const Icon(Icons.draw),
-                    tooltip: _drawing ? 'Stop drawing' : 'Draw',
-                    isSelected: _drawing,
-                    onPressed: _notebook == null
-                        ? null
-                        : () => setState(() {
-                              _drawing = !_drawing;
-                              // Entering draw mode drops the image chrome:
-                              // the page belongs to the pen, and tabs left
-                              // under ink would swallow stroke starts.
-                              if (_drawing) _selectedImageId = null;
-                              // The pen is the safe default whenever drawing
-                              // resumes: a stranded eraser would make the
-                              // next stroke delete work instead of adding
-                              // it.
-                              if (!_drawing) {
-                                _erasing = false;
-                                _lassoing = false;
-                                _lassoSelection = false;
-                              }
-                            }),
+                  // The IconButton's own tooltip would install a long-press
+                  // recognizer DEEPER than this detector (Tooltip's default
+                  // triggerMode is longPress on touch), win the arena, and
+                  // swallow the palette gesture — so the tooltip is manual
+                  // here. Mouse hover is unaffected by triggerMode.
+                  Tooltip(
+                    message: _drawing ? 'Stop drawing' : 'Draw',
+                    triggerMode: TooltipTriggerMode.manual,
+                    child: GestureDetector(
+                      onLongPressStart: _notebook == null
+                          ? null
+                          : (LongPressStartDetails d) => _pickInk(
+                                InkTool.pen,
+                                d.globalPosition,
+                              ),
+                      child: IconButton(
+                        icon: const Icon(Icons.draw),
+                        visualDensity: VisualDensity.compact,
+                        isSelected: _drawing && _tool == InkTool.pen,
+                        color: Color(_penColour.argb),
+                        onPressed: _notebook == null
+                            ? null
+                            : () => setState(() {
+                                  if (_drawing && _tool == InkTool.pen) {
+                                    // Leaving draw mode: the pen is the safe
+                                    // default whenever drawing resumes — a
+                                    // stranded eraser would delete work, a
+                                    // stranded highlighter would wash the next
+                                    // handwriting stroke in colour.
+                                    _drawing = false;
+                                    _erasing = false;
+                                    _lassoing = false;
+                                    _lassoSelection = false;
+                                    _tool = InkTool.pen;
+                                    return;
+                                  }
+                                  _enterDrawMode();
+                                  _tool = InkTool.pen;
+                                }),
+                      ),
+                    ),
+                  ),
+                  Tooltip(
+                    message: 'Highlighter. Long-press for colours',
+                    triggerMode: TooltipTriggerMode.manual,
+                    child: GestureDetector(
+                      onLongPressStart: _notebook == null
+                          ? null
+                          : (LongPressStartDetails d) => _pickInk(
+                                InkTool.highlighter,
+                                d.globalPosition,
+                              ),
+                      child: IconButton(
+                        key: const ValueKey('notebook-highlighter'),
+                        icon: const Icon(Icons.border_color),
+                        visualDensity: VisualDensity.compact,
+                        isSelected: _drawing && _tool == InkTool.highlighter,
+                        color: Color(_highlighterColour.argb),
+                        onPressed: _notebook == null
+                            ? null
+                            : () => setState(() {
+                                  _enterDrawMode();
+                                  _tool = InkTool.highlighter;
+                                  // Mutually exclusive gestures, same rule the
+                                  // eraser and lasso already follow.
+                                  _erasing = false;
+                                  _lassoing = false;
+                                  _lassoSelection = false;
+                                }),
+                      ),
+                    ),
                   ),
                   IconButton(
                     // An unlabelled mode is how you end up erasing when you
@@ -1122,6 +1209,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                       _erasing ? Icons.edit : Icons.auto_fix_normal,
                     ),
                     tooltip: _erasing ? 'Switch to pen' : 'Erase lines',
+                    visualDensity: VisualDensity.compact,
                     isSelected: _erasing,
                     // Every tool is live at any time (Jeff's contract): a
                     // tap outside draw mode ENTERS draw mode with this tool
@@ -1147,6 +1235,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                     tooltip: _penStyle == PenStyle.fountain
                         ? 'Fountain pen (pressure). Tap for ballpoint'
                         : 'Ballpoint. Tap for fountain pen (pressure)',
+                    visualDensity: VisualDensity.compact,
                     isSelected: _penStyle == PenStyle.fountain,
                     onPressed: _notebook == null
                         ? null
@@ -1163,6 +1252,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                     // selection anywhere, delete it from this row.
                     icon: const Icon(Icons.gesture),
                     tooltip: _lassoing ? 'Exit lasso' : 'Lasso select',
+                    visualDensity: VisualDensity.compact,
                     isSelected: _lassoing,
                     onPressed: _notebook == null
                         ? null
@@ -1180,6 +1270,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                       key: const ValueKey('notebook-lasso-delete'),
                       icon: const Icon(Icons.delete_outline),
                       tooltip: 'Delete selection',
+                      visualDensity: VisualDensity.compact,
                       // Enabled only while something is circled — a dead
                       // delete button reads as broken, a live one with
                       // nothing selected would surprise.
@@ -1188,6 +1279,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                   IconButton(
                     icon: const Icon(Icons.undo),
                     tooltip: 'Undo stroke',
+                    visualDensity: VisualDensity.compact,
                     // Undo/redo act on ink history and are safe any time;
                     // they do not flip modes.
                     onPressed: _notebook == null
@@ -1198,6 +1290,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                     key: const ValueKey<String>('notebook-redo'),
                     icon: const Icon(Icons.redo),
                     tooltip: 'Redo',
+                    visualDensity: VisualDensity.compact,
                     onPressed: _notebook == null
                         ? null
                         : () => _canvasKey.currentState?.redo(),
@@ -1529,6 +1622,8 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                           onSelectionDragStep: _lassoDragBlocks,
                           penWidth: _penWidth,
                           penStyle: _penStyle,
+                          tool: _tool,
+                          colour: _activeColour,
                           // Palm rejection, page half: while the pen is present
                           // the scroll physics lock so a resting hand cannot
                           // shove the page mid-word. The canvas half (touch not
