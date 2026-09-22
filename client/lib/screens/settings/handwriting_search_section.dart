@@ -12,6 +12,14 @@
 /// Cancelling at the confirm stage calls NOTHING and leaves the toggle OFF.
 /// Toggling OFF is destructive server-side (the venv AND the search index
 /// are deleted), so it gets its own confirm that names that consequence.
+///
+/// The installing state has THREE doors, because the server install outlives
+/// this widget (leaving Settings only stops the WATCHING):
+///   1. fresh confirm — the wizard above;
+///   2. re-entry rehydration — init sees capability.install_running=true and
+///      resumes progress + polling + the notification mirror, POSTing nothing;
+///   3. 409 attach — POST install says one is already running (a race the
+///      capability check missed), so we attach and watch it like our own.
 library;
 
 import 'dart:async';
@@ -19,6 +27,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../models/api_exception.dart';
 import '../../services/android_transcription_notification_port.dart';
 import '../../services/ocr_settings_client.dart';
 import '../../services/transcription_notifications.dart';
@@ -107,6 +116,15 @@ class _HandwritingSearchSectionState
   Timer? _pollTimer;
 
   @override
+  void initState() {
+    super.initState();
+    // Door 2: the install outlives this widget. If one is still running on
+    // the server, resume watching it — without this, re-entering Settings
+    // shows a resting OFF toggle whose tap 409s into a dead-end error.
+    _rehydrate();
+  }
+
+  @override
   void dispose() {
     // The pairing screen leaked a poll timer once; never again. The server
     // install keeps running — only the WATCHING stops with the widget.
@@ -115,6 +133,34 @@ class _HandwritingSearchSectionState
   }
 
   bool get _installing => _progress != null && !_installFailed;
+
+  /// Door 2: re-entry rehydration. If the server says an install is still
+  /// running (it survived our last dispose — only the watching stopped),
+  /// pick the progress UI, the 2 s poll, and the notification mirror back
+  /// up exactly where they were. POSTs nothing.
+  Future<void> _rehydrate() async {
+    final OcrSettingsClient client;
+    final OcrCapability capability;
+    try {
+      client = await ref.read(ocrSettingsClientProvider.future);
+      capability = await client.getCapability();
+    } catch (_) {
+      // Unreachable server at init is not an error banner — the user did
+      // nothing yet. The toggle stays interactive and complains on use.
+      return;
+    }
+    if (!mounted || !capability.installRunning || _installing) return;
+    _flavour ??= capability.gpuVisible ? 'gpu' : 'cpu';
+    setState(() {
+      _installFailed = false;
+      _progress = const OcrInstallProgress(
+        phase: 'venv',
+        percent: 0,
+        detail: 'Resuming install…',
+      );
+    });
+    await _watch(client);
+  }
 
   Future<void> _onToggle(bool requested) async {
     if (_busy || _installing) return;
@@ -180,22 +226,49 @@ class _HandwritingSearchSectionState
     });
     try {
       await client.startInstall(flavour: flavour);
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      if (e.statusCode == 409) {
+        // Door 3: an install is ALREADY running (a race the capability check
+        // missed, or our own from a previous visit). That is not a failure —
+        // it is the thing we wanted. Attach and watch it.
+        setState(() {
+          _progress = const OcrInstallProgress(
+            phase: 'venv',
+            percent: 0,
+            detail: 'Resuming install…',
+          );
+        });
+        await _watch(client);
+        return;
+      }
+      await _failInstall('$e');
+      return;
     } catch (e) {
       if (!mounted) return;
-      setState(() {
-        _installFailed = true;
-        _progress = OcrInstallProgress(
-          phase: 'failed',
-          percent: 0,
-          detail: '$e',
-        );
-      });
-      await _notify('Handwriting search install failed', '$e');
+      await _failInstall('$e');
       return;
     }
     if (!mounted) return;
-    // First poll immediately — the user just confirmed and is watching —
-    // then every 2 s for as long as the section stays visible.
+    await _watch(client);
+  }
+
+  Future<void> _failInstall(String detail) async {
+    setState(() {
+      _installFailed = true;
+      _progress = OcrInstallProgress(
+        phase: 'failed',
+        percent: 0,
+        detail: detail,
+      );
+    });
+    await _notify('Handwriting search install failed', detail);
+  }
+
+  /// The single watcher behind all three doors: poll immediately (whoever
+  /// just arrived is looking at the screen), then every 2 s for as long as
+  /// the section stays visible.
+  Future<void> _watch(OcrSettingsClient client) async {
     await _poll(client);
     _pollTimer?.cancel();
     _pollTimer = Timer.periodic(
