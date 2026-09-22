@@ -29,6 +29,7 @@ import '../../models/notebook.dart';
 import '../../models/notebook_ruling.dart';
 import '../../models/sync_status.dart';
 import '../../services/image_file_picker.dart';
+import '../../services/ink_search.dart';
 import '../../services/notebook_persistence.dart';
 import '../../widgets/dump_picker_sheet.dart';
 import '../../widgets/ink_palette_popup.dart';
@@ -37,6 +38,9 @@ import '../../widgets/notebook_image_block.dart';
 import '../../widgets/notebook_ink_canvas.dart';
 import '../dump/dump_detail_screen.dart';
 import '../dump/dumps_providers.dart';
+import '../settings/handwriting_search_section.dart'
+    show handwritingSearchEnabledProvider;
+import 'notebook_find_bar.dart';
 
 /// The footprint the lasso tests [block] against, in canonical page px.
 ///
@@ -123,9 +127,19 @@ enum _InsertAction {
 }
 
 class NotebookEditorScreen extends ConsumerStatefulWidget {
-  const NotebookEditorScreen({super.key, required this.notebookId});
+  const NotebookEditorScreen({
+    super.key,
+    required this.notebookId,
+    this.initialFindQuery,
+  });
 
   final String notebookId;
+
+  /// Deep link from the home screen's search: opens the editor with the find
+  /// bar populated with this query and the FIRST match current (spec: a tap
+  /// on a search result lands "at the top of the ctrl+f results"). Null (the
+  /// ordinary open) mounts no find bar.
+  final String? initialFindQuery;
 
   @override
   ConsumerState<NotebookEditorScreen> createState() =>
@@ -207,6 +221,30 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
   /// page holds still so a resting palm cannot scroll it mid-word.
   bool _stylusActive = false;
 
+  // ---- Find (Ctrl+F over handwriting and typed blocks) ----
+
+  /// Whether the find bar is mounted. Opened by the toolbar's search icon or
+  /// by an [NotebookEditorScreen.initialFindQuery] deep link.
+  bool _findOpen = false;
+
+  /// The query text. Owned here (not by the bar) so a deep-linked query
+  /// arrives already populated.
+  final TextEditingController _findQuery = TextEditingController();
+
+  /// Matches for the live query, in reading order (the service's contract).
+  List<InkMatch> _findMatches = const <InkMatch>[];
+
+  /// Index into [_findMatches] of the CURRENT match.
+  int _findIndex = 0;
+
+  /// Guards against out-of-order search responses: only the newest query's
+  /// results may land, or fast typing could paint a stale result set.
+  int _findGeneration = 0;
+
+  /// The page scale the last layout used, captured so scroll-to-match can
+  /// convert a match's canonical-page bbox into scroll offset.
+  double _pageScale = 1.0;
+
   /// Suppresses dirty-marking while the stored notebook is being poured into
   /// the controllers.
   bool _hydrating = true;
@@ -214,6 +252,13 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
   @override
   void initState() {
     super.initState();
+    final String? deepLinked = widget.initialFindQuery;
+    if (deepLinked != null && deepLinked.trim().isNotEmpty) {
+      // Deep link from the home screen's search: the bar opens populated;
+      // the search itself runs once the notebook has loaded (see _load).
+      _findOpen = true;
+      _findQuery.text = deepLinked;
+    }
     unawaited(_load());
   }
 
@@ -221,6 +266,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
   void dispose() {
     _pageScroll.dispose();
     _title.dispose();
+    _findQuery.dispose();
     for (final TextEditingController controller in _controllers.values) {
       controller.dispose();
     }
@@ -241,6 +287,11 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
         _notebook = notebook;
         if (notebook != null) _hydrate(notebook);
       });
+      // The deep-linked find runs only now: the search reads the db, but
+      // the scroll-to needs the page laid out, which needs the load done.
+      if (notebook != null && _findOpen) {
+        unawaited(_runFind(_findQuery.text));
+      }
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -299,6 +350,91 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
   void _markDirty() {
     if (_hydrating || _dirty) return;
     setState(() => _dirty = true);
+  }
+
+  // -------------------------------------------------------------------
+  // Find in notebook
+  // -------------------------------------------------------------------
+
+  /// Every stroke any match covers — the canvas bands them all.
+  Set<String> get _findHighlightIds => <String>{
+        for (final InkMatch match in _findMatches) ...match.strokeIds,
+      };
+
+  /// The CURRENT match's strokes. Empty for a typed-block match (its
+  /// [InkMatch.strokeIds] is empty): scroll-to only, no ink highlight.
+  Set<String> get _findCurrentIds => _findMatches.isEmpty
+      ? const <String>{}
+      : _findMatches[_findIndex].strokeIds.toSet();
+
+  void _openFind() {
+    if (_findOpen) return;
+    setState(() => _findOpen = true);
+  }
+
+  /// Close clears EVERYTHING: bar, query, matches, highlights. A closed
+  /// find that left bands on the page would read as stuck marker.
+  void _closeFind() {
+    setState(() {
+      _findOpen = false;
+      _findQuery.clear();
+      _findMatches = const <InkMatch>[];
+      _findIndex = 0;
+      // Orphan any in-flight search so its stale results cannot land on
+      // the now-closed bar.
+      _findGeneration++;
+    });
+  }
+
+  Future<void> _runFind(String query) async {
+    final int generation = ++_findGeneration;
+    final List<InkMatch> matches = query.trim().isEmpty
+        ? const <InkMatch>[]
+        : await ref
+            .read(inkSearchProvider)
+            .searchInNotebook(widget.notebookId, query);
+    // Only the NEWEST query's results may land; fast typing must not paint
+    // a stale result set over a fresher one.
+    if (!mounted || generation != _findGeneration || !_findOpen) return;
+    setState(() {
+      _findMatches = matches;
+      _findIndex = 0;
+    });
+    if (matches.isNotEmpty) _scrollToCurrentMatch();
+  }
+
+  /// Steps the current match by [delta] (+1 next, -1 prev), wrapping at both
+  /// ends — matches are already in reading order, so this is a plain walk.
+  void _findStep(int delta) {
+    final int count = _findMatches.length;
+    if (count == 0) return;
+    setState(() => _findIndex = (_findIndex + delta + count) % count);
+    _scrollToCurrentMatch();
+  }
+
+  /// Brings the current match's bbox into view, roughly a third down the
+  /// viewport so surrounding context shows above and below it.
+  ///
+  /// Post-frame: a deep-linked find runs before the page's first layout, and
+  /// the scroll controller has no clients (and no extent) until it settles.
+  void _scrollToCurrentMatch() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _findMatches.isEmpty || !_pageScroll.hasClients) return;
+      final InkMatch match = _findMatches[_findIndex];
+      final ScrollPosition position = _pageScroll.position;
+      // The bbox lives in canonical page space; the viewport shows the page
+      // scaled by [_pageScale] (see the LayoutBuilder in _buildBody).
+      final double target = (match.bbox.top * _pageScale -
+              position.viewportDimension / 3)
+          .clamp(0.0, position.maxScrollExtent);
+      unawaited(
+        _pageScroll.animateTo(
+          target,
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeInOut,
+        ),
+      );
+    });
   }
 
   // -------------------------------------------------------------------
@@ -1154,6 +1290,16 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                   ),
                 ),
           actions: <Widget>[
+            // The search icon exists ONLY while handwriting search is on
+            // (the provider is the gate — no capability call from here).
+            // It joins the row without displacing any existing tool.
+            if (ref.watch(handwritingSearchEnabledProvider))
+              IconButton(
+                key: const ValueKey<String>('notebook-editor-search'),
+                icon: const Icon(Icons.search),
+                tooltip: 'Find in notebook',
+                onPressed: _notebook == null ? null : _openFind,
+              ),
             IconButton(
               icon: const Icon(Icons.save),
               tooltip: 'Save notebook',
@@ -1472,7 +1618,23 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                   ],
                 ),
               ),
-        body: _buildBody(rowsById),
+        body: Column(
+          children: <Widget>[
+            // The find bar rides above the page, Ctrl+F style. Mounted only
+            // while open, so the ordinary editor pays nothing for it.
+            if (_findOpen)
+              NotebookFindBar(
+                controller: _findQuery,
+                matchCount: _findMatches.length,
+                currentIndex: _findIndex,
+                onQueryChanged: (String query) => unawaited(_runFind(query)),
+                onPrev: () => _findStep(-1),
+                onNext: () => _findStep(1),
+                onClose: _closeFind,
+              ),
+            Expanded(child: _buildBody(rowsById)),
+          ],
+        ),
       ),
     );
   }
@@ -1515,6 +1677,10 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
         // way off to the side on my phone"). Wider viewports keep scale 1.
         final double scale =
             math.min(1.0, constraints.maxWidth / _pageColumnWidth);
+        // Captured for scroll-to-match: a match bbox is canonical, the
+        // scroll offset is in viewport px. Plain assignment — layout is not
+        // a place to setState, and nothing rebuilds off this value.
+        _pageScale = scale;
         final double canonicalWidth = constraints.maxWidth / scale;
         final double pageHeight = _pageHeight(constraints.maxHeight / scale);
         return SingleChildScrollView(
@@ -1678,6 +1844,10 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                           // ink layer composites directly instead of painting
                           // black and filtering it back out.
                           opaqueBackground: false,
+                          // Find-in-notebook: all matches banded, the current
+                          // one stronger. Both empty while no find is open.
+                          highlightedStrokeIds: _findHighlightIds,
+                          currentMatchStrokeIds: _findCurrentIds,
                           onStrokesChanged: (List<InkStroke> strokes) {
                             setState(() {
                               _strokes = List<InkStroke>.of(strokes);

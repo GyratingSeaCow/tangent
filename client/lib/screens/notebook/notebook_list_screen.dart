@@ -5,6 +5,8 @@
 // The home screen's app-bar entry opens THIS list; the list opens or creates
 // individual notebooks. Deleting a notebook never touches the dumps its cards
 // referenced — the repository only drops the notebook row.
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show Uint8List;
 import 'package:path_provider/path_provider.dart';
@@ -17,6 +19,7 @@ import 'dart:io' show File, Platform;
 import '../../data/notebook_repository.dart';
 import '../../models/notebook.dart';
 import '../../services/desktop_pdf_share.dart';
+import '../../services/ink_search.dart';
 import '../../services/notebook_pdf_exporter.dart';
 import '../../services/notebook_persistence.dart';
 import '../../widgets/folder_picker.dart';
@@ -25,6 +28,8 @@ import '../../widgets/sync_button.dart';
 import '../../data/local_db.dart';
 import '../home/home_screen.dart' show localDbProvider;
 import '../home/home_providers.dart' show documentSyncEngineProvider;
+import '../settings/handwriting_search_section.dart'
+    show handwritingSearchEnabledProvider;
 import '../../widgets/item_action_sheet.dart';
 import '../../widgets/folder_header_actions.dart';
 import 'notebook_grouping.dart';
@@ -88,6 +93,58 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
   bool _selecting = false;
   final Set<String> _selectedIds = <String>{};
   bool _bulkBusy = false;
+
+  // ---- Handwriting search (Task 6) ----
+
+  /// True while the search field is open (the toolbar icon toggles it).
+  bool _searching = false;
+
+  /// The live query text; owned here so closing search can clear it.
+  final TextEditingController _searchQuery = TextEditingController();
+
+  /// Results for the live query, keyed by notebook id — or null while the
+  /// query is blank (no filtering at all). An EMPTY map is a real answer:
+  /// the query matched nothing, so every row is filtered out.
+  Map<String, NotebookMatchSummary>? _searchResults;
+
+  /// Guards against out-of-order search responses landing over fresher ones.
+  int _searchGeneration = 0;
+
+  @override
+  void dispose() {
+    _searchQuery.dispose();
+    super.dispose();
+  }
+
+  void _toggleSearch() {
+    setState(() {
+      _searching = !_searching;
+      if (!_searching) {
+        // Closing search restores the plain library: query and results go
+        // together, and any in-flight search is orphaned.
+        _searchQuery.clear();
+        _searchResults = null;
+        _searchGeneration++;
+      }
+    });
+  }
+
+  Future<void> _runSearch(String query) async {
+    final int generation = ++_searchGeneration;
+    final Map<String, NotebookMatchSummary>? results;
+    if (query.trim().isEmpty) {
+      results = null;
+    } else {
+      final List<NotebookMatchSummary> summaries =
+          await ref.read(inkSearchProvider).searchNotebooks(query);
+      results = <String, NotebookMatchSummary>{
+        for (final NotebookMatchSummary summary in summaries)
+          summary.notebookId: summary,
+      };
+    }
+    if (!mounted || generation != _searchGeneration || !_searching) return;
+    setState(() => _searchResults = results);
+  }
 
   void _enterSelection(String id) {
     setState(() {
@@ -212,10 +269,15 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
     await prefs.setBool(_viewPreferenceKey, next);
   }
 
-  Future<void> _openNotebook(String id) {
+  Future<void> _openNotebook(String id, {String? findQuery}) {
     return Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
-        builder: (_) => NotebookEditorScreen(notebookId: id),
+        builder: (_) => NotebookEditorScreen(
+          notebookId: id,
+          // Search-result taps carry the query so the editor opens at the
+          // top ctrl+f result with the find bar already populated.
+          initialFindQuery: findQuery,
+        ),
       ),
     );
   }
@@ -465,13 +527,21 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final AsyncValue<List<Notebook>> notebooks = ref.watch(notebooksProvider);
     final ColorScheme colors = Theme.of(context).colorScheme;
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('Notebooks'),
         actions: <Widget>[
+          // The search icon exists ONLY while handwriting search is on (the
+          // provider is the gate — no capability call from a list screen).
+          if (ref.watch(handwritingSearchEnabledProvider))
+            IconButton(
+              key: const ValueKey<String>('notebook-list-search'),
+              tooltip: _searching ? 'Close search' : 'Search notebooks',
+              icon: Icon(_searching ? Icons.search_off : Icons.search),
+              onPressed: _toggleSearch,
+            ),
           SyncButton(engineProvider: documentSyncEngineProvider),
           IconButton(
             key: const ValueKey<String>('notebook-view-toggle'),
@@ -488,7 +558,35 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
         onPressed: _creating ? null : _createNotebook,
         child: const Icon(Icons.add),
       ),
-      body: notebooks.when(
+      body: Column(
+        children: <Widget>[
+          // The query field, directly under the toolbar whose icon opened
+          // it. Live: every keystroke re-runs the search.
+          if (_searching)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+              child: TextField(
+                key: const ValueKey<String>('notebook-list-search-field'),
+                controller: _searchQuery,
+                autofocus: true,
+                onChanged: (String query) => unawaited(_runSearch(query)),
+                textInputAction: TextInputAction.search,
+                decoration: const InputDecoration(
+                  hintText: 'Search your handwriting…',
+                  prefixIcon: Icon(Icons.search, size: 18),
+                  isDense: true,
+                ),
+              ),
+            ),
+          Expanded(child: _buildRows(colors)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRows(ColorScheme colors) {
+    final AsyncValue<List<Notebook>> notebooks = ref.watch(notebooksProvider);
+    return notebooks.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (Object error, StackTrace _) => Center(
           child: Padding(
@@ -499,19 +597,37 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
             ),
           ),
         ),
-        data: (List<Notebook> rows) {
+        data: (List<Notebook> allRows) {
+          // A live search filters the library to notebooks the index says
+          // match. Null means "not searching" (or a blank query): no filter.
+          final Map<String, NotebookMatchSummary>? searchResults =
+              _searchResults;
+          final List<Notebook> rows = searchResults == null
+              ? allRows
+              : allRows
+                  .where((Notebook n) => searchResults.containsKey(n.id))
+                  .toList(growable: false);
           if (rows.isEmpty) {
-            return const Center(
+            return Center(
               child: Padding(
-                padding: EdgeInsets.all(24),
-                child: Text('No notebooks yet', textAlign: TextAlign.center),
+                padding: const EdgeInsets.all(24),
+                child: Text(
+                  // A search that matched nothing is a real answer and must
+                  // say so; 'No notebooks yet' would be a lie about the
+                  // library.
+                  searchResults == null ? 'No notebooks yet' : 'No matches',
+                  textAlign: TextAlign.center,
+                ),
               ),
             );
           }
           // Rows can vanish mid-selection (sync pull, another screen's
           // delete); a selection covering ghosts would mislead the count
-          // and the bulk actions.
-          _selectedIds.retainAll(rows.map((Notebook n) => n.id).toSet());
+          // and the bulk actions. Prune against the WHOLE library, not the
+          // search-filtered rows: a live search hides rows, it does not
+          // deselect them, and closing the search must find the selection
+          // exactly as the user left it.
+          _selectedIds.retainAll(allRows.map((Notebook n) => n.id).toSet());
           final Widget selectionBar = !_selecting
               ? const SizedBox.shrink()
               : Row(
@@ -669,8 +785,7 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
             ],
           );
         },
-      ),
-    );
+      );
   }
 
   /// Builds one cover for the grid view.
@@ -686,7 +801,10 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
       key: ValueKey<String>('notebook-cover-${notebook.id}'),
       onTap: _selecting
           ? () => _toggleSelected(notebook.id)
-          : () => _openNotebook(notebook.id),
+          : () => _openNotebook(
+                notebook.id,
+                findQuery: _searchQueryForOpen(),
+              ),
       onLongPress: _selecting ? null : () => _enterSelection(notebook.id),
       // Desktop: right-click is this app's long-press.
       onSecondaryTap: secondaryTapFor(
@@ -729,7 +847,12 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
                       style: Theme.of(context).textTheme.bodyMedium,
                     ),
                     Text(
-                      formatNotebookUpdated(notebook.updatedAt),
+                      // While a search is live this line answers the
+                      // searcher's question — how many hits, and of what —
+                      // exactly as the row's subtitle does, so the two
+                      // views stay at parity.
+                      _matchLabel(notebook) ??
+                          formatNotebookUpdated(notebook.updatedAt),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.bodySmall,
@@ -755,6 +878,33 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
         ],
       ),
     );
+  }
+
+  /// The live search's match line for an item, or null when not searching /
+  /// this notebook has no summary (filtered rows always have one). Shared
+  /// by the tile subtitle and the cover caption so the two views cannot
+  /// drift apart.
+  String? _matchLabel(Notebook notebook) {
+    final NotebookMatchSummary? m = _searchResults?[notebook.id];
+    if (m == null) return null;
+    return '${m.matchCount} ${m.matchCount == 1 ? 'match' : 'matches'} '
+        '— ${m.snippet}';
+  }
+
+  /// [_matchLabel] as the row's subtitle widget.
+  Widget? _matchSubtitle(Notebook notebook) {
+    final String? label = _matchLabel(notebook);
+    if (label == null) return null;
+    return Text(label, maxLines: 1, overflow: TextOverflow.ellipsis);
+  }
+
+  /// What a row-tap should hand the editor as its opening find query:
+  /// the active search text, or null when not searching. Blank never
+  /// travels — an empty find bar greeting the user would be noise.
+  String? _searchQueryForOpen() {
+    if (_searchResults == null) return null;
+    final String q = _searchQuery.text.trim();
+    return q.isEmpty ? null : q;
   }
 
   // Desktop: right-click is this app's long-press. GestureDetector wrapper
@@ -784,14 +934,21 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
-          subtitle: Text(formatNotebookUpdated(notebook.updatedAt)),
+          // While a search is live the subtitle answers the searcher's
+          // question — how many hits, and of what — instead of the resting
+          // timestamp.
+          subtitle: _matchSubtitle(notebook) ??
+              Text(formatNotebookUpdated(notebook.updatedAt)),
           // The same split dumps uses: long-press means multi-select, tap
           // toggles while selecting, and per-item actions live behind the ⋮
           // button — hidden during selection, because a one-row menu is
           // ambiguous while several rows are selected.
           onTap: _selecting
               ? (_bulkBusy ? null : () => _toggleSelected(notebook.id))
-              : () => _openNotebook(notebook.id),
+              : () => _openNotebook(
+                    notebook.id,
+                    findQuery: _searchQueryForOpen(),
+                  ),
           onLongPress: _selecting ? null : () => _enterSelection(notebook.id),
           trailing: _selecting
               ? null

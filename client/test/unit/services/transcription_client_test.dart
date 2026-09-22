@@ -692,5 +692,25 @@ void main() {
       expect(event.status, 'completed');
       expect(event.data['transcript'], transcript);
     });
+
+    test('pullChanges opts in to the ink_index entity on the wire', () async {
+      // The server treats include_ink_index as an additive opt-in: without
+      // it, ink_index changes are filtered out and this client could never
+      // build its search mirror.
+      when(() => mock.get<dynamic>(any())).thenAnswer(
+        (_) async => Response(
+          data: {'changes': <Object>[], 'head_seq': 7, 'has_more': false},
+          requestOptions: RequestOptions(path: '/v1/sync/pull'),
+          statusCode: 200,
+        ),
+      );
+
+      await client.pullChanges(deviceId: 'device-abc', sinceSeq: 7);
+
+      final captured = verify(() => mock.get<dynamic>(captureAny())).captured;
+      expect(captured.single, contains('include_ink_index=true'));
+      expect(captured.single, contains('device_id=device-abc'));
+      expect(captured.single, contains('since_seq=7'));
+    });
   });
 }

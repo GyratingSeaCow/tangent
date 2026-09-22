@@ -13,6 +13,7 @@ from fastapi import FastAPI
 from app.api.dumps import router as dumps_router
 from app.api.jobs import router as jobs_router
 from app.api.models import router as models_router
+from app.api.ocr import router as ocr_router
 from app.api.pairing import router as pairing_router
 from app.api.server_info import router as info_router
 from app.api.setup import router as setup_router
@@ -44,6 +45,17 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     db = next(gen)
     try:
         fail_interrupted_jobs(db)
+        # OCR index worker: only when the on-demand env is installed and
+        # verified. Its startup backfill scan catches notebooks that synced
+        # while the worker was down.
+        from app.services import ocr_env
+        from app.services.ocr_worker import start_worker_if_installed
+
+        # An install finishing on THIS live server must start the worker
+        # (wizard flow: toggle → install → indexing, no restart). Injected
+        # callback keeps ocr_env from importing the worker (cycle).
+        ocr_env.set_on_installed(start_worker_if_installed)
+        start_worker_if_installed()
         if not is_setup_complete(db):
             print("")
             print("=" * 60)
@@ -72,6 +84,11 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             next(gen)
 
     yield
+    from app.services import ocr_env
+    from app.services.ocr_worker import stop_worker
+
+    ocr_env.set_on_installed(None)  # no worker starts after shutdown
+    stop_worker()
     log.info("server.stopping")
 
 
@@ -92,6 +109,7 @@ def create_app() -> FastAPI:
     app.include_router(info_router)   # /v1/server/info
     app.include_router(sync_router)   # /v1/devices, /v1/sync/pull, /v1/sync/push
     app.include_router(pairing_router)  # /v1/pair/*, /v1/devices/{id}/token
+    app.include_router(ocr_router)    # /v1/ocr/*
 
     register_exception_handlers(app)
     return app

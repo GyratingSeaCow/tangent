@@ -80,7 +80,7 @@ CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at DESC);
 CREATE TABLE IF NOT EXISTS change_log (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
     entity_type TEXT NOT NULL
-        CHECK (entity_type IN ('dump', 'notebook', 'note', 'folder')),
+        CHECK (entity_type IN ('dump', 'notebook', 'note', 'folder', 'ink_index')),
     entity_id TEXT NOT NULL,
     op TEXT NOT NULL CHECK (op IN ('upsert', 'delete')),
     -- Who authored it, so a client can skip the echo of its own push.
@@ -136,8 +136,13 @@ CREATE TABLE IF NOT EXISTS device_tokens (
 CREATE TABLE IF NOT EXISTS notebooks (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
-    -- {"blocks": [...], "ink": {"strokes": [...], "deletedStrokeIds": [...]}}
+    -- {"blocks": [...]} — the text-block body. Strokes do NOT live here:
+    -- the client pushes 'doc' and 'ink' as SEPARATE payload fields.
     doc TEXT NOT NULL,
+    -- {"strokes": [...]} — the handwriting, stored server-side so the OCR
+    -- worker can read it without spelunking change_log payloads. NULL when
+    -- the notebook has never carried ink.
+    ink TEXT,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
     deleted_at INTEGER,
@@ -159,6 +164,27 @@ CREATE TABLE IF NOT EXISTS notes (
 );
 
 CREATE INDEX IF NOT EXISTS idx_notes_updated_at ON notes(updated_at DESC);
+
+-- Handwriting search index: one row per recognized WORD, grouped by the
+-- line that produced it. line_id is the sha1 of the line's sorted member
+-- stroke ids (Task 1) — a stable invalidation key: any stroke edit changes
+-- the set, so unchanged lines keep their rows untouched.
+CREATE TABLE IF NOT EXISTS ink_index (
+    id TEXT PRIMARY KEY,
+    notebook_id TEXT NOT NULL,
+    line_id TEXT NOT NULL,
+    word_text TEXT NOT NULL,
+    word_text_lower TEXT NOT NULL,
+    bbox_json TEXT NOT NULL,
+    stroke_ids_json TEXT NOT NULL,
+    model TEXT NOT NULL,
+    indexed_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_ink_index_notebook ON ink_index(notebook_id);
+CREATE INDEX IF NOT EXISTS idx_ink_index_word_lower
+    ON ink_index(word_text_lower);
+
 
 -- Folders sync by ID only: same-named folders created independently on two
 -- devices stay separate (user decision). One folder can hold notebooks and
@@ -378,6 +404,93 @@ def _migrate_change_log_folder_entity(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_change_log_ink_index_entity(conn: sqlite3.Connection) -> None:
+    """Rebuild change_log so its CHECK admits entity_type 'ink_index'.
+
+    Same shape and same seq-preservation obligation as the folder-entity
+    rebuild above: every device's checkpoint points into this sequence.
+    """
+    ddl = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='change_log'"
+    ).fetchone()
+    if ddl is None or "'ink_index'" in (ddl[0] or ""):
+        return
+    conn.executescript(
+        """
+        PRAGMA foreign_keys = OFF;
+        CREATE TABLE change_log_new (
+            seq INTEGER PRIMARY KEY AUTOINCREMENT,
+            entity_type TEXT NOT NULL
+                CHECK (entity_type IN
+                       ('dump', 'notebook', 'note', 'folder', 'ink_index')),
+            entity_id TEXT NOT NULL,
+            op TEXT NOT NULL CHECK (op IN ('upsert', 'delete')),
+            device_id TEXT NOT NULL,
+            payload TEXT,
+            created_at INTEGER NOT NULL
+        );
+        INSERT INTO change_log_new
+            (seq, entity_type, entity_id, op, device_id, payload, created_at)
+            SELECT seq, entity_type, entity_id, op, device_id, payload,
+                   created_at FROM change_log;
+        DROP TABLE change_log;
+        ALTER TABLE change_log_new RENAME TO change_log;
+        CREATE INDEX IF NOT EXISTS idx_change_log_seq ON change_log(seq);
+        CREATE INDEX IF NOT EXISTS idx_change_log_entity
+            ON change_log(entity_type, entity_id);
+        PRAGMA foreign_keys = ON;
+        """
+    )
+    conn.execute(
+        "INSERT OR REPLACE INTO sqlite_sequence (name, seq) "
+        "SELECT 'change_log', COALESCE(MAX(seq), 0) FROM change_log"
+    )
+
+
+def _migrate_notebooks_ink(conn: sqlite3.Connection) -> None:
+    """Add notebooks.ink and backfill it from the change feed.
+
+    The client has ALWAYS pushed 'doc' and 'ink' as separate payload fields,
+    but the push handler historically stored only 'doc' — so on a production
+    server the strokes live solely inside change_log upsert payloads. The
+    OCR worker needs them queryable per notebook.
+
+    Backfill rule: the NEWEST payload CARRYING an 'ink' key wins. A later
+    title-only upsert (older client, or a metadata edit) simply lacks the
+    key — absence is not an eraser, same rule the push path applies.
+    """
+    import json as _json
+
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(notebooks)")}
+    if "ink" not in columns:
+        conn.execute("ALTER TABLE notebooks ADD COLUMN ink TEXT")
+
+    empty = [
+        row[0]
+        for row in conn.execute("SELECT id FROM notebooks WHERE ink IS NULL")
+    ]
+    for nb_id in empty:
+        payload_rows = conn.execute(
+            "SELECT payload FROM change_log "
+            "WHERE entity_type = 'notebook' AND entity_id = ? AND op = 'upsert' "
+            "ORDER BY seq DESC",
+            (nb_id,),
+        ).fetchall()
+        for (raw,) in payload_rows:
+            if not raw:
+                continue
+            try:
+                payload = _json.loads(raw)
+            except ValueError:
+                continue
+            if isinstance(payload, dict) and "ink" in payload:
+                conn.execute(
+                    "UPDATE notebooks SET ink = ? WHERE id = ?",
+                    (_json.dumps(payload["ink"]), nb_id),
+                )
+                break
+
+
 def init_db(data_dir: str) -> None:
     """Create the SQLite DB and apply schema. Idempotent."""
     Path(data_dir).mkdir(parents=True, exist_ok=True)
@@ -393,6 +506,8 @@ def init_db(data_dir: str) -> None:
         _migrate_dumps_meeting_notes(conn)
         _migrate_notebooks_folder_id(conn)
         _migrate_change_log_folder_entity(conn)
+        _migrate_change_log_ink_index_entity(conn)
+        _migrate_notebooks_ink(conn)
         _reconcile_audio_kept(conn, data_dir)
         _backfill_dump_change_feed(conn)
         conn.commit()

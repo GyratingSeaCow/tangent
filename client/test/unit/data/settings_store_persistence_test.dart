@@ -18,6 +18,15 @@ void main() {
       expect(reloaded.keepScreenAwakeWhileRecording, isFalse);
     });
 
+    test('handwriting search defaults OFF and survives a new store', () async {
+      final first = await SettingsStore.load();
+      expect(first.handwritingSearchEnabled, isFalse);
+      await first.setHandwritingSearchEnabled(true);
+
+      final reloaded = await SettingsStore.load();
+      expect(reloaded.handwritingSearchEnabled, isTrue);
+    });
+
     test('default trigger mode is tap', () {
       expect(SettingsStore().triggerMode, TriggerMode.tap);
     });

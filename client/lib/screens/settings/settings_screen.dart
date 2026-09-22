@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/settings_store.dart';
 import '../server/pair_new_device_screen.dart';
 import '../server/server_connection_screen.dart';
+import 'handwriting_search_section.dart';
 import 'input_device_section.dart';
 import 'mic_gain_section.dart';
 import 'storage_settings_section.dart';
@@ -196,6 +197,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               style: TextStyle(fontSize: 12, color: TangentColors.textDim),
             ),
           ),
+          const Divider(),
+          const HandwritingSearchSection(),
           const Divider(),
           const Padding(
             padding: EdgeInsets.fromLTRB(16, 16, 16, 8),

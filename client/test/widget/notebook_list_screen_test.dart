@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import 'package:drift/native.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -9,12 +10,15 @@ import 'package:tangent/data/storage/storage_contract.dart';
 import 'package:tangent/data/notebook_repository.dart';
 import 'package:tangent/models/notebook.dart';
 import 'dart:async';
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:tangent/screens/dump/dumps_providers.dart';
 import 'package:tangent/screens/home/home_screen.dart' show localDbProvider;
 import 'package:tangent/screens/notebook/notebook_editor_screen.dart';
 import 'package:tangent/screens/notebook/notebook_list_screen.dart';
+import 'package:tangent/screens/settings/handwriting_search_section.dart'
+    show handwritingSearchEnabledProvider;
 import 'package:tangent/services/notebook_persistence.dart';
 import 'package:tangent/widgets/item_action_sheet.dart';
 
@@ -113,6 +117,8 @@ void main() {
     List<Folder> folders = const <Folder>[],
     _FakeFoldersDb? db,
     NotebookPdfShare? sharePdf,
+    LocalDb? searchDb,
+    bool searchEnabled = false,
   }) async {
     tester.view.physicalSize = const Size(1080, 2340);
     tester.view.devicePixelRatio = 1.0;
@@ -120,6 +126,15 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
     repository = FakeNotebookRepository(seed: seed);
     addTearDown(repository.dispose);
+    // [db] (folder actions) and [searchDb] (ink index) both stand in for
+    // localDbProvider; fold them into ONE override so a future test passing
+    // both cannot have one silently shadow the other.
+    assert(
+      db == null || searchDb == null,
+      'mountList: db and searchDb both override localDbProvider; '
+      'pass only one',
+    );
+    final LocalDb? localDb = searchDb ?? db;
     await tester.pumpWidget(
       ProviderScope(
         overrides: <Override>[
@@ -135,7 +150,12 @@ void main() {
             // otherwise the static seed list is enough.
             (_) => db?.watchFolders() ?? Stream<List<Folder>>.value(folders),
           ),
-          if (db != null) localDbProvider.overrideWithValue(db),
+          // Task 6: the search icon hangs off the feature toggle, and the
+          // query runs over a REAL in-memory ink index when a test seeds one.
+          if (localDb != null) localDbProvider.overrideWithValue(localDb),
+          handwritingSearchEnabledProvider.overrideWith(
+            (ref) => searchEnabled,
+          ),
         ],
         child: MaterialApp(
           home: NotebookListScreen(sharePdfOverride: sharePdf),
@@ -1180,5 +1200,373 @@ void main() {
     await tester.tapAt(const Offset(540, 100));
     await tester.pumpAndSettle();
     await unmount(tester);
+  });
+
+  group('handwriting search (Task 6)', () {
+    /// Seeds one indexed word into [db] the way sync writes it.
+    Future<void> seedWord(
+      LocalDb db, {
+      required String notebook,
+      required String line,
+      int slot = 0,
+      required String text,
+      required List<double> bbox,
+    }) async {
+      await db.into(db.inkIndexEntries).insert(
+            InkIndexEntriesCompanion.insert(
+              id: '$notebook:$line:${slot.toString().padLeft(3, '0')}',
+              notebookId: notebook,
+              lineId: line,
+              wordText: text,
+              wordTextLower: text.toLowerCase(),
+              bboxJson: jsonEncode(bbox),
+              strokeIdsJson: jsonEncode(const <String>['s1']),
+              model: 'trocr-test',
+              indexedAt: 1000,
+            ),
+          );
+    }
+
+    testWidgets('the search icon is absent while the toggle is off',
+        (tester) async {
+      await mountList(
+        tester,
+        seed: <Notebook>[testNotebook(id: 'nb-1', title: 'Sprint ideas')],
+        searchEnabled: false,
+      );
+
+      expect(
+        find.byKey(const ValueKey<String>('notebook-list-search')),
+        findsNothing,
+        reason: 'while handwriting search is off, no OCR UI appears anywhere',
+      );
+
+      await unmount(tester);
+    });
+
+    testWidgets(
+        'searching filters rows to matching notebooks with count and snippet',
+        (tester) async {
+      final LocalDb searchDb = LocalDb.forTesting(NativeDatabase.memory());
+      addTearDown(searchDb.close);
+      // nb-hit: two 'meeting' matches on a line reading "team meeting".
+      await seedWord(
+        searchDb,
+        notebook: 'nb-hit',
+        line: 'l1',
+        slot: 0,
+        text: 'team',
+        bbox: <double>[0, 0, 40, 10],
+      );
+      await seedWord(
+        searchDb,
+        notebook: 'nb-hit',
+        line: 'l1',
+        slot: 1,
+        text: 'meeting',
+        bbox: <double>[50, 0, 100, 10],
+      );
+      await seedWord(
+        searchDb,
+        notebook: 'nb-hit',
+        line: 'l2',
+        slot: 0,
+        text: 'meetings',
+        bbox: <double>[0, 20, 60, 30],
+      );
+      await mountList(
+        tester,
+        seed: <Notebook>[
+          testNotebook(id: 'nb-hit', title: 'Work log'),
+          testNotebook(id: 'nb-miss', title: 'Groceries'),
+        ],
+        searchDb: searchDb,
+        searchEnabled: true,
+      );
+
+      await tester
+          .tap(find.byKey(const ValueKey<String>('notebook-list-search')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey<String>('notebook-list-search-field')),
+        'meeting',
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey<String>('notebook-row-nb-hit')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey<String>('notebook-row-nb-miss')),
+        findsNothing,
+        reason: 'rows are FILTERED to matching notebooks',
+      );
+      expect(
+        find.textContaining('2 match'),
+        findsOneWidget,
+        reason: 'the row shows how many hits the notebook holds',
+      );
+      expect(
+        find.textContaining('team meeting'),
+        findsOneWidget,
+        reason: "the row shows the first matched line's snippet",
+      );
+
+      await unmount(tester);
+    });
+
+    testWidgets('tapping a search result opens the editor with the query',
+        (tester) async {
+      final LocalDb searchDb = LocalDb.forTesting(NativeDatabase.memory());
+      addTearDown(searchDb.close);
+      await seedWord(
+        searchDb,
+        notebook: 'nb-hit',
+        line: 'l1',
+        text: 'meeting',
+        bbox: <double>[0, 0, 40, 10],
+      );
+      await mountList(
+        tester,
+        seed: <Notebook>[testNotebook(id: 'nb-hit', title: 'Work log')],
+        searchDb: searchDb,
+        searchEnabled: true,
+      );
+
+      await tester
+          .tap(find.byKey(const ValueKey<String>('notebook-list-search')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey<String>('notebook-list-search-field')),
+        'meeting',
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey<String>('notebook-row-nb-hit')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      final NotebookEditorScreen editor = tester.widget(
+        find.byType(NotebookEditorScreen),
+      );
+      expect(editor.notebookId, 'nb-hit');
+      expect(
+        editor.initialFindQuery,
+        'meeting',
+        reason: 'the tap deep-links the query so the editor opens at the '
+            'top ctrl+f result',
+      );
+
+      await unmount(tester);
+    });
+
+    testWidgets('tapping a search result COVER opens the editor with the query',
+        (tester) async {
+      // Fix round 1, finding 1: the tile path above left the grid-cover tap
+      // unproven — a mutation dropping the cover's findQuery survived the
+      // whole suite. Same contract, covers view.
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      final LocalDb searchDb = LocalDb.forTesting(NativeDatabase.memory());
+      addTearDown(searchDb.close);
+      await seedWord(
+        searchDb,
+        notebook: 'nb-hit',
+        line: 'l1',
+        text: 'meeting',
+        bbox: <double>[0, 0, 40, 10],
+      );
+      await mountList(
+        tester,
+        seed: <Notebook>[testNotebook(id: 'nb-hit', title: 'Work log')],
+        searchDb: searchDb,
+        searchEnabled: true,
+      );
+
+      await tester.tap(find.byKey(const ValueKey('notebook-view-toggle')));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey<String>('notebook-cover-nb-hit')),
+        findsOneWidget,
+      );
+
+      await tester
+          .tap(find.byKey(const ValueKey<String>('notebook-list-search')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey<String>('notebook-list-search-field')),
+        'meeting',
+      );
+      await tester.pumpAndSettle();
+      await tester
+          .tap(find.byKey(const ValueKey<String>('notebook-cover-nb-hit')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      final NotebookEditorScreen editor = tester.widget(
+        find.byType(NotebookEditorScreen),
+      );
+      expect(editor.notebookId, 'nb-hit');
+      expect(
+        editor.initialFindQuery,
+        'meeting',
+        reason: 'a cover tap must deep-link the query exactly like a row '
+            'tap — switching views must not cost the searcher the carry',
+      );
+
+      await unmount(tester);
+    });
+
+    testWidgets('covers show the match count and snippet while searching',
+        (tester) async {
+      // Fix round 1, finding 2: the match info landed only on the list
+      // tile; covers silently kept their resting timestamp. Both views
+      // must answer the searcher's question.
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      final LocalDb searchDb = LocalDb.forTesting(NativeDatabase.memory());
+      addTearDown(searchDb.close);
+      await seedWord(
+        searchDb,
+        notebook: 'nb-hit',
+        line: 'l1',
+        slot: 0,
+        text: 'team',
+        bbox: <double>[0, 0, 40, 10],
+      );
+      await seedWord(
+        searchDb,
+        notebook: 'nb-hit',
+        line: 'l1',
+        slot: 1,
+        text: 'meeting',
+        bbox: <double>[50, 0, 100, 10],
+      );
+      await seedWord(
+        searchDb,
+        notebook: 'nb-hit',
+        line: 'l2',
+        slot: 0,
+        text: 'meetings',
+        bbox: <double>[0, 20, 60, 30],
+      );
+      await mountList(
+        tester,
+        seed: <Notebook>[
+          testNotebook(id: 'nb-hit', title: 'Work log'),
+          testNotebook(id: 'nb-miss', title: 'Groceries'),
+        ],
+        searchDb: searchDb,
+        searchEnabled: true,
+      );
+
+      await tester.tap(find.byKey(const ValueKey('notebook-view-toggle')));
+      await tester.pumpAndSettle();
+
+      await tester
+          .tap(find.byKey(const ValueKey<String>('notebook-list-search')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey<String>('notebook-list-search-field')),
+        'meeting',
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey<String>('notebook-cover-nb-hit')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey<String>('notebook-cover-nb-miss')),
+        findsNothing,
+        reason: 'covers are FILTERED to matching notebooks, like rows',
+      );
+      expect(
+        find.textContaining('2 match'),
+        findsOneWidget,
+        reason: 'the cover shows how many hits the notebook holds',
+      );
+      expect(
+        find.textContaining('team meeting'),
+        findsOneWidget,
+        reason: "the cover shows the first matched line's snippet",
+      );
+
+      await unmount(tester);
+    });
+
+    testWidgets('a live search hides selected rows without deselecting them',
+        (tester) async {
+      // Fix round 1, finding 3: typing a search used to prune _selectedIds
+      // to the FILTERED rows, so a selection made before searching was
+      // silently destroyed and closing the search did not bring it back.
+      // The pinned behavior: filtering hides rows, it never deselects them.
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      final LocalDb searchDb = LocalDb.forTesting(NativeDatabase.memory());
+      addTearDown(searchDb.close);
+      await seedWord(
+        searchDb,
+        notebook: 'nb-hit',
+        line: 'l1',
+        text: 'meeting',
+        bbox: <double>[0, 0, 40, 10],
+      );
+      await mountList(
+        tester,
+        seed: <Notebook>[
+          testNotebook(id: 'nb-hit', title: 'Work log'),
+          testNotebook(id: 'nb-miss', title: 'Groceries'),
+        ],
+        searchDb: searchDb,
+        searchEnabled: true,
+      );
+
+      // Select the notebook that the upcoming search will NOT match.
+      await tester
+          .longPress(find.byKey(const ValueKey('notebook-row-nb-miss')));
+      await tester.pumpAndSettle();
+      expect(find.text('1 selected'), findsOneWidget);
+
+      await tester
+          .tap(find.byKey(const ValueKey<String>('notebook-list-search')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey<String>('notebook-list-search-field')),
+        'meeting',
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey<String>('notebook-row-nb-miss')),
+        findsNothing,
+        reason: 'the non-matching row is hidden by the filter',
+      );
+      expect(
+        find.text('1 selected'),
+        findsOneWidget,
+        reason: 'hiding a selected row must not deselect it — the count '
+            'still answers for the hidden notebook',
+      );
+
+      // Closing the search restores the row exactly as the user left it.
+      await tester
+          .tap(find.byKey(const ValueKey<String>('notebook-list-search')));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey<String>('notebook-row-nb-miss')),
+        findsOneWidget,
+      );
+      expect(find.text('1 selected'), findsOneWidget);
+      expect(
+        tester
+            .widget<ListTile>(
+              find.byKey(const ValueKey<String>('notebook-row-nb-miss')),
+            )
+            .selected,
+        isTrue,
+        reason: 'the selection survives the search round-trip intact',
+      );
+
+      await unmount(tester);
+    });
   });
 }

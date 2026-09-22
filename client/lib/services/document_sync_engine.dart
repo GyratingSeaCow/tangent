@@ -74,6 +74,7 @@ class DocumentSyncEngine extends ChangeNotifier {
   /// the old one.
   final TranscriptionClient Function() _client;
   final ConnectivityService _connectivity;
+
   /// Resolved asynchronously on first registration: the real Android model
   /// comes from a platform channel, which cannot be read synchronously while
   /// building a provider.
@@ -199,6 +200,10 @@ class DocumentSyncEngine extends ChangeNotifier {
 
   /// Applies one incoming change. Returns true when it forked a conflict.
   Future<bool> _applyRemote(RemoteChange change) async {
+    if (change.entityType == 'ink_index') {
+      await _applyRemoteInkIndex(change);
+      return false;
+    }
     if (change.entityType == 'dump') {
       await _applyRemoteDump(change);
       return false;
@@ -312,6 +317,53 @@ class DocumentSyncEngine extends ChangeNotifier {
     return DateTime.fromMillisecondsSinceEpoch(seconds * 1000, isUtc: true);
   }
 
+  /// Applies one incoming ink_index change: the search mirror for one
+  /// notebook's handwriting.
+  ///
+  /// The payload is built by the server AT PULL TIME and carries the
+  /// notebook's ENTIRE current index, so applying it is a REPLACE-SET: drop
+  /// everything stored for that notebook, insert what arrived. There is no
+  /// merge decision — the server is the only writer (OCR runs there), so
+  /// nothing local can ever be at risk. The notebook document itself may not
+  /// have arrived yet; the rows are stored regardless, because rejecting them
+  /// would wedge the pull loop on this page forever.
+  Future<void> _applyRemoteInkIndex(RemoteChange change) async {
+    if (change.op == SyncOp.delete) {
+      await _db.applyRemoteInkIndexDeletion(change.entityId);
+      return;
+    }
+    final Map<String, dynamic> payload = change.payload ?? const {};
+    final List<dynamic> raw =
+        payload['rows'] as List<dynamic>? ?? const <dynamic>[];
+    final List<InkIndexEntriesCompanion> rows = <InkIndexEntriesCompanion>[];
+    for (final dynamic entry in raw) {
+      if (entry is! Map<String, dynamic>) continue;
+      final Object? id = entry['id'];
+      final Object? lineId = entry['line_id'];
+      final Object? wordText = entry['word_text'];
+      // A malformed row is skipped, not fatal: one bad word must not cost
+      // the notebook its whole index or wedge the pull loop.
+      if (id is! String || lineId is! String || wordText is! String) continue;
+      rows.add(
+        InkIndexEntriesCompanion.insert(
+          id: id,
+          notebookId: change.entityId,
+          lineId: lineId,
+          wordText: wordText,
+          wordTextLower: wordText.toLowerCase(),
+          bboxJson: jsonEncode(entry['bbox'] ?? const <num>[0, 0, 0, 0]),
+          strokeIdsJson: jsonEncode(entry['stroke_ids'] ?? const <String>[]),
+          model: entry['model'] as String? ?? '',
+          indexedAt: (entry['indexed_at'] as num?)?.toInt() ?? 0,
+        ),
+      );
+    }
+    await _db.applyRemoteInkIndex(
+      notebookId: change.entityId,
+      rows: rows,
+    );
+  }
+
   Future<void> _writeRemote(
     String id,
     Map<String, dynamic> payload,
@@ -334,9 +386,8 @@ class DocumentSyncEngine extends ChangeNotifier {
       // Absent means the peer is an older build that does not know about
       // ruling. Passing null through would erase a ruling this device already
       // has, so a missing value leaves the local one alone.
-      ruling: payload.containsKey('ruling')
-          ? payload['ruling'] as String?
-          : null,
+      ruling:
+          payload.containsKey('ruling') ? payload['ruling'] as String? : null,
       // Same pattern, sharper edge: folder_id null means UNFILED while
       // absence means "older peer, keep the local filing" — collapsing the
       // two would either strand filings or erase them.

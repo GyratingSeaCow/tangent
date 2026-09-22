@@ -45,8 +45,8 @@ void main() {
 
     await db.listDumps();
 
-    expect(db.schemaVersion, 14);
-    expect(sql.userVersion, 14);
+    expect(db.schemaVersion, 15);
+    expect(sql.userVersion, 15);
     expect(_columnNames(sql, 'notebooks'), _notebookColumns);
     expect(
       sql.select('PRAGMA foreign_key_list(notebooks)'),
@@ -72,7 +72,7 @@ void main() {
 
     await db.listDumps();
 
-    expect(sql.userVersion, 14);
+    expect(sql.userVersion, 15);
     expect(_columnNames(sql, 'notebooks'), _notebookColumns);
     // v8 adds folder_id to dumps, so compare the columns the fixture had:
     // this test is about existing rows surviving, not about the column list.
@@ -126,7 +126,7 @@ void main() {
 
     sql = sqlite3.open(file.path);
     addTearDown(sql.dispose);
-    expect(sql.userVersion, 14);
+    expect(sql.userVersion, 15);
     expect(_columnNames(sql, 'notebooks'), _notebookColumns);
     // v8 adds folder_id to dumps, so compare the columns the fixture had:
     // this test is about existing rows surviving, not about the column list.
@@ -182,7 +182,7 @@ void main() {
     addTearDown(db.close);
     await db.listDumps();
 
-    expect(sql.userVersion, 14);
+    expect(sql.userVersion, 15);
     final rows = <String, int>{
       for (final r in sql.select('SELECT id, sync_dirty FROM notebooks'))
         r['id'] as String: r['sync_dirty'] as int,
@@ -198,5 +198,54 @@ void main() {
       0,
       reason: 'pushing a trashed body would resurrect it on the peer',
     );
+  });
+
+  test('the v15 step creates ink_index_entries on the upgrade path', () async {
+    // Build a current-schema database, then drop the table and wind the
+    // version back to 14: exactly what a device that last ran a v14 build
+    // looks like on disk. The guarded createTable must build the mirror.
+    final sql = sqlite3.openInMemory();
+    final seed = LocalDb.forTesting(
+      NativeDatabase.opened(sql, closeUnderlyingOnClose: false),
+    );
+    await seed.listDumps();
+    await seed.close();
+    sql.execute('DROP TABLE ink_index_entries');
+    sql.userVersion = 14;
+
+    final db = LocalDb.forTesting(NativeDatabase.opened(sql));
+    addTearDown(db.close);
+    await db.listDumps();
+
+    expect(sql.userVersion, 15);
+    expect(
+      sql.select(
+        "SELECT name FROM sqlite_master WHERE type='table' "
+        "AND name='ink_index_entries'",
+      ),
+      isNotEmpty,
+      reason: 'a v14 device must gain the handwriting-search mirror — '
+          'without the table every ink_index sync pull throws',
+    );
+
+    // Prove Drift and SQLite agree on the shape: a full round-trip through
+    // the generated table, not just a name in sqlite_master.
+    await db.into(db.inkIndexEntries).insert(
+          InkIndexEntriesCompanion.insert(
+            id: 'line-1:000',
+            notebookId: 'nb-1',
+            lineId: 'line-1',
+            wordText: 'Brake',
+            wordTextLower: 'brake',
+            bboxJson: '[0,0,10,10]',
+            strokeIdsJson: '["s1"]',
+            model: 'trocr-test',
+            indexedAt: 1000,
+          ),
+        );
+    final InkIndexEntry row = await (db.select(db.inkIndexEntries)
+          ..where((t) => t.id.equals('line-1:000')))
+        .getSingle();
+    expect(row.wordTextLower, 'brake');
   });
 }

@@ -25,6 +25,7 @@ class SettingsStore {
   static const _inputDeviceIdKey = 'preferred_input_device_id';
   static const _inputDeviceLabelKey = 'preferred_input_device_label';
   static const _micGainKey = 'microphone_gain';
+  static const _handwritingSearchKey = 'handwriting_search_enabled';
 
   final SharedPreferences? _preferences;
 
@@ -65,6 +66,13 @@ class SettingsStore {
   /// only by a user who actually asked for more sensitivity.
   double micGain;
 
+  /// Server-side handwriting search (OCR of ink into a searchable index).
+  ///
+  /// OFF by default: turning it on installs a multi-gigabyte ML environment
+  /// on the user's server, so it only ever happens through the Settings
+  /// wizard's explicit confirm. While off, no OCR UI appears anywhere.
+  bool handwritingSearchEnabled;
+
   SettingsStore({
     this.wifiOnlySync = true,
     this.autoSync = true,
@@ -74,6 +82,7 @@ class SettingsStore {
     this.preferredInputDeviceId,
     this.preferredInputDeviceLabel,
     this.micGain = defaultMicGain,
+    this.handwritingSearchEnabled = false,
     SharedPreferences? preferences,
   }) : _preferences = preferences;
 
@@ -97,6 +106,8 @@ class SettingsStore {
       // hand or carried back from a future build, and a nonsense multiplier
       // would wreck every recording made afterwards.
       micGain: clampMicGain(preferences.getDouble(_micGainKey)),
+      handwritingSearchEnabled:
+          preferences.getBool(_handwritingSearchKey) ?? false,
     );
   }
 
@@ -129,6 +140,11 @@ class SettingsStore {
   Future<void> setKeepRecordingsOnDeviceOnly(bool value) async {
     keepRecordingsOnDeviceOnly = value;
     await _preferences?.setBool(_deviceOnlyKey, value);
+  }
+
+  Future<void> setHandwritingSearchEnabled(bool value) async {
+    handwritingSearchEnabled = value;
+    await _preferences?.setBool(_handwritingSearchKey, value);
   }
 
   /// Records the user's explicit microphone choice. Passing a null [id] clears
