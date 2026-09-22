@@ -485,6 +485,41 @@ void main() {
       expect((await rowsFor('nb-unknown')).single.wordText, 'early');
     });
 
+    test('mixed-case words get a locally derived lowercase search key',
+        () async {
+      // The wire payload carries word_text ONLY — the server never sends
+      // word_text_lower; the client derives it at apply time. Every other
+      // fixture word in this group is already lowercase, so only a
+      // mixed-case word can prove the derivation actually happens.
+      client.pullPages = <SyncPullPage>[
+        SyncPullPage(
+          changes: <RemoteChange>[
+            inkIndexChange(
+              notebookId: 'nb-case',
+              rows: <Map<String, dynamic>>[
+                wordRow(id: 'line-1:000', lineId: 'line-1', text: 'Brake'),
+              ],
+              seq: 50,
+            ),
+          ],
+          headSeq: 50,
+          hasMore: false,
+        ),
+      ];
+      final DocumentSyncEngine engine = build(label: () async => 'test');
+      await engine.syncNow();
+
+      final InkIndexEntry row = (await rowsFor('nb-case')).single;
+      expect(row.wordText, 'Brake', reason: 'display casing must survive');
+      expect(
+        row.wordTextLower,
+        'brake',
+        reason: 'the search key is derived client-side, not taken off the '
+            'wire — a case-sensitive column would hide every capitalized '
+            'word from search',
+      );
+    });
+
     test('an ink_index delete drops the notebook\'s rows', () async {
       client.pullPages = <SyncPullPage>[
         SyncPullPage(
