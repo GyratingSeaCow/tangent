@@ -2311,6 +2311,103 @@ void main() {
       await unmount(tester);
     });
 
+    testWidgets('ink beyond the typed column is not clipped on a narrow screen',
+        (tester) async {
+      // Jeff's Fold, exactly: the 475dp COVER screen clipped the right-hand
+      // end of every line ("entry int…", "of softw…") while the 932dp inner
+      // screen was fine. Cause: the scale denominator was the TYPED COLUMN
+      // width (720), but handwriting uses the full page area — this Journal
+      // page's ink reaches x=808, so everything past 720 fell off the edge.
+      //
+      // The page must scale against its real content, so the rightmost ink
+      // lands inside the viewport.
+      const double inkRight = 808;
+      tester.view.physicalSize = const Size(475, 751);
+      tester.view.devicePixelRatio = 1.0;
+      await mountEditor(
+        tester,
+        notebook: testNotebook(
+          id: 'nb-1',
+          title: 'Journal',
+          strokes: <InkStroke>[
+            const InkStroke(
+              id: 's1',
+              width: 3,
+              points: <InkPoint>[
+                InkPoint(x: 48, y: 100),
+                InkPoint(x: inkRight, y: 100),
+              ],
+            ),
+          ],
+        ),
+        setViewSize: false,
+      );
+
+      // Measure what the widget ACTUALLY laid out, never a scale recomputed
+      // here: the canvas sits inside the FittedBox, so its own size IS the
+      // canonical page width the editor chose. Asserting on a locally
+      // derived scale proves nothing (an earlier version of this test stayed
+      // green against the unfixed code).
+      final double canonicalWidth =
+          tester.getSize(find.byType(NotebookInkCanvas)).width;
+      expect(
+        canonicalWidth,
+        greaterThanOrEqualTo(inkRight),
+        reason: 'the canonical page must be wide enough to hold ink at '
+            'x=$inkRight; a 720-wide page clips it off the right edge',
+      );
+
+      final Rect surface = tester.getRect(
+        find.byKey(const ValueKey('notebook-canvas-surface')),
+      );
+      expect(
+        surface.width,
+        moreOrLessEquals(475, epsilon: 1),
+        reason: 'the surface still fills the viewport width',
+      );
+      await unmount(tester);
+    });
+
+    testWidgets('a page inside the typed column keeps the column scale',
+        (tester) async {
+      // The guard: widening the denominator must not shrink ordinary pages.
+      // Ink well inside the column leaves the 720 basis untouched, so a
+      // block at x=600 still renders at 300 on a 360-wide screen.
+      tester.view.physicalSize = const Size(360, 780);
+      tester.view.devicePixelRatio = 1.0;
+      await mountEditor(
+        tester,
+        notebook: testNotebook(
+          id: 'nb-1',
+          title: 'Narrow ink',
+          blocks: <NotebookBlock>[
+            const NotebookTextBlock(id: 'b1', text: 'far right', x: 600, y: 100),
+          ],
+          strokes: <InkStroke>[
+            const InkStroke(
+              id: 's1',
+              width: 3,
+              points: <InkPoint>[
+                InkPoint(x: 10, y: 10),
+                InkPoint(x: 200, y: 10),
+              ],
+            ),
+          ],
+        ),
+        setViewSize: false,
+      );
+
+      final Offset surface = tester.getTopLeft(
+        find.byKey(const ValueKey('notebook-canvas-surface')),
+      );
+      final Offset topLeft = tester.getTopLeft(
+            find.byKey(const ValueKey('notebook-block-b1')),
+          ) -
+          surface;
+      expect(topLeft.dx, moreOrLessEquals(300, epsilon: 1));
+      await unmount(tester);
+    });
+
     testWidgets('dragging a block on a narrow viewport stores canonical x/y',
         (tester) async {
       tester.view.physicalSize = const Size(360, 780);

@@ -1204,6 +1204,29 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
     return _pagePadding;
   }
 
+  /// How far right the actual content reaches, in canonical page px.
+  ///
+  /// The width analogue of [_pageHeight]. [_pageColumnWidth] is the TYPED
+  /// COLUMN's width — handwriting and cards deliberately use the full area,
+  /// so a page authored on a wide screen routinely holds ink beyond it.
+  /// Scaling a narrow viewport against the column width alone therefore
+  /// clipped every stroke past x=720: on the Fold's 475dp cover screen a
+  /// Journal page whose ink reached x=808 lost the right-hand end of every
+  /// line ("entry int…", "of softw…"), while the 932dp inner screen was fine.
+  ///
+  /// Returns 0 for an empty page so the scale maths falls back to the column
+  /// width unchanged.
+  double _contentRightEdge() {
+    double rightmost = 0;
+    for (final InkStroke stroke in _strokes) {
+      for (final InkPoint point in stroke.points) {
+        rightmost = math.max(rightmost, point.x);
+      }
+    }
+    if (rightmost == 0) return 0;
+    return rightmost + _pagePadding;
+  }
+
   /// Height of the page: always a screen beyond the lowest thing on it, so
   /// there is fresh page to write on however far down you scroll.
   double _pageHeight(double viewportHeight) {
@@ -1675,8 +1698,15 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
         // tablet arrives on a phone proportionally smaller instead of hanging
         // off the right edge ("saved a bit of a notebook on the tab s10 ...
         // way off to the side on my phone"). Wider viewports keep scale 1.
-        final double scale =
-            math.min(1.0, constraints.maxWidth / _pageColumnWidth);
+        //
+        // The denominator is the widest of the typed column and the page's
+        // ACTUAL content: handwriting and cards use the full area, not just
+        // the column, so a page whose ink reaches x=808 must scale against
+        // 808 (+padding) or everything past the column is clipped away. That
+        // was the Fold's cover screen losing the right end of every line.
+        final double canon =
+            math.max(_pageColumnWidth, _contentRightEdge());
+        final double scale = math.min(1.0, constraints.maxWidth / canon);
         // Captured for scroll-to-match: a match bbox is canonical, the
         // scroll offset is in viewport px. Plain assignment — layout is not
         // a place to setState, and nothing rebuilds off this value.
