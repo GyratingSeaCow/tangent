@@ -57,6 +57,13 @@ android {
             signingConfig = keystorePropertiesFile.exists()
                     ? signingConfigs.release
                     : signingConfigs.debug
+            // Flutter release builds shrink with R8 by default; without these
+            // rules it strips the gson generic signatures that
+            // flutter_local_notifications needs, and the app dies at plugin
+            // init with "TypeToken must be created with a type argument"
+            // (release-only — debug never shrinks). Rules documented by the
+            // plugin, pinned in proguard-rules.pro.
+            proguardFiles(getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro')
         }
     }
 }

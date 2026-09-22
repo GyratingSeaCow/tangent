@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Resource-shrinker keeps for the release build.
+
+     The notification icons are referenced only from DART strings
+     ('@drawable/ic_notification', '@mipmap/ic_launcher' in
+     android_transcription_notification_port.dart), which the resource
+     shrinker cannot see — without this file it may discard them and Android
+     then drops the notification silently when the post references a missing
+     resource. Documented in the flutter_local_notifications README
+     ("Release build configuration"). -->
+<resources xmlns:tools="http://schemas.android.com/tools"
+    tools:keep="@drawable/ic_notification,@mipmap/ic_launcher" />

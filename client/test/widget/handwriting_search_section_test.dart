@@ -6,6 +6,7 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show PlatformException;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tangent/data/settings_store.dart';
@@ -82,6 +83,29 @@ class _RecordingPort implements TranscriptionNotificationPort {
   }
 }
 
+/// The notification plugin, broken exactly as the release build broke it:
+/// R8 stripped the gson generic signatures and every call into the plugin
+/// threw a PlatformException. Init must survive it.
+class _ThrowingPort implements TranscriptionNotificationPort {
+  int showAttempts = 0;
+
+  @override
+  Future<void> show(TranscriptionNotice notice) async {
+    showAttempts += 1;
+    throw PlatformException(
+      code: 'error',
+      message: 'TypeToken must be created with a type argument: '
+          'new TypeToken<...>() {}; When using code shrinkers (ProGuard, R8, '
+          '...) make sure that generic signatures are preserved.',
+    );
+  }
+
+  @override
+  Future<void> cancel() async {
+    throw PlatformException(code: 'error', message: 'TypeToken');
+  }
+}
+
 class _Harness {
   _Harness({
     required this.container,
@@ -92,8 +116,11 @@ class _Harness {
 
   final ProviderContainer container;
   final _FakeOcrClient client;
-  final _RecordingPort port;
+  final TranscriptionNotificationPort port;
   final SettingsStore store;
+
+  /// The recording double, for the tests that assert on what was shown.
+  _RecordingPort get recorded => port as _RecordingPort;
 }
 
 Future<_Harness> _mount(
@@ -103,6 +130,7 @@ Future<_Harness> _mount(
   bool enabled = false,
   bool installRunning = false,
   List<OcrInstallProgress>? script,
+  TranscriptionNotificationPort? port,
 }) async {
   final SettingsStore store =
       SettingsStore(handwritingSearchEnabled: enabled);
@@ -118,14 +146,15 @@ Future<_Harness> _mount(
   // Rehydration polls during init, so a scripted progress sequence must be
   // in place BEFORE the first pump.
   if (script != null) client.script = script;
-  final _RecordingPort port = _RecordingPort();
+  final TranscriptionNotificationPort notificationPort =
+      port ?? _RecordingPort();
   final ProviderContainer container = ProviderContainer(
     overrides: <Override>[
       settingsStoreProvider.overrideWithValue(store),
       ocrSettingsClientProvider.overrideWith(
         (ref) => Future<OcrSettingsClient>.value(client),
       ),
-      ocrInstallNotificationPortProvider.overrideWithValue(port),
+      ocrInstallNotificationPortProvider.overrideWithValue(notificationPort),
     ],
   );
   addTearDown(container.dispose);
@@ -143,7 +172,7 @@ Future<_Harness> _mount(
   return _Harness(
     container: container,
     client: client,
-    port: port,
+    port: notificationPort,
     store: store,
   );
 }
@@ -239,14 +268,14 @@ void main() {
     // First poll fires immediately on confirm.
     expect(find.textContaining('40%'), findsOneWidget);
     expect(find.text('Downloading PyTorch (CUDA)'), findsOneWidget);
-    expect(h.port.shown, isNotEmpty);
-    expect(h.port.shown.last.body, contains('40%'));
+    expect(h.recorded.shown, isNotEmpty);
+    expect(h.recorded.shown.last.body, contains('40%'));
 
     // 2 s cadence: the next poll advances the bar and the notification.
     await tester.pump(const Duration(seconds: 2));
     await tester.pump();
     expect(find.textContaining('80%'), findsOneWidget);
-    expect(h.port.shown.last.body, contains('80%'));
+    expect(h.recorded.shown.last.body, contains('80%'));
 
     // Terminal phase: completion notification, toggle rests ON, persisted.
     await tester.pump(const Duration(seconds: 2));
@@ -254,7 +283,7 @@ void main() {
     expect(_toggleValue(tester), isTrue);
     expect(h.container.read(handwritingSearchEnabledProvider), isTrue);
     expect(h.store.handwritingSearchEnabled, isTrue);
-    expect(h.port.shown.last.title, 'Handwriting search ready');
+    expect(h.recorded.shown.last.title, 'Handwriting search ready');
     expect(find.textContaining('80%'), findsNothing);
   });
 
@@ -280,7 +309,7 @@ void main() {
     // A failed install must not leave the feature half-on.
     expect(_toggleValue(tester), isFalse);
     expect(h.container.read(handwritingSearchEnabledProvider), isFalse);
-    expect(h.port.shown.last.title, contains('failed'));
+    expect(h.recorded.shown.last.title, contains('failed'));
     expect(h.client.installCalls, hasLength(1));
 
     // Retry goes straight back to POST install — the user already confirmed.
@@ -386,13 +415,13 @@ void main() {
     expect(find.textContaining('55%'), findsOneWidget);
     expect(h.client.installCalls, isEmpty);
     expect(tester.widget<SwitchListTile>(_toggle).onChanged, isNull);
-    expect(h.port.shown.last.body, contains('55%'));
+    expect(h.recorded.shown.last.body, contains('55%'));
 
     // Polling resumed at the 2 s cadence.
     await tester.pump(const Duration(seconds: 2));
     await tester.pump();
     expect(find.textContaining('85%'), findsOneWidget);
-    expect(h.port.shown.last.body, contains('85%'));
+    expect(h.recorded.shown.last.body, contains('85%'));
 
     // Completion behaves exactly as if the user had never left.
     await tester.pump(const Duration(seconds: 2));
@@ -400,7 +429,7 @@ void main() {
     expect(_toggleValue(tester), isTrue);
     expect(h.container.read(handwritingSearchEnabledProvider), isTrue);
     expect(h.store.handwritingSearchEnabled, isTrue);
-    expect(h.port.shown.last.title, 'Handwriting search ready');
+    expect(h.recorded.shown.last.title, 'Handwriting search ready');
     expect(h.client.installCalls, isEmpty);
   });
 
@@ -445,7 +474,7 @@ void main() {
     await tester.pump(const Duration(seconds: 2));
     await tester.pump();
     expect(_toggleValue(tester), isTrue);
-    expect(h.port.shown.last.title, 'Handwriting search ready');
+    expect(h.recorded.shown.last.title, 'Handwriting search ready');
   });
 
   testWidgets('the progress poll timer dies with the widget', (tester) async {
@@ -470,5 +499,52 @@ void main() {
     await tester.pump(const Duration(seconds: 8));
 
     expect(h.client.progressCalls, callsWhileMounted);
+  });
+
+  testWidgets(
+      'a notification plugin that throws at init does not stop the section '
+      'from rehydrating and polling', (tester) async {
+    // THE FOURTH E2E DEFECT, at this layer. The release APK shipped without
+    // the R8 keep rules flutter_local_notifications needs; the plugin threw
+    // "TypeToken must be created with a type argument" and the throw
+    // travelled up the init path — rehydration died on its first notify and
+    // the poll that should have followed never started, which downstream
+    // read to the user as "can't connect to the server". A notification is a
+    // convenience; it may never take the surrounding init down with it.
+    final _ThrowingPort broken = _ThrowingPort();
+    final _Harness h = await _mount(
+      tester,
+      gpuVisible: true,
+      installRunning: true,
+      port: broken,
+      script: <OcrInstallProgress>[
+        const OcrInstallProgress(
+          phase: 'torch',
+          percent: 55,
+          detail: 'Downloading PyTorch (CUDA)',
+        ),
+        const OcrInstallProgress(
+          phase: 'done',
+          percent: 100,
+          detail: 'Install complete',
+        ),
+      ],
+    );
+    await tester.pump();
+
+    // It TRIED to notify, and failed — that is the staged defect.
+    expect(broken.showAttempts, greaterThanOrEqualTo(1));
+    // And init carried on regardless: rehydrated UI, live poll.
+    expect(find.textContaining('55%'), findsOneWidget);
+    expect(h.client.progressCalls, greaterThanOrEqualTo(1));
+    expect(h.client.installCalls, isEmpty);
+
+    // The 2 s poll survived too, and the install still completes and lands
+    // the toggle ON — nothing downstream of the notification was lost.
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pump();
+    expect(_toggleValue(tester), isTrue);
+    expect(h.container.read(handwritingSearchEnabledProvider), isTrue);
+    expect(h.store.handwritingSearchEnabled, isTrue);
   });
 }

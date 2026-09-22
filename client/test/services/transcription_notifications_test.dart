@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import 'dart:async';
 
+import 'package:flutter/services.dart' show PlatformException;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tangent/services/transcription_notifications.dart';
 
@@ -44,6 +45,33 @@ class _BlockingPort implements TranscriptionNotificationPort {
   Future<void> cancel() async {
     if (_gates.isNotEmpty) await _gates.removeAt(0).future;
     calls.add('cancel');
+  }
+}
+
+/// A port that fails the way the release build did: every platform call
+/// throws. The notification plugin's init threw a PlatformException when R8
+/// stripped the gson generic signatures it needs, and that throw travelled up
+/// the app's init path and stopped sync from ever starting.
+class _ThrowingPort implements TranscriptionNotificationPort {
+  int showAttempts = 0;
+  int cancelAttempts = 0;
+
+  @override
+  Future<void> show(TranscriptionNotice notice) async {
+    showAttempts += 1;
+    throw PlatformException(
+      code: 'error',
+      message: 'TypeToken must be created with a type argument',
+    );
+  }
+
+  @override
+  Future<void> cancel() async {
+    cancelAttempts += 1;
+    throw PlatformException(
+      code: 'error',
+      message: 'TypeToken must be created with a type argument',
+    );
   }
 }
 
@@ -322,6 +350,86 @@ void main() {
       await notifier.sync(hasActive: true, queuedCount: 0);
 
       expect(port.shown, isEmpty);
+    });
+  });
+
+  group('a broken notification plugin never takes the app down', () {
+    // THE FOURTH E2E DEFECT. The release APK shipped without the R8 keep
+    // rules flutter_local_notifications needs, so the plugin threw
+    // "TypeToken must be created with a type argument" at init. That throw
+    // travelled up the Dart init path, the startup sequence never reached
+    // auto-sync, and the user read it as "can't connect to the server".
+    // Keep rules fix the cause; these pin the containment.
+
+    test('a throwing port does not fail the caller that syncs it', () async {
+      final _ThrowingPort port = _ThrowingPort();
+      final TranscriptionNotifier notifier = TranscriptionNotifier(port: port);
+
+      await expectLater(
+        notifier.sync(hasActive: true, queuedCount: 0),
+        completes,
+        reason: 'startup awaits this; a throw here stops everything after it',
+      );
+      expect(port.showAttempts, 1, reason: 'it must still have TRIED');
+    });
+
+    test('startup reconcile survives a plugin that cannot even cancel',
+        () async {
+      // reconcileStaleNotification() is the FIRST platform call the app
+      // makes, on the startup path, before sync is wired up.
+      final _ThrowingPort port = _ThrowingPort();
+      final TranscriptionNotifier notifier = TranscriptionNotifier(port: port);
+
+      await expectLater(notifier.reconcileStaleNotification(), completes);
+      expect(port.cancelAttempts, 1);
+    });
+
+    test('one failed call does not poison every later notification', () async {
+      // The platform calls are chained through a single pending future. An
+      // error left in that chain propagates to every `.then` after it, so a
+      // transient failure would silently kill the shade for the session —
+      // and each later sync would hand its caller a failed future too.
+      final _ThrowingPort port = _ThrowingPort();
+      final TranscriptionNotifier notifier = TranscriptionNotifier(port: port);
+
+      await notifier.sync(hasActive: true, queuedCount: 0);
+      await expectLater(
+        notifier.sync(hasActive: true, queuedCount: 2),
+        completes,
+      );
+      await expectLater(
+        notifier.sync(hasActive: false, queuedCount: 0),
+        completes,
+      );
+
+      expect(
+        port.showAttempts,
+        2,
+        reason: 'every state must still reach the platform after a failure',
+      );
+      expect(port.cancelAttempts, 1);
+    });
+
+    test('dispose survives a throwing port', () async {
+      final _ThrowingPort port = _ThrowingPort();
+      final TranscriptionNotifier notifier = TranscriptionNotifier(port: port);
+
+      await notifier.sync(hasActive: true, queuedCount: 0);
+      await expectLater(notifier.dispose(), completes);
+    });
+
+    test('the null port is a silent, successful stand-in', () async {
+      // What the providers fall back to when the plugin cannot even be
+      // CONSTRUCTED. It must satisfy the notifier without doing anything.
+      const TranscriptionNotificationPort port =
+          NullTranscriptionNotificationPort();
+      final TranscriptionNotifier notifier = TranscriptionNotifier(port: port);
+
+      await expectLater(
+        notifier.sync(hasActive: true, queuedCount: 1),
+        completes,
+      );
+      await expectLater(notifier.dispose(), completes);
     });
   });
 }

@@ -69,6 +69,25 @@ abstract interface class TranscriptionNotificationPort {
   Future<void> cancel();
 }
 
+/// A port that delivers nothing, successfully.
+///
+/// The fallback when the real platform port cannot even be CONSTRUCTED. A
+/// release build once shipped without the R8 keep rules the notification
+/// plugin needs, and the resulting failure travelled up the startup path and
+/// stopped auto-sync from ever starting — the user saw "can't connect to the
+/// server". Notifications are a convenience; degrading to silence is always
+/// better than taking the app's core down with them.
+class NullTranscriptionNotificationPort
+    implements TranscriptionNotificationPort {
+  const NullTranscriptionNotificationPort();
+
+  @override
+  Future<void> show(TranscriptionNotice notice) async {}
+
+  @override
+  Future<void> cancel() async {}
+}
+
 /// Keeps the shade in step with the transcription queue.
 ///
 /// The service notifies on every queue and stream event, which for a single
@@ -122,12 +141,30 @@ class TranscriptionNotifier {
       if (_disposed || next != _intended) return;
       _shown = next;
       if (next == null) {
-        await _port.cancel();
+        await _deliver('cancel', _port.cancel);
       } else {
-        await _port.show(next);
+        await _deliver('show', () => _port.show(next));
       }
     });
     return _pending;
+  }
+
+  /// Runs one platform call so that it can NEVER fail the caller.
+  ///
+  /// Two things depend on this. A notification is a convenience: nothing it
+  /// does may break transcription, sync, or startup — the release build that
+  /// shipped without the notification plugin's R8 keep rules threw here and
+  /// took the startup sequence down with it. And [_pending] is a CHAIN: one
+  /// failed future in it propagates to every `.then` that follows, so a
+  /// single transient platform error would silently kill the notification
+  /// for the rest of the session.
+  Future<void> _deliver(String operation, Future<void> Function() call) async {
+    try {
+      await call();
+    } catch (error, stack) {
+      debugPrint('tangent.notifications $operation failed: $error');
+      debugPrintStack(stackTrace: stack, label: 'tangent.notifications');
+    }
   }
 
   /// Clears anything left in the shade by a previous process.
@@ -141,7 +178,7 @@ class TranscriptionNotifier {
   Future<void> reconcileStaleNotification() async {
     if (_disposed) return;
     if (_shown != null || _intended != null) return; // this process owns it
-    _pending = _pending.then((_) => _port.cancel());
+    _pending = _pending.then((_) => _deliver('cancel', _port.cancel));
     return _pending;
   }
 
@@ -154,7 +191,7 @@ class TranscriptionNotifier {
     _intended = null;
     // Queued behind any in-flight call: a cancel that overtakes a pending
     // show would be undone by it.
-    _pending = _pending.then((_) => _port.cancel());
+    _pending = _pending.then((_) => _deliver('cancel', _port.cancel));
     return _pending;
   }
 }

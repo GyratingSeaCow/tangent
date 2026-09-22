@@ -70,13 +70,22 @@ final ocrSettingsClientProvider = FutureProvider<OcrSettingsClient>(
 /// never overwrite each other in the shade. Overridden in tests.
 final ocrInstallNotificationPortProvider =
     Provider<TranscriptionNotificationPort>((ref) {
-  return AndroidTranscriptionNotificationPort(
-    notificationId: 1002,
-    channelId: 'ocr_install_progress',
-    channelName: 'Handwriting search install',
-    channelDescription:
-        'Shows while the OCR environment installs on your server.',
-  );
+  // Guarded construction: if the plugin cannot be had at all, the section
+  // still works — silently, without a shade mirror — rather than throwing
+  // out of a provider read on the init path.
+  try {
+    return AndroidTranscriptionNotificationPort(
+      notificationId: 1002,
+      channelId: 'ocr_install_progress',
+      channelName: 'Handwriting search install',
+      channelDescription:
+          'Shows while the OCR environment installs on your server.',
+    );
+  } catch (e, stack) {
+    debugPrint('tangent.ocr-install notifications unavailable: $e');
+    debugPrintStack(stackTrace: stack, label: 'tangent.ocr-install');
+    return const NullTranscriptionNotificationPort();
+  }
 });
 
 /// Jeff's wording for a GPU-visible server, verbatim.
@@ -367,11 +376,21 @@ class _HandwritingSearchSectionState
     ref.read(handwritingSearchEnabledProvider.notifier).state = value;
   }
 
+  /// Mirrors a wizard state into the shade. Never throws: a notification is
+  /// a convenience, and the install/rehydrate paths that call this must
+  /// survive a notification plugin that is broken or unavailable (the
+  /// release build once shipped without the plugin's R8 keep rules, and the
+  /// resulting throw travelled up the init path and stopped sync).
   Future<void> _notify(String title, String body) async {
     if (!mounted) return;
-    await ref
-        .read(ocrInstallNotificationPortProvider)
-        .show(TranscriptionNotice(title: title, body: body));
+    try {
+      await ref
+          .read(ocrInstallNotificationPortProvider)
+          .show(TranscriptionNotice(title: title, body: body));
+    } catch (e, stack) {
+      debugPrint('tangent.ocr-install notification failed: $e');
+      debugPrintStack(stackTrace: stack, label: 'tangent.ocr-install');
+    }
   }
 
   @override

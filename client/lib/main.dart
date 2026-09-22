@@ -329,7 +329,19 @@ class _TranscriptionLifecycleHostState
     // Subscribes the notification shade to transcription progress for the
     // whole session. Without this read the notifier is never constructed and
     // the feature silently does nothing while every test still passes.
-    ref.read(transcriptionNotificationOwnerProvider);
+    //
+    // Guarded, and deliberately placed BEFORE sync in this sequence: an
+    // unguarded throw here skipped every line below it, so a notification
+    // plugin that failed to initialise (the release build missing its R8
+    // keep rules) stopped auto-sync and the startup sync from ever running
+    // and read to the user as "can't connect to the server". Notifications
+    // are a convenience; sync is the product.
+    try {
+      ref.read(transcriptionNotificationOwnerProvider);
+    } catch (e, stack) {
+      debugPrint('tangent.notifications disabled this session: $e');
+      debugPrintStack(stackTrace: stack, label: 'tangent.notifications');
+    }
     // Auto-sync: from here on, edits push themselves a few seconds after the
     // user pauses — the sync button is a manual override, not a requirement.
     ref.read(autoSyncOwnerProvider);

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'dart:io' show Platform;
 
 import 'package:device_info_plus/device_info_plus.dart';
+import 'package:flutter/foundation.dart' show debugPrint, debugPrintStack;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 
@@ -95,10 +96,29 @@ final serverTranscriptionServiceProvider =
 
 /// The platform sink for the "Transcribing" notice. Overridden in tests with
 /// a double, so no test ever reaches the real notification plugin.
+///
+/// Guarded construction: a notification is a convenience, and nothing about
+/// it may take the app down. A release build shipped without the plugin's R8
+/// keep rules threw out of the plugin at init, and because this provider is
+/// read on the startup path the failure stopped AUTO-SYNC from ever starting
+/// — the user saw "can't connect to the server" over a notification bug.
 final transcriptionNotificationPortProvider =
     Provider<TranscriptionNotificationPort>((ref) {
-  return AndroidTranscriptionNotificationPort();
+  return _platformNotificationPort(() => AndroidTranscriptionNotificationPort());
 });
+
+/// Builds a platform port, degrading to silence if the plugin cannot be had.
+TranscriptionNotificationPort _platformNotificationPort(
+  TranscriptionNotificationPort Function() build,
+) {
+  try {
+    return build();
+  } catch (error, stack) {
+    debugPrint('tangent.notifications unavailable: $error');
+    debugPrintStack(stackTrace: stack, label: 'tangent.notifications');
+    return const NullTranscriptionNotificationPort();
+  }
+}
 
 /// Two-way document sync (notebooks and notes) against the user's server.
 ///
