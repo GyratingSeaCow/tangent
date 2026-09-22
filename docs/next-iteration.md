@@ -10,8 +10,9 @@ re-derive it.
 
 ### 1.1 Linux AppImage: verify handwriting search on desktop (v1.7.0 E2E gate)
 
-**Status:** owed, blocked on hardware — Jeff runs the agent at home to build
-natively for the platform.
+**Status:** owed. The v1.7.0 tag's Release workflow builds and attaches
+`Tangent-x86_64.AppImage`, so no local Linux build is needed — download it
+from the release and run the checks below.
 
 This is E2E checkpoint 6 and it is the WHOLE REASON the feature is
 server-side: ML Kit is Android/iOS-only, so the Linux desktop must be able
@@ -20,7 +21,7 @@ depends on is already proven on Android:
 
 - server indexes and serves the rows (248 rows / 10 notebooks / 0 errors);
 - `include_ink_index=true` pull works and the client mirror applies it;
-- search, highlight and next/prev all verified on the Fold.
+- search, highlight and next/prev all verified on the Fold's cover screen.
 
 What to check on the AppImage: the search icon appears on both Notebooks
 home and in-notebook, a query returns match counts + snippets, tapping a

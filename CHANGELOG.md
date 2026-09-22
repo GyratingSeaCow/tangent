@@ -5,6 +5,73 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.0] - 2026-09-22
+
+Handwriting search: find your handwritten notes by typing what you wrote.
+
+### Added
+- **Handwriting search** — type a word and Tangent finds it in your
+  handwritten notebooks. The search icon sits in the toolbar on both the
+  Notebooks list and inside a notebook: the list shows which notebooks match
+  with a count and a snippet, and opening one jumps straight to the match
+  with the word highlighted on your actual ink. Next/prev walks the matches
+  and wraps at the end, Ctrl+F style.
+
+  Recognition runs **on the server**, so search works on every device that
+  syncs — including Linux desktop, which has no on-device handwriting
+  recognizer at all. Your notebooks sync up, the server reads them, and the
+  resulting index syncs back down: **searching itself is local and offline**
+  on every device.
+
+- **Handwriting search install wizard** (Settings → Handwriting search) —
+  off by default. Turning it on downloads the recognition model with a
+  progress notification and a completion notification. Both a CPU and an
+  RTX (GPU) flavour are supported: **the GPU flavour is not more accurate**,
+  it is the same model running faster. Turning the feature off removes the
+  model and the index entirely.
+
+- **Optional GPU compose override** — `server/docker-compose.gpu.yml`, layered
+  on with `-f docker-compose.yml -f docker-compose.gpu.yml`. The stock compose
+  file stays CPU-only so a GPU-less homelab still works unchanged.
+
+### Fixed
+- **Handwriting no longer gets cut off on narrow screens** — a notebook page
+  was scaled to fit the typed-text column rather than its actual content, so
+  on a narrow screen (a foldable's cover display, for example) everything
+  written past that column was clipped off the right edge with no way to
+  scroll to it. Pages now scale against their real content width: ink,
+  imported images, and blocks you have dragged to the right. Pages that fit
+  the column render exactly as before.
+
+- **Notifications can no longer take the app down at startup** — in a release
+  build the notification plugin could fail to initialise and kill the startup
+  sequence with it, leaving the app running but never syncing, which looked
+  for all the world like the server was unreachable. Notification failures now
+  degrade to "no notifications" and are logged; sync always starts.
+
+- **Server info no longer times out once handwriting search is installed** —
+  the storage-usage figure walked the whole data directory including the
+  ~9 GB recognition environment, taking over a minute and exceeding the app's
+  request timeout. Every device then reported the server as unreachable and
+  stopped syncing. The recognition environment is now skipped (it is
+  reinstallable machinery, not your data) and the call returns in a fraction
+  of a second.
+
+- **Changing servers no longer leaves handwriting search on the old one** —
+  the Settings section cached the server address at first load, so after
+  pointing the app at a different server the handwriting toggle silently kept
+  talking to the previous one until the app was restarted.
+
+- **Returning to Settings mid-install shows live progress** — leaving the
+  Settings screen while the model downloaded and coming back showed an error
+  instead of the running install.
+
+### Known behaviour
+- If an install finishes while you are away from the Settings screen, the
+  toggle rests OFF until one tap flips it on. This is deliberate: a device
+  that installs the model must not silently enable the feature on your other
+  devices.
+
 ## [1.6.1] - 2026-09-21
 
 Quality-of-life release: the notebook tools now behave the way they look.

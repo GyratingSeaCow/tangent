@@ -50,13 +50,22 @@ ADH2/
 
 ## Status
 
-Shipping — **v1.6.1** (see CHANGELOG.md). Client and server are both
-implemented and tested (1562
-Flutter tests, 185 server tests, 100 Kotlin tests). The client now runs
+Shipping — **v1.7.0** (see CHANGELOG.md). Client and server are both
+implemented and tested (1617
+Flutter tests, 281 server tests, 100 Kotlin tests). The client now runs
 natively on Linux (tray icon, global record hotkey, close-to-tray,
 right-click = long-press, AppImage packaging under `packaging/`) —
 verified on CachyOS/KDE Plasma Wayland; see the README's Desktop
-section. Open work candidates live in `docs/next-iteration.md`.
+section.
+
+v1.7.0 adds **handwriting search**: server-side OCR indexes notebook ink,
+the word index syncs down to every device, and search itself runs locally
+and offline everywhere (including Linux desktop, which has no on-device
+recognizer — that is precisely why recognition is server-side). The feature
+is off by default behind an install wizard. See
+`docs/design/2026-09-21-handwriting-search-ocr.md` for the approved spec.
+
+Open work candidates live in `docs/next-iteration.md`.
 
 ---
 

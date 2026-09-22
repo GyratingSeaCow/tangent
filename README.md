@@ -5,9 +5,9 @@
 > Built for ADHD minds. Self-hosted. Offline-first. No subscriptions.
 
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](./LICENSE)
-[![Version: 1.6.1](https://img.shields.io/badge/version-1.6.1-blue.svg)](./CHANGELOG.md)
-[![Client tests: 1562 passing](https://img.shields.io/badge/client_tests-1562%20passing-brightgreen.svg)]()
-[![Server tests: 185 passing](https://img.shields.io/badge/server_tests-185%20passing-brightgreen.svg)]()
+[![Version: 1.7.0](https://img.shields.io/badge/version-1.7.0-blue.svg)](./CHANGELOG.md)
+[![Client tests: 1617 passing](https://img.shields.io/badge/client_tests-1617%20passing-brightgreen.svg)]()
+[![Server tests: 281 passing](https://img.shields.io/badge/server_tests-281%20passing-brightgreen.svg)]()
 
 ---
 
@@ -47,6 +47,18 @@ exactly as drawn) straight into the system share sheet. File notebooks —
 **and dumps** — into the same **folders**, collapse a folder by tapping its
 name, rename or delete it with a long-press, and switch between a named list
 and a cover-grid view.
+
+**Handwriting search** finds your handwritten notes by what you wrote. Type a
+word: the Notebooks list shows which notebooks match with a count and a
+snippet, and opening one jumps straight to the match with the word
+highlighted on your real ink — next/prev walks the matches, Ctrl+F style.
+Recognition runs **on the server**, so search works on every device that
+syncs, Linux desktop included (no on-device recognizer needed anywhere). The
+resulting index syncs back down, so **searching itself is local and offline**.
+It is **off by default**: turn it on in Settings → Handwriting search, which
+installs the recognition model with progress notifications (a CPU and an RTX
+GPU flavour — the GPU one is the *same model running faster*, not more
+accurate). Turning it off removes the model and the index.
 
 **Multi-device sync** keeps notebooks, notes and recordings consistent across
 your devices through the server: each device pairs once (a 6-digit code, no
@@ -285,6 +297,25 @@ Database migrations run automatically on startup; your data directory
 (`./data` or the `tangent-data` volume) survives every update. Paired
 devices stay paired — tokens live in the database, not the container.
 
+### Handwriting search: GPU acceleration (optional)
+
+Handwriting recognition runs on the CPU by default and needs no setup. If the
+server has an NVIDIA GPU you can hand it through with the opt-in override
+file, which changes **speed only** — it is the same recognition model either
+way, so accuracy is identical:
+
+```bash
+cd tangent/server
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+```
+
+Pass **both** `-f` flags on every later `docker compose` call for this stack,
+or Compose falls back to the CPU-only stock file. The stock
+`docker-compose.yml` is untouched so a GPU-less machine keeps working as-is.
+
+The recognition environment (~9 GB) installs into the data volume, so it
+survives container rebuilds and does not need reinstalling after an update.
+
 ### Android app
 
 Install the new APK over the old one — data is kept:
@@ -383,6 +414,7 @@ requires a one-time uninstall, which deletes local data. Stick to one flavor.
 | Notebook folders with collapsible sections (list + cover views) | ✅ |
 | Dump folders (same folder system as notebooks; rename/delete) | ✅ |
 | Notebook export to PDF (share sheet) | ✅ |
+| Handwriting search (server-side OCR, offline search on every device) | ✅ device-verified |
 | Import dumps as audio bubble or transcript text, placed below existing content | ✅ |
 | Pen styles (uniform / fountain / italic nib), pressure-aware | ✅ device-verified |
 | Palm rejection + stroke eraser | ✅ device-verified |
@@ -409,7 +441,7 @@ python -m pytest                # 185 passed, 3 skipped
 
 # Client (Flutter)
 cd client
-flutter test                    # 1562 widget + unit tests
+flutter test                    # 1617 widget + unit tests
 flutter analyze                 # No issues found
 
 # Android native (Kotlin) — from client/android
