@@ -8,6 +8,8 @@
 /// time because nothing ever constructed the engine and watched what it sent.
 library;
 
+import 'dart:convert';
+
 import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -346,6 +348,184 @@ void main() {
         row.folderId,
         'folder-abc',
         reason: 'an older client is a narrower payload, not an eraser',
+      );
+    });
+  });
+
+  group('ink index sync', () {
+    /// One ink_index upsert as the server builds it at pull time: the
+    /// notebook's ENTIRE current index, to be applied as a replace-set.
+    RemoteChange inkIndexChange({
+      required String notebookId,
+      required List<Map<String, dynamic>> rows,
+      int seq = 20,
+    }) =>
+        RemoteChange(
+          entityType: 'ink_index',
+          entityId: notebookId,
+          op: SyncOp.upsert,
+          payload: <String, dynamic>{
+            'notebook_id': notebookId,
+            'rows': rows,
+          },
+          seq: seq,
+          deviceId: 'server',
+        );
+
+    Map<String, dynamic> wordRow({
+      required String id,
+      required String lineId,
+      required String text,
+      List<num> bbox = const <num>[0, 0, 10, 10],
+      List<String> strokeIds = const <String>['s1'],
+    }) =>
+        <String, dynamic>{
+          'id': id,
+          'line_id': lineId,
+          'word_text': text,
+          'bbox': bbox,
+          'stroke_ids': strokeIds,
+          'model': 'trocr-test',
+          'indexed_at': 1000,
+        };
+
+    Future<List<InkIndexEntry>> rowsFor(String notebookId) =>
+        (db.select(db.inkIndexEntries)
+              ..where((t) => t.notebookId.equals(notebookId)))
+            .get();
+
+    test('a pull replaces exactly that notebook\'s rows; others untouched',
+        () async {
+      // Seed both notebooks with a first-generation index.
+      client.pullPages = <SyncPullPage>[
+        SyncPullPage(
+          changes: <RemoteChange>[
+            inkIndexChange(
+              notebookId: 'nb-a',
+              rows: <Map<String, dynamic>>[
+                wordRow(id: 'line-1:000', lineId: 'line-1', text: 'stale'),
+                wordRow(id: 'line-1:001', lineId: 'line-1', text: 'words'),
+              ],
+              seq: 20,
+            ),
+            inkIndexChange(
+              notebookId: 'nb-b',
+              rows: <Map<String, dynamic>>[
+                wordRow(id: 'line-9:000', lineId: 'line-9', text: 'bystander'),
+              ],
+              seq: 21,
+            ),
+          ],
+          headSeq: 21,
+          hasMore: false,
+        ),
+      ];
+      final DocumentSyncEngine engine = build(label: () async => 'test');
+      await engine.syncNow();
+
+      expect((await rowsFor('nb-a')).length, 2);
+      expect((await rowsFor('nb-b')).length, 1);
+
+      // nb-a re-indexes: the new set has ONE row and different text. The old
+      // two rows must vanish — an append here would leave phantom matches for
+      // words the user has since erased.
+      client.pullPages = <SyncPullPage>[
+        SyncPullPage(
+          changes: <RemoteChange>[
+            inkIndexChange(
+              notebookId: 'nb-a',
+              rows: <Map<String, dynamic>>[
+                wordRow(id: 'line-2:000', lineId: 'line-2', text: 'fresh'),
+              ],
+              seq: 22,
+            ),
+          ],
+          headSeq: 22,
+          hasMore: false,
+        ),
+      ];
+      await engine.syncNow();
+
+      final List<InkIndexEntry> nbA = await rowsFor('nb-a');
+      expect(nbA.length, 1, reason: 'replace-set, never append');
+      expect(nbA.single.wordText, 'fresh');
+      expect(nbA.single.wordTextLower, 'fresh');
+      expect(jsonDecode(nbA.single.strokeIdsJson), ['s1']);
+      expect(
+        (await rowsFor('nb-b')).single.wordText,
+        'bystander',
+        reason: 'another notebook\'s index must survive nb-a\'s replace-set',
+      );
+    });
+
+    test('an index for a notebook this client has never seen inserts cleanly',
+        () async {
+      // The index can arrive BEFORE the notebook doc (separate change_log
+      // entries, arbitrary page boundaries). Rejecting it would wedge the
+      // pull loop on the same page forever.
+      client.pullPages = <SyncPullPage>[
+        SyncPullPage(
+          changes: <RemoteChange>[
+            inkIndexChange(
+              notebookId: 'nb-unknown',
+              rows: <Map<String, dynamic>>[
+                wordRow(id: 'line-1:000', lineId: 'line-1', text: 'early'),
+              ],
+              seq: 30,
+            ),
+          ],
+          headSeq: 30,
+          hasMore: false,
+        ),
+      ];
+      final DocumentSyncEngine engine = build(label: () async => 'test');
+      final SyncReport report = await engine.syncNow();
+
+      expect(report.outcome, SyncOutcome.success);
+      expect((await rowsFor('nb-unknown')).single.wordText, 'early');
+    });
+
+    test('an ink_index delete drops the notebook\'s rows', () async {
+      client.pullPages = <SyncPullPage>[
+        SyncPullPage(
+          changes: <RemoteChange>[
+            inkIndexChange(
+              notebookId: 'nb-gone',
+              rows: <Map<String, dynamic>>[
+                wordRow(id: 'line-1:000', lineId: 'line-1', text: 'doomed'),
+              ],
+              seq: 40,
+            ),
+          ],
+          headSeq: 40,
+          hasMore: false,
+        ),
+      ];
+      final DocumentSyncEngine engine = build(label: () async => 'test');
+      await engine.syncNow();
+      expect(await rowsFor('nb-gone'), isNotEmpty);
+
+      client.pullPages = <SyncPullPage>[
+        const SyncPullPage(
+          changes: <RemoteChange>[
+            RemoteChange(
+              entityType: 'ink_index',
+              entityId: 'nb-gone',
+              op: SyncOp.delete,
+              payload: null,
+              seq: 41,
+              deviceId: 'server',
+            ),
+          ],
+          headSeq: 41,
+          hasMore: false,
+        ),
+      ];
+      await engine.syncNow();
+      expect(
+        await rowsFor('nb-gone'),
+        isEmpty,
+        reason: 'a purged notebook\'s index must not keep matching searches',
       );
     });
   });

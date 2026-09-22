@@ -442,12 +442,17 @@ class TranscriptionClient {
   }
 
   /// Changes after [sinceSeq], excluding this device's own echoes.
+  ///
+  /// `include_ink_index=true` opts in to the handwriting-search entity: the
+  /// server filters ink_index changes out for clients that do not send it, so
+  /// omitting the flag would leave this device's search mirror empty forever.
   Future<SyncPullPage> pullChanges({
     required String deviceId,
     required int sinceSeq,
   }) async {
     final Map<String, dynamic> resp = await _fetch(
-      '/v1/sync/pull?device_id=$deviceId&since_seq=$sinceSeq',
+      '/v1/sync/pull?device_id=$deviceId&since_seq=$sinceSeq'
+      '&include_ink_index=true',
     );
     final List<dynamic> raw =
         (resp['changes'] as List<dynamic>?) ?? const <dynamic>[];

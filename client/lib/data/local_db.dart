@@ -200,6 +200,28 @@ class SyncStates extends Table {
   Set<Column> get primaryKey => {id};
 }
 
+/// Mirror of the server's word-level handwriting index (`ink_index`).
+///
+/// Rows arrive only via sync pull (replace-set per notebook) — the client
+/// never writes its own recognition results. Searching is a local lookup
+/// against `word_text_lower`; `stroke_ids_json` is what the find bar
+/// highlights.
+class InkIndexEntries extends Table {
+  @override
+  String get tableName => 'ink_index_entries';
+  TextColumn get id => text()();
+  TextColumn get notebookId => text()();
+  TextColumn get lineId => text()();
+  TextColumn get wordText => text()();
+  TextColumn get wordTextLower => text()();
+  TextColumn get bboxJson => text()();
+  TextColumn get strokeIdsJson => text()();
+  TextColumn get model => text()();
+  IntColumn get indexedAt => integer()();
+  @override
+  Set<Column> get primaryKey => {id};
+}
+
 @DriftDatabase(
   tables: [
     Dumps,
@@ -214,6 +236,7 @@ class SyncStates extends Table {
     Notebooks,
     SyncTombstones,
     SyncStates,
+    InkIndexEntries,
   ],
 )
 class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
@@ -222,7 +245,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   LocalDb.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 14;
+  int get schemaVersion => 15;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -536,6 +559,19 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
               );
             }
           }
+          if (from < 15) {
+            // Additive: the handwriting-search index mirror. Guarded because
+            // a fresh install's onCreate already built it — createTable on an
+            // existing table would throw and wedge the upgrade.
+            final bool exists = (await customSelect(
+              "SELECT name FROM sqlite_master WHERE type = 'table' "
+              "AND name = 'ink_index_entries'",
+            ).get())
+                .isNotEmpty;
+            if (!exists) {
+              await m.createTable(inkIndexEntries);
+            }
+          }
         },
       );
 
@@ -580,9 +616,43 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   Future<void> refreshExternalWrites() async {
     notifyUpdates({
       for (final TableInfo<Table, dynamic> table in <TableInfo<Table,
-          dynamic>>[notebooks, dumps, folders, syncTombstones, syncStates])
+          dynamic>>[
+        notebooks,
+        dumps,
+        folders,
+        syncTombstones,
+        syncStates,
+        inkIndexEntries,
+      ])
         TableUpdate.onTable(table),
     });
+  }
+
+  /// Replaces a notebook's mirrored index rows with a freshly pulled set.
+  ///
+  /// Replace-set in ONE transaction: the delete and inserts land atomically,
+  /// so a reader never sees a half-swapped index and a crash mid-apply
+  /// re-pulls the page instead of leaving stale words behind.
+  Future<void> applyRemoteInkIndex({
+    required String notebookId,
+    required List<InkIndexEntriesCompanion> rows,
+  }) async {
+    await transaction(() async {
+      await (delete(inkIndexEntries)
+            ..where((t) => t.notebookId.equals(notebookId)))
+          .go();
+      for (final InkIndexEntriesCompanion row in rows) {
+        await into(inkIndexEntries).insert(row);
+      }
+    });
+  }
+
+  /// Drops a notebook's mirrored index rows (its `ink_index` delete arrived —
+  /// the notebook was purged server-side, so its words must stop matching).
+  Future<void> applyRemoteInkIndexDeletion(String notebookId) async {
+    await (delete(inkIndexEntries)
+          ..where((t) => t.notebookId.equals(notebookId)))
+        .go();
   }
 
   /// Notebooks with local edits the server has not confirmed. Trashed rows

@@ -5355,6 +5355,482 @@ class SyncStatesCompanion extends UpdateCompanion<SyncStateRow> {
   }
 }
 
+class $InkIndexEntriesTable extends InkIndexEntries
+    with TableInfo<$InkIndexEntriesTable, InkIndexEntry> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $InkIndexEntriesTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<String> id = GeneratedColumn<String>(
+      'id', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _notebookIdMeta =
+      const VerificationMeta('notebookId');
+  @override
+  late final GeneratedColumn<String> notebookId = GeneratedColumn<String>(
+      'notebook_id', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _lineIdMeta = const VerificationMeta('lineId');
+  @override
+  late final GeneratedColumn<String> lineId = GeneratedColumn<String>(
+      'line_id', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _wordTextMeta =
+      const VerificationMeta('wordText');
+  @override
+  late final GeneratedColumn<String> wordText = GeneratedColumn<String>(
+      'word_text', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _wordTextLowerMeta =
+      const VerificationMeta('wordTextLower');
+  @override
+  late final GeneratedColumn<String> wordTextLower = GeneratedColumn<String>(
+      'word_text_lower', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _bboxJsonMeta =
+      const VerificationMeta('bboxJson');
+  @override
+  late final GeneratedColumn<String> bboxJson = GeneratedColumn<String>(
+      'bbox_json', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _strokeIdsJsonMeta =
+      const VerificationMeta('strokeIdsJson');
+  @override
+  late final GeneratedColumn<String> strokeIdsJson = GeneratedColumn<String>(
+      'stroke_ids_json', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _modelMeta = const VerificationMeta('model');
+  @override
+  late final GeneratedColumn<String> model = GeneratedColumn<String>(
+      'model', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _indexedAtMeta =
+      const VerificationMeta('indexedAt');
+  @override
+  late final GeneratedColumn<int> indexedAt = GeneratedColumn<int>(
+      'indexed_at', aliasedName, false,
+      type: DriftSqlType.int, requiredDuringInsert: true);
+  @override
+  List<GeneratedColumn> get $columns => [
+        id,
+        notebookId,
+        lineId,
+        wordText,
+        wordTextLower,
+        bboxJson,
+        strokeIdsJson,
+        model,
+        indexedAt
+      ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'ink_index_entries';
+  @override
+  VerificationContext validateIntegrity(Insertable<InkIndexEntry> instance,
+      {bool isInserting = false}) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    } else if (isInserting) {
+      context.missing(_idMeta);
+    }
+    if (data.containsKey('notebook_id')) {
+      context.handle(
+          _notebookIdMeta,
+          notebookId.isAcceptableOrUnknown(
+              data['notebook_id']!, _notebookIdMeta));
+    } else if (isInserting) {
+      context.missing(_notebookIdMeta);
+    }
+    if (data.containsKey('line_id')) {
+      context.handle(_lineIdMeta,
+          lineId.isAcceptableOrUnknown(data['line_id']!, _lineIdMeta));
+    } else if (isInserting) {
+      context.missing(_lineIdMeta);
+    }
+    if (data.containsKey('word_text')) {
+      context.handle(_wordTextMeta,
+          wordText.isAcceptableOrUnknown(data['word_text']!, _wordTextMeta));
+    } else if (isInserting) {
+      context.missing(_wordTextMeta);
+    }
+    if (data.containsKey('word_text_lower')) {
+      context.handle(
+          _wordTextLowerMeta,
+          wordTextLower.isAcceptableOrUnknown(
+              data['word_text_lower']!, _wordTextLowerMeta));
+    } else if (isInserting) {
+      context.missing(_wordTextLowerMeta);
+    }
+    if (data.containsKey('bbox_json')) {
+      context.handle(_bboxJsonMeta,
+          bboxJson.isAcceptableOrUnknown(data['bbox_json']!, _bboxJsonMeta));
+    } else if (isInserting) {
+      context.missing(_bboxJsonMeta);
+    }
+    if (data.containsKey('stroke_ids_json')) {
+      context.handle(
+          _strokeIdsJsonMeta,
+          strokeIdsJson.isAcceptableOrUnknown(
+              data['stroke_ids_json']!, _strokeIdsJsonMeta));
+    } else if (isInserting) {
+      context.missing(_strokeIdsJsonMeta);
+    }
+    if (data.containsKey('model')) {
+      context.handle(
+          _modelMeta, model.isAcceptableOrUnknown(data['model']!, _modelMeta));
+    } else if (isInserting) {
+      context.missing(_modelMeta);
+    }
+    if (data.containsKey('indexed_at')) {
+      context.handle(_indexedAtMeta,
+          indexedAt.isAcceptableOrUnknown(data['indexed_at']!, _indexedAtMeta));
+    } else if (isInserting) {
+      context.missing(_indexedAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  InkIndexEntry map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return InkIndexEntry(
+      id: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}id'])!,
+      notebookId: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}notebook_id'])!,
+      lineId: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}line_id'])!,
+      wordText: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}word_text'])!,
+      wordTextLower: attachedDatabase.typeMapping.read(
+          DriftSqlType.string, data['${effectivePrefix}word_text_lower'])!,
+      bboxJson: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}bbox_json'])!,
+      strokeIdsJson: attachedDatabase.typeMapping.read(
+          DriftSqlType.string, data['${effectivePrefix}stroke_ids_json'])!,
+      model: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}model'])!,
+      indexedAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}indexed_at'])!,
+    );
+  }
+
+  @override
+  $InkIndexEntriesTable createAlias(String alias) {
+    return $InkIndexEntriesTable(attachedDatabase, alias);
+  }
+}
+
+class InkIndexEntry extends DataClass implements Insertable<InkIndexEntry> {
+  final String id;
+  final String notebookId;
+  final String lineId;
+  final String wordText;
+  final String wordTextLower;
+  final String bboxJson;
+  final String strokeIdsJson;
+  final String model;
+  final int indexedAt;
+  const InkIndexEntry(
+      {required this.id,
+      required this.notebookId,
+      required this.lineId,
+      required this.wordText,
+      required this.wordTextLower,
+      required this.bboxJson,
+      required this.strokeIdsJson,
+      required this.model,
+      required this.indexedAt});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<String>(id);
+    map['notebook_id'] = Variable<String>(notebookId);
+    map['line_id'] = Variable<String>(lineId);
+    map['word_text'] = Variable<String>(wordText);
+    map['word_text_lower'] = Variable<String>(wordTextLower);
+    map['bbox_json'] = Variable<String>(bboxJson);
+    map['stroke_ids_json'] = Variable<String>(strokeIdsJson);
+    map['model'] = Variable<String>(model);
+    map['indexed_at'] = Variable<int>(indexedAt);
+    return map;
+  }
+
+  InkIndexEntriesCompanion toCompanion(bool nullToAbsent) {
+    return InkIndexEntriesCompanion(
+      id: Value(id),
+      notebookId: Value(notebookId),
+      lineId: Value(lineId),
+      wordText: Value(wordText),
+      wordTextLower: Value(wordTextLower),
+      bboxJson: Value(bboxJson),
+      strokeIdsJson: Value(strokeIdsJson),
+      model: Value(model),
+      indexedAt: Value(indexedAt),
+    );
+  }
+
+  factory InkIndexEntry.fromJson(Map<String, dynamic> json,
+      {ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return InkIndexEntry(
+      id: serializer.fromJson<String>(json['id']),
+      notebookId: serializer.fromJson<String>(json['notebookId']),
+      lineId: serializer.fromJson<String>(json['lineId']),
+      wordText: serializer.fromJson<String>(json['wordText']),
+      wordTextLower: serializer.fromJson<String>(json['wordTextLower']),
+      bboxJson: serializer.fromJson<String>(json['bboxJson']),
+      strokeIdsJson: serializer.fromJson<String>(json['strokeIdsJson']),
+      model: serializer.fromJson<String>(json['model']),
+      indexedAt: serializer.fromJson<int>(json['indexedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<String>(id),
+      'notebookId': serializer.toJson<String>(notebookId),
+      'lineId': serializer.toJson<String>(lineId),
+      'wordText': serializer.toJson<String>(wordText),
+      'wordTextLower': serializer.toJson<String>(wordTextLower),
+      'bboxJson': serializer.toJson<String>(bboxJson),
+      'strokeIdsJson': serializer.toJson<String>(strokeIdsJson),
+      'model': serializer.toJson<String>(model),
+      'indexedAt': serializer.toJson<int>(indexedAt),
+    };
+  }
+
+  InkIndexEntry copyWith(
+          {String? id,
+          String? notebookId,
+          String? lineId,
+          String? wordText,
+          String? wordTextLower,
+          String? bboxJson,
+          String? strokeIdsJson,
+          String? model,
+          int? indexedAt}) =>
+      InkIndexEntry(
+        id: id ?? this.id,
+        notebookId: notebookId ?? this.notebookId,
+        lineId: lineId ?? this.lineId,
+        wordText: wordText ?? this.wordText,
+        wordTextLower: wordTextLower ?? this.wordTextLower,
+        bboxJson: bboxJson ?? this.bboxJson,
+        strokeIdsJson: strokeIdsJson ?? this.strokeIdsJson,
+        model: model ?? this.model,
+        indexedAt: indexedAt ?? this.indexedAt,
+      );
+  InkIndexEntry copyWithCompanion(InkIndexEntriesCompanion data) {
+    return InkIndexEntry(
+      id: data.id.present ? data.id.value : this.id,
+      notebookId:
+          data.notebookId.present ? data.notebookId.value : this.notebookId,
+      lineId: data.lineId.present ? data.lineId.value : this.lineId,
+      wordText: data.wordText.present ? data.wordText.value : this.wordText,
+      wordTextLower: data.wordTextLower.present
+          ? data.wordTextLower.value
+          : this.wordTextLower,
+      bboxJson: data.bboxJson.present ? data.bboxJson.value : this.bboxJson,
+      strokeIdsJson: data.strokeIdsJson.present
+          ? data.strokeIdsJson.value
+          : this.strokeIdsJson,
+      model: data.model.present ? data.model.value : this.model,
+      indexedAt: data.indexedAt.present ? data.indexedAt.value : this.indexedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('InkIndexEntry(')
+          ..write('id: $id, ')
+          ..write('notebookId: $notebookId, ')
+          ..write('lineId: $lineId, ')
+          ..write('wordText: $wordText, ')
+          ..write('wordTextLower: $wordTextLower, ')
+          ..write('bboxJson: $bboxJson, ')
+          ..write('strokeIdsJson: $strokeIdsJson, ')
+          ..write('model: $model, ')
+          ..write('indexedAt: $indexedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(id, notebookId, lineId, wordText,
+      wordTextLower, bboxJson, strokeIdsJson, model, indexedAt);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is InkIndexEntry &&
+          other.id == this.id &&
+          other.notebookId == this.notebookId &&
+          other.lineId == this.lineId &&
+          other.wordText == this.wordText &&
+          other.wordTextLower == this.wordTextLower &&
+          other.bboxJson == this.bboxJson &&
+          other.strokeIdsJson == this.strokeIdsJson &&
+          other.model == this.model &&
+          other.indexedAt == this.indexedAt);
+}
+
+class InkIndexEntriesCompanion extends UpdateCompanion<InkIndexEntry> {
+  final Value<String> id;
+  final Value<String> notebookId;
+  final Value<String> lineId;
+  final Value<String> wordText;
+  final Value<String> wordTextLower;
+  final Value<String> bboxJson;
+  final Value<String> strokeIdsJson;
+  final Value<String> model;
+  final Value<int> indexedAt;
+  final Value<int> rowid;
+  const InkIndexEntriesCompanion({
+    this.id = const Value.absent(),
+    this.notebookId = const Value.absent(),
+    this.lineId = const Value.absent(),
+    this.wordText = const Value.absent(),
+    this.wordTextLower = const Value.absent(),
+    this.bboxJson = const Value.absent(),
+    this.strokeIdsJson = const Value.absent(),
+    this.model = const Value.absent(),
+    this.indexedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  InkIndexEntriesCompanion.insert({
+    required String id,
+    required String notebookId,
+    required String lineId,
+    required String wordText,
+    required String wordTextLower,
+    required String bboxJson,
+    required String strokeIdsJson,
+    required String model,
+    required int indexedAt,
+    this.rowid = const Value.absent(),
+  })  : id = Value(id),
+        notebookId = Value(notebookId),
+        lineId = Value(lineId),
+        wordText = Value(wordText),
+        wordTextLower = Value(wordTextLower),
+        bboxJson = Value(bboxJson),
+        strokeIdsJson = Value(strokeIdsJson),
+        model = Value(model),
+        indexedAt = Value(indexedAt);
+  static Insertable<InkIndexEntry> custom({
+    Expression<String>? id,
+    Expression<String>? notebookId,
+    Expression<String>? lineId,
+    Expression<String>? wordText,
+    Expression<String>? wordTextLower,
+    Expression<String>? bboxJson,
+    Expression<String>? strokeIdsJson,
+    Expression<String>? model,
+    Expression<int>? indexedAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (notebookId != null) 'notebook_id': notebookId,
+      if (lineId != null) 'line_id': lineId,
+      if (wordText != null) 'word_text': wordText,
+      if (wordTextLower != null) 'word_text_lower': wordTextLower,
+      if (bboxJson != null) 'bbox_json': bboxJson,
+      if (strokeIdsJson != null) 'stroke_ids_json': strokeIdsJson,
+      if (model != null) 'model': model,
+      if (indexedAt != null) 'indexed_at': indexedAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  InkIndexEntriesCompanion copyWith(
+      {Value<String>? id,
+      Value<String>? notebookId,
+      Value<String>? lineId,
+      Value<String>? wordText,
+      Value<String>? wordTextLower,
+      Value<String>? bboxJson,
+      Value<String>? strokeIdsJson,
+      Value<String>? model,
+      Value<int>? indexedAt,
+      Value<int>? rowid}) {
+    return InkIndexEntriesCompanion(
+      id: id ?? this.id,
+      notebookId: notebookId ?? this.notebookId,
+      lineId: lineId ?? this.lineId,
+      wordText: wordText ?? this.wordText,
+      wordTextLower: wordTextLower ?? this.wordTextLower,
+      bboxJson: bboxJson ?? this.bboxJson,
+      strokeIdsJson: strokeIdsJson ?? this.strokeIdsJson,
+      model: model ?? this.model,
+      indexedAt: indexedAt ?? this.indexedAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<String>(id.value);
+    }
+    if (notebookId.present) {
+      map['notebook_id'] = Variable<String>(notebookId.value);
+    }
+    if (lineId.present) {
+      map['line_id'] = Variable<String>(lineId.value);
+    }
+    if (wordText.present) {
+      map['word_text'] = Variable<String>(wordText.value);
+    }
+    if (wordTextLower.present) {
+      map['word_text_lower'] = Variable<String>(wordTextLower.value);
+    }
+    if (bboxJson.present) {
+      map['bbox_json'] = Variable<String>(bboxJson.value);
+    }
+    if (strokeIdsJson.present) {
+      map['stroke_ids_json'] = Variable<String>(strokeIdsJson.value);
+    }
+    if (model.present) {
+      map['model'] = Variable<String>(model.value);
+    }
+    if (indexedAt.present) {
+      map['indexed_at'] = Variable<int>(indexedAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('InkIndexEntriesCompanion(')
+          ..write('id: $id, ')
+          ..write('notebookId: $notebookId, ')
+          ..write('lineId: $lineId, ')
+          ..write('wordText: $wordText, ')
+          ..write('wordTextLower: $wordTextLower, ')
+          ..write('bboxJson: $bboxJson, ')
+          ..write('strokeIdsJson: $strokeIdsJson, ')
+          ..write('model: $model, ')
+          ..write('indexedAt: $indexedAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$LocalDb extends GeneratedDatabase {
   _$LocalDb(QueryExecutor e) : super(e);
   $LocalDbManager get managers => $LocalDbManager(this);
@@ -5376,6 +5852,8 @@ abstract class _$LocalDb extends GeneratedDatabase {
   late final $NotebooksTable notebooks = $NotebooksTable(this);
   late final $SyncTombstonesTable syncTombstones = $SyncTombstonesTable(this);
   late final $SyncStatesTable syncStates = $SyncStatesTable(this);
+  late final $InkIndexEntriesTable inkIndexEntries =
+      $InkIndexEntriesTable(this);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -5392,7 +5870,8 @@ abstract class _$LocalDb extends GeneratedDatabase {
         localDeletionTickets,
         notebooks,
         syncTombstones,
-        syncStates
+        syncStates,
+        inkIndexEntries
       ];
   @override
   StreamQueryUpdateRules get streamUpdateRules => const StreamQueryUpdateRules(
@@ -8178,6 +8657,241 @@ typedef $$SyncStatesTableProcessedTableManager = ProcessedTableManager<
     (SyncStateRow, BaseReferences<_$LocalDb, $SyncStatesTable, SyncStateRow>),
     SyncStateRow,
     PrefetchHooks Function()>;
+typedef $$InkIndexEntriesTableCreateCompanionBuilder = InkIndexEntriesCompanion
+    Function({
+  required String id,
+  required String notebookId,
+  required String lineId,
+  required String wordText,
+  required String wordTextLower,
+  required String bboxJson,
+  required String strokeIdsJson,
+  required String model,
+  required int indexedAt,
+  Value<int> rowid,
+});
+typedef $$InkIndexEntriesTableUpdateCompanionBuilder = InkIndexEntriesCompanion
+    Function({
+  Value<String> id,
+  Value<String> notebookId,
+  Value<String> lineId,
+  Value<String> wordText,
+  Value<String> wordTextLower,
+  Value<String> bboxJson,
+  Value<String> strokeIdsJson,
+  Value<String> model,
+  Value<int> indexedAt,
+  Value<int> rowid,
+});
+
+class $$InkIndexEntriesTableFilterComposer
+    extends Composer<_$LocalDb, $InkIndexEntriesTable> {
+  $$InkIndexEntriesTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get id => $composableBuilder(
+      column: $table.id, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get notebookId => $composableBuilder(
+      column: $table.notebookId, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get lineId => $composableBuilder(
+      column: $table.lineId, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get wordText => $composableBuilder(
+      column: $table.wordText, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get wordTextLower => $composableBuilder(
+      column: $table.wordTextLower, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get bboxJson => $composableBuilder(
+      column: $table.bboxJson, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get strokeIdsJson => $composableBuilder(
+      column: $table.strokeIdsJson, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get model => $composableBuilder(
+      column: $table.model, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get indexedAt => $composableBuilder(
+      column: $table.indexedAt, builder: (column) => ColumnFilters(column));
+}
+
+class $$InkIndexEntriesTableOrderingComposer
+    extends Composer<_$LocalDb, $InkIndexEntriesTable> {
+  $$InkIndexEntriesTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get id => $composableBuilder(
+      column: $table.id, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get notebookId => $composableBuilder(
+      column: $table.notebookId, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get lineId => $composableBuilder(
+      column: $table.lineId, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get wordText => $composableBuilder(
+      column: $table.wordText, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get wordTextLower => $composableBuilder(
+      column: $table.wordTextLower,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get bboxJson => $composableBuilder(
+      column: $table.bboxJson, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get strokeIdsJson => $composableBuilder(
+      column: $table.strokeIdsJson,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get model => $composableBuilder(
+      column: $table.model, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get indexedAt => $composableBuilder(
+      column: $table.indexedAt, builder: (column) => ColumnOrderings(column));
+}
+
+class $$InkIndexEntriesTableAnnotationComposer
+    extends Composer<_$LocalDb, $InkIndexEntriesTable> {
+  $$InkIndexEntriesTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<String> get notebookId => $composableBuilder(
+      column: $table.notebookId, builder: (column) => column);
+
+  GeneratedColumn<String> get lineId =>
+      $composableBuilder(column: $table.lineId, builder: (column) => column);
+
+  GeneratedColumn<String> get wordText =>
+      $composableBuilder(column: $table.wordText, builder: (column) => column);
+
+  GeneratedColumn<String> get wordTextLower => $composableBuilder(
+      column: $table.wordTextLower, builder: (column) => column);
+
+  GeneratedColumn<String> get bboxJson =>
+      $composableBuilder(column: $table.bboxJson, builder: (column) => column);
+
+  GeneratedColumn<String> get strokeIdsJson => $composableBuilder(
+      column: $table.strokeIdsJson, builder: (column) => column);
+
+  GeneratedColumn<String> get model =>
+      $composableBuilder(column: $table.model, builder: (column) => column);
+
+  GeneratedColumn<int> get indexedAt =>
+      $composableBuilder(column: $table.indexedAt, builder: (column) => column);
+}
+
+class $$InkIndexEntriesTableTableManager extends RootTableManager<
+    _$LocalDb,
+    $InkIndexEntriesTable,
+    InkIndexEntry,
+    $$InkIndexEntriesTableFilterComposer,
+    $$InkIndexEntriesTableOrderingComposer,
+    $$InkIndexEntriesTableAnnotationComposer,
+    $$InkIndexEntriesTableCreateCompanionBuilder,
+    $$InkIndexEntriesTableUpdateCompanionBuilder,
+    (
+      InkIndexEntry,
+      BaseReferences<_$LocalDb, $InkIndexEntriesTable, InkIndexEntry>
+    ),
+    InkIndexEntry,
+    PrefetchHooks Function()> {
+  $$InkIndexEntriesTableTableManager(_$LocalDb db, $InkIndexEntriesTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$InkIndexEntriesTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$InkIndexEntriesTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$InkIndexEntriesTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback: ({
+            Value<String> id = const Value.absent(),
+            Value<String> notebookId = const Value.absent(),
+            Value<String> lineId = const Value.absent(),
+            Value<String> wordText = const Value.absent(),
+            Value<String> wordTextLower = const Value.absent(),
+            Value<String> bboxJson = const Value.absent(),
+            Value<String> strokeIdsJson = const Value.absent(),
+            Value<String> model = const Value.absent(),
+            Value<int> indexedAt = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              InkIndexEntriesCompanion(
+            id: id,
+            notebookId: notebookId,
+            lineId: lineId,
+            wordText: wordText,
+            wordTextLower: wordTextLower,
+            bboxJson: bboxJson,
+            strokeIdsJson: strokeIdsJson,
+            model: model,
+            indexedAt: indexedAt,
+            rowid: rowid,
+          ),
+          createCompanionCallback: ({
+            required String id,
+            required String notebookId,
+            required String lineId,
+            required String wordText,
+            required String wordTextLower,
+            required String bboxJson,
+            required String strokeIdsJson,
+            required String model,
+            required int indexedAt,
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              InkIndexEntriesCompanion.insert(
+            id: id,
+            notebookId: notebookId,
+            lineId: lineId,
+            wordText: wordText,
+            wordTextLower: wordTextLower,
+            bboxJson: bboxJson,
+            strokeIdsJson: strokeIdsJson,
+            model: model,
+            indexedAt: indexedAt,
+            rowid: rowid,
+          ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ));
+}
+
+typedef $$InkIndexEntriesTableProcessedTableManager = ProcessedTableManager<
+    _$LocalDb,
+    $InkIndexEntriesTable,
+    InkIndexEntry,
+    $$InkIndexEntriesTableFilterComposer,
+    $$InkIndexEntriesTableOrderingComposer,
+    $$InkIndexEntriesTableAnnotationComposer,
+    $$InkIndexEntriesTableCreateCompanionBuilder,
+    $$InkIndexEntriesTableUpdateCompanionBuilder,
+    (
+      InkIndexEntry,
+      BaseReferences<_$LocalDb, $InkIndexEntriesTable, InkIndexEntry>
+    ),
+    InkIndexEntry,
+    PrefetchHooks Function()>;
 
 class $LocalDbManager {
   final _$LocalDb _db;
@@ -8206,4 +8920,6 @@ class $LocalDbManager {
       $$SyncTombstonesTableTableManager(_db, _db.syncTombstones);
   $$SyncStatesTableTableManager get syncStates =>
       $$SyncStatesTableTableManager(_db, _db.syncStates);
+  $$InkIndexEntriesTableTableManager get inkIndexEntries =>
+      $$InkIndexEntriesTableTableManager(_db, _db.inkIndexEntries);
 }
