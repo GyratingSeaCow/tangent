@@ -29,9 +29,11 @@ result opens at the highlighted match, and next/prev wraps. No install
 wizard should be reachable or needed — the desktop never installs an OCR
 env, it only consumes the synced index.
 
-Note the known desktop fallback base URL (`10.0.2.2` in
-`ocrSettingsClientProvider` / `main.dart`) is a deferred minor: a desktop
-that has never paired points there. Pair first, then test.
+Note: the desktop fallback base URL is fixed (`900f726`):
+`defaultServerBaseUrl()` returns `http://localhost:8765` on desktop, the
+emulator alias only on Android. An unpaired desktop now fails loud
+(connection refused) instead of black-holing into `10.0.2.2`. Pairing
+before testing is still the right path for checkpoint 6.
 
 ### 1.2 Hardware-feedback-gated ideas (no work queued)
 
