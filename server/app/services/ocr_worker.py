@@ -267,6 +267,15 @@ def pending() -> list[str]:
         return list(_queue)
 
 
+def clear_queue() -> None:
+    """Drop every pending notebook. Used by uninstall: entries queued for a
+    deleted env would only ever produce all-error junk rows."""
+    with _lock:
+        _queue.clear()
+        _queued.clear()
+        _wake.clear()
+
+
 def _pop() -> str | None:
     with _lock:
         if not _queue:

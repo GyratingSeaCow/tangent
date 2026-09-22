@@ -87,13 +87,39 @@ _progress: dict = dict(_IDLE)
 # Held for the whole duration of an install (and during uninstall).
 _install_mutex = threading.Lock()
 
+#: Fired after a successful install has been atomically published. main.py
+#: wires this to ocr_worker.start_worker_if_installed so an install completing
+#: on a LIVE server starts indexing (and its backfill scan) without a restart.
+#: Injected rather than imported: ocr_worker imports this module, so a
+#: module-level import back at it would be a cycle.
+_on_installed: Callable[[], None] | None = None
+
+
+def set_on_installed(callback: Callable[[], None] | None) -> None:
+    """Register (or clear, with None) the install-success hook."""
+    global _on_installed
+    _on_installed = callback
+
+
+def _fire_on_installed() -> None:
+    """Run the hook, swallowing its errors: once the env dir is published the
+    install HAS succeeded — a broken hook must not report otherwise."""
+    callback = _on_installed
+    if callback is None:
+        return
+    try:
+        callback()
+    except Exception:
+        log.exception("ocr_env.on_installed_hook_failed")
+
 
 def _reset_state_for_tests() -> None:
-    """Reset progress + mutex. Test-only: assumes no install thread is live."""
-    global _progress, _install_mutex
+    """Reset progress + mutex + hook. Test-only: assumes no install thread."""
+    global _progress, _install_mutex, _on_installed
     with _state_lock:
         _progress = dict(_IDLE)
     _install_mutex = threading.Lock()
+    _on_installed = None
 
 
 def _set_progress(phase: str, percent: int, detail: str) -> None:
@@ -291,13 +317,17 @@ def _run_install(flavour: str, runner: Runner) -> None:
         if final.exists():
             shutil.rmtree(final)
         tmp.rename(final)
-        _set_progress("done", 100, "installed")
-        log.info("ocr_env.installed", flavour=flavour)
     except Exception as exc:
         shutil.rmtree(tmp, ignore_errors=True)
         _set_progress("failed", 0, f"{phase}: {exc}")
         log.warning("ocr_env.install_failed", phase=phase, error=str(exc))
         raise InstallError(f"{phase}: {exc}") from exc
+    _set_progress("done", 100, "installed")
+    log.info("ocr_env.installed", flavour=flavour)
+    # After the publish and the 'done' progress: the wizard polling progress
+    # sees success, and the hook (worker start + backfill) runs against a
+    # fully-installed env. A failed install never reaches this line.
+    _fire_on_installed()
 
 
 def _validate_flavour(flavour: str) -> str:
@@ -353,6 +383,16 @@ def uninstall(db) -> bool:
     if not _install_mutex.acquire(blocking=False):
         raise InstallInProgress("cannot uninstall while an install is running")
     try:
+        # Stop the worker and drop its queue BEFORE deleting the env:
+        # a notebook processed after the wipe would repopulate ink_index
+        # with all-error junk rows (run_inference raises; the per-line
+        # catch converts that into model='error' rows).
+        # Function-level import: ocr_worker imports this module, so a
+        # module-level import back at it would be a cycle.
+        from app.services import ocr_worker
+
+        ocr_worker.stop_worker()
+        ocr_worker.clear_queue()
         for path in (env_dir(), tmp_env_dir()):
             if path.exists():
                 shutil.rmtree(path)

@@ -48,8 +48,13 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         # OCR index worker: only when the on-demand env is installed and
         # verified. Its startup backfill scan catches notebooks that synced
         # while the worker was down.
+        from app.services import ocr_env
         from app.services.ocr_worker import start_worker_if_installed
 
+        # An install finishing on THIS live server must start the worker
+        # (wizard flow: toggle → install → indexing, no restart). Injected
+        # callback keeps ocr_env from importing the worker (cycle).
+        ocr_env.set_on_installed(start_worker_if_installed)
         start_worker_if_installed()
         if not is_setup_complete(db):
             print("")
@@ -79,8 +84,10 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             next(gen)
 
     yield
+    from app.services import ocr_env
     from app.services.ocr_worker import stop_worker
 
+    ocr_env.set_on_installed(None)  # no worker starts after shutdown
     stop_worker()
     log.info("server.stopping")
 
