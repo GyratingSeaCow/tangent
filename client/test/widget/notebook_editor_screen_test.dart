@@ -2408,6 +2408,46 @@ void main() {
       await unmount(tester);
     });
 
+    testWidgets('a wide image block is not clipped on a narrow screen',
+        (tester) async {
+      // Ink is not the only thing that escapes the typed column. An image
+      // carries its OWN width and sits at its own x (text/checkbox rows are
+      // width-clamped to the page, so they self-limit and need no term).
+      // An image at x=600 w=400 reaches 1000 and was clipped exactly like
+      // the ink was.
+      tester.view.physicalSize = const Size(475, 751);
+      tester.view.devicePixelRatio = 1.0;
+      await mountEditor(
+        tester,
+        notebook: testNotebook(
+          id: 'nb-1',
+          title: 'Wide image',
+          blocks: <NotebookBlock>[
+            const NotebookImageBlock(
+              id: 'img1',
+              data: '',
+              mime: 'image/png',
+              x: 600,
+              y: 50,
+              width: 400,
+              height: 200,
+            ),
+          ],
+        ),
+        setViewSize: false,
+      );
+
+      final double canonicalWidth =
+          tester.getSize(find.byType(NotebookInkCanvas)).width;
+      expect(
+        canonicalWidth,
+        greaterThanOrEqualTo(1000),
+        reason: 'the page must be wide enough to hold an image whose right '
+            'edge is at x=1000; a 720-wide page cuts it off',
+      );
+      await unmount(tester);
+    });
+
     testWidgets('dragging a block on a narrow viewport stores canonical x/y',
         (tester) async {
       tester.view.physicalSize = const Size(360, 780);

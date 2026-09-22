@@ -1207,12 +1207,18 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
   /// How far right the actual content reaches, in canonical page px.
   ///
   /// The width analogue of [_pageHeight]. [_pageColumnWidth] is the TYPED
-  /// COLUMN's width — handwriting and cards deliberately use the full area,
-  /// so a page authored on a wide screen routinely holds ink beyond it.
+  /// COLUMN's width — handwriting and images deliberately use the full area,
+  /// so a page authored on a wide screen routinely holds content beyond it.
   /// Scaling a narrow viewport against the column width alone therefore
   /// clipped every stroke past x=720: on the Fold's 475dp cover screen a
   /// Journal page whose ink reached x=808 lost the right-hand end of every
   /// line ("entry int…", "of softw…"), while the 932dp inner screen was fine.
+  ///
+  /// Covers ink AND image blocks. Text/checkbox rows need no term: their
+  /// laid-out width is clamped to what is left of the page from their own
+  /// left edge (see `_buildPositionedBlocks`), so they can never reach past
+  /// the page they are measured against. Images carry their OWN width and
+  /// are positioned at their own x, so they can and must be counted.
   ///
   /// Returns 0 for an empty page so the scale maths falls back to the column
   /// width unchanged.
@@ -1221,6 +1227,11 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
     for (final InkStroke stroke in _strokes) {
       for (final InkPoint point in stroke.points) {
         rightmost = math.max(rightmost, point.x);
+      }
+    }
+    for (final NotebookBlock block in _blocks) {
+      if (block is NotebookImageBlock) {
+        rightmost = math.max(rightmost, block.x + block.width);
       }
     }
     if (rightmost == 0) return 0;

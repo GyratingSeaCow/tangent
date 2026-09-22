@@ -8,13 +8,35 @@ re-derive it.
 
 ## 1. Open items
 
-None. The board is clear as of 2026-09-21 — every candidate from the last
-sweep shipped in v1.6.0/v1.6.1.
+### 1.1 Linux AppImage: verify handwriting search on desktop (v1.7.0 E2E gate)
 
-Remaining ideas are all **hardware-feedback-gated** (Jeff drives, no work
-queued): hover-ring linger/thickness tuning if 250 ms feels wrong on device;
-toolbar `visualDensity.compact` eyeball; flip-to-erase only if this pen ever
-emits `invertedStylus`. New arcs come from daily-use annoyances.
+**Status:** owed, blocked on hardware — Jeff runs the agent at home to build
+natively for the platform.
+
+This is E2E checkpoint 6 and it is the WHOLE REASON the feature is
+server-side: ML Kit is Android/iOS-only, so the Linux desktop must be able
+to search handwriting with no on-device recognizer present. Everything it
+depends on is already proven on Android:
+
+- server indexes and serves the rows (248 rows / 10 notebooks / 0 errors);
+- `include_ink_index=true` pull works and the client mirror applies it;
+- search, highlight and next/prev all verified on the Fold.
+
+What to check on the AppImage: the search icon appears on both Notebooks
+home and in-notebook, a query returns match counts + snippets, tapping a
+result opens at the highlighted match, and next/prev wraps. No install
+wizard should be reachable or needed — the desktop never installs an OCR
+env, it only consumes the synced index.
+
+Note the known desktop fallback base URL (`10.0.2.2` in
+`ocrSettingsClientProvider` / `main.dart`) is a deferred minor: a desktop
+that has never paired points there. Pair first, then test.
+
+### 1.2 Hardware-feedback-gated ideas (no work queued)
+
+Hover-ring linger/thickness tuning if 250 ms feels wrong on device; toolbar
+`visualDensity.compact` eyeball; flip-to-erase only if this pen ever emits
+`invertedStylus`. New arcs come from daily-use annoyances.
 
 ## 2. Done (2026-09-21, v1.6.0 → v1.6.1)
 
