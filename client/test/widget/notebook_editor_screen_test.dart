@@ -2276,9 +2276,13 @@ void main() {
     // Positions persist in CANONICAL page space (720 logical px wide). A
     // narrower viewport renders the same layout scaled by viewport/720 —
     // content authored on a tablet must not sit off a phone's right edge:
-    // block x=600 on a 360-wide phone renders at 300, fully on screen.
+    // block x=400 on a 360-wide phone renders at 200, fully on screen.
     testWidgets('blocks render scaled down on a narrow viewport',
         (tester) async {
+      // A block at x=400 spans 400..560 at the minimum block width, so it
+      // sits fully inside the 720 column and the basis stays 720. (x=600
+      // would NOT: 600..760 overflows the page by 40px and clips the remove
+      // X — the very bug _contentRightEdge exists to prevent.)
       tester.view.physicalSize = const Size(360, 780);
       tester.view.devicePixelRatio = 1.0;
       await mountEditor(
@@ -2290,7 +2294,7 @@ void main() {
             const NotebookTextBlock(
               id: 'b1',
               text: 'far right',
-              x: 600,
+              x: 400,
               y: 100,
             ),
           ],
@@ -2305,8 +2309,8 @@ void main() {
             find.byKey(const ValueKey('notebook-block-b1')),
           ) -
           surface;
-      // 600 * (360/720) = 300; the whole block must start on-screen.
-      expect(topLeft.dx, moreOrLessEquals(300, epsilon: 1));
+      // 400 * (360/720) = 200; the whole block must start on-screen.
+      expect(topLeft.dx, moreOrLessEquals(200, epsilon: 1));
       expect(topLeft.dy, moreOrLessEquals(50, epsilon: 1));
       await unmount(tester);
     });
@@ -2372,7 +2376,8 @@ void main() {
         (tester) async {
       // The guard: widening the denominator must not shrink ordinary pages.
       // Ink well inside the column leaves the 720 basis untouched, so a
-      // block at x=600 still renders at 300 on a 360-wide screen.
+      // block at x=400 (spanning 400..560, fully in-column) still renders at
+      // 200 on a 360-wide screen.
       tester.view.physicalSize = const Size(360, 780);
       tester.view.devicePixelRatio = 1.0;
       await mountEditor(
@@ -2381,7 +2386,7 @@ void main() {
           id: 'nb-1',
           title: 'Narrow ink',
           blocks: <NotebookBlock>[
-            const NotebookTextBlock(id: 'b1', text: 'far right', x: 600, y: 100),
+            const NotebookTextBlock(id: 'b1', text: 'far right', x: 400, y: 100),
           ],
           strokes: <InkStroke>[
             const InkStroke(
@@ -2404,7 +2409,77 @@ void main() {
             find.byKey(const ValueKey('notebook-block-b1')),
           ) -
           surface;
-      expect(topLeft.dx, moreOrLessEquals(300, epsilon: 1));
+      expect(topLeft.dx, moreOrLessEquals(200, epsilon: 1));
+      await unmount(tester);
+    });
+
+    testWidgets('a text block near the right edge is not clipped',
+        (tester) async {
+      // _buildPositionedBlocks clamps a row to what is left of the page, but
+      // floors it at _minBlockWidth (160) so the grip and remove X stay
+      // reachable. That floor BEATS the clamp: a block at x=700 is laid out
+      // 700..860 no matter how narrow the page, so the page must be at least
+      // that wide or the row (and its X) hang off the edge.
+      tester.view.physicalSize = const Size(475, 751);
+      tester.view.devicePixelRatio = 1.0;
+      await mountEditor(
+        tester,
+        notebook: testNotebook(
+          id: 'nb-1',
+          title: 'Right-edge block',
+          blocks: <NotebookBlock>[
+            const NotebookTextBlock(
+              id: 'tb1',
+              text: 'dragged right',
+              x: 700,
+              y: 40,
+            ),
+          ],
+        ),
+        setViewSize: false,
+      );
+
+      final double canonicalWidth =
+          tester.getSize(find.byType(NotebookInkCanvas)).width;
+      expect(
+        canonicalWidth,
+        greaterThanOrEqualTo(860),
+        reason: 'a block at x=700 is floored to 160 wide, so it reaches 860; '
+            'a 720-wide page cuts off its right-hand end including the X',
+      );
+      await unmount(tester);
+    });
+
+    testWidgets('a dump card near the right edge is not clipped',
+        (tester) async {
+      // A dump card has an x but no width, so it is laid out at the same
+      // _minBlockWidth floor: x=800 reaches 960.
+      tester.view.physicalSize = const Size(475, 751);
+      tester.view.devicePixelRatio = 1.0;
+      await mountEditor(
+        tester,
+        notebook: testNotebook(
+          id: 'nb-1',
+          title: 'Right-edge card',
+          blocks: <NotebookBlock>[
+            const NotebookDumpCardBlock(
+              id: 'dc1',
+              dumpId: 'dump-1',
+              x: 800,
+              y: 40,
+            ),
+          ],
+        ),
+        setViewSize: false,
+      );
+
+      final double canonicalWidth =
+          tester.getSize(find.byType(NotebookInkCanvas)).width;
+      expect(
+        canonicalWidth,
+        greaterThanOrEqualTo(960),
+        reason: 'a dump card at x=800 reaches 960 at the minimum block width',
+      );
       await unmount(tester);
     });
 

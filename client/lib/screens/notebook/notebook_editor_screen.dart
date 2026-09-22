@@ -1214,11 +1214,19 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
   /// Journal page whose ink reached x=808 lost the right-hand end of every
   /// line ("entry int…", "of softw…"), while the 932dp inner screen was fine.
   ///
-  /// Covers ink AND image blocks. Text/checkbox rows need no term: their
-  /// laid-out width is clamped to what is left of the page from their own
-  /// left edge (see `_buildPositionedBlocks`), so they can never reach past
-  /// the page they are measured against. Images carry their OWN width and
-  /// are positioned at their own x, so they can and must be counted.
+  /// Every content kind that can sit right of the column is counted:
+  ///
+  /// - ink, per point;
+  /// - images, which carry their own `width` at their own `x`;
+  /// - dump cards, which have an `x` but no width, so they get the same
+  ///   [_minBlockWidth] floor their row is laid out with;
+  /// - positioned text and checkbox rows. These look self-limiting —
+  ///   `_buildPositionedBlocks` clamps a row to what is LEFT of the page from
+  ///   its own left edge — but that clamp is floored at [_minBlockWidth] so
+  ///   the drag grip and remove X stay reachable, and the floor BEATS the
+  ///   clamp: a block at x=700 is laid out 700..860 however narrow the page
+  ///   is. Leaving them out cut the X off exactly the rows a user had dragged
+  ///   right, which is the bug that made blocks undeletable on a phone.
   ///
   /// Returns 0 for an empty page so the scale maths falls back to the column
   /// width unchanged.
@@ -1230,8 +1238,21 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
       }
     }
     for (final NotebookBlock block in _blocks) {
-      if (block is NotebookImageBlock) {
-        rightmost = math.max(rightmost, block.x + block.width);
+      switch (block) {
+        case NotebookImageBlock i:
+          rightmost = math.max(rightmost, i.x + i.width);
+        case NotebookDumpCardBlock d:
+          rightmost = math.max(rightmost, d.x + _minBlockWidth);
+        case NotebookTextBlock t:
+          if (t.x != null) {
+            rightmost = math.max(rightmost, t.x! + _minBlockWidth);
+          }
+        case NotebookCheckboxBlock c:
+          if (c.x != null) {
+            rightmost = math.max(rightmost, c.x! + _minBlockWidth);
+          }
+        case NotebookBlock():
+          break;
       }
     }
     if (rightmost == 0) return 0;
