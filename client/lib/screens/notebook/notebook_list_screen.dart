@@ -623,8 +623,11 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
           }
           // Rows can vanish mid-selection (sync pull, another screen's
           // delete); a selection covering ghosts would mislead the count
-          // and the bulk actions.
-          _selectedIds.retainAll(rows.map((Notebook n) => n.id).toSet());
+          // and the bulk actions. Prune against the WHOLE library, not the
+          // search-filtered rows: a live search hides rows, it does not
+          // deselect them, and closing the search must find the selection
+          // exactly as the user left it.
+          _selectedIds.retainAll(allRows.map((Notebook n) => n.id).toSet());
           final Widget selectionBar = !_selecting
               ? const SizedBox.shrink()
               : Row(
@@ -844,7 +847,12 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
                       style: Theme.of(context).textTheme.bodyMedium,
                     ),
                     Text(
-                      formatNotebookUpdated(notebook.updatedAt),
+                      // While a search is live this line answers the
+                      // searcher's question — how many hits, and of what —
+                      // exactly as the row's subtitle does, so the two
+                      // views stay at parity.
+                      _matchLabel(notebook) ??
+                          formatNotebookUpdated(notebook.updatedAt),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.bodySmall,
@@ -872,18 +880,22 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
     );
   }
 
-  // Desktop: right-click is this app's long-press. GestureDetector wrapper
-  // because ListTile exposes no onSecondaryTap of its own.
-  /// The live search's subtitle for a row, or null when not searching /
-  /// this notebook has no summary (filtered rows always have one).
-  Widget? _matchSubtitle(Notebook notebook) {
+  /// The live search's match line for an item, or null when not searching /
+  /// this notebook has no summary (filtered rows always have one). Shared
+  /// by the tile subtitle and the cover caption so the two views cannot
+  /// drift apart.
+  String? _matchLabel(Notebook notebook) {
     final NotebookMatchSummary? m = _searchResults?[notebook.id];
     if (m == null) return null;
-    return Text(
-      '${m.matchCount} ${m.matchCount == 1 ? 'match' : 'matches'} — ${m.snippet}',
-      maxLines: 1,
-      overflow: TextOverflow.ellipsis,
-    );
+    return '${m.matchCount} ${m.matchCount == 1 ? 'match' : 'matches'} '
+        '— ${m.snippet}';
+  }
+
+  /// [_matchLabel] as the row's subtitle widget.
+  Widget? _matchSubtitle(Notebook notebook) {
+    final String? label = _matchLabel(notebook);
+    if (label == null) return null;
+    return Text(label, maxLines: 1, overflow: TextOverflow.ellipsis);
   }
 
   /// What a row-tap should hand the editor as its opening find query:
@@ -895,6 +907,8 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
     return q.isEmpty ? null : q;
   }
 
+  // Desktop: right-click is this app's long-press. GestureDetector wrapper
+  // because ListTile exposes no onSecondaryTap of its own.
   Widget _notebookTile(Notebook notebook) => GestureDetector(
         onSecondaryTap: secondaryTapFor(
           _selecting ? null : () => _enterSelection(notebook.id),
