@@ -88,6 +88,11 @@ class OcrSettingsClient {
 
   final Dio _dio;
 
+  /// The server this client talks to. Mirrors [TranscriptionClient.baseUrl];
+  /// lets a test prove the provider rebuilt against a new server rather than
+  /// handing back a cached client pointed at the old one.
+  String get baseUrl => _dio.options.baseUrl;
+
   Future<OcrCapability> getCapability() async {
     final resp = await _dio.get<dynamic>('/v1/ocr/capability');
     _checkStatus(resp);

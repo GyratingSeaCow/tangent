@@ -31,7 +31,8 @@ import '../../models/api_exception.dart';
 import '../../services/android_transcription_notification_port.dart';
 import '../../services/ocr_settings_client.dart';
 import '../../services/transcription_notifications.dart';
-import '../server/server_connection_screen.dart' show secureStoreProvider;
+import '../server/server_connection_screen.dart'
+    show secureStoreProvider, transcriptionClientProvider;
 import 'settings_screen.dart' show settingsStoreProvider;
 
 /// Whether handwriting search is enabled on THIS device.
@@ -45,8 +46,22 @@ final handwritingSearchEnabledProvider = StateProvider<bool>(
 
 /// Client for /v1/ocr/*. Async because the server URL and bearer token live
 /// in secure storage, same as the transcription client built in main().
+///
+/// WATCHES [transcriptionClientProvider] so that reconnecting to a different
+/// server rebuilds this client too. Both places that call
+/// `SecureStore.setServerUrl` set that provider immediately afterwards, so
+/// depending on it is equivalent to depending on the stored URL — which a
+/// FutureProvider cannot do directly, because secure storage is not
+/// observable. Without this the section keeps talking to the OLD host after
+/// a server change: the toggle sits inert and NOTHING appears in the
+/// server's log, because no request is being sent anywhere reachable.
 final ocrSettingsClientProvider = FutureProvider<OcrSettingsClient>(
   (ref) async {
+    // The value is deliberately unused: this is a dependency edge, not data.
+    // The transcription client carries the same base URL, but reading it
+    // here and trusting its fields would couple two clients' construction;
+    // secure storage stays the single source of truth below.
+    ref.watch(transcriptionClientProvider);
     final store = ref.watch(secureStoreProvider);
     String? url;
     String? token;
