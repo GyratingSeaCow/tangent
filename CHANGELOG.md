@@ -5,6 +5,28 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.1] - 2026-09-22
+
+Patch release: two fixes found running v1.7.0 on real devices.
+
+### Fixed
+- **Handwriting search showed "No matches" forever on devices that upgraded
+  from an older version.** A device that had been syncing before v1.7.0 had
+  its sync checkpoint already past the search index entries, so the index
+  never arrived — search looked enabled but always came up empty (a fresh
+  install was fine, which is why it slipped through). The server can now
+  re-announce the index (`POST /v1/ocr/index/backfill`), and the app asks
+  it to automatically when you enable handwriting search on an
+  already-provisioned server. Existing devices heal themselves the next
+  time the toggle is turned on.
+- **Unpaired desktop pointed at an Android-emulator-only address.** A
+  Linux/Windows desktop that had never paired defaulted every request to
+  `10.0.2.2` — an address that only means something inside the Android
+  emulator — and silently timed out. The desktop default is now
+  `http://localhost:8765` (the documented server port): correct when the
+  server runs on the same machine, and an instant, visible
+  "connection refused" instead of a silent hang everywhere else.
+
 ## [1.7.0] - 2026-09-22
 
 Handwriting search: find your handwritten notes by typing what you wrote.
