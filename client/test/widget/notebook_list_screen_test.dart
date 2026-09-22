@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import 'package:drift/native.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -9,12 +10,15 @@ import 'package:tangent/data/storage/storage_contract.dart';
 import 'package:tangent/data/notebook_repository.dart';
 import 'package:tangent/models/notebook.dart';
 import 'dart:async';
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:tangent/screens/dump/dumps_providers.dart';
 import 'package:tangent/screens/home/home_screen.dart' show localDbProvider;
 import 'package:tangent/screens/notebook/notebook_editor_screen.dart';
 import 'package:tangent/screens/notebook/notebook_list_screen.dart';
+import 'package:tangent/screens/settings/handwriting_search_section.dart'
+    show handwritingSearchEnabledProvider;
 import 'package:tangent/services/notebook_persistence.dart';
 import 'package:tangent/widgets/item_action_sheet.dart';
 
@@ -113,6 +117,8 @@ void main() {
     List<Folder> folders = const <Folder>[],
     _FakeFoldersDb? db,
     NotebookPdfShare? sharePdf,
+    LocalDb? searchDb,
+    bool searchEnabled = false,
   }) async {
     tester.view.physicalSize = const Size(1080, 2340);
     tester.view.devicePixelRatio = 1.0;
@@ -136,6 +142,12 @@ void main() {
             (_) => db?.watchFolders() ?? Stream<List<Folder>>.value(folders),
           ),
           if (db != null) localDbProvider.overrideWithValue(db),
+          // Task 6: the search icon hangs off the feature toggle, and the
+          // query runs over a REAL in-memory ink index when a test seeds one.
+          if (searchDb != null) localDbProvider.overrideWithValue(searchDb),
+          handwritingSearchEnabledProvider.overrideWith(
+            (ref) => searchEnabled,
+          ),
         ],
         child: MaterialApp(
           home: NotebookListScreen(sharePdfOverride: sharePdf),
@@ -1180,5 +1192,164 @@ void main() {
     await tester.tapAt(const Offset(540, 100));
     await tester.pumpAndSettle();
     await unmount(tester);
+  });
+
+  group('handwriting search (Task 6)', () {
+    /// Seeds one indexed word into [db] the way sync writes it.
+    Future<void> seedWord(
+      LocalDb db, {
+      required String notebook,
+      required String line,
+      int slot = 0,
+      required String text,
+      required List<double> bbox,
+    }) async {
+      await db.into(db.inkIndexEntries).insert(
+            InkIndexEntriesCompanion.insert(
+              id: '$notebook:$line:${slot.toString().padLeft(3, '0')}',
+              notebookId: notebook,
+              lineId: line,
+              wordText: text,
+              wordTextLower: text.toLowerCase(),
+              bboxJson: jsonEncode(bbox),
+              strokeIdsJson: jsonEncode(const <String>['s1']),
+              model: 'trocr-test',
+              indexedAt: 1000,
+            ),
+          );
+    }
+
+    testWidgets('the search icon is absent while the toggle is off',
+        (tester) async {
+      await mountList(
+        tester,
+        seed: <Notebook>[testNotebook(id: 'nb-1', title: 'Sprint ideas')],
+        searchEnabled: false,
+      );
+
+      expect(
+        find.byKey(const ValueKey<String>('notebook-list-search')),
+        findsNothing,
+        reason: 'while handwriting search is off, no OCR UI appears anywhere',
+      );
+
+      await unmount(tester);
+    });
+
+    testWidgets(
+        'searching filters rows to matching notebooks with count and snippet',
+        (tester) async {
+      final LocalDb searchDb = LocalDb.forTesting(NativeDatabase.memory());
+      addTearDown(searchDb.close);
+      // nb-hit: two 'meeting' matches on a line reading "team meeting".
+      await seedWord(
+        searchDb,
+        notebook: 'nb-hit',
+        line: 'l1',
+        slot: 0,
+        text: 'team',
+        bbox: <double>[0, 0, 40, 10],
+      );
+      await seedWord(
+        searchDb,
+        notebook: 'nb-hit',
+        line: 'l1',
+        slot: 1,
+        text: 'meeting',
+        bbox: <double>[50, 0, 100, 10],
+      );
+      await seedWord(
+        searchDb,
+        notebook: 'nb-hit',
+        line: 'l2',
+        slot: 0,
+        text: 'meetings',
+        bbox: <double>[0, 20, 60, 30],
+      );
+      await mountList(
+        tester,
+        seed: <Notebook>[
+          testNotebook(id: 'nb-hit', title: 'Work log'),
+          testNotebook(id: 'nb-miss', title: 'Groceries'),
+        ],
+        searchDb: searchDb,
+        searchEnabled: true,
+      );
+
+      await tester
+          .tap(find.byKey(const ValueKey<String>('notebook-list-search')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey<String>('notebook-list-search-field')),
+        'meeting',
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey<String>('notebook-row-nb-hit')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey<String>('notebook-row-nb-miss')),
+        findsNothing,
+        reason: 'rows are FILTERED to matching notebooks',
+      );
+      expect(
+        find.textContaining('2 match'),
+        findsOneWidget,
+        reason: 'the row shows how many hits the notebook holds',
+      );
+      expect(
+        find.textContaining('team meeting'),
+        findsOneWidget,
+        reason: "the row shows the first matched line's snippet",
+      );
+
+      await unmount(tester);
+    });
+
+    testWidgets('tapping a search result opens the editor with the query',
+        (tester) async {
+      final LocalDb searchDb = LocalDb.forTesting(NativeDatabase.memory());
+      addTearDown(searchDb.close);
+      await seedWord(
+        searchDb,
+        notebook: 'nb-hit',
+        line: 'l1',
+        text: 'meeting',
+        bbox: <double>[0, 0, 40, 10],
+      );
+      await mountList(
+        tester,
+        seed: <Notebook>[testNotebook(id: 'nb-hit', title: 'Work log')],
+        searchDb: searchDb,
+        searchEnabled: true,
+      );
+
+      await tester
+          .tap(find.byKey(const ValueKey<String>('notebook-list-search')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey<String>('notebook-list-search-field')),
+        'meeting',
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey<String>('notebook-row-nb-hit')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      final NotebookEditorScreen editor = tester.widget(
+        find.byType(NotebookEditorScreen),
+      );
+      expect(editor.notebookId, 'nb-hit');
+      expect(
+        editor.initialFindQuery,
+        'meeting',
+        reason: 'the tap deep-links the query so the editor opens at the '
+            'top ctrl+f result',
+      );
+
+      await unmount(tester);
+    });
   });
 }

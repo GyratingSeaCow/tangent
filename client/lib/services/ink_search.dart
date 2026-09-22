@@ -16,8 +16,18 @@ library;
 import 'dart:convert';
 import 'dart:ui' show Rect;
 
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import '../data/local_db.dart';
 import '../models/notebook.dart';
+import '../screens/home/home_screen.dart' show localDbProvider;
+
+/// App-wide [InkSearch] over the app's own database, the same seam
+/// [notebookRepositoryProvider] uses. Tests override [localDbProvider] with
+/// an in-memory db and seed index rows directly.
+final inkSearchProvider = Provider<InkSearch>(
+  (ref) => InkSearch(ref.watch(localDbProvider)),
+);
 
 /// One match inside a notebook, in page coordinates.
 ///

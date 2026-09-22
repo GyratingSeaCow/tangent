@@ -117,6 +117,16 @@ class NotebookInkCanvas extends StatefulWidget {
   /// The editor uses it to hold the page still under a resting palm.
   final ValueChanged<bool>? onStylusPresence;
 
+  /// Strokes the find bar's matches cover, banded in a translucent accent
+  /// BEHIND the ink so search hits read like marker under handwriting.
+  /// Empty (the default) costs nothing: no painter is even constructed.
+  final Set<String> highlightedStrokeIds;
+
+  /// The CURRENT find match's strokes, banded stronger than
+  /// [highlightedStrokeIds] so the eye can follow next/prev across a page
+  /// of hits. Paint-only, like the rest of the find layer.
+  final Set<String> currentMatchStrokeIds;
+
   const NotebookInkCanvas({
     super.key,
     required this.strokes,
@@ -134,6 +144,8 @@ class NotebookInkCanvas extends StatefulWidget {
     this.tool = InkTool.pen,
     this.colour = InkColor.white,
     this.onStylusPresence,
+    this.highlightedStrokeIds = const <String>{},
+    this.currentMatchStrokeIds = const <String>{},
   });
 
   /// Handwriting. White, never the lime signal colour: lime ink competes
@@ -1056,34 +1068,52 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
                 color: widget.opaqueBackground
                     ? NotebookInkCanvas.backgroundColor
                     : const Color(0x00000000),
+                // The find-highlight layer paints in this OUTER CustomPaint,
+                // which paints before (and therefore beneath) the ink layer
+                // inside it — a search band must never obscure handwriting.
+                // Like the hover ring, it lives OUTSIDE NotebookInkPainter,
+                // which the PDF exporter drives directly: a find highlight
+                // structurally cannot print. With no highlights the painter
+                // is null, so the idle canvas pays nothing.
                 child: CustomPaint(
-                  painter: NotebookInkPainter(
-                    strokes: _strokes,
-                    selectedIds: _selected,
-                    lassoPath: _lassoPath,
-                    activeStroke: active == null
-                        ? null
-                        : InkStroke(
-                            id: '_active',
-                            width: _activeWidth,
-                            style: _activeStyle,
-                            tool: _activeTool,
-                            colour: _activeColour,
-                            points: active,
-                          ),
-                    revision: _revision,
-                  ),
-                  // The hover ring rides in its OWN painter behind its own
-                  // repaint boundary: the digitizer delivers ~93 hover
-                  // events per approach, and each must repaint this one
-                  // circle, never the page of ink beneath. It also keeps
-                  // the ring out of NotebookInkPainter, which the PDF
-                  // exporter drives directly — a hovering pen can never
-                  // print.
-                  child: RepaintBoundary(
-                    child: CustomPaint(
-                      painter: NotebookHoverRingPainter(ring: _hoverRing),
-                      child: const SizedBox.expand(),
+                  painter: widget.highlightedStrokeIds.isEmpty &&
+                          widget.currentMatchStrokeIds.isEmpty
+                      ? null
+                      : NotebookFindHighlightPainter(
+                          strokes: _strokes,
+                          highlightedIds: widget.highlightedStrokeIds,
+                          currentIds: widget.currentMatchStrokeIds,
+                          revision: _revision,
+                        ),
+                  child: CustomPaint(
+                    painter: NotebookInkPainter(
+                      strokes: _strokes,
+                      selectedIds: _selected,
+                      lassoPath: _lassoPath,
+                      activeStroke: active == null
+                          ? null
+                          : InkStroke(
+                              id: '_active',
+                              width: _activeWidth,
+                              style: _activeStyle,
+                              tool: _activeTool,
+                              colour: _activeColour,
+                              points: active,
+                            ),
+                      revision: _revision,
+                    ),
+                    // The hover ring rides in its OWN painter behind its own
+                    // repaint boundary: the digitizer delivers ~93 hover
+                    // events per approach, and each must repaint this one
+                    // circle, never the page of ink beneath. It also keeps
+                    // the ring out of NotebookInkPainter, which the PDF
+                    // exporter drives directly — a hovering pen can never
+                    // print.
+                    child: RepaintBoundary(
+                      child: CustomPaint(
+                        painter: NotebookHoverRingPainter(ring: _hoverRing),
+                        child: const SizedBox.expand(),
+                      ),
                     ),
                   ),
                 ),
@@ -1387,6 +1417,92 @@ class NotebookHoverRingPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant NotebookHoverRingPainter oldDelegate) =>
       !identical(oldDelegate.ring, ring);
+}
+
+/// Paints the find bar's match highlights: a translucent accent band along
+/// each matched stroke, and a stronger band along the CURRENT match.
+///
+/// Deliberately SEPARATE from [NotebookInkPainter], exactly like the hover
+/// ring and for the same two reasons:
+///  * the PDF exporter drives [NotebookInkPainter.paint] directly, so a
+///    search highlight painted there would print — here it structurally
+///    cannot;
+///  * it mounts in the layer that paints BEFORE the ink layer, so the band
+///    sits behind handwriting (the same layer family as the lasso's
+///    selection halo) and can never obscure the ink it marks.
+///
+/// Paint-only: this class is never consulted for hit testing, and the canvas
+/// constructs it at all only while a find is active.
+class NotebookFindHighlightPainter extends CustomPainter {
+  const NotebookFindHighlightPainter({
+    required this.strokes,
+    required this.highlightedIds,
+    required this.currentIds,
+    required this.revision,
+  });
+
+  final List<InkStroke> strokes;
+
+  /// Every stroke any match covers.
+  final Set<String> highlightedIds;
+
+  /// The current match's strokes, banded stronger so next/prev is followable.
+  final Set<String> currentIds;
+
+  /// The canvas's visual revision, so ink edits under a live find repaint.
+  final int revision;
+
+  /// How much wider than the stroke its band paints. Matches the lasso
+  /// halo's inflation so the two selection languages feel related.
+  static const double _bandPadding = 8;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    for (final InkStroke stroke in strokes) {
+      final bool current = currentIds.contains(stroke.id);
+      if (!current && !highlightedIds.contains(stroke.id)) continue;
+      _paintBand(canvas, stroke, current: current);
+    }
+  }
+
+  /// The stroke redrawn wider and translucent beneath itself — the same
+  /// geometry trick as the lasso halo, so fountain and ballpoint both band
+  /// correctly. The CURRENT match is brighter, never a different hue: one
+  /// colour means "match", intensity means "you are here".
+  void _paintBand(Canvas canvas, InkStroke stroke, {required bool current}) {
+    if (stroke.points.isEmpty) return;
+    final double base = stroke.tool == InkTool.highlighter
+        ? stroke.width * kHighlighterWidthFactor
+        : stroke.width;
+    final Paint band = Paint()
+      ..color = TangentColors.signal.withValues(alpha: current ? 0.65 : 0.28)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = base + _bandPadding
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round
+      ..isAntiAlias = true;
+    if (stroke.points.length == 1) {
+      canvas.drawCircle(
+        stroke.points.first.offset,
+        (base + _bandPadding) / 2,
+        band..style = PaintingStyle.fill,
+      );
+      return;
+    }
+    final Path path = Path()
+      ..moveTo(stroke.points.first.x, stroke.points.first.y);
+    for (final InkPoint point in stroke.points.skip(1)) {
+      path.lineTo(point.x, point.y);
+    }
+    canvas.drawPath(path, band);
+  }
+
+  @override
+  bool shouldRepaint(covariant NotebookFindHighlightPainter oldDelegate) =>
+      oldDelegate.revision != revision ||
+      !identical(oldDelegate.strokes, strokes) ||
+      !setEquals(oldDelegate.highlightedIds, highlightedIds) ||
+      !setEquals(oldDelegate.currentIds, currentIds);
 }
 
 /// Pen-size slider with a live round preview dot, for the notebook page's own
