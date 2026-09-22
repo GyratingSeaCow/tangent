@@ -45,8 +45,8 @@ void main() {
 
     await db.listDumps();
 
-    expect(db.schemaVersion, 14);
-    expect(sql.userVersion, 14);
+    expect(db.schemaVersion, 15);
+    expect(sql.userVersion, 15);
     expect(_columnNames(sql, 'notebooks'), _notebookColumns);
     expect(
       sql.select('PRAGMA foreign_key_list(notebooks)'),
@@ -72,7 +72,7 @@ void main() {
 
     await db.listDumps();
 
-    expect(sql.userVersion, 14);
+    expect(sql.userVersion, 15);
     expect(_columnNames(sql, 'notebooks'), _notebookColumns);
     // v8 adds folder_id to dumps, so compare the columns the fixture had:
     // this test is about existing rows surviving, not about the column list.
@@ -126,7 +126,7 @@ void main() {
 
     sql = sqlite3.open(file.path);
     addTearDown(sql.dispose);
-    expect(sql.userVersion, 14);
+    expect(sql.userVersion, 15);
     expect(_columnNames(sql, 'notebooks'), _notebookColumns);
     // v8 adds folder_id to dumps, so compare the columns the fixture had:
     // this test is about existing rows surviving, not about the column list.
@@ -182,7 +182,7 @@ void main() {
     addTearDown(db.close);
     await db.listDumps();
 
-    expect(sql.userVersion, 14);
+    expect(sql.userVersion, 15);
     final rows = <String, int>{
       for (final r in sql.select('SELECT id, sync_dirty FROM notebooks'))
         r['id'] as String: r['sync_dirty'] as int,
