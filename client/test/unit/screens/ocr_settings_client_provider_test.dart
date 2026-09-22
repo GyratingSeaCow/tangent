@@ -112,5 +112,15 @@ void main() {
 
     final client = await container.read(ocrSettingsClientProvider.future);
     expect(client.baseUrl, 'http://host:8765');
+
+    // The name of this test is the token, so assert the token. Checking
+    // baseUrl alone would pass even if the Authorization header were dropped
+    // entirely, and every /v1/ocr/* call would 401 behind a UI that shows
+    // nothing but a dead toggle.
+    expect(
+      client.authorizationHeader,
+      'Bearer secret-token',
+      reason: 'the stored token must reach the request options',
+    );
   });
 }

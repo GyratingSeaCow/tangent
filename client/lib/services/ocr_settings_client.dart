@@ -93,6 +93,15 @@ class OcrSettingsClient {
   /// handing back a cached client pointed at the old one.
   String get baseUrl => _dio.options.baseUrl;
 
+  /// The Authorization header this client will send, or null if it has none.
+  ///
+  /// Exposed so a test can prove the stored token actually reaches the
+  /// request options: asserting [baseUrl] alone passes even when the token
+  /// is dropped, and every /v1/ocr/* call would then 401 behind a UI that
+  /// just shows a dead toggle.
+  String? get authorizationHeader =>
+      _dio.options.headers['Authorization'] as String?;
+
   Future<OcrCapability> getCapability() async {
     final resp = await _dio.get<dynamic>('/v1/ocr/capability');
     _checkStatus(resp);

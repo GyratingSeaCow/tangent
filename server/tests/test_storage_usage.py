@@ -84,3 +84,20 @@ def test_does_not_descend_into_ocr_env(tmp_path: Path):
 
 def test_missing_dir_is_zero(tmp_path: Path):
     assert get_storage_used_bytes(str(tmp_path / "nope")) == 0
+
+
+def test_nested_ocr_env_is_still_counted(tmp_path):
+    """Only the server's own top-level ocr-env is machinery.
+
+    A directory that merely shares the name deeper in the tree is user
+    content: skipping it by name at any depth would silently under-report
+    storage with no way for the user to tell.
+    """
+    (tmp_path / "ocr-env").mkdir()
+    (tmp_path / "ocr-env" / "big.bin").write_bytes(b"x" * 5000)
+
+    nested = tmp_path / "audio" / "ocr-env"
+    nested.mkdir(parents=True)
+    (nested / "note.m4a").write_bytes(b"y" * 321)
+
+    assert get_storage_used_bytes(str(tmp_path)) == 321

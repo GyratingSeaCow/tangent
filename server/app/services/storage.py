@@ -18,6 +18,10 @@ _DB_SUFFIXES = {".db", ".db-journal", ".db-wal", ".db-shm"}
 #
 # These names are PRUNED (never descended), not merely filtered out of the
 # sum: statting 29k files and discarding the numbers is just as slow.
+#
+# Matched only at the TOP LEVEL of data_dir, where the server creates them.
+# A bare name test would also skip a user directory that happened to be
+# called "ocr-env" at any depth, silently under-reporting real storage.
 _SKIP_DIRS = {"ocr-env", "ocr-env.tmp"}
 
 
@@ -31,10 +35,13 @@ def get_storage_used_bytes(data_dir: str) -> int:
     root = Path(data_dir)
     if not root.exists():
         return 0
+    root_path = os.path.normpath(str(root))
     total = 0
     for dirpath, dirnames, filenames in os.walk(root):
         # Prune in place: os.walk will not descend into what we remove here.
-        dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS]
+        # Only at the root, so nested user content keeps being counted.
+        if os.path.normpath(dirpath) == root_path:
+            dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS]
         for name in filenames:
             if Path(name).suffix in _DB_SUFFIXES:
                 continue
