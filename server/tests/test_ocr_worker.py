@@ -297,8 +297,83 @@ class TestReindex:
 
 
 # ---------------------------------------------------------------------------
-# run_inference: the subprocess boundary
+# run_inference: the persistent-child subprocess boundary
 # ---------------------------------------------------------------------------
+#
+# The seam: a stub script stands in for ``ocr_infer.py --serve`` and the test
+# interpreter stands in for the venv python. Each stub appends its PID to a
+# spawn log on startup — child-process count is asserted from that file, so
+# a regression back to one-subprocess-per-line is caught by count, not by
+# implementation detail.
+
+_SERVE_PREAMBLE = (
+    "import json, os, sys\n"
+    "assert '--serve' in sys.argv, 'worker must start the child in serve mode'\n"
+    "log = os.environ['OCR_STUB_SPAWN_LOG']\n"
+    "with open(log, 'a') as f:\n"
+    "    f.write(str(os.getpid()) + '\\n')\n"
+    "spawn_n = sum(1 for _ in open(log))\n"
+)
+
+#: Healthy child: opens each PNG path it is handed, answers forever.
+_SERVE_FOREVER = (
+    "for line in sys.stdin:\n"
+    "    path = line.strip()\n"
+    "    if not path:\n"
+    "        continue\n"
+    "    open(path, 'rb').close()\n"
+    "    print(json.dumps({'text': '  stub text  '}), flush=True)\n"
+)
+
+#: First spawn: serves ONE line then dies mid-batch. Later spawns: healthy.
+_SERVE_ONE_THEN_CRASH = (
+    "served = 0\n"
+    "for line in sys.stdin:\n"
+    "    path = line.strip()\n"
+    "    if not path:\n"
+    "        continue\n"
+    "    print(json.dumps({'text': 'line text'}), flush=True)\n"
+    "    served += 1\n"
+    "    if spawn_n == 1 and served == 1:\n"
+    "        os._exit(1)\n"
+)
+
+#: Reads requests and never answers them.
+_SERVE_HANG = (
+    "import time\n"
+    "for line in sys.stdin:\n"
+    "    time.sleep(60)\n"
+)
+
+
+def _install_serve_stub(monkeypatch, tmp_path: Path, behavior: str) -> Path:
+    """Point the worker at a stub serve child; return the spawn-log path."""
+    stub = tmp_path / "serve_stub.py"
+    stub.write_text(_SERVE_PREAMBLE + behavior, encoding="utf-8")
+    spawn_log = tmp_path / "spawns.log"
+    spawn_log.write_text("", encoding="utf-8")
+    monkeypatch.setenv("OCR_STUB_SPAWN_LOG", str(spawn_log))
+    monkeypatch.setattr(ocr_worker.ocr_env, "python_path", lambda: sys.executable)
+    monkeypatch.setattr(ocr_worker, "_infer_script", lambda: stub)
+    return spawn_log
+
+
+def _spawns(spawn_log: Path) -> int:
+    return len(spawn_log.read_text(encoding="utf-8").splitlines())
+
+
+class _WarningLog:
+    """Records log.warning events; every other level is a no-op."""
+
+    def __init__(self) -> None:
+        self.warnings: list[tuple[str, dict]] = []
+
+    def __getattr__(self, name):
+        def _record(event, **kw):
+            if name == "warning":
+                self.warnings.append((event, kw))
+
+        return _record
 
 
 def test_run_inference_raises_when_env_not_installed(temp_data_dir):
@@ -306,34 +381,100 @@ def test_run_inference_raises_when_env_not_installed(temp_data_dir):
         ocr_worker.run_inference(Image.new("L", (32, 32), 255))
 
 
-def test_run_inference_shells_to_the_venv_python(monkeypatch, tmp_path):
-    # The stub stands in for ocr_infer.py; the test interpreter stands in for
-    # the venv python. What is pinned: argv contract (--image <png>) and that
-    # stdout comes back stripped.
-    stub = tmp_path / "stub_infer.py"
-    stub.write_text(
-        "import sys\n"
-        "assert '--image' in sys.argv\n"
-        "path = sys.argv[sys.argv.index('--image') + 1]\n"
-        "open(path, 'rb').close()\n"
-        "print('stubbed text')\n",
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(ocr_worker.ocr_env, "python_path", lambda: sys.executable)
-    monkeypatch.setattr(ocr_worker, "_infer_script", lambda: stub)
+def test_run_inference_speaks_the_serve_protocol(monkeypatch, tmp_path):
+    # Pinned contract: the child is started with --serve, receives a
+    # readable PNG path per line, and the JSON text comes back stripped.
+    _install_serve_stub(monkeypatch, tmp_path, _SERVE_FOREVER)
 
     out = ocr_worker.run_inference(Image.new("L", (32, 32), 255))
-    assert out == "stubbed text"
+    assert out == "stub text"
 
 
-def test_run_inference_surfaces_subprocess_failure(monkeypatch, tmp_path):
-    stub = tmp_path / "boom.py"
-    stub.write_text("import sys; sys.exit(3)\n", encoding="utf-8")
-    monkeypatch.setattr(ocr_worker.ocr_env, "python_path", lambda: sys.executable)
-    monkeypatch.setattr(ocr_worker, "_infer_script", lambda: stub)
+def test_model_loads_once_two_lines_share_one_child(monkeypatch, tmp_path):
+    # THE point of the persistent child: N inferences, ONE spawn (one model
+    # load). A regression to subprocess-per-line shows up as spawn count 2.
+    spawn_log = _install_serve_stub(monkeypatch, tmp_path, _SERVE_FOREVER)
+
+    img = Image.new("L", (32, 32), 255)
+    assert ocr_worker.run_inference(img) == "stub text"
+    assert ocr_worker.run_inference(img) == "stub text"
+    assert _spawns(spawn_log) == 1, "two lines must reuse one serve child"
+
+
+def test_child_crash_mid_batch_restarts_once_and_second_line_indexes(
+    db, monkeypatch, tmp_path
+):
+    spawn_log = _install_serve_stub(monkeypatch, tmp_path, _SERVE_ONE_THEN_CRASH)
+    fake_log = _WarningLog()
+    monkeypatch.setattr(ocr_worker, "log", fake_log)
+
+    # Two lines, top-to-bottom: the child dies right after answering line 1.
+    _insert_notebook(
+        db, "nb-crash", [_stroke("s-top", 0, 0), _stroke("s-bot", 0, 60)]
+    )
+    ocr_worker.reindex_notebook(
+        db, "nb-crash", infer=ocr_worker.run_inference, now=1000
+    )
+
+    rows = _rows(db, "nb-crash")
+    assert len(rows) == 2
+    assert all(r["model"] == ocr_env.MODEL_ID for r in rows), (
+        "the crash must cost a restart, not an error row"
+    )
+    assert all(r["word_text"] == "line text" for r in rows)
+    assert _spawns(spawn_log) == 2, "exactly one restart"
+    restarts = [e for e, _ in fake_log.warnings if e == "ocr_worker.infer_restarted"]
+    assert len(restarts) == 1, "the restart must be logged as a WARNING"
+
+
+def test_per_line_timeout_records_error_row_and_restarts_child(
+    db, monkeypatch, tmp_path
+):
+    spawn_log = _install_serve_stub(monkeypatch, tmp_path, _SERVE_HANG)
+    monkeypatch.setattr(ocr_worker, "INFER_TIMEOUT_S", 0.5)
+    fake_log = _WarningLog()
+    monkeypatch.setattr(ocr_worker, "log", fake_log)
+
+    _insert_notebook(db, "nb-slow", [_stroke("s-1", 0, 0)])
+    ocr_worker.reindex_notebook(
+        db, "nb-slow", infer=ocr_worker.run_inference, now=1000
+    )
+
+    rows = _rows(db, "nb-slow")
+    assert len(rows) == 1
+    assert rows[0]["model"] == "error", "a hung child is a per-line error row"
+    assert _spawns(spawn_log) == 2, "the hung child is killed and restarted once"
+    assert any(
+        e == "ocr_worker.infer_restarted" for e, _ in fake_log.warnings
+    )
+    assert ocr_worker._infer_child is None, "both hung children were discarded"
+
+
+def test_run_inference_surfaces_child_death_after_one_restart(
+    monkeypatch, tmp_path
+):
+    # A child that dies at startup: restart once, then surface the failure —
+    # never an infinite respawn loop.
+    spawn_log = _install_serve_stub(monkeypatch, tmp_path, "sys.exit(3)\n")
 
     with pytest.raises(RuntimeError, match="exited 3"):
         ocr_worker.run_inference(Image.new("L", (32, 32), 255))
+    assert _spawns(spawn_log) == 2, "one restart attempt, then give up"
+
+
+def test_stop_worker_kills_the_persistent_child(monkeypatch, tmp_path):
+    # uninstall's quiesce-first contract: stop_worker runs BEFORE the env
+    # wipe and must leave no live child behind (no orphan holding the venv).
+    _install_serve_stub(monkeypatch, tmp_path, _SERVE_FOREVER)
+
+    ocr_worker.run_inference(Image.new("L", (32, 32), 255))
+    child = ocr_worker._infer_child
+    assert child is not None and child.proc.poll() is None, "child is live"
+
+    ocr_worker.stop_worker()
+
+    assert child.proc.poll() is not None, "stop_worker must not orphan the child"
+    assert ocr_worker._infer_child is None
 
 
 # ---------------------------------------------------------------------------

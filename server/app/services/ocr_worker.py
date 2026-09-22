@@ -11,12 +11,17 @@ x-order, and publish ONE ink_index change per notebook batch so devices know
 to re-pull the replace-set.
 
 Inference runs in a SUBPROCESS via ``ocr_env.python_path()``: torch and
-transformers are never imported into the server process.
+transformers are never imported into the server process. The subprocess is
+PERSISTENT (``ocr_infer.py --serve``): the model is loaded once per child
+lifetime, then image paths stream over stdin and JSON results stream back —
+measured 39s/line with a fresh subprocess per line vs ~0.1s once loaded.
 """
 
 from __future__ import annotations
 
+import collections
 import json
+import queue
 import sqlite3
 import subprocess
 import tempfile
@@ -35,7 +40,9 @@ from app.services.ink_segmentation import Line, segment_ink
 log = get_logger(__name__)
 
 #: Per-line inference budget. TrOCR-base on CPU takes seconds; a minute of
-#: silence means the venv is broken, not slow.
+#: silence means the venv is broken, not slow. Applied as a read deadline on
+#: the persistent child's response (the first line of a fresh child also
+#: pays the model load inside this budget).
 INFER_TIMEOUT_S = 120
 
 
@@ -47,28 +54,198 @@ def _infer_script() -> Path:
     return Path(__file__).resolve().parent.parent / "ocr_infer.py"
 
 
-def run_inference(image: Image.Image) -> str:
-    """OCR one line image via the installed venv's python. Raises on failure."""
+class _ChildFailure(Exception):
+    """The persistent child failed at the TRANSPORT level: died, hung past
+    the deadline, or spoke a non-JSON line. Distinct from a child-reported
+    ``{"error": ...}`` result, which is a healthy child rejecting one line
+    (no restart for those)."""
+
+
+class _InferChild:
+    """One persistent ``ocr_infer.py --serve`` subprocess.
+
+    A reader thread pumps stdout lines into a queue so requests can wait
+    with a deadline (subprocess.run's timeout no longer applies here); a
+    second thread drains stderr into a bounded tail for error messages.
+    ``closed`` marks a deliberate shutdown so the retry logic can tell
+    stop_worker's kill apart from a crash — a killed child must NOT be
+    respawned by an in-flight request.
+    """
+
+    def __init__(self, argv: list[str]) -> None:
+        self.closed = False
+        self.proc = subprocess.Popen(
+            argv,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+        )
+        self._lines: queue.Queue[str | None] = queue.Queue()
+        self._stderr_tail: collections.deque[str] = collections.deque(maxlen=20)
+        threading.Thread(
+            target=self._pump_stdout, name="ocr-infer-stdout", daemon=True
+        ).start()
+        threading.Thread(
+            target=self._pump_stderr, name="ocr-infer-stderr", daemon=True
+        ).start()
+
+    def _pump_stdout(self) -> None:
+        try:
+            for line in self.proc.stdout:  # type: ignore[union-attr]
+                self._lines.put(line)
+        except ValueError:
+            pass  # pipe closed under the reader during shutdown
+        self._lines.put(None)  # EOF sentinel: the child is gone
+
+    def _pump_stderr(self) -> None:
+        try:
+            for line in self.proc.stderr:  # type: ignore[union-attr]
+                self._stderr_tail.append(line)
+        except ValueError:
+            pass
+
+    def _death_notice(self) -> str:
+        try:
+            rc: int | str = self.proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            rc = "?"
+        tail = "".join(self._stderr_tail).strip()[-500:]
+        return f"ocr_infer exited {rc}: {tail}"
+
+    def request(self, path: str, timeout: float) -> str:
+        """One image path in, one recognized text out.
+
+        Raises _ChildFailure on transport death/hang/garbage; RuntimeError
+        on a child-reported per-line error (child stays up).
+        """
+        try:
+            self.proc.stdin.write(path + "\n")  # type: ignore[union-attr]
+            self.proc.stdin.flush()  # type: ignore[union-attr]
+        except (OSError, ValueError) as exc:
+            raise _ChildFailure(self._death_notice()) from exc
+        try:
+            line = self._lines.get(timeout=timeout)
+        except queue.Empty:
+            raise _ChildFailure(
+                f"ocr_infer timed out after {timeout}s"
+            ) from None
+        if line is None:
+            raise _ChildFailure(self._death_notice())
+        try:
+            result = json.loads(line)
+        except ValueError as exc:
+            raise _ChildFailure(
+                f"ocr_infer spoke garbage: {line.strip()[:200]!r}"
+            ) from exc
+        if not isinstance(result, dict):
+            raise _ChildFailure(f"ocr_infer sent a non-object: {line.strip()[:200]!r}")
+        if "text" in result:
+            return str(result["text"]).strip()
+        raise RuntimeError(str(result.get("error") or "unknown inference error"))
+
+    def close(self) -> None:
+        """Deliberate shutdown. Never hangs: EOF first (clean exit), then a
+        short grace, then kill — a child whose env was deleted under it (the
+        uninstall quiesce path) dies here instead of lingering."""
+        self.closed = True
+        try:
+            if self.proc.stdin is not None:
+                self.proc.stdin.close()
+        except OSError:
+            pass
+        try:
+            self.proc.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            self.proc.kill()
+            try:
+                self.proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                log.warning("ocr_worker.infer_child_unkillable")
+
+
+#: Guards the child REFERENCE (brief holds only — never held across a
+#: request, so stop_worker can always grab it to kill a hung child).
+_child_lock = threading.Lock()
+#: Serializes whole inference calls: one in-flight line at a time.
+_infer_serial = threading.Lock()
+_infer_child: _InferChild | None = None
+
+
+def _spawn_child() -> _InferChild:
     py = ocr_env.python_path()
     if py is None:
         raise RuntimeError("OCR environment is not installed")
+    try:
+        return _InferChild([py, str(_infer_script()), "--serve"])
+    except OSError as exc:
+        raise RuntimeError(f"failed to start ocr_infer --serve: {exc}") from exc
+
+
+def _ensure_child() -> _InferChild:
+    global _infer_child
+    with _child_lock:
+        if _infer_child is None:
+            _infer_child = _spawn_child()
+        return _infer_child
+
+
+def _discard_child(child: _InferChild) -> None:
+    global _infer_child
+    with _child_lock:
+        if _infer_child is child:
+            _infer_child = None
+    child.close()
+
+
+def shutdown_infer_child() -> None:
+    """Kill the persistent inference child, if any. Part of every stop path."""
+    global _infer_child
+    with _child_lock:
+        child, _infer_child = _infer_child, None
+    if child is not None:
+        child.close()
+
+
+def _infer_line(path: str) -> str:
+    """Run one line through the persistent child, restarting it ONCE on
+    transport failure (crash/timeout/garbage) before surfacing the error."""
+    with _infer_serial:
+        child = _ensure_child()
+        try:
+            return child.request(path, INFER_TIMEOUT_S)
+        except _ChildFailure as exc:
+            deliberate = child.closed
+            _discard_child(child)
+            if deliberate:
+                # stop_worker killed it under us: surface, never respawn.
+                raise RuntimeError(str(exc)) from exc
+            log.warning("ocr_worker.infer_restarted", error=str(exc))
+            retry = _ensure_child()
+            try:
+                return retry.request(path, INFER_TIMEOUT_S)
+            except _ChildFailure as exc2:
+                _discard_child(retry)
+                raise RuntimeError(str(exc2)) from exc2
+
+
+def run_inference(image: Image.Image) -> str:
+    """OCR one line image via the persistent venv child. Raises on failure."""
+    if ocr_env.python_path() is None:
+        raise RuntimeError("OCR environment is not installed")
 
     # delete=False + manual unlink: on Windows an open NamedTemporaryFile
-    # cannot be reopened by the image save or the child process.
+    # cannot be reopened by the image save or the child process. The unlink
+    # happens only after the result (or final failure) arrives — the child
+    # reads the path asynchronously, and the retry attempt reuses the file.
     tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)  # noqa: SIM115
     try:
         tmp.close()
         image.save(tmp.name, format="PNG")
-        argv = [py, str(_infer_script()), "--image", tmp.name]
-        proc = subprocess.run(
-            argv, capture_output=True, text=True, timeout=INFER_TIMEOUT_S
-        )
-        if proc.returncode != 0:
-            tail = (proc.stderr or proc.stdout or "").strip()[-500:]
-            raise RuntimeError(
-                f"ocr_infer exited {proc.returncode}: {tail}"
-            )
-        return (proc.stdout or "").strip()
+        return _infer_line(tmp.name)
     finally:
         Path(tmp.name).unlink(missing_ok=True)
 
@@ -375,15 +552,21 @@ def start_worker_if_installed() -> threading.Thread | None:
 
 
 def stop_worker() -> None:
+    """Stop the index thread AND the persistent inference child.
+
+    The child kill runs even when the thread never started (tests and API
+    paths call run_inference directly) — uninstall's quiesce-first contract
+    requires no live child when the env dir is wiped right after.
+    """
     global _thread
-    if _thread is None:
-        return
-    _stop.set()
-    _wake.set()
-    _thread.join(timeout=5)
-    _thread = None
-    _stop.clear()
-    _wake.clear()
+    if _thread is not None:
+        _stop.set()
+        _wake.set()
+        _thread.join(timeout=5)
+        _thread = None
+        _stop.clear()
+        _wake.clear()
+    shutdown_infer_child()
 
 
 def _reset_for_tests() -> None:
