@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import 'package:flutter/material.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 import '../../theme/tangent_tokens.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -36,7 +37,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   void initState() {
     super.initState();
     _load();
+    // The footer version comes from the build, never a literal: the old
+    // hard-coded 'v1.0.0' footer sat stale for seven releases.
+    PackageInfo.fromPlatform().then((info) {
+      if (mounted) setState(() => _appVersion = info.version);
+    });
   }
+
+  String _appVersion = '';
 
   Future<void> _load() async {
     final settings = ref.read(settingsStoreProvider);
@@ -252,12 +260,33 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             onChanged: (value) => setState(() => _keepScreenAwake = value),
           ),
           const Divider(),
-          const Padding(
-            padding: EdgeInsets.all(16),
+          ListTile(
+            leading: const Icon(Icons.description_outlined),
+            title: const Text('Licenses'),
+            subtitle: const Text(
+              'Tangent is AGPL-3.0. View every open-source license this '
+              'app is built on.',
+            ),
+            onTap: () => showLicensePage(
+              context: context,
+              applicationName: 'Tangent',
+              applicationVersion:
+                  _appVersion.isEmpty ? null : 'v$_appVersion',
+              applicationLegalese:
+                  'Copyright © 2026 Tangent contributors.\n'
+                  'Licensed under the GNU AGPL-3.0-or-later: you have the '
+                  'right to receive the source code of this app and of the '
+                  'server it talks to.',
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(16),
             child: Text(
-              'Tangent v1.0.0 — AGPL-3.0',
+              _appVersion.isEmpty
+                  ? 'Tangent — AGPL-3.0'
+                  : 'Tangent v$_appVersion — AGPL-3.0',
               textAlign: TextAlign.center,
-              style: TextStyle(color: TangentColors.textDim),
+              style: const TextStyle(color: TangentColors.textDim),
             ),
           ),
           ],

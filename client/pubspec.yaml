@@ -41,6 +41,7 @@ dependencies:
   window_manager: ^0.5.2
   dbus: ^0.7.12
   file_selector: ^1.0.3
+  package_info_plus: ^9.0.1
 
 dev_dependencies:
   flutter_test:
@@ -60,3 +61,4 @@ flutter:
   uses-material-design: true
   assets:
     - assets/tray/tray_icon.png
+    - assets/licenses/AGPL-3.0.txt

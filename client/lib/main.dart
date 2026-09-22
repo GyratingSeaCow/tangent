@@ -2,7 +2,9 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show LicenseEntryWithLineBreaks, LicenseRegistry;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'theme/tangent_theme.dart';
@@ -106,6 +108,15 @@ void backgroundSyncDispatcher() {
 
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Tangent's own license belongs in the registry alongside the package
+  // licenses Flutter collects automatically — the Settings > Licenses page
+  // shows exactly what ships, from the bundled LICENSE file, never a copy
+  // that could drift.
+  LicenseRegistry.addLicense(() async* {
+    final String text =
+        await rootBundle.loadString('assets/licenses/AGPL-3.0.txt');
+    yield LicenseEntryWithLineBreaks(const <String>['Tangent'], text);
+  });
   // Desktop playback backend. Must precede any AudioPlayer construction,
   // which providers below can trigger.
   initPlatformAudio();
