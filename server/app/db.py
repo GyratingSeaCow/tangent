@@ -484,11 +484,71 @@ def _migrate_notebooks_ink(conn: sqlite3.Connection) -> None:
             except ValueError:
                 continue
             if isinstance(payload, dict) and "ink" in payload:
+                ink_val = payload["ink"]
+                if isinstance(ink_val, str):
+                    # The client pushes ink as JSON TEXT inside the payload.
+                    # Dumping it AGAIN would double-encode: json.loads on the
+                    # column would yield a str, the OCR worker would see no
+                    # dict, and every notebook would silently index nothing.
+                    # Store the text as-is — but only if it actually parses;
+                    # otherwise fall back to an older payload.
+                    try:
+                        _json.loads(ink_val)
+                    except ValueError:
+                        log.warning(
+                            "db.notebook_ink_backfill_unparseable",
+                            notebook_id=nb_id,
+                        )
+                        continue
+                    encoded = ink_val
+                else:
+                    encoded = _json.dumps(ink_val)
                 conn.execute(
                     "UPDATE notebooks SET ink = ? WHERE id = ?",
-                    (_json.dumps(payload["ink"]), nb_id),
+                    (encoded, nb_id),
                 )
                 break
+
+
+def _normalize_notebooks_ink(conn: sqlite3.Connection) -> None:
+    """Repair double-encoded notebooks.ink rows in place.
+
+    The original Task 3 backfill json.dumps()'d payload ink that was ALREADY
+    JSON text, so json.loads(ink) yielded a str — the OCR worker saw no dict,
+    no strokes, and silently indexed nothing. Runs every boot: idempotent and
+    cheap (a healthy row costs one json.loads; only wrapped rows are
+    rewritten). Handles N layers of wrapping; a value that never resolves to
+    a dict is left untouched and logged.
+    """
+    import json as _json
+
+    rows = conn.execute(
+        "SELECT id, ink FROM notebooks WHERE ink IS NOT NULL"
+    ).fetchall()
+    for nb_id, raw in rows:
+        try:
+            value = _json.loads(raw)
+        except ValueError:
+            log.warning("db.notebook_ink_unparseable", notebook_id=nb_id)
+            continue
+        if not isinstance(value, str):
+            continue  # canonical single-encoded row — nothing to do
+        # Peel wrapper layers. Terminates: each loads strictly shrinks the
+        # string; the cap is belt-and-braces against pathological data.
+        for _ in range(10):
+            if not isinstance(value, str):
+                break
+            try:
+                value = _json.loads(value)
+            except ValueError:
+                break
+        if isinstance(value, dict):
+            conn.execute(
+                "UPDATE notebooks SET ink = ? WHERE id = ?",
+                (_json.dumps(value), nb_id),
+            )
+        else:
+            log.warning("db.notebook_ink_unparseable", notebook_id=nb_id)
 
 
 def init_db(data_dir: str) -> None:
@@ -508,6 +568,7 @@ def init_db(data_dir: str) -> None:
         _migrate_change_log_folder_entity(conn)
         _migrate_change_log_ink_index_entity(conn)
         _migrate_notebooks_ink(conn)
+        _normalize_notebooks_ink(conn)
         _reconcile_audio_kept(conn, data_dir)
         _backfill_dump_change_feed(conn)
         conn.commit()

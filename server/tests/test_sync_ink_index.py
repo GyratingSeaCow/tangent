@@ -402,3 +402,108 @@ class TestSchema:
             )
         finally:
             conn.close()
+
+    def test_migration_stores_string_ink_payload_single_encoded(
+        self, temp_data_dir
+    ):
+        # THE production bug: the client pushes ink as JSON TEXT inside the
+        # payload. The backfill must store it as-is (single-encoded), not
+        # json.dumps it again — double-encoding made json.loads(ink) yield a
+        # str and the OCR worker silently indexed nothing, 25/25 notebooks.
+        from app.db import _migrate_notebooks_ink
+
+        init_db(str(temp_data_dir))
+        conn = sqlite3.connect(temp_data_dir / "tangent.db")
+        try:
+            conn.execute(
+                "INSERT INTO notebooks (id, title, doc, created_at, updated_at) "
+                "VALUES ('nb-str', 'S', '{}', 1, 1)"
+            )
+            payload = json.dumps(
+                {
+                    "title": "S",
+                    "ink": json.dumps({"strokes": [{"id": "s-1"}]}),
+                }
+            )
+            conn.execute(
+                "INSERT INTO change_log "
+                "(entity_type, entity_id, op, device_id, payload, created_at) "
+                "VALUES ('notebook', 'nb-str', 'upsert', 'dev-1', ?, 100)",
+                (payload,),
+            )
+            conn.commit()
+
+            _migrate_notebooks_ink(conn)
+
+            row = conn.execute(
+                "SELECT ink FROM notebooks WHERE id = 'nb-str'"
+            ).fetchone()
+            ink = json.loads(row[0])
+            assert isinstance(ink, dict), (
+                "string ink payload must land single-encoded"
+            )
+            assert [s["id"] for s in ink["strokes"]] == ["s-1"]
+        finally:
+            conn.close()
+
+
+class TestNormalizeDoubleEncodedInk:
+    """Boot repair for rows the buggy backfill already double-encoded."""
+
+    def _seed_ink(self, temp_data_dir, nb_id: str, ink_text: str) -> None:
+        conn = sqlite3.connect(temp_data_dir / "tangent.db")
+        try:
+            conn.execute(
+                "INSERT INTO notebooks (id, title, doc, ink, created_at, "
+                "updated_at) VALUES (?, 'T', '{}', ?, 1, 1)",
+                (nb_id, ink_text),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _read_ink(self, temp_data_dir, nb_id: str) -> str:
+        conn = sqlite3.connect(temp_data_dir / "tangent.db")
+        try:
+            return conn.execute(
+                "SELECT ink FROM notebooks WHERE id = ?", (nb_id,)
+            ).fetchone()[0]
+        finally:
+            conn.close()
+
+    def test_boot_fixes_double_encoded_row_in_place(self, temp_data_dir):
+        init_db(str(temp_data_dir))
+        inner = json.dumps({"strokes": [{"id": "s-2"}]})
+        self._seed_ink(temp_data_dir, "nb-dbl", json.dumps(inner))
+
+        init_db(str(temp_data_dir))  # boot normalization runs here
+
+        ink = json.loads(self._read_ink(temp_data_dir, "nb-dbl"))
+        assert isinstance(ink, dict), "double-encoded row repaired in place"
+        assert [s["id"] for s in ink["strokes"]] == ["s-2"]
+
+        init_db(str(temp_data_dir))  # idempotent: second boot is a no-op
+        assert json.loads(self._read_ink(temp_data_dir, "nb-dbl")) == ink
+
+    def test_boot_unwraps_many_layers(self, temp_data_dir):
+        init_db(str(temp_data_dir))
+        value = json.dumps({"strokes": []})
+        for _ in range(4):  # 4 wrapper layers, general N-layer case
+            value = json.dumps(value)
+        self._seed_ink(temp_data_dir, "nb-deep", value)
+
+        init_db(str(temp_data_dir))
+
+        assert json.loads(self._read_ink(temp_data_dir, "nb-deep")) == {
+            "strokes": []
+        }
+
+    def test_boot_leaves_truly_bad_ink_untouched(self, temp_data_dir):
+        init_db(str(temp_data_dir))
+        # Decodes to a str that is not JSON — can never resolve to a dict.
+        bad = json.dumps("this is not ink")
+        self._seed_ink(temp_data_dir, "nb-bad", bad)
+
+        init_db(str(temp_data_dir))  # must not crash and must not mangle
+
+        assert self._read_ink(temp_data_dir, "nb-bad") == bad

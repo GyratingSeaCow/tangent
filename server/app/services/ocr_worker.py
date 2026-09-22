@@ -196,8 +196,20 @@ def reindex_notebook(
             ink = json.loads(row["ink"])
         except ValueError:
             ink = None
+        if isinstance(ink, str):
+            # Old DBs in the wild carry double-encoded ink (the Task 3
+            # backfill dumped JSON text a second time). One more decode
+            # recovers the dict; boot normalization fixes the row itself.
+            try:
+                ink = json.loads(ink)
+            except ValueError:
+                ink = None
         if isinstance(ink, dict):
             strokes = ink.get("strokes") or []
+        else:
+            # NEVER silently treat unparseable ink as an empty notebook —
+            # that is exactly how 25 production notebooks no-op'd unseen.
+            log.warning("ocr_worker.ink_unparseable", notebook_id=notebook_id)
 
     lines = segment_ink(strokes)
     current_ids = {line.line_id for line in lines}

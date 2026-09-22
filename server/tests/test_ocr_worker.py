@@ -247,6 +247,54 @@ class TestReindex:
         assert _ink_changes(db, "ghost") == []
         assert _ink_changes(db, "nb-noink") == []
 
+    def test_double_encoded_ink_still_indexes(self, db):
+        # Old DBs in the wild: notebooks.ink holds json.dumps(json.dumps(...))
+        # (the Task 3 backfill bug). The worker must peel the extra layer and
+        # index anyway — 25 production notebooks silently no-op'd without it.
+        inner = json.dumps({"strokes": [_stroke("s-a", 0, 0)]})
+        db.execute(
+            "INSERT INTO notebooks (id, title, doc, ink, created_at, updated_at) "
+            "VALUES ('nb-dbl', 'T', '{}', ?, 1, 1)",
+            (json.dumps(inner),),
+        )
+        db.commit()
+
+        ocr_worker.reindex_notebook(db, "nb-dbl", infer=lambda img: "hello", now=1000)
+
+        rows = _rows(db, "nb-dbl")
+        assert len(rows) == 1, "double-encoded ink must still be indexed"
+        assert rows[0]["word_text"] == "hello"
+
+    def test_unparseable_ink_warns_instead_of_silent_noop(self, db, monkeypatch):
+        # ink that never resolves to a dict must be LOUD: the silent
+        # empty-notebook treatment is what hid the production bug.
+        warnings: list = []
+
+        class _Log:
+            def __getattr__(self, name):
+                def _record(event, **kw):
+                    if name == "warning":
+                        warnings.append((event, kw))
+
+                return _record
+
+        monkeypatch.setattr(ocr_worker, "log", _Log())
+        db.execute(
+            "INSERT INTO notebooks (id, title, doc, ink, created_at, updated_at) "
+            "VALUES ('nb-junk', 'T', '{}', ?, 1, 1)",
+            (json.dumps("this is not ink"),),
+        )
+        db.commit()
+
+        ocr_worker.reindex_notebook(db, "nb-junk", infer=lambda img: "x", now=1000)
+
+        assert _rows(db, "nb-junk") == [], "no rows from junk ink"
+        assert any(
+            event == "ocr_worker.ink_unparseable"
+            and kw.get("notebook_id") == "nb-junk"
+            for event, kw in warnings
+        ), "unparseable ink must log a warning, never a silent no-op"
+
 
 # ---------------------------------------------------------------------------
 # run_inference: the subprocess boundary
