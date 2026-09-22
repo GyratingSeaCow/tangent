@@ -45,6 +45,12 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     db = next(gen)
     try:
         fail_interrupted_jobs(db)
+        # OCR index worker: only when the on-demand env is installed and
+        # verified. Its startup backfill scan catches notebooks that synced
+        # while the worker was down.
+        from app.services.ocr_worker import start_worker_if_installed
+
+        start_worker_if_installed()
         if not is_setup_complete(db):
             print("")
             print("=" * 60)
@@ -73,6 +79,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             next(gen)
 
     yield
+    from app.services.ocr_worker import stop_worker
+
+    stop_worker()
     log.info("server.stopping")
 
 

@@ -316,8 +316,13 @@ def test_uninstall_drops_ink_index_rows_when_table_exists(temp_data_dir):
     ocr_env.install("cpu", runner=RecordingRunner())
     conn = _open_db(temp_data_dir)
     try:
-        conn.execute("CREATE TABLE ink_index (id TEXT PRIMARY KEY, text TEXT)")
-        conn.execute("INSERT INTO ink_index VALUES ('line-1', 'hello world')")
+        # Task 3's real schema — init_db created the table.
+        conn.execute(
+            "INSERT INTO ink_index (id, notebook_id, line_id, word_text, "
+            "word_text_lower, bbox_json, stroke_ids_json, model, indexed_at) "
+            "VALUES ('l1:000', 'nb-1', 'l1', 'hello', 'hello', '[0,0,1,1]', "
+            "'[\"s-1\"]', 'm', 1)"
+        )
         conn.commit()
         ocr_env.uninstall(conn)
         count = conn.execute("SELECT COUNT(*) FROM ink_index").fetchone()[0]

@@ -1,10 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""OCR environment endpoints: capability, install, progress, uninstall.
-
-The handwriting-search index endpoints (/v1/ocr/status etc.) arrive with the
-OCR worker in a later task — this router only manages the on-demand
-torch/transformers environment install.
-"""
+"""OCR endpoints: environment install management + index status."""
 
 from __future__ import annotations
 
@@ -17,7 +12,7 @@ from pydantic import BaseModel
 from app.auth import require_auth
 from app.db import get_db
 from app.logging_config import get_logger
-from app.services import ocr_env
+from app.services import ocr_env, ocr_worker
 
 router = APIRouter()
 
@@ -51,6 +46,21 @@ class ProgressResponse(BaseModel):
 
 class UninstallResponse(BaseModel):
     uninstalled: bool
+
+
+class IndexStatusResponse(BaseModel):
+    installed: bool
+    worker_running: bool
+    #: Distinct notebooks with at least one index row.
+    indexed_notebooks: int
+    #: Successfully recognized word rows (model != 'error').
+    indexed_words: int
+    #: Rows written by a failed line inference.
+    error_words: int
+    #: Live, inked notebooks with no index rows at all.
+    backlog: int
+    #: Notebooks currently queued for (re)indexing.
+    queue_depth: int
 
 
 @router.get("/v1/ocr/capability", response_model=CapabilityResponse)
@@ -108,3 +118,36 @@ def uninstall(
             detail="Cannot uninstall while an install is running",
         ) from exc
     return UninstallResponse(uninstalled=True)
+
+
+@router.get("/v1/ocr/status", response_model=IndexStatusResponse)
+def get_index_status(
+    db: Annotated[sqlite3.Connection, Depends(get_db)],
+    _user: Annotated[str, Depends(require_auth)],
+) -> IndexStatusResponse:
+    """Index coverage + backlog, for the client's search-settings screen."""
+    counts = db.execute(
+        """
+        SELECT COUNT(DISTINCT notebook_id) AS notebooks,
+               SUM(CASE WHEN model != 'error' THEN 1 ELSE 0 END) AS words,
+               SUM(CASE WHEN model = 'error' THEN 1 ELSE 0 END) AS errors
+        FROM ink_index
+        """
+    ).fetchone()
+    backlog = db.execute(
+        """
+        SELECT COUNT(*) AS n FROM notebooks
+        WHERE deleted_at IS NULL
+          AND ink IS NOT NULL
+          AND id NOT IN (SELECT DISTINCT notebook_id FROM ink_index)
+        """
+    ).fetchone()
+    return IndexStatusResponse(
+        installed=ocr_env.python_path() is not None,
+        worker_running=ocr_worker.worker_running(),
+        indexed_notebooks=counts["notebooks"] or 0,
+        indexed_words=counts["words"] or 0,
+        error_words=counts["errors"] or 0,
+        backlog=backlog["n"] or 0,
+        queue_depth=len(ocr_worker.pending()),
+    )

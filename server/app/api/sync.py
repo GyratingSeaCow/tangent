@@ -33,6 +33,7 @@ from app.models import (
     SyncPushResponse,
     SyncPushResult,
 )
+from app.services import ocr_worker
 from app.services.change_log import changes_since, head_seq, record_change
 
 router = APIRouter()
@@ -124,6 +125,7 @@ def sync_pull(
     db: Annotated[sqlite3.Connection, Depends(get_db)],
     device_id: Annotated[str, Query(min_length=8, max_length=64)],
     since_seq: Annotated[int, Query(ge=0)] = 0,
+    include_ink_index: Annotated[bool, Query()] = False,
 ) -> SyncPullResponse:
     """Changes after ``since_seq``, oldest first.
 
@@ -134,6 +136,14 @@ def sync_pull(
     ``head_seq`` is the checkpoint to store — but only once every change in
     this page has been applied, and only when ``has_more`` is false. Storing it
     early is how a client silently skips changes.
+
+    ``include_ink_index`` is the additive opt-in for the handwriting-search
+    entity. Old clients never send it and never see ink_index rows — but their
+    checkpoint still advances past the filtered entries, or they would re-pull
+    the same page forever. An ink_index upsert payload is built AT PULL TIME
+    from the live table (replace-set semantics: the client drops that
+    notebook's rows and inserts these), so a stale log entry can never carry
+    stale rows.
     """
     rows = changes_since(
         db,
@@ -149,21 +159,56 @@ def sync_pull(
     global_head = head_seq(db)
     checkpoint = page[-1]["seq"] if (has_more and page) else global_head
 
-    return SyncPullResponse(
-        changes=[
+    changes: list[SyncChange] = []
+    for r in page:
+        payload = r["payload"]
+        if r["entity_type"] == "ink_index":
+            if not include_ink_index:
+                continue  # legacy client: additive entity stays invisible
+            if r["op"] == "upsert":
+                payload = _ink_index_replace_set(db, r["entity_id"])
+        changes.append(
             SyncChange(
                 entity_type=r["entity_type"],
                 entity_id=r["entity_id"],
                 op=r["op"],
-                payload=r["payload"],
+                payload=payload,
                 seq=r["seq"],
                 device_id=r["device_id"],
             )
-            for r in page
-        ],
+        )
+
+    return SyncPullResponse(
+        changes=changes,
         head_seq=checkpoint,
         has_more=has_more,
     )
+
+
+def _ink_index_replace_set(
+    conn: sqlite3.Connection, notebook_id: str
+) -> dict[str, Any]:
+    """The notebook's full current index — the replace-set a client applies."""
+    rows = conn.execute(
+        "SELECT id, line_id, word_text, bbox_json, stroke_ids_json, model, "
+        "indexed_at FROM ink_index WHERE notebook_id = ? ORDER BY id",
+        (notebook_id,),
+    ).fetchall()
+    return {
+        "notebook_id": notebook_id,
+        "rows": [
+            {
+                "id": r["id"],
+                "line_id": r["line_id"],
+                "word_text": r["word_text"],
+                "bbox": json.loads(r["bbox_json"]),
+                "stroke_ids": json.loads(r["stroke_ids_json"]),
+                "model": r["model"],
+                "indexed_at": r["indexed_at"],
+            }
+            for r in rows
+        ],
+    }
 
 
 def _apply_dump(conn: sqlite3.Connection, change: SyncChange, now: int) -> None:
@@ -275,23 +320,37 @@ def _apply_document(
     if table == "notebooks":
         # folder_id: present means "this filing", absent means "keep what is
         # stored" — an older client's narrower payload is not an eraser.
+        # ink follows the same rule: the client pushes 'doc' and 'ink' as
+        # SEPARATE fields, and a payload without ink (title edit, old app)
+        # must not erase the strokes the server already holds.
         existing = conn.execute(
-            "SELECT folder_id FROM notebooks WHERE id = ?", (change.entity_id,)
+            "SELECT folder_id, ink FROM notebooks WHERE id = ?",
+            (change.entity_id,),
         ).fetchone()
         folder_id = (
             p["folder_id"]
             if "folder_id" in p
             else (existing["folder_id"] if existing is not None else None)
         )
+        if "ink" in p:
+            ink_val = p["ink"]
+            ink = (
+                json.dumps(ink_val)
+                if isinstance(ink_val, (dict, list))
+                else ink_val
+            )
+        else:
+            ink = existing["ink"] if existing is not None else None
         conn.execute(
             """
             INSERT INTO notebooks
-                (id, title, doc, created_at, updated_at, deleted_at,
+                (id, title, doc, ink, created_at, updated_at, deleted_at,
                  origin_device_id, folder_id)
-            VALUES (?, ?, ?, ?, ?, NULL, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
                 doc = excluded.doc,
+                ink = excluded.ink,
                 updated_at = excluded.updated_at,
                 deleted_at = NULL,
                 folder_id = excluded.folder_id
@@ -300,6 +359,7 @@ def _apply_document(
                 change.entity_id,
                 p.get("title", "Untitled"),
                 encoded,
+                ink,
                 int(p.get("created_at", now)),
                 now,
                 change.device_id,
@@ -344,10 +404,15 @@ def sync_push(
     """
     now = _now_ts()
     results: list[SyncPushResult] = []
+    reindex_ids: list[str] = []
 
     for change in body.changes:
         try:
             publish_payload = change.payload
+            if change.entity_type == "ink_index":
+                # The index is server-generated. Accepting a client's rows
+                # would let a stale device overwrite fresher OCR output.
+                raise ValueError("ink_index is server-generated; push rejected")
             if change.entity_type == "dump":
                 _apply_dump(db, change, now)
                 # Republish what the server now HOLDS, not what the device
@@ -364,6 +429,9 @@ def sync_push(
                         publish_payload["audio_kept"] = bool(stored["audio_kept"])
             elif change.entity_type == "notebook":
                 _apply_document(db, "notebooks", change, now)
+                # The OCR worker re-derives this notebook's index (a delete
+                # purges it) — queued after the whole batch commits.
+                reindex_ids.append(change.entity_id)
             elif change.entity_type == "folder":
                 _apply_folder(db, change, now)
             else:
@@ -409,6 +477,12 @@ def sync_push(
         "UPDATE devices SET last_seen_seq = ?, last_seen_at = ? WHERE device_id = ?",
         (head, now, body.device_id),
     )
+    # Commit BEFORE waking the worker: it reads on its own connection, and an
+    # enqueue racing an uncommitted transaction would index the previous ink
+    # with no later trigger to fix it.
+    db.commit()
+    for notebook_id in reindex_ids:
+        ocr_worker.enqueue(notebook_id)
     log.info(
         "sync.push",
         device_id=body.device_id,
