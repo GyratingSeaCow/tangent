@@ -163,12 +163,46 @@ def test_hook_exception_does_not_fail_a_successful_install(temp_data_dir):
 # ---------------------------------------------------------------------------
 
 
+class _RecordingDb:
+    """Passthrough sqlite wrapper that timestamps uninstall's destructive
+    statements into a shared event log (uninstall only uses execute/commit)."""
+
+    def __init__(self, conn, log: list[tuple[str, dict]]):
+        self._conn = conn
+        self._log = log
+
+    def execute(self, sql, *args):
+        if "DELETE FROM ink_index" in sql:
+            self._log.append(("delete_ink_index", _snapshot()))
+        return self._conn.execute(sql, *args)
+
+    def commit(self):
+        self._log.append(("commit", _snapshot()))
+        return self._conn.commit()
+
+
+def _snapshot() -> dict:
+    """State visible to a notebook that the worker might still pick up."""
+    return {
+        "worker_running": ocr_worker.worker_running(),
+        "pending": ocr_worker.pending(),
+        "env_exists": ocr_env.env_dir().exists(),
+    }
+
+
 def test_uninstall_stops_running_worker_and_clears_queue(
     temp_data_dir, monkeypatch
 ):
     """Worker busy on one notebook, another queued behind it: uninstall must
     stop the worker and drop the queued one — it must NEVER be processed
-    (against a deleted env it would only produce all-error junk rows)."""
+    (against a deleted env it would only produce all-error junk rows).
+
+    This pins the ORDER directly, not just the end state: every destructive
+    step (rmtree of the env, DELETE FROM ink_index, commit) is observed live
+    and must find the worker already stopped and the queue already empty.
+    A refactor that wipes first and stops after leaves an identical end state
+    but fails here.
+    """
     init_db(str(temp_data_dir))
     ocr_env.install("cpu", runner=fake_runner)
 
@@ -180,6 +214,27 @@ def test_uninstall_stops_running_worker_and_clears_queue(
 
     monkeypatch.setattr(ocr_worker, "reindex_notebook", blocking_reindex)
 
+    events: list[tuple[str, dict]] = []
+
+    real_stop, real_clear = ocr_worker.stop_worker, ocr_worker.clear_queue
+    real_rmtree = ocr_env.shutil.rmtree
+
+    def recording_stop():
+        real_stop()
+        events.append(("stop_worker", _snapshot()))
+
+    def recording_clear():
+        real_clear()
+        events.append(("clear_queue", _snapshot()))
+
+    def recording_rmtree(path, *a, **k):
+        events.append((f"rmtree:{Path(path).name}", _snapshot()))
+        return real_rmtree(path, *a, **k)
+
+    monkeypatch.setattr(ocr_worker, "stop_worker", recording_stop)
+    monkeypatch.setattr(ocr_worker, "clear_queue", recording_clear)
+    monkeypatch.setattr(ocr_env.shutil, "rmtree", recording_rmtree)
+
     assert ocr_worker.start_worker_if_installed() is not None
     ocr_worker.enqueue("nb-busy")
     assert _wait_for(lambda: processed == ["nb-busy"]), "worker never got busy"
@@ -188,16 +243,51 @@ def test_uninstall_stops_running_worker_and_clears_queue(
 
     conn = _open_db(temp_data_dir)
     try:
-        assert ocr_env.uninstall(conn) is True
+        assert ocr_env.uninstall(_RecordingDb(conn, events)) is True
     finally:
         conn.close()
 
+    # --- end state ---------------------------------------------------------
     assert not ocr_worker.worker_running(), "uninstall must stop the worker"
     assert ocr_worker.pending() == [], "uninstall must clear the pending queue"
     assert processed == ["nb-busy"], (
         "the queued notebook must never be processed after uninstall"
     )
     assert not ocr_env.env_dir().exists()
+
+    # --- ORDER: quiesce BEFORE destroy ------------------------------------
+    names = [name for name, _ in events]
+    assert names[:2] == ["stop_worker", "clear_queue"], (
+        "uninstall must stop the worker and clear the queue FIRST, before it "
+        f"touches the env or ink_index; actual order was {names}"
+    )
+    destructive = [(name, snap) for name, snap in events if name not in
+                   ("stop_worker", "clear_queue")]
+    assert [name for name, _ in destructive] == [
+        f"rmtree:{ocr_env.env_dir().name}",
+        "delete_ink_index",
+        "commit",
+    ], f"unexpected destructive sequence: {[n for n, _ in destructive]}"
+
+    # The queue was drained while the env was still on disk: that is exactly
+    # the window in which a surviving worker would write model='error' junk.
+    quiesce = dict(events[:2])
+    assert quiesce["stop_worker"]["env_exists"] is True, (
+        "the worker must be stopped while the env still exists (it was stopped "
+        "only after the wipe — the junk-row race is open again)"
+    )
+    assert quiesce["clear_queue"]["env_exists"] is True
+    assert quiesce["clear_queue"]["pending"] == []
+
+    for name, snap in destructive:
+        assert snap["worker_running"] is False, (
+            f"worker was still running at {name}: it can process a queued "
+            "notebook against a half-deleted env and repopulate ink_index"
+        )
+        assert snap["pending"] == [], (
+            f"queue was still non-empty at {name}: {snap['pending']} would be "
+            "processed against a half-deleted env"
+        )
 
 
 def test_uninstall_clears_queue_even_when_worker_never_ran(temp_data_dir):
