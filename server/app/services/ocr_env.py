@@ -28,12 +28,14 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from app.config import get_settings
 from app.logging_config import get_logger
+from app.services.change_log import record_change
 
 log = get_logger(__name__)
 
@@ -402,6 +404,26 @@ def uninstall(db) -> bool:
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'ink_index'"
         ).fetchone()
         if row is not None:
+            # Publish one ink_index delete per indexed notebook BEFORE the
+            # DELETE, in the same transaction (one commit covers both, so a
+            # crash leaves either all of DELETE+changes or none). Without
+            # these, no device ever pulls a deletion and every client's
+            # ink_index mirror stays stale forever — breaking the wizard's
+            # promise that uninstall deletes the handwriting search index.
+            # Mirrors ocr_worker._purge_notebook's record_change usage; a
+            # delete carries no payload, the client replace-sets to empty.
+            now = int(time.time())
+            for nb_row in db.execute(
+                "SELECT DISTINCT notebook_id FROM ink_index"
+            ).fetchall():
+                record_change(
+                    db,
+                    entity_type="ink_index",
+                    entity_id=nb_row[0],
+                    op="delete",
+                    device_id="server",
+                    now=now,
+                )
             db.execute("DELETE FROM ink_index")
         db.commit()
         _set_progress("idle", 0, "")

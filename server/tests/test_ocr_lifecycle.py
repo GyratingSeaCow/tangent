@@ -304,3 +304,158 @@ def test_uninstall_clears_queue_even_when_worker_never_ran(temp_data_dir):
         conn.close()
 
     assert ocr_worker.pending() == []
+
+
+# ---------------------------------------------------------------------------
+# Final review: uninstall must PUBLISH the index deletion, not just perform it
+# ---------------------------------------------------------------------------
+#
+# `DELETE FROM ink_index` alone cleans only the server. Clients mirror the
+# index via change_log (one ink_index change per notebook; the payload is a
+# replace-set built at pull time — a delete simply replace-sets to empty), so
+# without a recorded delete per notebook no device EVER pulls the removal and
+# every client's handwriting-search mirror stays stale forever, breaking the
+# wizard's promise that uninstall deletes the handwriting search index.
+
+
+def _seed_ink_rows(conn: sqlite3.Connection, notebook_ids: list[str]) -> None:
+    for nb in notebook_ids:
+        conn.execute(
+            "INSERT INTO ink_index "
+            "(id, notebook_id, line_id, word_text, word_text_lower, "
+            " bbox_json, stroke_ids_json, model, indexed_at) "
+            "VALUES (?, ?, 'line-1', 'hello', 'hello', '[0,0,1,1]', "
+            "'[\"s-a\"]', 'trocr-base', 1)",
+            (f"{nb}:000", nb),
+        )
+    conn.commit()
+
+
+def test_uninstall_publishes_an_ink_index_delete_per_indexed_notebook(
+    temp_data_dir,
+):
+    init_db(str(temp_data_dir))
+    ocr_env.install("cpu", runner=fake_runner)
+
+    conn = _open_db(temp_data_dir)
+    try:
+        _seed_ink_rows(conn, ["nb-1", "nb-2"])
+
+        assert ocr_env.uninstall(conn) is True
+
+        rows = conn.execute(
+            "SELECT entity_id, op, payload FROM change_log "
+            "WHERE entity_type = 'ink_index' ORDER BY entity_id"
+        ).fetchall()
+        assert [(r["entity_id"], r["op"]) for r in rows] == [
+            ("nb-1", "delete"),
+            ("nb-2", "delete"),
+        ], "one ink_index delete per indexed notebook, or clients never learn"
+        assert all(r["payload"] is None for r in rows), (
+            "a delete is a tombstone; it must carry no payload"
+        )
+        n = conn.execute("SELECT COUNT(*) AS n FROM ink_index").fetchone()["n"]
+        assert n == 0
+    finally:
+        conn.close()
+
+
+class _CommitObservingDb:
+    """Passthrough that snapshots what a SECOND connection can see at the
+    instant uninstall commits. Before that commit is delegated, an outside
+    observer must see NONE of the mutation (rows intact, no delete changes) —
+    proving DELETE + record_change travel in one transaction and a crash
+    between them loses both, never just one."""
+
+    def __init__(self, conn: sqlite3.Connection, data_dir: Path):
+        self._conn = conn
+        self._data_dir = data_dir
+        self.seen_before_commit: dict | None = None
+
+    def execute(self, sql, *args):
+        return self._conn.execute(sql, *args)
+
+    def commit(self):
+        other = _open_db(self._data_dir)
+        try:
+            self.seen_before_commit = {
+                "ink_rows": other.execute(
+                    "SELECT COUNT(*) AS n FROM ink_index"
+                ).fetchone()["n"],
+                "delete_changes": other.execute(
+                    "SELECT COUNT(*) AS n FROM change_log "
+                    "WHERE entity_type = 'ink_index' AND op = 'delete'"
+                ).fetchone()["n"],
+            }
+        finally:
+            other.close()
+        return self._conn.commit()
+
+
+def test_uninstall_delete_and_change_entries_commit_atomically(temp_data_dir):
+    init_db(str(temp_data_dir))
+    ocr_env.install("cpu", runner=fake_runner)
+
+    conn = _open_db(temp_data_dir)
+    try:
+        _seed_ink_rows(conn, ["nb-1", "nb-2"])
+        db = _CommitObservingDb(conn, temp_data_dir)
+
+        assert ocr_env.uninstall(db) is True
+
+        assert db.seen_before_commit == {"ink_rows": 2, "delete_changes": 0}, (
+            "an outside connection saw a partial state before commit: the "
+            "DELETE and its change_log entries must be in ONE transaction "
+            f"(saw {db.seen_before_commit})"
+        )
+        # After the single commit, ALL of it is visible.
+        after = _open_db(temp_data_dir)
+        try:
+            assert after.execute(
+                "SELECT COUNT(*) AS n FROM ink_index"
+            ).fetchone()["n"] == 0
+            assert after.execute(
+                "SELECT COUNT(*) AS n FROM change_log "
+                "WHERE entity_type = 'ink_index' AND op = 'delete'"
+            ).fetchone()["n"] == 2
+        finally:
+            after.close()
+    finally:
+        conn.close()
+
+
+def test_client_pull_after_uninstall_delivers_the_deletions(temp_data_dir):
+    """The full fleet-cleanup path: uninstall via the API, then a device's
+    next pull carries an ink_index delete per notebook — the signal that
+    replace-sets its local mirror to empty."""
+    with TestClient(create_app()) as cli:
+        token = cli.post("/v1/setup", json={"display_name": "T"}).json()["token"]
+        auth = {"Authorization": f"Bearer {token}"}
+
+        _insert_inked_notebook(temp_data_dir, "nb-ink")
+        conn = _open_db(temp_data_dir)
+        try:
+            _seed_ink_rows(conn, ["nb-ink"])
+        finally:
+            conn.close()
+
+        assert cli.post("/v1/ocr/uninstall", headers=auth).status_code == 200
+
+        pulled = cli.get(
+            "/v1/sync/pull",
+            params={
+                "device_id": "device-bbbb-2",
+                "since_seq": 0,
+                "include_ink_index": True,
+            },
+            headers=auth,
+        ).json()
+        deletes = [
+            c["entity_id"]
+            for c in pulled["changes"]
+            if c["entity_type"] == "ink_index" and c["op"] == "delete"
+        ]
+        assert deletes == ["nb-ink"], (
+            "a client's next pull after uninstall must carry the deletion, "
+            f"or its mirror is stale forever; pulled {pulled['changes']}"
+        )
