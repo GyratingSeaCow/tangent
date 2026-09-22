@@ -13,6 +13,7 @@ from app.auth import require_auth
 from app.db import get_db
 from app.logging_config import get_logger
 from app.services import ocr_env, ocr_worker
+from app.services.change_log import record_change
 
 router = APIRouter()
 
@@ -46,6 +47,11 @@ class ProgressResponse(BaseModel):
 
 class UninstallResponse(BaseModel):
     uninstalled: bool
+
+
+class BackfillResponse(BaseModel):
+    #: Notebooks whose index was re-announced to the change feed.
+    notebooks: int
 
 
 class IndexStatusResponse(BaseModel):
@@ -118,6 +124,44 @@ def uninstall(
             detail="Cannot uninstall while an install is running",
         ) from exc
     return UninstallResponse(uninstalled=True)
+
+
+@router.post("/v1/ocr/index/backfill", response_model=BackfillResponse)
+def backfill_index(
+    db: Annotated[sqlite3.Connection, Depends(get_db)],
+    _user: Annotated[str, Depends(require_auth)],
+) -> BackfillResponse:
+    """Re-announce every indexed notebook to the change feed.
+
+    The upgrade gap this closes: a 1.6.x client's checkpoint advances PAST
+    filtered ink_index entries (sync_pull filters the entity but still moves
+    head_seq). After upgrading and enabling handwriting search, that device
+    pulls from a checkpoint beyond the index rows and receives nothing —
+    forever. Re-recording one upsert per indexed notebook puts the index
+    back in front of every checkpoint.
+
+    Cheap and idempotent by construction: upsert payloads are built AT PULL
+    TIME from the live table (replace-set semantics), so the entries carry
+    no body here and re-applying them is a no-op for an up-to-date device.
+    """
+    notebook_ids = [
+        r["notebook_id"]
+        for r in db.execute(
+            "SELECT DISTINCT notebook_id FROM ink_index ORDER BY notebook_id"
+        )
+    ]
+    for notebook_id in notebook_ids:
+        record_change(
+            db,
+            entity_type="ink_index",
+            entity_id=notebook_id,
+            op="upsert",
+            device_id="server",
+        )
+    db.commit()
+    if notebook_ids:
+        log.info("ink-index backfill re-announced %d notebooks", len(notebook_ids))
+    return BackfillResponse(notebooks=len(notebook_ids))
 
 
 @router.get("/v1/ocr/status", response_model=IndexStatusResponse)

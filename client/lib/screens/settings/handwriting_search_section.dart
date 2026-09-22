@@ -222,6 +222,18 @@ class _HandwritingSearchSectionState
     if (capability.installed) {
       // The environment already exists (installed from another device, or
       // toggled off locally without uninstalling): nothing to download.
+      // This is exactly the upgraded-device path, so ask the server to
+      // re-announce the index before resting the toggle: this device's
+      // checkpoint may have advanced past every ink_index change while it
+      // was running a pre-1.7.0 build (the server filters the entity for
+      // legacy pulls but still moves head_seq), and without the backfill
+      // its search stays empty forever. Best-effort: a failure here must
+      // not block enabling — the next enable retries it.
+      try {
+        await client.backfillIndex();
+      } catch (e) {
+        debugPrint('tangent.ocr ink-index backfill failed: $e');
+      }
       await _restToggle(true);
       return;
     }

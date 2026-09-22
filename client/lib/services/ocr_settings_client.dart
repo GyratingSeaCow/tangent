@@ -136,6 +136,20 @@ class OcrSettingsClient {
     _checkStatus(resp);
   }
 
+  /// Re-announces every indexed notebook to the sync feed.
+  ///
+  /// The upgrade gap this closes: a pre-1.7.0 client's sync checkpoint
+  /// advances PAST ink_index changes it never saw (the server filters the
+  /// entity for legacy pulls but still moves head_seq). When such a device
+  /// upgrades and enables handwriting search, its next pull starts beyond
+  /// the index rows and returns nothing — search stays empty forever.
+  /// Posting a backfill puts the index back in front of every checkpoint;
+  /// devices that already hold it re-apply an identical replace-set (no-op).
+  Future<void> backfillIndex() async {
+    final resp = await _dio.post<dynamic>('/v1/ocr/index/backfill');
+    _checkStatus(resp);
+  }
+
   void _checkStatus(Response<dynamic> resp) {
     final int status = resp.statusCode ?? 0;
     if (status < 400) return;

@@ -66,6 +66,19 @@ class _FakeOcrClient extends OcrSettingsClient {
   Future<void> uninstall() async {
     uninstallCalls += 1;
   }
+
+  @override
+  Future<void> backfillIndex() async {
+    backfillCalls += 1;
+    final Object? err = backfillError;
+    if (err != null) throw err;
+  }
+
+  int backfillCalls = 0;
+
+  /// When set, [backfillIndex] throws this — how the "server briefly
+  /// unreachable" case is staged. Enabling must survive it.
+  Object? backfillError;
 }
 
 class _RecordingPort implements TranscriptionNotificationPort {
@@ -343,6 +356,40 @@ void main() {
     expect(h.client.installCalls, isEmpty);
     expect(h.client.uninstallCalls, 0);
     expect(h.client.progressCalls, 0);
+  });
+
+  testWidgets(
+      'enabling on a server that already has the environment posts the '
+      'ink-index backfill (the upgraded-device path)', (tester) async {
+    // The tablet bug: a pre-1.7.0 device synced its checkpoint past every
+    // ink_index change entry (the server filters the entity for legacy
+    // pulls but still advances head_seq). Toggling ON after the upgrade
+    // must re-announce the index server-side or search stays empty forever.
+    final _Harness h = await _mount(tester, installed: true);
+
+    await _openWizard(tester);
+
+    expect(h.client.backfillCalls, 1);
+    expect(h.client.installCalls, isEmpty); // nothing to download
+    expect(_toggleValue(tester), isTrue);
+    expect(h.store.handwritingSearchEnabled, isTrue);
+  });
+
+  testWidgets(
+      'a failed backfill does not block enabling — search sync self-heals '
+      'on the next enable', (tester) async {
+    final _Harness h = await _mount(tester, installed: true);
+    h.client.backfillError = ApiException(
+      statusCode: 500,
+      code: 'internal',
+      message: 'boom',
+    );
+
+    await _openWizard(tester);
+
+    expect(h.client.backfillCalls, 1);
+    expect(_toggleValue(tester), isTrue); // enable survived
+    expect(h.store.handwritingSearchEnabled, isTrue);
   });
 
   testWidgets('toggle off names the destructive consequence and posts '
