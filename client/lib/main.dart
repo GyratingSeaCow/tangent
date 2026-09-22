@@ -42,6 +42,7 @@ import 'services/single_instance.dart';
 import 'services/tray_service.dart';
 import 'services/transcription_client.dart';
 import 'widgets/mouse_back_navigation.dart';
+import 'package:tangent/services/server_defaults.dart';
 
 /// Device label for the background isolate, which cannot reach the app's
 /// providers. Duplicated deliberately rather than shared: the UI copy lives
@@ -157,7 +158,7 @@ Future<void> main(List<String> args) async {
     debugPrint('tangent.secure-storage unavailable at startup: $e');
   }
   final client = TranscriptionClient(
-    baseUrl: url ?? 'http://10.0.2.2:8000',
+    baseUrl: url ?? defaultServerBaseUrl(),
     token: token,
   );
   final db = LocalDb();

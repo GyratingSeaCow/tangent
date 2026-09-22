@@ -34,6 +34,7 @@ import '../../services/transcription_notifications.dart';
 import '../server/server_connection_screen.dart'
     show secureStoreProvider, transcriptionClientProvider;
 import 'settings_screen.dart' show settingsStoreProvider;
+import 'package:tangent/services/server_defaults.dart';
 
 /// Whether handwriting search is enabled on THIS device.
 ///
@@ -74,7 +75,7 @@ final ocrSettingsClientProvider = FutureProvider<OcrSettingsClient>(
       // can show, which beats dying before the section even builds.
     }
     return OcrSettingsClient(
-      baseUrl: url ?? 'http://10.0.2.2:8000',
+      baseUrl: url ?? defaultServerBaseUrl(),
       token: token,
     );
   },

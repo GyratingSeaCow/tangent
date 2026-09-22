@@ -9,14 +9,15 @@ import '../../data/secure_storage.dart';
 import '../../services/pairing_client.dart';
 import '../../services/server_discovery.dart';
 import '../../services/transcription_client.dart';
+import 'package:tangent/services/server_defaults.dart';
 
 final secureStoreProvider = Provider<SecureStore>((ref) => SecureStore());
 
 final transcriptionClientProvider = StateProvider<TranscriptionClient>((ref) {
   // Caller must override this provider once async values are available.
-  // Defaults to localhost which lets the app boot; real client is set in
-  // main() after reading SecureStore.
-  return TranscriptionClient(baseUrl: 'http://10.0.2.2:8000');
+  // Defaults to the platform's unpaired-client URL, which lets the app
+  // boot; the real client is set in main() after reading SecureStore.
+  return TranscriptionClient(baseUrl: defaultServerBaseUrl());
 });
 
 class ServerConnectionScreen extends ConsumerStatefulWidget {
@@ -90,7 +91,7 @@ class _ServerConnectionScreenState
     // race where async load clobbers the user's typed value (which used to
     // cause an empty/host-less URL to be sent to the network layer).
     if (_urlController.text.isEmpty) {
-      _urlController.text = url ?? 'http://10.0.2.2:8000';
+      _urlController.text = url ?? defaultServerBaseUrl();
     }
     if (_tokenController.text.isEmpty && token != null) {
       _tokenController.text = token;
