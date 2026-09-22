@@ -142,7 +142,16 @@ def test_gpu_flavour_steps_pin_torch_index_model_and_verify(temp_data_dir):
     by_phase = {s.phase: s for s in runner.steps}
 
     assert CU128_INDEX in by_phase["torch"].argv
-    assert "transformers>=4.46,<5" in by_phase["transformers"].argv
+    # The full plan-mandated dep set — not just the transformers pin.
+    transformers_argv = by_phase["transformers"].argv
+    for dep in (
+        "transformers>=4.46,<5",
+        "pillow",
+        "sentencepiece",
+        "protobuf",
+        "huggingface_hub",
+    ):
+        assert dep in transformers_argv, f"{dep!r} missing from transformers step argv"
 
     weights = by_phase["weights"]
     assert weights.kind == "download"
@@ -167,6 +176,28 @@ def test_cpu_flavour_uses_cpu_wheel_index(temp_data_dir):
     torch_step = next(s for s in runner.steps if s.phase == "torch")
     assert CPU_INDEX in torch_step.argv
     assert CU128_INDEX not in torch_step.argv
+
+
+def test_reinstall_over_existing_env_switches_flavour(temp_data_dir, monkeypatch):
+    """Installing over an already-verified env must replace it (flavour switch).
+
+    Pins the rmtree(final)-before-rename publish step: without it, rename onto
+    the existing dir raises, the rollback deletes the fresh tmp env, and
+    flavour switching silently becomes impossible without a manual uninstall.
+    """
+    monkeypatch.setattr(ocr_env, "probe_gpu_visible", lambda: False)
+    ocr_env.install("cpu", runner=RecordingRunner())
+    assert ocr_env.capability()["flavour"] == "cpu"
+
+    ocr_env.install("gpu", runner=RecordingRunner())  # must NOT raise
+
+    cap = ocr_env.capability()
+    assert cap["installed"] is True
+    assert cap["flavour"] == "gpu", "re-install must switch the verified flavour"
+    assert not ocr_env.tmp_env_dir().exists(), "tmp dir must be renamed away"
+    marker = json.loads((ocr_env.env_dir() / "verified.json").read_text(encoding="utf-8"))
+    assert marker["flavour"] == "gpu"
+    assert ocr_env.progress()["phase"] == "done"
 
 
 def test_second_install_while_running_raises_conflict(temp_data_dir):
@@ -263,6 +294,10 @@ def _open_db(data_dir: Path) -> sqlite3.Connection:
 def test_uninstall_removes_env_and_tolerates_missing_ink_index(temp_data_dir):
     init_db(str(temp_data_dir))
     ocr_env.install("cpu", runner=RecordingRunner())
+    # A stale tmp build (e.g. from a crashed install) must also be removed.
+    stale_tmp = ocr_env.tmp_env_dir()
+    stale_tmp.mkdir(parents=True)
+    (stale_tmp / "leftover.txt").write_text("crashed install debris", encoding="utf-8")
     conn = _open_db(temp_data_dir)
     try:
         # ink_index does not exist yet (Task 3 owns that schema) — must not raise.
@@ -270,6 +305,7 @@ def test_uninstall_removes_env_and_tolerates_missing_ink_index(temp_data_dir):
     finally:
         conn.close()
     assert not ocr_env.env_dir().exists()
+    assert not ocr_env.tmp_env_dir().exists(), "uninstall must delete stale ocr-env.tmp"
     assert ocr_env.python_path() is None
     cap_installed = ocr_env.capability()["installed"]
     assert cap_installed is False
@@ -368,6 +404,11 @@ def test_install_endpoint_202_progress_409_then_completes(api_client, monkeypatc
         # Concurrent install attempt → 409.
         dup = cli.post("/v1/ocr/install", json={"flavour": "cpu"}, headers=_auth(token))
         assert dup.status_code == 409
+
+        # capability() must report the running install (the wizard's
+        # "install in progress" signal) — not just default to False.
+        cap = cli.get("/v1/ocr/capability", headers=_auth(token)).json()
+        assert cap["install_running"] is True
     finally:
         release.set()
 
