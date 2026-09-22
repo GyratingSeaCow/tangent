@@ -1279,12 +1279,32 @@ class NotebookInkPainter extends CustomPainter {
           ? stroke.width
           : _fountainWidth(stroke.width, ((pa ?? pb)! + (pb ?? pa)!) / 2);
       final Offset half = _nibEdge * (width / 2);
-      ribbon
-        ..moveTo(a.x + half.dx, a.y + half.dy)
-        ..lineTo(b.x + half.dx, b.y + half.dy)
-        ..lineTo(b.x - half.dx, b.y - half.dy)
-        ..lineTo(a.x - half.dx, a.y - half.dy)
-        ..close();
+      // Winding normalization: a quad's orientation is the sign of
+      // cross(b−a, nibEdge). Every time the stroke direction crosses the
+      // nib-edge direction (every cursive loop or reversal) that sign
+      // flips, and where two opposite-winding quads OVERLAP — letter
+      // crossings — nonZero sums +1−1=0 and leaves a transparent hole in
+      // the ink. Emitting every quad with ONE consistent orientation makes
+      // overlaps sum to ≥1 instead: ink over ink stays ink. cross == 0
+      // (segment parallel to the nib edge) is a zero-area quad; either
+      // order is harmless and nothing here divides, so no NaN is possible.
+      final double cross =
+          (b.x - a.x) * half.dy - (b.y - a.y) * half.dx;
+      if (cross >= 0) {
+        ribbon
+          ..moveTo(a.x + half.dx, a.y + half.dy)
+          ..lineTo(b.x + half.dx, b.y + half.dy)
+          ..lineTo(b.x - half.dx, b.y - half.dy)
+          ..lineTo(a.x - half.dx, a.y - half.dy)
+          ..close();
+      } else {
+        ribbon
+          ..moveTo(a.x - half.dx, a.y - half.dy)
+          ..lineTo(b.x - half.dx, b.y - half.dy)
+          ..lineTo(b.x + half.dx, b.y + half.dy)
+          ..lineTo(a.x + half.dx, a.y + half.dy)
+          ..close();
+      }
     }
     canvas.drawPath(ribbon, fill);
   }

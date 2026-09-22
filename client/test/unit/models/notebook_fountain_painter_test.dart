@@ -225,4 +225,103 @@ void main() {
       reason: 'along the nib the stroke thins to nearly nothing',
     );
   });
+
+  group('winding normalization - no holes where a stroke crosses itself', () {
+    // The regression behind the "erased ink" holes on real pages: 8fd6e60
+    // batched every quad into ONE nonZero path, but each quad's winding
+    // orientation is sign(cross(b-a, nibEdge)). Cursive loops and
+    // reversals flip that sign, and wherever two opposite-winding quads
+    // OVERLAP (letter crossings) nonZero summed +1-1=0 — a transparent
+    // hole punched exactly where ink crossed ink. The fix emits every
+    // quad with one consistent orientation, so overlaps sum to >=1.
+
+    // The renderer's nib edge, replicated so each test PROVES its points
+    // actually produce a winding flip rather than assuming it.
+    const Offset nibEdge = Offset(0.8660254037844387, -0.5); // 30°, y-down
+    double crossWithNib(Offset d) => d.dx * nibEdge.dy - d.dy * nibEdge.dx;
+
+    test('a self-crossing loop keeps ink at the crossing', () {
+      // A cursive-loop skeleton: right along a baseline, curl below it,
+      // then straight back UP through it. The up-stroke crosses the
+      // baseline segment at exactly (20, 10).
+      const Offset p0 = Offset(0, 10);
+      const Offset p1 = Offset(30, 10); // baseline, rightward
+      const Offset p2 = Offset(20, 22); // connector, below the line
+      const Offset p3 = Offset(20, -5); // straight up, crossing p0->p1
+
+      // Prove the construction: the two OVERLAPPING segments wind
+      // opposite ways under the original vertex order.
+      expect(crossWithNib(p1 - p0), lessThan(0));
+      expect(
+        crossWithNib(p3 - p2),
+        greaterThan(0),
+        reason: 'the up-stroke must wind opposite to the baseline, or '
+            'this test does not reproduce the cancellation at all',
+      );
+
+      final _RecordingCanvas canvas = _RecordingCanvas();
+      painterFor(
+        const InkStroke(
+          id: 's',
+          width: 4,
+          style: PenStyle.fountain,
+          points: <InkPoint>[
+            InkPoint(x: 0, y: 10, p: 0.5),
+            InkPoint(x: 30, y: 10, p: 0.5),
+            InkPoint(x: 20, y: 22, p: 0.5),
+            InkPoint(x: 20, y: -5, p: 0.5),
+          ],
+        ),
+      ).paint(canvas, const Size(100, 100));
+
+      expect(
+        canvas.paths,
+        1,
+        reason: 'the fix must not give up the one-path perf contract',
+      );
+      // (20, 10) is the crossing point itself: dead centre of BOTH quads
+      // (u = 0 in each parametrisation a + t*(b-a) + u*half, with
+      // t = 2/3 and t = 12/27) and provably outside the connector quad
+      // (its t solves to about -0.93). Before the winding fix nonZero
+      // summed +1-1=0 here, so the ink had a hole at its own crossing.
+      expect(
+        canvas.drawnPaths.single.contains(const Offset(20, 10)),
+        isTrue,
+        reason: 'ink over ink must stay ink — the crossing had a hole',
+      );
+    });
+
+    test('a direction reversal (retraced line) keeps its ink', () {
+      // Straight out and straight back: the retrace quad is the SAME
+      // parallelogram wound the other way, so before the fix the whole
+      // stroke cancelled itself to zero painted area.
+      expect(
+        crossWithNib(const Offset(20, 0)) * crossWithNib(const Offset(-20, 0)),
+        lessThan(0),
+        reason: 'a reversal flips the winding sign',
+      );
+
+      final _RecordingCanvas canvas = _RecordingCanvas();
+      painterFor(
+        const InkStroke(
+          id: 's',
+          width: 4,
+          style: PenStyle.fountain,
+          points: <InkPoint>[
+            InkPoint(x: 0, y: 0, p: 0.5),
+            InkPoint(x: 20, y: 0, p: 0.5),
+            InkPoint(x: 0, y: 0, p: 0.5),
+          ],
+        ),
+      ).paint(canvas, const Size(100, 100));
+
+      expect(canvas.paths, 1, reason: 'still one batched path');
+      // (10, 0) is the exact centre of both overlapping quads.
+      expect(
+        canvas.drawnPaths.single.contains(const Offset(10, 0)),
+        isTrue,
+        reason: 'a retraced stroke must not erase itself',
+      );
+    });
+  });
 }
