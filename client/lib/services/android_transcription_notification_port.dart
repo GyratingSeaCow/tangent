@@ -16,18 +16,24 @@ class AndroidTranscriptionNotificationPort
     implements TranscriptionNotificationPort {
   AndroidTranscriptionNotificationPort({
     FlutterLocalNotificationsPlugin? plugin,
+    this.notificationId = transcriptionNotificationId,
+    this.channelId = 'transcription_progress',
+    this.channelName = 'Transcription progress',
+    this.channelDescription = 'Shows when a recording is being transcribed.',
   }) : _plugin = plugin ?? FlutterLocalNotificationsPlugin();
 
   final FlutterLocalNotificationsPlugin _plugin;
 
-  /// One fixed id: the shade shows a single transcription notice that is
-  /// REPLACED as progress changes, never a stack of them.
-  static const int notificationId = 1001;
+  /// One fixed id per feature: the shade shows a single notice that is
+  /// REPLACED as progress changes, never a stack of them. Defaults keep this
+  /// the transcription notification; other long-running server work (the OCR
+  /// install) reuses the same plumbing under its own id and channel.
+  static const int transcriptionNotificationId = 1001;
+  final int notificationId;
 
-  static const String _channelId = 'transcription_progress';
-  static const String _channelName = 'Transcription progress';
-  static const String _channelDescription =
-      'Shows when a recording is being transcribed.';
+  final String channelId;
+  final String channelName;
+  final String channelDescription;
 
   /// The brand purple, carried by the notification's accent colour.
   ///
@@ -70,11 +76,11 @@ class AndroidTranscriptionNotificationPort
         notificationId,
         notice.title,
         notice.body,
-        const NotificationDetails(
+        NotificationDetails(
           android: AndroidNotificationDetails(
-            _channelId,
-            _channelName,
-            channelDescription: _channelDescription,
+            channelId,
+            channelName,
+            channelDescription: channelDescription,
             // The waveform mark, not the launcher icon: Android silhouettes
             // status-bar icons, and a full-colour launcher PNG comes out a
             // solid blob.
