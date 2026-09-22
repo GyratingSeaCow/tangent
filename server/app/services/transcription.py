@@ -17,6 +17,48 @@ if TYPE_CHECKING:
 log = get_logger(__name__)
 
 
+def _cuda_runtime_loadable() -> bool:
+    """Can ctranslate2 actually run a CUDA kernel here?
+
+    Device visibility is NOT enough: docker-compose.gpu.yml can expose the
+    GPU while the image lacks the CUDA 12 runtime ctranslate2 links against
+    (libcublas.so.12, cudnn 9) — torch ships CUDA 13 wheels. In that state
+    model LOAD succeeds (libraries load lazily) and the first inference
+    dies with 'Library libcublas.so.12 is not found'. So probe by loading
+    the libraries themselves, not by counting devices.
+    """
+    import ctypes
+
+    try:
+        import ctranslate2
+
+        if ctranslate2.get_cuda_device_count() < 1:
+            return False
+        # The exact libraries ctranslate2 dlopens at inference time. If
+        # either is missing we WILL crash mid-transcription — treat the
+        # GPU as unusable now, while we can still choose CPU.
+        for lib in ("libcublas.so.12", "libcudnn_ops.so.9"):
+            ctypes.CDLL(lib)
+        return True
+    except Exception:
+        return False
+
+
+def resolve_whisper_device() -> str:
+    """Pick the device Whisper runs on. See tests/test_whisper_device.py.
+
+    TANGENT_WHISPER_DEVICE=cpu|cuda overrides the probe: cpu skips it,
+    cuda is honored even if the probe fails (explicit opt-in fails loud
+    rather than silently degrading to CPU forever).
+    """
+    import os
+
+    override = os.environ.get("TANGENT_WHISPER_DEVICE", "").strip().lower()
+    if override in ("cpu", "cuda"):
+        return override
+    return "cuda" if _cuda_runtime_loadable() else "cpu"
+
+
 @dataclass
 class TranscriptionResult:
     """A transcription: the joined plain text plus per-segment timings.
@@ -57,15 +99,18 @@ class TranscriptionService:
             model=target,
             download_root=str(download_root),
         )
-        # device="auto" lets faster-whisper pick CPU/CUDA; compute_type="int8" for CPU friendliness
+        # resolve_whisper_device probes whether the CUDA runtime can
+        # actually execute (not just whether a GPU is visible) — the
+        # libcublas.so.12 regression. int8 works on both CPU and CUDA.
+        device = resolve_whisper_device()
         self._model = WhisperModel(
             target,
-            device="auto",
+            device=device,
             compute_type="int8",
             download_root=str(download_root),
         )
         self._model_name = target
-        log.info("transcription.model_loaded", model=target)
+        log.info("transcription.model_loaded", model=target, device=device)
 
     def transcribe(self, audio_path: str) -> TranscriptionResult:
         """Transcribe an audio file.
