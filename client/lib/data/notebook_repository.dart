@@ -79,6 +79,11 @@ class NotebookRepository {
         updatedAt: Value(timestamp.millisecondsSinceEpoch),
         docJson: Value(notebook.document.encode()),
         inkJson: Value(notebook.ink.encode()),
+        // Ruling and nib travel with every ordinary save. Ruling's absence
+        // here was a latent bug: cycling the ruling then reopening lost the
+        // choice because this UPDATE never wrote the column.
+        ruling: Value<String?>(notebook.ruling.wireValue),
+        lastPenStyle: Value<String?>(notebook.lastPenStyle?.wireValue),
         // Every local edit is unsynced work until the server confirms it.
         // Marked here, in the one place ordinary edits funnel through, rather
         // than at each call site — a save that forgot this flag would be
@@ -116,6 +121,7 @@ class NotebookRepository {
             inkJson: notebook.ink.encode(),
             folderId: Value<String?>(existingFolderId),
             ruling: Value<String?>(notebook.ruling.wireValue),
+            lastPenStyle: Value<String?>(notebook.lastPenStyle?.wireValue),
           ),
         );
   }
@@ -145,6 +151,14 @@ class NotebookRepository {
         // NOT as the new-notebook default: an existing page must not silently
         // gain lines the user never asked for.
         ruling: NotebookRuling.parse(row.ruling),
+        // Null is a notebook that has never recorded a nib: it opens with
+        // the fountain default, chosen at the editor, not coerced here —
+        // the model keeps the distinction between "never set" and "set".
+        lastPenStyle: switch (row.lastPenStyle) {
+          'fountain' => PenStyle.fountain,
+          'ballpoint' => PenStyle.ballpoint,
+          _ => null,
+        },
       );
 }
 

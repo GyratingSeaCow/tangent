@@ -22,6 +22,10 @@ const _notebookColumns = [
   // blank, which is how every page rendered before this column existed.
   // Declared right after folder_id, so it precedes the sync pair.
   'ruling',
+  // v16: per-notebook pen memory — the nib the notebook was last written
+  // with. Nullable; null reads as the fountain default. Declared right
+  // after ruling, so it also precedes the sync pair.
+  'last_pen_style',
   'sync_dirty',
   'synced_seq',
   // v13: notebook trash. Deletion parks the row here for 7 days before
@@ -45,8 +49,8 @@ void main() {
 
     await db.listDumps();
 
-    expect(db.schemaVersion, 15);
-    expect(sql.userVersion, 15);
+    expect(db.schemaVersion, 16);
+    expect(sql.userVersion, 16);
     expect(_columnNames(sql, 'notebooks'), _notebookColumns);
     expect(
       sql.select('PRAGMA foreign_key_list(notebooks)'),
@@ -72,7 +76,7 @@ void main() {
 
     await db.listDumps();
 
-    expect(sql.userVersion, 15);
+    expect(sql.userVersion, 16);
     expect(_columnNames(sql, 'notebooks'), _notebookColumns);
     // v8 adds folder_id to dumps, so compare the columns the fixture had:
     // this test is about existing rows surviving, not about the column list.
@@ -126,7 +130,7 @@ void main() {
 
     sql = sqlite3.open(file.path);
     addTearDown(sql.dispose);
-    expect(sql.userVersion, 15);
+    expect(sql.userVersion, 16);
     expect(_columnNames(sql, 'notebooks'), _notebookColumns);
     // v8 adds folder_id to dumps, so compare the columns the fixture had:
     // this test is about existing rows surviving, not about the column list.
@@ -182,7 +186,7 @@ void main() {
     addTearDown(db.close);
     await db.listDumps();
 
-    expect(sql.userVersion, 15);
+    expect(sql.userVersion, 16);
     final rows = <String, int>{
       for (final r in sql.select('SELECT id, sync_dirty FROM notebooks'))
         r['id'] as String: r['sync_dirty'] as int,
@@ -217,7 +221,7 @@ void main() {
     addTearDown(db.close);
     await db.listDumps();
 
-    expect(sql.userVersion, 15);
+    expect(sql.userVersion, 16);
     expect(
       sql.select(
         "SELECT name FROM sqlite_master WHERE type='table' "

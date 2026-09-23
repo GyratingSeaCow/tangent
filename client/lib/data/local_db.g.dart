@@ -4315,6 +4315,12 @@ class $NotebooksTable extends Notebooks
   late final GeneratedColumn<String> ruling = GeneratedColumn<String>(
       'ruling', aliasedName, true,
       type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _lastPenStyleMeta =
+      const VerificationMeta('lastPenStyle');
+  @override
+  late final GeneratedColumn<String> lastPenStyle = GeneratedColumn<String>(
+      'last_pen_style', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
   static const VerificationMeta _syncDirtyMeta =
       const VerificationMeta('syncDirty');
   @override
@@ -4347,6 +4353,7 @@ class $NotebooksTable extends Notebooks
         inkJson,
         folderId,
         ruling,
+        lastPenStyle,
         syncDirty,
         syncedSeq,
         deletedAt
@@ -4404,6 +4411,12 @@ class $NotebooksTable extends Notebooks
       context.handle(_rulingMeta,
           ruling.isAcceptableOrUnknown(data['ruling']!, _rulingMeta));
     }
+    if (data.containsKey('last_pen_style')) {
+      context.handle(
+          _lastPenStyleMeta,
+          lastPenStyle.isAcceptableOrUnknown(
+              data['last_pen_style']!, _lastPenStyleMeta));
+    }
     if (data.containsKey('sync_dirty')) {
       context.handle(_syncDirtyMeta,
           syncDirty.isAcceptableOrUnknown(data['sync_dirty']!, _syncDirtyMeta));
@@ -4441,6 +4454,8 @@ class $NotebooksTable extends Notebooks
           .read(DriftSqlType.string, data['${effectivePrefix}folder_id']),
       ruling: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}ruling']),
+      lastPenStyle: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}last_pen_style']),
       syncDirty: attachedDatabase.typeMapping
           .read(DriftSqlType.bool, data['${effectivePrefix}sync_dirty'])!,
       syncedSeq: attachedDatabase.typeMapping
@@ -4479,6 +4494,14 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
   /// which is exactly how those pages have always rendered.
   final String? ruling;
 
+  /// The nib last used in this notebook: 'ballpoint' or 'fountain'.
+  ///
+  /// Same contract as [ruling]: stored as the enum's NAME, nullable because
+  /// every notebook written before v16 has no value, and null reads as the
+  /// fountain default. Per-notebook because the user keeps different
+  /// notebooks in different pens and each must reopen with its own.
+  final String? lastPenStyle;
+
   /// True when this notebook has local edits the server has not accepted.
   ///
   /// Set on every local save and cleared only by a push the server confirmed.
@@ -4507,6 +4530,7 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
       required this.inkJson,
       this.folderId,
       this.ruling,
+      this.lastPenStyle,
       required this.syncDirty,
       this.syncedSeq,
       this.deletedAt});
@@ -4524,6 +4548,9 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
     }
     if (!nullToAbsent || ruling != null) {
       map['ruling'] = Variable<String>(ruling);
+    }
+    if (!nullToAbsent || lastPenStyle != null) {
+      map['last_pen_style'] = Variable<String>(lastPenStyle);
     }
     map['sync_dirty'] = Variable<bool>(syncDirty);
     if (!nullToAbsent || syncedSeq != null) {
@@ -4548,6 +4575,9 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
           : Value(folderId),
       ruling:
           ruling == null && nullToAbsent ? const Value.absent() : Value(ruling),
+      lastPenStyle: lastPenStyle == null && nullToAbsent
+          ? const Value.absent()
+          : Value(lastPenStyle),
       syncDirty: Value(syncDirty),
       syncedSeq: syncedSeq == null && nullToAbsent
           ? const Value.absent()
@@ -4570,6 +4600,7 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
       inkJson: serializer.fromJson<String>(json['inkJson']),
       folderId: serializer.fromJson<String?>(json['folderId']),
       ruling: serializer.fromJson<String?>(json['ruling']),
+      lastPenStyle: serializer.fromJson<String?>(json['lastPenStyle']),
       syncDirty: serializer.fromJson<bool>(json['syncDirty']),
       syncedSeq: serializer.fromJson<int?>(json['syncedSeq']),
       deletedAt: serializer.fromJson<int?>(json['deletedAt']),
@@ -4587,6 +4618,7 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
       'inkJson': serializer.toJson<String>(inkJson),
       'folderId': serializer.toJson<String?>(folderId),
       'ruling': serializer.toJson<String?>(ruling),
+      'lastPenStyle': serializer.toJson<String?>(lastPenStyle),
       'syncDirty': serializer.toJson<bool>(syncDirty),
       'syncedSeq': serializer.toJson<int?>(syncedSeq),
       'deletedAt': serializer.toJson<int?>(deletedAt),
@@ -4602,6 +4634,7 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
           String? inkJson,
           Value<String?> folderId = const Value.absent(),
           Value<String?> ruling = const Value.absent(),
+          Value<String?> lastPenStyle = const Value.absent(),
           bool? syncDirty,
           Value<int?> syncedSeq = const Value.absent(),
           Value<int?> deletedAt = const Value.absent()}) =>
@@ -4614,6 +4647,8 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
         inkJson: inkJson ?? this.inkJson,
         folderId: folderId.present ? folderId.value : this.folderId,
         ruling: ruling.present ? ruling.value : this.ruling,
+        lastPenStyle:
+            lastPenStyle.present ? lastPenStyle.value : this.lastPenStyle,
         syncDirty: syncDirty ?? this.syncDirty,
         syncedSeq: syncedSeq.present ? syncedSeq.value : this.syncedSeq,
         deletedAt: deletedAt.present ? deletedAt.value : this.deletedAt,
@@ -4628,6 +4663,9 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
       inkJson: data.inkJson.present ? data.inkJson.value : this.inkJson,
       folderId: data.folderId.present ? data.folderId.value : this.folderId,
       ruling: data.ruling.present ? data.ruling.value : this.ruling,
+      lastPenStyle: data.lastPenStyle.present
+          ? data.lastPenStyle.value
+          : this.lastPenStyle,
       syncDirty: data.syncDirty.present ? data.syncDirty.value : this.syncDirty,
       syncedSeq: data.syncedSeq.present ? data.syncedSeq.value : this.syncedSeq,
       deletedAt: data.deletedAt.present ? data.deletedAt.value : this.deletedAt,
@@ -4645,6 +4683,7 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
           ..write('inkJson: $inkJson, ')
           ..write('folderId: $folderId, ')
           ..write('ruling: $ruling, ')
+          ..write('lastPenStyle: $lastPenStyle, ')
           ..write('syncDirty: $syncDirty, ')
           ..write('syncedSeq: $syncedSeq, ')
           ..write('deletedAt: $deletedAt')
@@ -4654,7 +4693,7 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
 
   @override
   int get hashCode => Object.hash(id, title, createdAt, updatedAt, docJson,
-      inkJson, folderId, ruling, syncDirty, syncedSeq, deletedAt);
+      inkJson, folderId, ruling, lastPenStyle, syncDirty, syncedSeq, deletedAt);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -4667,6 +4706,7 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
           other.inkJson == this.inkJson &&
           other.folderId == this.folderId &&
           other.ruling == this.ruling &&
+          other.lastPenStyle == this.lastPenStyle &&
           other.syncDirty == this.syncDirty &&
           other.syncedSeq == this.syncedSeq &&
           other.deletedAt == this.deletedAt);
@@ -4681,6 +4721,7 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
   final Value<String> inkJson;
   final Value<String?> folderId;
   final Value<String?> ruling;
+  final Value<String?> lastPenStyle;
   final Value<bool> syncDirty;
   final Value<int?> syncedSeq;
   final Value<int?> deletedAt;
@@ -4694,6 +4735,7 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
     this.inkJson = const Value.absent(),
     this.folderId = const Value.absent(),
     this.ruling = const Value.absent(),
+    this.lastPenStyle = const Value.absent(),
     this.syncDirty = const Value.absent(),
     this.syncedSeq = const Value.absent(),
     this.deletedAt = const Value.absent(),
@@ -4708,6 +4750,7 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
     required String inkJson,
     this.folderId = const Value.absent(),
     this.ruling = const Value.absent(),
+    this.lastPenStyle = const Value.absent(),
     this.syncDirty = const Value.absent(),
     this.syncedSeq = const Value.absent(),
     this.deletedAt = const Value.absent(),
@@ -4727,6 +4770,7 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
     Expression<String>? inkJson,
     Expression<String>? folderId,
     Expression<String>? ruling,
+    Expression<String>? lastPenStyle,
     Expression<bool>? syncDirty,
     Expression<int>? syncedSeq,
     Expression<int>? deletedAt,
@@ -4741,6 +4785,7 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
       if (inkJson != null) 'ink_json': inkJson,
       if (folderId != null) 'folder_id': folderId,
       if (ruling != null) 'ruling': ruling,
+      if (lastPenStyle != null) 'last_pen_style': lastPenStyle,
       if (syncDirty != null) 'sync_dirty': syncDirty,
       if (syncedSeq != null) 'synced_seq': syncedSeq,
       if (deletedAt != null) 'deleted_at': deletedAt,
@@ -4757,6 +4802,7 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
       Value<String>? inkJson,
       Value<String?>? folderId,
       Value<String?>? ruling,
+      Value<String?>? lastPenStyle,
       Value<bool>? syncDirty,
       Value<int?>? syncedSeq,
       Value<int?>? deletedAt,
@@ -4770,6 +4816,7 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
       inkJson: inkJson ?? this.inkJson,
       folderId: folderId ?? this.folderId,
       ruling: ruling ?? this.ruling,
+      lastPenStyle: lastPenStyle ?? this.lastPenStyle,
       syncDirty: syncDirty ?? this.syncDirty,
       syncedSeq: syncedSeq ?? this.syncedSeq,
       deletedAt: deletedAt ?? this.deletedAt,
@@ -4804,6 +4851,9 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
     if (ruling.present) {
       map['ruling'] = Variable<String>(ruling.value);
     }
+    if (lastPenStyle.present) {
+      map['last_pen_style'] = Variable<String>(lastPenStyle.value);
+    }
     if (syncDirty.present) {
       map['sync_dirty'] = Variable<bool>(syncDirty.value);
     }
@@ -4830,6 +4880,7 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
           ..write('inkJson: $inkJson, ')
           ..write('folderId: $folderId, ')
           ..write('ruling: $ruling, ')
+          ..write('lastPenStyle: $lastPenStyle, ')
           ..write('syncDirty: $syncDirty, ')
           ..write('syncedSeq: $syncedSeq, ')
           ..write('deletedAt: $deletedAt, ')
@@ -8122,6 +8173,7 @@ typedef $$NotebooksTableCreateCompanionBuilder = NotebooksCompanion Function({
   required String inkJson,
   Value<String?> folderId,
   Value<String?> ruling,
+  Value<String?> lastPenStyle,
   Value<bool> syncDirty,
   Value<int?> syncedSeq,
   Value<int?> deletedAt,
@@ -8136,6 +8188,7 @@ typedef $$NotebooksTableUpdateCompanionBuilder = NotebooksCompanion Function({
   Value<String> inkJson,
   Value<String?> folderId,
   Value<String?> ruling,
+  Value<String?> lastPenStyle,
   Value<bool> syncDirty,
   Value<int?> syncedSeq,
   Value<int?> deletedAt,
@@ -8174,6 +8227,9 @@ class $$NotebooksTableFilterComposer
 
   ColumnFilters<String> get ruling => $composableBuilder(
       column: $table.ruling, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get lastPenStyle => $composableBuilder(
+      column: $table.lastPenStyle, builder: (column) => ColumnFilters(column));
 
   ColumnFilters<bool> get syncDirty => $composableBuilder(
       column: $table.syncDirty, builder: (column) => ColumnFilters(column));
@@ -8218,6 +8274,10 @@ class $$NotebooksTableOrderingComposer
   ColumnOrderings<String> get ruling => $composableBuilder(
       column: $table.ruling, builder: (column) => ColumnOrderings(column));
 
+  ColumnOrderings<String> get lastPenStyle => $composableBuilder(
+      column: $table.lastPenStyle,
+      builder: (column) => ColumnOrderings(column));
+
   ColumnOrderings<bool> get syncDirty => $composableBuilder(
       column: $table.syncDirty, builder: (column) => ColumnOrderings(column));
 
@@ -8261,6 +8321,9 @@ class $$NotebooksTableAnnotationComposer
   GeneratedColumn<String> get ruling =>
       $composableBuilder(column: $table.ruling, builder: (column) => column);
 
+  GeneratedColumn<String> get lastPenStyle => $composableBuilder(
+      column: $table.lastPenStyle, builder: (column) => column);
+
   GeneratedColumn<bool> get syncDirty =>
       $composableBuilder(column: $table.syncDirty, builder: (column) => column);
 
@@ -8302,6 +8365,7 @@ class $$NotebooksTableTableManager extends RootTableManager<
             Value<String> inkJson = const Value.absent(),
             Value<String?> folderId = const Value.absent(),
             Value<String?> ruling = const Value.absent(),
+            Value<String?> lastPenStyle = const Value.absent(),
             Value<bool> syncDirty = const Value.absent(),
             Value<int?> syncedSeq = const Value.absent(),
             Value<int?> deletedAt = const Value.absent(),
@@ -8316,6 +8380,7 @@ class $$NotebooksTableTableManager extends RootTableManager<
             inkJson: inkJson,
             folderId: folderId,
             ruling: ruling,
+            lastPenStyle: lastPenStyle,
             syncDirty: syncDirty,
             syncedSeq: syncedSeq,
             deletedAt: deletedAt,
@@ -8330,6 +8395,7 @@ class $$NotebooksTableTableManager extends RootTableManager<
             required String inkJson,
             Value<String?> folderId = const Value.absent(),
             Value<String?> ruling = const Value.absent(),
+            Value<String?> lastPenStyle = const Value.absent(),
             Value<bool> syncDirty = const Value.absent(),
             Value<int?> syncedSeq = const Value.absent(),
             Value<int?> deletedAt = const Value.absent(),
@@ -8344,6 +8410,7 @@ class $$NotebooksTableTableManager extends RootTableManager<
             inkJson: inkJson,
             folderId: folderId,
             ruling: ruling,
+            lastPenStyle: lastPenStyle,
             syncDirty: syncDirty,
             syncedSeq: syncedSeq,
             deletedAt: deletedAt,

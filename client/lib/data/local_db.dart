@@ -137,6 +137,14 @@ class Notebooks extends Table {
   /// which is exactly how those pages have always rendered.
   TextColumn get ruling => text().nullable()();
 
+  /// The nib last used in this notebook: 'ballpoint' or 'fountain'.
+  ///
+  /// Same contract as [ruling]: stored as the enum's NAME, nullable because
+  /// every notebook written before v16 has no value, and null reads as the
+  /// fountain default. Per-notebook because the user keeps different
+  /// notebooks in different pens and each must reopen with its own.
+  TextColumn get lastPenStyle => text().nullable()();
+
   /// True when this notebook has local edits the server has not accepted.
   ///
   /// Set on every local save and cleared only by a push the server confirmed.
@@ -245,7 +253,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   LocalDb.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 15;
+  int get schemaVersion => 16;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -570,6 +578,21 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
                 .isNotEmpty;
             if (!exists) {
               await m.createTable(inkIndexEntries);
+            }
+          }
+          if (from < 16) {
+            // Per-notebook pen memory. One nullable column; null reads as
+            // the fountain default, so no backfill and no existing notebook
+            // changes behaviour until its nib is next switched. Same
+            // ask-the-database guard as v10's ruling: adding a column twice
+            // throws "duplicate column name" and wedges the upgrade.
+            final List<QueryRow> penColumns =
+                await customSelect('PRAGMA table_info(notebooks)').get();
+            final bool present = penColumns.any(
+              (QueryRow row) => row.data['name'] == 'last_pen_style',
+            );
+            if (!present) {
+              await m.addColumn(notebooks, notebooks.lastPenStyle);
             }
           }
         },
@@ -909,6 +932,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     required String inkJson,
     required int seq,
     String? ruling,
+    String? lastPenStyle,
     Object? folderId = absentFolderId,
   }) async {
     // insertOrReplace rewrites the whole row, so a null ruling here would
@@ -920,6 +944,10 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
           ..where((t) => t.id.equals(id)))
         .getSingleOrNull();
     final String? effectiveRuling = ruling ?? existing?.ruling;
+    // The nib gets the ruling treatment: an older peer that has never heard
+    // of pen memory sends nothing, and that absence must not erase the nib
+    // this device already remembers.
+    final String? effectivePenStyle = lastPenStyle ?? existing?.lastPenStyle;
     final String? effectiveFolderId = identical(folderId, absentFolderId)
         ? existing?.folderId
         : folderId as String?;
@@ -933,6 +961,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
         docJson: docJson,
         inkJson: inkJson,
         ruling: Value<String?>(effectiveRuling),
+        lastPenStyle: Value<String?>(effectivePenStyle),
         folderId: Value<String?>(effectiveFolderId),
         syncDirty: const Value(false),
         syncedSeq: Value(seq),

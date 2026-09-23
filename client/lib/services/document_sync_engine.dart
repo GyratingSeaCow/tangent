@@ -388,6 +388,11 @@ class DocumentSyncEngine extends ChangeNotifier {
       // has, so a missing value leaves the local one alone.
       ruling:
           payload.containsKey('ruling') ? payload['ruling'] as String? : null,
+      // The nib rides the same rule: absent means an older peer, and null
+      // through applyRemoteNotebook falls back to the locally stored value.
+      lastPenStyle: payload.containsKey('last_pen_style')
+          ? payload['last_pen_style'] as String?
+          : null,
       // Same pattern, sharper edge: folder_id null means UNFILED while
       // absence means "older peer, keep the local filing" — collapsing the
       // two would either strand filings or erase them.
@@ -436,6 +441,7 @@ class DocumentSyncEngine extends ChangeNotifier {
             'doc': row.docJson,
             'ink': row.inkJson,
             'ruling': row.ruling,
+            'last_pen_style': row.lastPenStyle,
             // Filing travels with the notebook. Null is meaningful here —
             // it says "unfiled", and the server stores it verbatim.
             'folder_id': row.folderId,

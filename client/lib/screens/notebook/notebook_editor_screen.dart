@@ -321,6 +321,10 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
     }
     _strokes = List<InkStroke>.of(notebook.ink.strokes);
     _ruling = notebook.ruling;
+    // Each notebook reopens with ITS last nib (personal notebooks live in
+    // fountain, others in ballpoint). Null — never recorded — keeps the
+    // fountain default the field initialised with.
+    _penStyle = notebook.lastPenStyle ?? _penStyle;
     _hydrating = false;
     _title.addListener(_markDirty);
   }
@@ -849,6 +853,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
       document: NotebookDocument(_composeBlocks()),
       ink: NotebookInk(List<InkStroke>.of(_strokes)),
       ruling: _ruling,
+      lastPenStyle: _penStyle,
     );
     try {
       // Route through NotebookPersistence, not the bare repository: it writes
@@ -1490,6 +1495,9 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                               _penStyle = _penStyle == PenStyle.fountain
                                   ? PenStyle.ballpoint
                                   : PenStyle.fountain;
+                              // A nib switch is a change: it must survive
+                              // reopen, so the next save persists it.
+                              _dirty = true;
                             }),
                   ),
                   IconButton(

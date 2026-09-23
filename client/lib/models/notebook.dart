@@ -20,6 +20,7 @@ class Notebook {
     required this.ink,
     this.folderId,
     this.ruling = NotebookRuling.medium,
+    this.lastPenStyle,
   });
 
   final String id;
@@ -43,12 +44,21 @@ class Notebook {
   /// was never given.
   final NotebookRuling ruling;
 
+  /// The nib this notebook was last written with, or null when it has
+  /// never recorded one (every notebook written before pen memory).
+  ///
+  /// Per-notebook on purpose: the user writes personal notebooks in
+  /// fountain and others in ballpoint, and each must reopen with ITS pen
+  /// rather than a global default. Null reads as the fountain default.
+  final PenStyle? lastPenStyle;
+
   Notebook copyWith({
     String? title,
     DateTime? updatedAt,
     NotebookDocument? document,
     NotebookInk? ink,
     NotebookRuling? ruling,
+    PenStyle? lastPenStyle,
   }) =>
       Notebook(
         id: id,
@@ -59,6 +69,7 @@ class Notebook {
         ink: ink ?? this.ink,
         folderId: folderId,
         ruling: ruling ?? this.ruling,
+        lastPenStyle: lastPenStyle ?? this.lastPenStyle,
       );
 }
 
