@@ -215,7 +215,10 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
       _tool == InkTool.highlighter ? _highlighterColour : _penColour;
 
   double _penWidth = PenSizeControl.defaultPenWidth;
-  PenStyle _penStyle = PenStyle.ballpoint;
+
+  /// The fountain nib is the default (Jeff's contract, 2026-09-22): it is
+  /// the pen actually used; ballpoint was default only by being first.
+  PenStyle _penStyle = PenStyle.fountain;
 
   /// True while a stylus is in contact or within its trailing window. The
   /// page holds still so a resting palm cannot scroll it mid-word.
