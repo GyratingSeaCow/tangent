@@ -54,6 +54,23 @@ class FakeNotebookRepository extends NotebookRepository {
     yield* _changes.stream;
   }
 
+  /// Headers derived from the same rows [watchNotebooks] serves, so widget
+  /// tests seeding full notebooks exercise the header-driven list unchanged.
+  @override
+  Stream<List<NotebookListEntry>> watchNotebookHeaders() {
+    List<NotebookListEntry> headers(List<Notebook> rows) => rows
+        .map(
+          (Notebook n) => NotebookListEntry(
+            id: n.id,
+            title: n.title,
+            updatedAt: n.updatedAt,
+            folderId: n.folderId,
+          ),
+        )
+        .toList(growable: false);
+    return watchNotebooks().map(headers);
+  }
+
   @override
   Future<Notebook?> getNotebook(String id) async => _notebooks[id];
 

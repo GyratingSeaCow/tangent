@@ -29,8 +29,11 @@ String encodeNotebookFile(Notebook notebook) => jsonEncode({
       'title': notebook.title,
       'createdAt': notebook.createdAt.millisecondsSinceEpoch,
       'updatedAt': notebook.updatedAt.millisecondsSinceEpoch,
-      'doc': jsonDecode(notebook.document.encode()),
-      'ink': jsonDecode(notebook.ink.encode()),
+      // toJson, not jsonDecode(encode()): the old round trip serialized the
+      // whole document/ink to a string and immediately re-parsed it, twice
+      // per save, for byte-identical output.
+      'doc': notebook.document.toJson(),
+      'ink': notebook.ink.toJson(),
     });
 
 /// Decodes a durable notebook payload.

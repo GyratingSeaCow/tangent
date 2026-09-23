@@ -415,7 +415,18 @@ void main() {
   testWidgets('rename from the menu saves the new title', (tester) async {
     await mountList(
       tester,
-      seed: <Notebook>[testNotebook(id: 'nb-7', title: 'Sprint ideas')],
+      seed: <Notebook>[
+        // Content matters here: the list rows are headers with no document
+        // or ink, so a rename that saved the ROW would hollow the notebook
+        // out. The block below must still be present in what gets saved.
+        testNotebook(
+          id: 'nb-7',
+          title: 'Sprint ideas',
+          blocks: const <NotebookBlock>[
+            NotebookTextBlock(id: 'blk-1', text: 'keep me'),
+          ],
+        ),
+      ],
     );
 
     await tester.tap(find.byKey(const ValueKey('notebook-menu-nb-7')));
@@ -437,6 +448,15 @@ void main() {
       repository.saved.map((Notebook n) => n.title),
       contains('Q4 planning'),
       reason: 'rename must persist through the notebook persistence layer',
+    );
+    final Notebook renamed = repository.saved
+        .lastWhere((Notebook n) => n.title == 'Q4 planning');
+    expect(
+      renamed.document.blocks.whereType<NotebookTextBlock>().single.text,
+      'keep me',
+      reason: 'rename must save the FULL notebook: the list row is a '
+          'header with no content, and saving it verbatim would erase '
+          'the page',
     );
     expect(repository.deleted, isEmpty);
     expect(tester.takeException(), isNull);

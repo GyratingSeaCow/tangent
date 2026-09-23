@@ -161,9 +161,10 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
     });
   }
 
-  void _toggleSelectAll(List<Notebook> rows) {
+  void _toggleSelectAll(List<NotebookListEntry> rows) {
     setState(() {
-      final Set<String> all = rows.map((Notebook n) => n.id).toSet();
+      final Set<String> all =
+          rows.map((NotebookListEntry n) => n.id).toSet();
       if (_selectedIds.containsAll(all)) {
         _selectedIds.clear();
       } else {
@@ -303,7 +304,7 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
   }
 
   /// Long-press opens the shared menu instead of deleting outright.
-  Future<void> _showActions(Notebook notebook) async {
+  Future<void> _showActions(NotebookHeader notebook) async {
     final ItemAction? action = await showItemActionSheet(
       context,
       title: notebook.title.isEmpty ? '(untitled)' : notebook.title,
@@ -343,7 +344,7 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
   /// The export reads the notebook fresh from the repository rather than
   /// trusting the list row: the row carries no document or ink, and a stale
   /// copy exporting silently would be worse than a failure.
-  Future<void> _exportPdf(Notebook notebook) async {
+  Future<void> _exportPdf(NotebookHeader notebook) async {
     try {
       final Notebook? full =
           await ref.read(notebookRepositoryProvider).getNotebook(notebook.id);
@@ -410,7 +411,7 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
     await _systemSharePdf(bytes: bytes, filename: filename, subject: subject);
   }
 
-  Future<void> _move(Notebook notebook) async {
+  Future<void> _move(NotebookHeader notebook) async {
     final LocalDb db = ref.read(localDbProvider);
     final List<Folder> folders =
         ref.read(foldersProvider).valueOrNull ?? const <Folder>[];
@@ -443,7 +444,7 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
     }
   }
 
-  Future<void> _rename(Notebook notebook) async {
+  Future<void> _rename(NotebookHeader notebook) async {
     final TextEditingController controller =
         TextEditingController(text: notebook.title);
     final String? name = await showDialog<String>(
@@ -478,11 +479,19 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) => controller.dispose());
     if (name == null || name.isEmpty || !mounted) return;
     try {
-      // Persistence rewrites the durable file too; the bare repository would
-      // leave the on-disk copy carrying the old title for the next import.
+      // The list row is a header: it has no document or ink to save. Fetch
+      // the full notebook and rename THAT — saving a hollow copy would
+      // erase the page. Persistence rewrites the durable file too; the bare
+      // repository would leave the on-disk copy carrying the old title for
+      // the next import.
+      final Notebook? full =
+          await ref.read(notebookRepositoryProvider).getNotebook(notebook.id);
+      if (full == null) {
+        throw StateError('Notebook is no longer available');
+      }
       await ref
           .read(notebookPersistenceProvider)
-          .saveNotebook(notebook.copyWith(title: name));
+          .saveNotebook(full.copyWith(title: name));
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -491,7 +500,7 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
     }
   }
 
-  Future<void> _confirmDelete(Notebook notebook) async {
+  Future<void> _confirmDelete(NotebookHeader notebook) async {
     final bool? confirmed = await showDialog<bool>(
       context: context,
       builder: (BuildContext dialogContext) => AlertDialog(
@@ -596,7 +605,8 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
   }
 
   Widget _buildRows(ColorScheme colors) {
-    final AsyncValue<List<Notebook>> notebooks = ref.watch(notebooksProvider);
+    final AsyncValue<List<NotebookListEntry>> notebooks =
+        ref.watch(notebookHeadersProvider);
     return notebooks.when(
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (Object error, StackTrace _) => Center(
@@ -608,14 +618,16 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
           ),
         ),
       ),
-      data: (List<Notebook> allRows) {
+      data: (List<NotebookListEntry> allRows) {
         // A live search filters the library to notebooks the index says
         // match. Null means "not searching" (or a blank query): no filter.
         final Map<String, NotebookMatchSummary>? searchResults = _searchResults;
-        final List<Notebook> rows = searchResults == null
+        final List<NotebookListEntry> rows = searchResults == null
             ? allRows
             : allRows
-                .where((Notebook n) => searchResults.containsKey(n.id))
+                .where(
+                  (NotebookListEntry n) => searchResults.containsKey(n.id),
+                )
                 .toList(growable: false);
         if (rows.isEmpty) {
           return Center(
@@ -637,7 +649,9 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
         // search-filtered rows: a live search hides rows, it does not
         // deselect them, and closing the search must find the selection
         // exactly as the user left it.
-        _selectedIds.retainAll(allRows.map((Notebook n) => n.id).toSet());
+        _selectedIds.retainAll(
+          allRows.map((NotebookListEntry n) => n.id).toSet(),
+        );
         final Widget selectionBar = !_selecting
             ? const SizedBox.shrink()
             : Row(
@@ -778,7 +792,7 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
               ),
             );
           } else {
-            for (final Notebook notebook in section.notebooks) {
+            for (final NotebookHeader notebook in section.notebooks) {
               children.add(_notebookTile(notebook));
               children.add(const Divider(height: 1));
             }
@@ -801,7 +815,7 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
   /// while selecting), long-press starts selection -- so switching view never
   /// costs the user an affordance. The title is always drawn: a grid of
   /// identical covers with no names cannot be navigated.
-  Widget _notebookCover(Notebook notebook) {
+  Widget _notebookCover(NotebookHeader notebook) {
     final ColorScheme colors = Theme.of(context).colorScheme;
     final bool selected = _selectedIds.contains(notebook.id);
     return InkWell(
@@ -891,7 +905,7 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
   /// this notebook has no summary (filtered rows always have one). Shared
   /// by the tile subtitle and the cover caption so the two views cannot
   /// drift apart.
-  String? _matchLabel(Notebook notebook) {
+  String? _matchLabel(NotebookHeader notebook) {
     final NotebookMatchSummary? m = _searchResults?[notebook.id];
     if (m == null) return null;
     return '${m.matchCount} ${m.matchCount == 1 ? 'match' : 'matches'} '
@@ -899,7 +913,7 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
   }
 
   /// [_matchLabel] as the row's subtitle widget.
-  Widget? _matchSubtitle(Notebook notebook) {
+  Widget? _matchSubtitle(NotebookHeader notebook) {
     final String? label = _matchLabel(notebook);
     if (label == null) return null;
     return Text(label, maxLines: 1, overflow: TextOverflow.ellipsis);
@@ -916,7 +930,7 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
 
   // Desktop: right-click is this app's long-press. GestureDetector wrapper
   // because ListTile exposes no onSecondaryTap of its own.
-  Widget _notebookTile(Notebook notebook) => GestureDetector(
+  Widget _notebookTile(NotebookHeader notebook) => GestureDetector(
         onSecondaryTap: secondaryTapFor(
           _selecting ? null : () => _enterSelection(notebook.id),
         ),

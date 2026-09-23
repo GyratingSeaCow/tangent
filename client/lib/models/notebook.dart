@@ -10,7 +10,17 @@ import 'notebook_ruling.dart';
 ///
 /// Notebooks are stored as a single row with two JSON payloads (phase 1 of the
 /// notebooks design): atomic document saves, no relational block explosion.
-class Notebook {
+/// The list-facing surface of a notebook: what a row can show without
+/// decoding a single stroke. [Notebook] carries it as part of the full
+/// model; the repository's header stream carries it alone.
+abstract interface class NotebookHeader {
+  String get id;
+  String get title;
+  DateTime get updatedAt;
+  String? get folderId;
+}
+
+class Notebook implements NotebookHeader {
   const Notebook({
     required this.id,
     required this.title,
@@ -23,9 +33,12 @@ class Notebook {
     this.lastPenStyle,
   });
 
+  @override
   final String id;
+  @override
   final String title;
   final DateTime createdAt;
+  @override
   final DateTime updatedAt;
   final NotebookDocument document;
   final NotebookInk ink;
@@ -34,6 +47,7 @@ class Notebook {
   ///
   /// Filing is metadata: moving a notebook between folders never moves its
   /// published file, so a reorganise cannot half-fail across storage.
+  @override
   final String? folderId;
 
   /// How the page is ruled.
@@ -404,9 +418,14 @@ class NotebookDocument {
     );
   }
 
-  String encode() => jsonEncode({
+  /// The document as a JSON-encodable map. [encode] is this, stringified;
+  /// callers embedding the document in a larger payload use this directly
+  /// instead of paying an encode→decode round trip.
+  Map<String, dynamic> toJson() => {
         'blocks': blocks.map((block) => block.toJson()).toList(growable: false),
-      });
+      };
+
+  String encode() => jsonEncode(toJson());
 
   NotebookDocument copyWith({List<NotebookBlock>? blocks}) =>
       NotebookDocument(blocks ?? this.blocks);
@@ -731,9 +750,13 @@ class NotebookInk {
     );
   }
 
-  String encode() => jsonEncode({
+  /// The ink as a JSON-encodable map; same contract as
+  /// [NotebookDocument.toJson].
+  Map<String, dynamic> toJson() => {
         'strokes': strokes.map((s) => s.toJson()).toList(growable: false),
-      });
+      };
+
+  String encode() => jsonEncode(toJson());
 
   NotebookInk copyWith({List<InkStroke>? strokes}) =>
       NotebookInk(strokes ?? this.strokes);

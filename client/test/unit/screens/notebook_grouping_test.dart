@@ -33,7 +33,7 @@ void main() {
         isNull,
         reason: 'a user with no folders must not see folder chrome',
       );
-      expect(sections.single.notebooks.map((Notebook n) => n.id), <String>[
+      expect(sections.single.notebooks.map((NotebookHeader n) => n.id), <String>[
         'a',
         'b',
       ]);
@@ -90,7 +90,7 @@ void main() {
         ],
       );
 
-      expect(sections.single.notebooks.map((Notebook n) => n.id), <String>[
+      expect(sections.single.notebooks.map((NotebookHeader n) => n.id), <String>[
         'zeta',
         'alpha',
         'mid',

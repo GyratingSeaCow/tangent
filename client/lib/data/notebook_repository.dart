@@ -33,6 +33,42 @@ class NotebookRepository {
       .watch()
       .map((rows) => rows.map(_fromRow).toList(growable: false));
 
+  /// The list screen's stream: metadata only, NO document, NO ink.
+  ///
+  /// [watchNotebooks] decodes every stroke of every notebook on every
+  /// notebooks-table write — cost proportional to everything ever drawn,
+  /// paid during pop animations while the list sits under the editor.
+  /// The list renders title/date/folder, nothing more, so this selects
+  /// exactly those columns. Deliberately a different TYPE, not a hollow
+  /// [Notebook]: a hollow notebook handed to copyWith+save would erase
+  /// real content. Rename and export must fetch via [getNotebook] first.
+  Stream<List<NotebookListEntry>> watchNotebookHeaders() {
+    final query = _db.selectOnly(_db.notebooks)
+      ..addColumns(<Expression<Object>>[
+        _db.notebooks.id,
+        _db.notebooks.title,
+        _db.notebooks.updatedAt,
+        _db.notebooks.folderId,
+      ])
+      ..where(_db.notebooks.deletedAt.isNull())
+      ..orderBy([OrderingTerm.desc(_db.notebooks.updatedAt)]);
+    return query.watch().map(
+          (rows) => rows
+              .map(
+                (row) => NotebookListEntry(
+                  id: row.read(_db.notebooks.id)!,
+                  title: row.read(_db.notebooks.title)!,
+                  updatedAt: DateTime.fromMillisecondsSinceEpoch(
+                    row.read(_db.notebooks.updatedAt)!,
+                    isUtc: true,
+                  ),
+                  folderId: row.read(_db.notebooks.folderId),
+                ),
+              )
+              .toList(growable: false),
+        );
+  }
+
   Future<Notebook?> getNotebook(String id) async {
     // Trashed rows read as absent: to the live app a trashed notebook is
     // gone, and only Settings → Trash can see it. Without this filter the
@@ -169,6 +205,45 @@ final notebookRepositoryProvider = Provider<NotebookRepository>(
 /// Live notebook list for the notebooks screen.
 final notebooksProvider = StreamProvider<List<Notebook>>(
   (ref) => ref.watch(notebookRepositoryProvider).watchNotebooks(),
+);
+
+/// One notebook as the LIST sees it: metadata only.
+///
+/// Carries no document and no ink on purpose — see
+/// [NotebookRepository.watchNotebookHeaders]. Immutable, compared by field
+/// so widget rebuilds can be skipped when nothing visible changed.
+class NotebookListEntry implements NotebookHeader {
+  const NotebookListEntry({
+    required this.id,
+    required this.title,
+    required this.updatedAt,
+    required this.folderId,
+  });
+
+  @override
+  final String id;
+  @override
+  final String title;
+  @override
+  final DateTime updatedAt;
+  @override
+  final String? folderId;
+
+  @override
+  bool operator ==(Object other) =>
+      other is NotebookListEntry &&
+      other.id == id &&
+      other.title == title &&
+      other.updatedAt == updatedAt &&
+      other.folderId == folderId;
+
+  @override
+  int get hashCode => Object.hash(id, title, updatedAt, folderId);
+}
+
+/// Header stream for the notebooks list screen (see [NotebookListEntry]).
+final notebookHeadersProvider = StreamProvider<List<NotebookListEntry>>(
+  (ref) => ref.watch(notebookRepositoryProvider).watchNotebookHeaders(),
 );
 
 /// Live folder list for the notebooks screen.

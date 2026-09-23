@@ -26,7 +26,7 @@ class NotebookSection {
   /// Null for the single flat section shown when no folders exist.
   final String? title;
   final String? folderId;
-  final List<Notebook> notebooks;
+  final List<NotebookHeader> notebooks;
 
   bool get isEmpty => notebooks.isEmpty;
 }
@@ -49,14 +49,14 @@ const String kUnfiledSectionTitle = 'No folder';
 ///    unfiled rather than dropped: losing sight of work is worse than
 ///    showing it in the wrong place.
 List<NotebookSection> groupNotebooks({
-  required List<Notebook> notebooks,
+  required List<NotebookHeader> notebooks,
   required List<FolderSummary> folders,
 }) {
   if (folders.isEmpty) {
     // Rule 1. Note this deliberately also covers notebooks whose folder was
     // deleted: they land here rather than vanishing.
     return <NotebookSection>[
-      NotebookSection(title: null, notebooks: List<Notebook>.from(notebooks)),
+      NotebookSection(title: null, notebooks: List<NotebookHeader>.from(notebooks)),
     ];
   }
 
@@ -75,14 +75,14 @@ List<NotebookSection> groupNotebooks({
         title: folder.name,
         folderId: folder.id,
         notebooks: notebooks
-            .where((Notebook n) => n.folderId == folder.id)
+            .where((NotebookHeader n) => n.folderId == folder.id)
             .toList(growable: false),
       ),
   ];
 
-  final List<Notebook> unfiled = notebooks
+  final List<NotebookHeader> unfiled = notebooks
       .where(
-        (Notebook n) =>
+        (NotebookHeader n) =>
             n.folderId == null || !knownFolderIds.contains(n.folderId),
       )
       .toList(growable: false);
