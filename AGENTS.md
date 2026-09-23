@@ -50,9 +50,9 @@ ADH2/
 
 ## Status
 
-Shipping — **v1.7.1** (see CHANGELOG.md). Client and server are both
-implemented and tested (1623
-Flutter tests, 284 server tests, 100 Kotlin tests). The client now runs
+Shipping — **v1.7.2** (see CHANGELOG.md). Client and server are both
+implemented and tested (1633
+Flutter tests, 296 server tests, 100 Kotlin tests).
 natively on Linux (tray icon, global record hotkey, close-to-tray,
 right-click = long-press, AppImage packaging under `packaging/`) —
 verified on CachyOS/KDE Plasma Wayland; see the README's Desktop

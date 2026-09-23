@@ -5,6 +5,54 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.2] - 2026-09-23
+
+Patch release: three user-visible fixes found on real devices, plus a
+meeting-notes format overhaul.
+
+### Fixed
+- **Fountain-pen strokes appeared to erase the ink underneath them.** The
+  batched italic-nib renderer emitted segment quads whose winding direction
+  flipped at every cursive loop or reversal; under the nonzero fill rule two
+  overlapping opposite-winding quads cancelled to a transparent hole exactly
+  where letters self-cross. No ink was ever lost — the strokes were intact
+  on disk and reappear whole after updating. Quads are now normalized to a
+  single winding direction so overlaps can never cancel. PDF export used the
+  same painter and is fixed by the same change.
+- **Meeting recordings lost their speaker labels.** Speaker diarization
+  crashed with a short-final-chunk error on any recording whose length was
+  not a clean multiple of its processing window (i.e. most recordings), and
+  the transcript silently degraded to unattributed paragraphs. The audio is
+  now decoded once and handed to the diarizer as a waveform — the same
+  16 kHz mono stream the transcriber hears, which is also the diarization
+  models' native rate — so the chunked-decode failure cannot occur.
+- **Transcription failed on GPU-enabled servers.** With the GPU compose
+  override active, the Whisper backend auto-selected CUDA, but the container
+  ships CUDA 13 wheels while the inference runtime links the CUDA 12
+  libraries — every transcription failed at first inference (model load
+  succeeds; the libraries load lazily). The server now probes for the exact
+  runtime libraries before choosing a device and falls back to CPU when they
+  are absent. `TANGENT_WHISPER_DEVICE=cpu|cuda` overrides the probe.
+- **Release builds could crash at startup after the notification plugin's
+  code was shrunk.** R8 stripped generic-type metadata the notifications
+  plugin needs; the resulting exception during early init killed sync and
+  presented as "can't connect to the server." Keep rules now preserve the
+  metadata, and a notification-plugin failure can no longer break startup or
+  sync — it degrades to no-notifications with a logged warning.
+
+### Changed
+- **Meeting transcripts are now grouped by speaker, not by time.** Instead
+  of timestamped paragraphs interleaved in chronological order, the
+  transcript renders one section per speaker (numbered by order of first
+  appearance) containing everything that speaker said. Text the diarizer
+  could not attribute lands in a final `[unattributed]` section. Recordings
+  where diarization found no speakers keep the timestamped layout. Server
+  and on-device transcription produce byte-identical output. Existing
+  meeting notes keep their old text until re-transcribed.
+- Settings gained a Licenses page (Tangent's AGPL-3.0 text plus every
+  bundled package license), and the Settings footer now reads its version
+  from the build instead of a hard-coded string.
+
 ## [1.7.1] - 2026-09-22
 
 Patch release: two fixes found running v1.7.0 on real devices.

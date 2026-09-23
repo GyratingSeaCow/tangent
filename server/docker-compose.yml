@@ -16,7 +16,7 @@ services:
       args:
         # 1 = install the optional pyannote.audio stack for speaker diarization.
         TANGENT_WITH_DIARIZATION: "${TANGENT_WITH_DIARIZATION:-0}"
-    image: tangent-server:1.7.1
+    image: tangent-server:1.7.2
     container_name: tangent-server
     restart: unless-stopped
     ports:
