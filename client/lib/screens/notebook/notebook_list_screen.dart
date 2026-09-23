@@ -529,57 +529,68 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
   Widget build(BuildContext context) {
     final ColorScheme colors = Theme.of(context).colorScheme;
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Notebooks'),
-        actions: <Widget>[
-          // The search icon exists ONLY while handwriting search is on (the
-          // provider is the gate — no capability call from a list screen).
-          if (ref.watch(handwritingSearchEnabledProvider))
+    // Back means "leave selection", not "leave the page", while a
+    // multi-select is active — the app-bar arrow, gesture back, and the
+    // system navigation bar all funnel through this pop. Only with no
+    // selection active does back actually leave the list. Mirrors the
+    // dumps list's PopScope; the two lists must feel identical.
+    return PopScope(
+      canPop: !_selecting,
+      onPopInvokedWithResult: (bool didPop, Object? _) {
+        if (!didPop && _selecting) _cancelSelection();
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('Notebooks'),
+          actions: <Widget>[
+            // The search icon exists ONLY while handwriting search is on (the
+            // provider is the gate — no capability call from a list screen).
+            if (ref.watch(handwritingSearchEnabledProvider))
+              IconButton(
+                key: const ValueKey<String>('notebook-list-search'),
+                tooltip: _searching ? 'Close search' : 'Search notebooks',
+                icon: Icon(_searching ? Icons.search_off : Icons.search),
+                onPressed: _toggleSearch,
+              ),
+            SyncButton(engineProvider: documentSyncEngineProvider),
             IconButton(
-              key: const ValueKey<String>('notebook-list-search'),
-              tooltip: _searching ? 'Close search' : 'Search notebooks',
-              icon: Icon(_searching ? Icons.search_off : Icons.search),
-              onPressed: _toggleSearch,
+              key: const ValueKey<String>('notebook-view-toggle'),
+              tooltip: _covers ? 'Show as list' : 'Show as covers',
+              icon: Icon(_covers ? Icons.view_list : Icons.grid_view),
+              onPressed: _toggleView,
             ),
-          SyncButton(engineProvider: documentSyncEngineProvider),
-          IconButton(
-            key: const ValueKey<String>('notebook-view-toggle'),
-            tooltip: _covers ? 'Show as list' : 'Show as covers',
-            icon: Icon(_covers ? Icons.view_list : Icons.grid_view),
-            onPressed: _toggleView,
-          ),
-        ],
-      ),
-      floatingActionButton: FloatingActionButton(
-        tooltip: 'New notebook',
-        backgroundColor: colors.primary,
-        foregroundColor: colors.onPrimary,
-        onPressed: _creating ? null : _createNotebook,
-        child: const Icon(Icons.add),
-      ),
-      body: Column(
-        children: <Widget>[
-          // The query field, directly under the toolbar whose icon opened
-          // it. Live: every keystroke re-runs the search.
-          if (_searching)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
-              child: TextField(
-                key: const ValueKey<String>('notebook-list-search-field'),
-                controller: _searchQuery,
-                autofocus: true,
-                onChanged: (String query) => unawaited(_runSearch(query)),
-                textInputAction: TextInputAction.search,
-                decoration: const InputDecoration(
-                  hintText: 'Search your handwriting…',
-                  prefixIcon: Icon(Icons.search, size: 18),
-                  isDense: true,
+          ],
+        ),
+        floatingActionButton: FloatingActionButton(
+          tooltip: 'New notebook',
+          backgroundColor: colors.primary,
+          foregroundColor: colors.onPrimary,
+          onPressed: _creating ? null : _createNotebook,
+          child: const Icon(Icons.add),
+        ),
+        body: Column(
+          children: <Widget>[
+            // The query field, directly under the toolbar whose icon opened
+            // it. Live: every keystroke re-runs the search.
+            if (_searching)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+                child: TextField(
+                  key: const ValueKey<String>('notebook-list-search-field'),
+                  controller: _searchQuery,
+                  autofocus: true,
+                  onChanged: (String query) => unawaited(_runSearch(query)),
+                  textInputAction: TextInputAction.search,
+                  decoration: const InputDecoration(
+                    hintText: 'Search your handwriting…',
+                    prefixIcon: Icon(Icons.search, size: 18),
+                    isDense: true,
+                  ),
                 ),
               ),
-            ),
-          Expanded(child: _buildRows(colors)),
-        ],
+            Expanded(child: _buildRows(colors)),
+          ],
+        ),
       ),
     );
   }
@@ -587,205 +598,201 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
   Widget _buildRows(ColorScheme colors) {
     final AsyncValue<List<Notebook>> notebooks = ref.watch(notebooksProvider);
     return notebooks.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (Object error, StackTrace _) => Center(
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Text(
-              'Notebooks unavailable: $error',
-              textAlign: TextAlign.center,
-            ),
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (Object error, StackTrace _) => Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Text(
+            'Notebooks unavailable: $error',
+            textAlign: TextAlign.center,
           ),
         ),
-        data: (List<Notebook> allRows) {
-          // A live search filters the library to notebooks the index says
-          // match. Null means "not searching" (or a blank query): no filter.
-          final Map<String, NotebookMatchSummary>? searchResults =
-              _searchResults;
-          final List<Notebook> rows = searchResults == null
-              ? allRows
-              : allRows
-                  .where((Notebook n) => searchResults.containsKey(n.id))
-                  .toList(growable: false);
-          if (rows.isEmpty) {
-            return Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Text(
-                  // A search that matched nothing is a real answer and must
-                  // say so; 'No notebooks yet' would be a lie about the
-                  // library.
-                  searchResults == null ? 'No notebooks yet' : 'No matches',
-                  textAlign: TextAlign.center,
+      ),
+      data: (List<Notebook> allRows) {
+        // A live search filters the library to notebooks the index says
+        // match. Null means "not searching" (or a blank query): no filter.
+        final Map<String, NotebookMatchSummary>? searchResults = _searchResults;
+        final List<Notebook> rows = searchResults == null
+            ? allRows
+            : allRows
+                .where((Notebook n) => searchResults.containsKey(n.id))
+                .toList(growable: false);
+        if (rows.isEmpty) {
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Text(
+                // A search that matched nothing is a real answer and must
+                // say so; 'No notebooks yet' would be a lie about the
+                // library.
+                searchResults == null ? 'No notebooks yet' : 'No matches',
+                textAlign: TextAlign.center,
+              ),
+            ),
+          );
+        }
+        // Rows can vanish mid-selection (sync pull, another screen's
+        // delete); a selection covering ghosts would mislead the count
+        // and the bulk actions. Prune against the WHOLE library, not the
+        // search-filtered rows: a live search hides rows, it does not
+        // deselect them, and closing the search must find the selection
+        // exactly as the user left it.
+        _selectedIds.retainAll(allRows.map((Notebook n) => n.id).toSet());
+        final Widget selectionBar = !_selecting
+            ? const SizedBox.shrink()
+            : Row(
+                children: <Widget>[
+                  IconButton(
+                    key: const ValueKey<String>('notebook-selection-cancel'),
+                    tooltip: 'Cancel selection',
+                    onPressed: _bulkBusy ? null : _cancelSelection,
+                    icon: const Icon(Icons.close),
+                  ),
+                  Expanded(
+                    child: Text('${_selectedIds.length} selected'),
+                  ),
+                  IconButton(
+                    key: const ValueKey<String>('notebook-selection-all'),
+                    tooltip: 'Select all notebooks',
+                    onPressed: _bulkBusy ? null : () => _toggleSelectAll(rows),
+                    icon: const Icon(Icons.select_all),
+                  ),
+                  IconButton(
+                    key: const ValueKey<String>('notebook-selection-delete'),
+                    tooltip: 'Delete selected notebooks',
+                    onPressed: _bulkBusy || _selectedIds.isEmpty
+                        ? null
+                        : _deleteSelected,
+                    icon: const Icon(Icons.delete_outline),
+                  ),
+                ],
+              );
+        // Folders are watched via a provider (not the database directly) so
+        // the screen stays testable, and filing shows up immediately: move a
+        // notebook and the section it left collapses without a refresh.
+        final List<FolderSummary> folders =
+            ref.watch(foldersProvider).maybeWhen(
+                  data: (List<Folder> rows) => rows
+                      .map((Folder f) => FolderSummary(id: f.id, name: f.name))
+                      .toList(growable: false),
+                  orElse: () => const <FolderSummary>[],
+                );
+        final List<NotebookSection> sections = groupNotebooks(
+          notebooks: rows,
+          folders: folders,
+        );
+
+        // Flatten sections into a single list: a header, then its rows.
+        final List<Widget> children = <Widget>[];
+        for (final NotebookSection section in sections) {
+          // The unfiled pseudo-folder collapses under this key too — its
+          // header is a name like any other, and a tap that works on
+          // 'Work' but not 'No folder' would read as a broken control.
+          final String sectionKey = section.folderId ?? 'unfiled';
+          final bool collapsed = _collapsed.contains(sectionKey);
+          if (section.title != null) {
+            // Only real folders have actions; the "No folder"
+            // pseudo-section is not a folder and cannot be renamed
+            // or deleted.
+            final VoidCallback? headerActions = section.folderId == null
+                ? null
+                : () => showFolderHeaderActions(
+                      context,
+                      folderId: section.folderId!,
+                      name: section.title!,
+                      db: ref.read(localDbProvider),
+                    );
+            children.add(
+              InkWell(
+                key: ValueKey<String>('notebook-section-$sectionKey'),
+                onTap: () => _toggleSection(sectionKey),
+                onLongPress: headerActions,
+                // Desktop: right-click is this app's long-press.
+                onSecondaryTap: secondaryTapFor(headerActions),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                  child: Row(
+                    children: <Widget>[
+                      Expanded(
+                        child: Text(
+                          section.title!,
+                          style: Theme.of(context)
+                              .textTheme
+                              .labelLarge
+                              ?.copyWith(color: colors.primary),
+                        ),
+                      ),
+                      // The affordance: a chevron that points down when
+                      // open and sideways when folded, so collapsibility
+                      // is discoverable without a tooltip.
+                      AnimatedRotation(
+                        turns: collapsed ? -0.25 : 0,
+                        duration: const Duration(milliseconds: 150),
+                        child: Icon(
+                          Icons.expand_more,
+                          size: 20,
+                          color: colors.primary,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             );
           }
-          // Rows can vanish mid-selection (sync pull, another screen's
-          // delete); a selection covering ghosts would mislead the count
-          // and the bulk actions. Prune against the WHOLE library, not the
-          // search-filtered rows: a live search hides rows, it does not
-          // deselect them, and closing the search must find the selection
-          // exactly as the user left it.
-          _selectedIds.retainAll(allRows.map((Notebook n) => n.id).toSet());
-          final Widget selectionBar = !_selecting
-              ? const SizedBox.shrink()
-              : Row(
-                  children: <Widget>[
-                    IconButton(
-                      key: const ValueKey<String>('notebook-selection-cancel'),
-                      tooltip: 'Cancel selection',
-                      onPressed: _bulkBusy ? null : _cancelSelection,
-                      icon: const Icon(Icons.close),
-                    ),
-                    Expanded(
-                      child: Text('${_selectedIds.length} selected'),
-                    ),
-                    IconButton(
-                      key: const ValueKey<String>('notebook-selection-all'),
-                      tooltip: 'Select all notebooks',
-                      onPressed:
-                          _bulkBusy ? null : () => _toggleSelectAll(rows),
-                      icon: const Icon(Icons.select_all),
-                    ),
-                    IconButton(
-                      key: const ValueKey<String>('notebook-selection-delete'),
-                      tooltip: 'Delete selected notebooks',
-                      onPressed: _bulkBusy || _selectedIds.isEmpty
-                          ? null
-                          : _deleteSelected,
-                      icon: const Icon(Icons.delete_outline),
-                    ),
-                  ],
-                );
-          // Folders are watched via a provider (not the database directly) so
-          // the screen stays testable, and filing shows up immediately: move a
-          // notebook and the section it left collapses without a refresh.
-          final List<FolderSummary> folders = ref
-              .watch(foldersProvider)
-              .maybeWhen(
-                data: (List<Folder> rows) => rows
-                    .map((Folder f) => FolderSummary(id: f.id, name: f.name))
-                    .toList(growable: false),
-                orElse: () => const <FolderSummary>[],
-              );
-          final List<NotebookSection> sections = groupNotebooks(
-            notebooks: rows,
-            folders: folders,
-          );
-
-          // Flatten sections into a single list: a header, then its rows.
-          final List<Widget> children = <Widget>[];
-          for (final NotebookSection section in sections) {
-            // The unfiled pseudo-folder collapses under this key too — its
-            // header is a name like any other, and a tap that works on
-            // 'Work' but not 'No folder' would read as a broken control.
-            final String sectionKey = section.folderId ?? 'unfiled';
-            final bool collapsed = _collapsed.contains(sectionKey);
-            if (section.title != null) {
-              // Only real folders have actions; the "No folder"
-              // pseudo-section is not a folder and cannot be renamed
-              // or deleted.
-              final VoidCallback? headerActions = section.folderId == null
-                  ? null
-                  : () => showFolderHeaderActions(
-                        context,
-                        folderId: section.folderId!,
-                        name: section.title!,
-                        db: ref.read(localDbProvider),
-                      );
-              children.add(
-                InkWell(
-                  key: ValueKey<String>('notebook-section-$sectionKey'),
-                  onTap: () => _toggleSection(sectionKey),
-                  onLongPress: headerActions,
-                  // Desktop: right-click is this app's long-press.
-                  onSecondaryTap: secondaryTapFor(headerActions),
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                    child: Row(
-                      children: <Widget>[
-                        Expanded(
-                          child: Text(
-                            section.title!,
-                            style: Theme.of(context)
-                                .textTheme
-                                .labelLarge
-                                ?.copyWith(color: colors.primary),
-                          ),
-                        ),
-                        // The affordance: a chevron that points down when
-                        // open and sideways when folded, so collapsibility
-                        // is discoverable without a tooltip.
-                        AnimatedRotation(
-                          turns: collapsed ? -0.25 : 0,
-                          duration: const Duration(milliseconds: 150),
-                          child: Icon(
-                            Icons.expand_more,
-                            size: 20,
-                            color: colors.primary,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
+          if (collapsed && section.title != null) {
+            // A folded section shows only its header. The items stay in
+            // the tree's data, not the tree itself.
+            continue;
+          }
+          if (section.isEmpty && section.title != null) {
+            children.add(
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                child: Text(
+                  'Empty',
+                  style: Theme.of(context).textTheme.bodySmall,
                 ),
-              );
-            }
-            if (collapsed && section.title != null) {
-              // A folded section shows only its header. The items stay in
-              // the tree's data, not the tree itself.
-              continue;
-            }
-            if (section.isEmpty && section.title != null) {
-              children.add(
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-                  child: Text(
-                    'Empty',
-                    style: Theme.of(context).textTheme.bodySmall,
+              ),
+            );
+          }
+          if (_covers) {
+            // One grid per section, shrink-wrapped inside the outer list, so
+            // folder headers keep their place between grids.
+            children.add(
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
+                child: GridView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                    maxCrossAxisExtent: 180,
+                    childAspectRatio: 0.72,
+                    crossAxisSpacing: 12,
+                    mainAxisSpacing: 12,
                   ),
+                  itemCount: section.notebooks.length,
+                  itemBuilder: (BuildContext _, int index) =>
+                      _notebookCover(section.notebooks[index]),
                 ),
-              );
-            }
-            if (_covers) {
-              // One grid per section, shrink-wrapped inside the outer list, so
-              // folder headers keep their place between grids.
-              children.add(
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
-                  child: GridView.builder(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    gridDelegate:
-                        const SliverGridDelegateWithMaxCrossAxisExtent(
-                      maxCrossAxisExtent: 180,
-                      childAspectRatio: 0.72,
-                      crossAxisSpacing: 12,
-                      mainAxisSpacing: 12,
-                    ),
-                    itemCount: section.notebooks.length,
-                    itemBuilder: (BuildContext _, int index) =>
-                        _notebookCover(section.notebooks[index]),
-                  ),
-                ),
-              );
-            } else {
-              for (final Notebook notebook in section.notebooks) {
-                children.add(_notebookTile(notebook));
-                children.add(const Divider(height: 1));
-              }
+              ),
+            );
+          } else {
+            for (final Notebook notebook in section.notebooks) {
+              children.add(_notebookTile(notebook));
+              children.add(const Divider(height: 1));
             }
           }
+        }
 
-          return Column(
-            children: <Widget>[
-              selectionBar,
-              Expanded(child: ListView(children: children)),
-            ],
-          );
-        },
-      );
+        return Column(
+          children: <Widget>[
+            selectionBar,
+            Expanded(child: ListView(children: children)),
+          ],
+        );
+      },
+    );
   }
 
   /// Builds one cover for the grid view.
