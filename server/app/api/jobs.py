@@ -149,6 +149,7 @@ def get_job(
     db: Annotated[sqlite3.Connection, Depends(get_db)],
     _user: Annotated[str, Depends(require_auth)],
 ) -> JobResponse:
+    """Poll one transcription job: status (queued/running/done/failed), progress, and the dump it belongs to. For push instead of polling, use GET /v1/jobs/{job_id}/stream."""
     row = db.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
     if row is None:
         raise HTTPException(

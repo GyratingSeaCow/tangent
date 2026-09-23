@@ -375,6 +375,50 @@ requires a one-time uninstall, which deletes local data. Stick to one flavor.
 └──────────────────────────────────────────────────────────────┘
 ```
 
+## REST API
+
+Everything the app can do, you can script. The server publishes its full
+OpenAPI schema — open **`http://<your-server>:8765/docs`** in a browser for
+interactive documentation of every endpoint (24 routes: dumps, audio,
+transcription jobs, sync, OCR/handwriting search, pairing, models), or
+fetch **`/openapi.json`** to generate a client in your language of choice.
+
+All data routes require the bearer token you got at setup. A complete
+transcription round-trip from the shell:
+
+```bash
+TOKEN="your-device-token"
+BASE="http://192.168.1.206:8765"
+
+# 1. create a dump
+curl -X POST "$BASE/v1/dumps" -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"id":"dump-cli-001","mode":"brain_dump","duration_seconds":5,
+       "title":"Grocery thoughts","created_at":"2026-09-23T12:00:00Z"}'
+
+# 2. attach the audio (multipart field: audio)
+curl -X POST "$BASE/v1/dumps/dump-cli-001/audio" \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "audio=@recording.opus;type=audio/ogg"
+
+# 3. queue transcription
+curl -X POST "$BASE/v1/dumps/dump-cli-001/transcribe" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"model":"large-v3","request_id":"request-cli-001"}'
+# → {"id":"<job_id>","status":"queued",...}
+
+# 4. poll the job (or stream it: GET /v1/jobs/<job_id>/stream is SSE)
+curl "$BASE/v1/jobs/<job_id>" -H "Authorization: Bearer $TOKEN"
+
+# 5. the finished transcript lands on the dump
+curl "$BASE/v1/dumps/dump-cli-001" -H "Authorization: Bearer $TOKEN"
+```
+
+This exact sequence runs in CI (`server/tests/test_readme_api_walkthrough.py`),
+so if a route or payload shape ever changes, this section fails the build
+until it's updated. Every endpoint's description in `/docs` is enforced by
+test too — an undocumented route can't ship.
+
 ### Privacy & data ownership
 
 - **Audio never leaves your device unless you sync to a server you control.**

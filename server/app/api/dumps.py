@@ -317,6 +317,7 @@ def get_dump(
     db: Annotated[sqlite3.Connection, Depends(get_db)],
     _user: Annotated[str, Depends(require_auth)],
 ) -> DumpResponse:
+    """One dump with its transcript, mode, and timestamps. 404 once deleted."""
     row = db.execute(
         "SELECT * FROM dumps WHERE id = ? AND deleted_at IS NULL", (dump_id,)
     ).fetchone()
@@ -336,6 +337,7 @@ def patch_dump(
     _user: Annotated[str, Depends(require_auth)],
     x_device_id: Annotated[str | None, Header()] = None,
 ) -> DumpResponse:
+    """Edit a dump's mutable fields (title, transcript text, done flag). Send only what changes; other fields keep their values. Bumps updated_at so sync picks the edit up."""
     row = db.execute(
         "SELECT * FROM dumps WHERE id = ? AND deleted_at IS NULL", (dump_id,)
     ).fetchone()
@@ -370,6 +372,7 @@ def delete_dump(
     _user: Annotated[str, Depends(require_auth)],
     x_device_id: Annotated[str | None, Header()] = None,
 ) -> Response:
+    """Soft-delete: the dump leaves every list and sync feed but its row and audio survive server-side until purge. 204 on success, 404 if already gone."""
     row = db.execute(
         "SELECT id FROM dumps WHERE id = ? AND deleted_at IS NULL", (dump_id,)
     ).fetchone()

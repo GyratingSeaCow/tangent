@@ -44,6 +44,9 @@ def get_server_info(
     db: Annotated[sqlite3.Connection, Depends(get_db)],
     _user: Annotated[str, Depends(require_auth)],
 ) -> ServerInfo:
+    """Authenticated server facts: version, whisper model, device
+    counts, storage paths. The unauthenticated variant at
+    /v1/server/info/public carries only what pairing needs."""
     settings = get_settings()
     dump_count = db.execute(
         "SELECT COUNT(*) AS c FROM dumps WHERE deleted_at IS NULL"
