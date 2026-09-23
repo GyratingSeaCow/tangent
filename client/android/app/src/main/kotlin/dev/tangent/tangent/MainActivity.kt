@@ -43,6 +43,10 @@ class MainActivity : FlutterActivity() {
     private val requestTree = 7301
     private val requestAudioFile = 7302
     private val requestImageFile = 7303
+    private val requestAudioFiles = 7304
+
+    /** Pending reply for the multi-select audio picker (bulk import). */
+    private var pendingAudioFilesResult: MethodChannel.Result? = null
     private var storageOwner: StorageChannel? = null
     private val communicationRouting by lazy {
         CommunicationRouting(AndroidCommunicationDevices(this))
@@ -149,6 +153,14 @@ class MainActivity : FlutterActivity() {
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, audioChannelName)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
+                    "pickAudioFiles" -> {
+                        if (pendingAudioFilesResult != null) {
+                            result.error("picker_active", "A file picker is already open", null)
+                        } else {
+                            pendingAudioFilesResult = result
+                            pickAudioFiles()
+                        }
+                    }
                     "pickAudioFile" -> audioFilePicker.start(object : StorageReply {
                         override fun success(value: Any?) = result.success(value)
                         override fun error(code: String, message: String?) = result.error(code, message, null)
@@ -221,6 +233,49 @@ class MainActivity : FlutterActivity() {
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         startActivityForResult(intent, requestAudioFile)
+    }
+
+    /** Multi-select variant for the Settings bulk import. */
+    private fun pickAudioFiles() {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "audio/*"
+            putExtra(
+                Intent.EXTRA_MIME_TYPES,
+                arrayOf("audio/*", "video/mp4", "application/ogg"),
+            )
+            putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        startActivityForResult(intent, requestAudioFiles)
+    }
+
+    /** Copies every selected document into cache, skipping unreadable ones.
+     *  Selected-but-broken files surface on the Dart side as absent entries;
+     *  the bulk importer reports per-file failures for everything it DID get. */
+    private fun completeAudioFiles(resultCode: Int, data: Intent?) {
+        val pending = pendingAudioFilesResult ?: return
+        pendingAudioFilesResult = null
+        if (resultCode != Activity.RESULT_OK) {
+            pending.success(null)
+            return
+        }
+        val uris = mutableListOf<Uri>()
+        val clip = data?.clipData
+        if (clip != null) {
+            for (i in 0 until clip.itemCount) uris.add(clip.getItemAt(i).uri)
+        } else {
+            data?.data?.let { uris.add(it) }
+        }
+        val copies = mutableListOf<Map<String, Any>>()
+        for (uri in uris) {
+            try {
+                copies.add(copyIntoCache(uri))
+            } catch (_: Exception) {
+                // Unreadable selection: skip. The batch must not die here.
+            }
+        }
+        pending.success(copies)
     }
 
     private fun pickImageFile() {
@@ -340,6 +395,7 @@ class MainActivity : FlutterActivity() {
         super.onActivityResult(requestCode, resultCode, data)
         candidatePicker.complete(requestCode == requestTree, resultCode == Activity.RESULT_OK, data?.data, data?.flags ?: 0)
         audioFilePicker.complete(requestCode == requestAudioFile, resultCode == Activity.RESULT_OK, data?.data, data?.flags ?: 0)
+        if (requestCode == requestAudioFiles) completeAudioFiles(resultCode, data)
         imageFilePicker.complete(requestCode == requestImageFile, resultCode == Activity.RESULT_OK, data?.data, data?.flags ?: 0)
     }
 
@@ -540,6 +596,8 @@ class MainActivity : FlutterActivity() {
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         candidatePicker.interrupt()
         audioFilePicker.interrupt()
+        pendingAudioFilesResult?.error("activity_destroyed", "File picker was interrupted", null)
+        pendingAudioFilesResult = null
         imageFilePicker.interrupt()
         super.onDestroy()
     }

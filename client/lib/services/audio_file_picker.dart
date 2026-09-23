@@ -35,4 +35,25 @@ class AudioFilePicker {
       name: (picked['name'] as String?) ?? 'Imported audio',
     );
   }
+
+  /// Returns every picked file (multi-select), or an empty list when the
+  /// user cancels. Same cache-copy contract as [pick], per file.
+  Future<List<PickedAudio>> pickMultiple() async {
+    final List<Object?>? picked =
+        await _channel.invokeListMethod<Object?>('pickAudioFiles');
+    if (picked == null) return const <PickedAudio>[];
+    final files = <PickedAudio>[];
+    for (final Object? entry in picked) {
+      if (entry is! Map<Object?, Object?>) continue;
+      final String? path = entry['path'] as String?;
+      if (path == null || path.isEmpty) continue;
+      files.add(
+        PickedAudio(
+          path: path,
+          name: (entry['name'] as String?) ?? 'Imported audio',
+        ),
+      );
+    }
+    return files;
+  }
 }

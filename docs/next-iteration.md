@@ -8,15 +8,6 @@ re-derive it.
 
 ## 1. Open items
 
-### 1.0 Naming: KEEP "Tangent" — decided, closed (2026-09-23)
-
-Jeff evaluated the "Tangent Notes" (tangentnotes.com) collision and decided
-to keep the name: "they are different enough that we can make our own path
-down that lane." Do not re-raise a rename. Differentiate in positioning
-instead — self-hosted voice+ink for Android/Linux vs their lane. Candidate
-research preserved in session history (Inkramble/Sidetangent/Inkmutter all
-had clean namespaces) in case circumstances ever change.
-
 ### 1.1 Linux AppImage: verify handwriting search on desktop (v1.7.0 E2E gate)
 
 **Status:** owed. The v1.7.0 tag's Release workflow builds and attaches
@@ -110,29 +101,14 @@ lowercase), `BINARY_NAME` in both CMakeLists (executable filename),
 `APPLICATION_ID`/`applicationId` `dev.tangent.tangent` (changing it
 orphans installed apps' data). Display strings only.
 
-### 1.4 Bulk audio import in Settings (decided 2026-09-23)
+### 1.4 Bulk audio import in Settings — DONE (2026-09-23)
 
-Jeff: single-file import already lives on the home screen (his original
-ask, quoted at `home_screen.dart:346`) — "If it's not bulk import, then we
-can just add that into the settings menu." Audited state: bulk does NOT
-exist. `AudioFilePicker.pick()` → platform channel `pickAudioFile` returns
-exactly one file; `AudioImportRunner.run()` takes one sourcePath.
-
-Design when built:
-- Settings gains "Import audio files…" → multi-select picker
-  (`ACTION_OPEN_DOCUMENT` with `EXTRA_ALLOW_MULTIPLE` on Android; the
-  Kotlin handler grows a `pickAudioFiles` method returning a list —
-  keep the copy-to-our-storage step per file, same content://-grant
-  rationale as single pick)
-- Loop the EXISTING `AudioImporter` per file: sequential, progress
-  "n of N" (snackbar → progress sheet), per-file failure surfaced at the
-  end (list of failed names), never silently swallowed — one bad file
-  must not abort the rest
-- Imported items land in the catalog exactly like home-screen imports
-  (same mode default); transcription queues per existing pipeline
-- Home-screen single-file button unchanged
-- Tests: fake picker returning N paths incl. one invalid; assert N-1
-  imported, 1 surfaced; RED-first; full-parity install after
+Shipped: Settings -> Import -> "Import audio files..." multi-select
+picker (EXTRA_ALLOW_MULTIPLE + clipData on the existing cache-copy
+handler), sequential runs of the same AudioImportRunner the home
+button uses, per-file progress on the tile, failures named in the
+summary (one bad file never aborts the rest — sabotage-proven).
+Home-screen single-file button unchanged.
 
 ### 1.5 Hardware-feedback-gated ideas (no work queued)
 

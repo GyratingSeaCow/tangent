@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/settings_store.dart';
 import '../server/pair_new_device_screen.dart';
 import '../server/server_connection_screen.dart';
+import 'bulk_import_section.dart';
 import 'handwriting_search_section.dart';
 import 'input_device_section.dart';
 import 'mic_gain_section.dart';
@@ -134,6 +135,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       body: ListView(
         children: [
           const StorageSettingsSection(),
+          const Divider(),
+          const BulkImportSection(),
           const Divider(),
           const InputDeviceSection(),
           const MicGainSection(),

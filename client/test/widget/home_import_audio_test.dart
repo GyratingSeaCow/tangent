@@ -44,6 +44,10 @@ class _FakePicker implements AudioFilePicker {
   int calls = 0;
 
   @override
+  Future<List<PickedAudio>> pickMultiple() async =>
+      throw UnimplementedError('home screen never bulk-imports');
+
+  @override
   Future<PickedAudio?> pick() async {
     calls++;
     return _result;

@@ -431,6 +431,14 @@ void main() {
     await pumpStorage(t);
     await t.tap(find.text('Upload recordings only on Wi-Fi'));
     await pumpStorage(t);
+    // The bulk-import section (2026-09-23) sits above this switch; the
+    // taller page pushes it below the lazy ListView's build window, so it
+    // must be scrolled INTO EXISTENCE, not merely into view.
+    await t.scrollUntilVisible(
+      find.text('Keep screen awake while recording'),
+      80,
+      scrollable: find.byType(Scrollable).first,
+    );
     await t.tap(find.text('Keep screen awake while recording'));
     await pumpStorage(t);
     // Completing server info must not reset edits made while that read was held.
