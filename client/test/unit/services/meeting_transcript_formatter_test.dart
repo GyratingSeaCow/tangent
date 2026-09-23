@@ -167,21 +167,23 @@ void main() {
     });
 
     test('renumbers speakers by first appearance in the recording', () {
+      // The chronologically-first speaker deliberately carries the lexically
+      // LARGER raw label so label-order numbering cannot pass this test.
       final formatted = formatMeetingTranscript(const [
         // Payload order deliberately not chronological.
         TranscriptSegment(
           start: 12,
-          speaker: 'SPEAKER_07',
+          speaker: 'SPEAKER_03',
           text: 'Second voice.',
         ),
         TranscriptSegment(
           start: 0,
-          speaker: 'SPEAKER_03',
+          speaker: 'SPEAKER_07',
           text: 'First voice.',
         ),
         TranscriptSegment(
           start: 20,
-          speaker: 'SPEAKER_03',
+          speaker: 'SPEAKER_07',
           text: 'First voice again.',
         ),
       ]);
@@ -310,7 +312,7 @@ void main() {
         TranscriptSegment(
           start: 0,
           end: 4,
-          speaker: 'SPEAKER_02',
+          speaker: 'SPEAKER_09',
           text: 'Kickoff.',
         ),
         TranscriptSegment(
@@ -321,7 +323,7 @@ void main() {
         TranscriptSegment(
           start: 18,
           end: 21,
-          speaker: 'SPEAKER_02',
+          speaker: 'SPEAKER_09',
           text: 'Wrapping up.',
         ),
       ]);

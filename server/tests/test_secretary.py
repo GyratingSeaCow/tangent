@@ -105,13 +105,17 @@ def test_format_interleaved_speakers_stay_chronological_within_sections() -> Non
 
 
 def test_format_renumbers_speakers_by_first_appearance() -> None:
-    """Raw diarization labels are arbitrary — whoever speaks first is Speaker 1."""
+    """Raw diarization labels are arbitrary — whoever speaks first is Speaker 1.
+
+    The chronologically-first speaker deliberately carries the lexically
+    LARGER raw label so label-order numbering cannot pass this test.
+    """
     formatted = format_meeting_transcript(
         [
             # Payload order deliberately not chronological.
-            {"start": 12.0, "speaker": "SPEAKER_07", "text": "Second voice."},
-            {"start": 0.0, "speaker": "SPEAKER_03", "text": "First voice."},
-            {"start": 20.0, "speaker": "SPEAKER_03", "text": "First voice again."},
+            {"start": 12.0, "speaker": "SPEAKER_03", "text": "Second voice."},
+            {"start": 0.0, "speaker": "SPEAKER_07", "text": "First voice."},
+            {"start": 20.0, "speaker": "SPEAKER_07", "text": "First voice again."},
         ]
     )
     assert formatted == (
@@ -173,9 +177,9 @@ def test_format_zero_speakers_falls_back_to_timestamped_paragraphs() -> None:
 # change both.
 CROSS_CHECK_SEGMENTS = [
     {"start": 12.0, "end": 15.0, "speaker": "SPEAKER_07", "text": "Second speaker opener."},
-    {"start": 0.0, "end": 4.0, "speaker": "SPEAKER_02", "text": "Kickoff."},
+    {"start": 0.0, "end": 4.0, "speaker": "SPEAKER_09", "text": "Kickoff."},
     {"start": 7.5, "end": 11.0, "speaker": None, "text": "Crosstalk nobody owns."},
-    {"start": 18.0, "end": 21.0, "speaker": "SPEAKER_02", "text": "Wrapping up."},
+    {"start": 18.0, "end": 21.0, "speaker": "SPEAKER_09", "text": "Wrapping up."},
 ]
 CROSS_CHECK_EXPECTED = (
     "## Speaker 1\n\nKickoff.\nWrapping up.\n\n"
