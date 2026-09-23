@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 2x2 cells: minWidth/minHeight = 70dp * n - 30dp => 110dp for n=2. -->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="110dp"
+    android:minHeight="110dp"
+    android:targetCellWidth="2"
+    android:targetCellHeight="2"
+    android:initialLayout="@layout/widget_notebook"
+    android:configure="dev.tangent.tangent.widget.NotebookWidgetConfigActivity"
+    android:resizeMode="none"
+    android:widgetCategory="home_screen"
+    android:description="@string/widget_notebook_description" />

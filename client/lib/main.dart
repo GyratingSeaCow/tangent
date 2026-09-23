@@ -26,6 +26,8 @@ import 'data/secure_storage.dart';
 import 'data/settings_store.dart';
 import 'screens/home/home_providers.dart';
 import 'screens/home/home_screen.dart';
+import 'screens/notebook/notebook_editor_screen.dart';
+import 'services/widget_launch.dart';
 import 'screens/recording/recording_controller.dart';
 import 'screens/server/server_connection_screen.dart';
 import 'screens/settings/settings_screen.dart';
@@ -425,11 +427,51 @@ class _TranscriptionLifecycleHostState
   Widget build(BuildContext context) => widget.child;
 }
 
-class _Router extends ConsumerWidget {
+class _Router extends ConsumerStatefulWidget {
   const _Router();
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_Router> createState() => _RouterState();
+}
+
+class _RouterState extends ConsumerState<_Router> {
+  StreamSubscription<String>? _widgetOpens;
+
+  @override
+  void initState() {
+    super.initState();
+    final WidgetLaunch launch = ref.read(widgetLaunchProvider);
+    // Cold start from a home-screen widget: land on Home first so back
+    // exits to the list the user knows, then open the notebook on top.
+    // then() rather than a Future() constructor: the latter schedules a
+    // Timer, which strict widget tests report as a leak.
+    unawaited(
+      launch.initialNotebook().then((String? id) {
+        if (id != null && mounted) _openNotebook(id);
+      }),
+    );
+    // Warm taps while the app is already running.
+    _widgetOpens = launch.opens.listen(_openNotebook);
+  }
+
+  void _openNotebook(String id) {
+    final NavigatorState? nav = TangentApp.navigatorKey.currentState;
+    if (nav == null) return;
+    nav.push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => NotebookEditorScreen(notebookId: id),
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _widgetOpens?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return const HomeScreen();
   }
 }

@@ -51,6 +51,35 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+            <!-- Home-screen widget taps arrive as VIEW tangent://notebook/<id>.
+                 Internal-only scheme: no autoVerify, no http, nothing another
+                 app is likely to fire in anger. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <data android:scheme="tangent" android:host="notebook"/>
+            </intent-filter>
+        </activity>
+        <!-- 2x2 "open this notebook" home-screen widget. -->
+        <receiver
+            android:name=".widget.NotebookWidgetProvider"
+            android:exported="false"
+            android:label="Notebook">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE"/>
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_notebook_info"/>
+        </receiver>
+        <activity
+            android:name=".widget.NotebookWidgetConfigActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.DeviceDefault.Dialog"
+            android:excludeFromRecents="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_CONFIGURE"/>
+            </intent-filter>
         </activity>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->

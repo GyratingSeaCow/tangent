@@ -29,10 +29,17 @@ import dev.tangent.tangent.storage.StorageChannel
 import dev.tangent.tangent.storage.CandidatePicker
 import dev.tangent.tangent.storage.StorageMethodRouter
 import dev.tangent.tangent.storage.StorageReply
+import dev.tangent.tangent.widget.WidgetLaunchIntents
 
 class MainActivity : FlutterActivity() {
     private val channelName = "dev.tangent.tangent/storage"
     private val audioChannelName = "dev.tangent.tangent/audio"
+    private val launchChannelName = "dev.tangent.tangent/launch"
+
+    /** Widget-tap notebook waiting for the Dart side to ask (cold start),
+     *  and the channel to push through when the app is already alive. */
+    private var pendingLaunchNotebook: String? = null
+    private var launchChannel: MethodChannel? = null
     private val requestTree = 7301
     private val requestAudioFile = 7302
     private val requestImageFile = 7303
@@ -90,8 +97,45 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    override fun onCreate(savedInstanceState: android.os.Bundle?) {
+        super.onCreate(savedInstanceState)
+        // A widget tap that cold-starts the app: the id waits here until
+        // Dart calls takeLaunchNotebook (the engine isn't up yet).
+        pendingLaunchNotebook =
+            WidgetLaunchIntents.notebookId(intent?.action, intent?.dataString)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        // Warm tap: the activity is singleTop, so the running instance
+        // gets the intent; push straight to Dart.
+        val id = WidgetLaunchIntents.notebookId(intent.action, intent.dataString)
+        if (id != null) {
+            val channel = launchChannel
+            if (channel != null) {
+                channel.invokeMethod("openNotebook", id)
+            } else {
+                pendingLaunchNotebook = id
+            }
+        }
+    }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        launchChannel =
+            MethodChannel(flutterEngine.dartExecutor.binaryMessenger, launchChannelName)
+                .also { channel ->
+                    channel.setMethodCallHandler { call, result ->
+                        when (call.method) {
+                            "takeLaunchNotebook" -> {
+                                // Read-once: a hot restart must not reopen it.
+                                result.success(pendingLaunchNotebook)
+                                pendingLaunchNotebook = null
+                            }
+                            else -> result.notImplemented()
+                        }
+                    }
+                }
         storageOwner?.detach()
         storageOwner = StorageChannel(NativeIoSupervisor.process, documentsPort::execute)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)

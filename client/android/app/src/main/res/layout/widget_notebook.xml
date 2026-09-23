@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 2x2 notebook tile: icon on top, the chosen notebook's title under it. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_notebook_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_notebook_bg"
+    android:orientation="vertical"
+    android:gravity="center"
+    android:padding="8dp">
+
+  <ImageView
+      android:layout_width="48dp"
+      android:layout_height="48dp"
+      android:src="@drawable/ic_widget_notebook"
+      android:contentDescription="@string/widget_notebook_description" />
+
+  <TextView
+      android:id="@+id/widget_notebook_title"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:layout_marginTop="6dp"
+      android:gravity="center"
+      android:textColor="#E6E1E5"
+      android:textSize="12sp"
+      android:maxLines="2"
+      android:ellipsize="end" />
+</LinearLayout>
