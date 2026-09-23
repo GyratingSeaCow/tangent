@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Post-process transcripts. For 'meeting' mode, format diarised segments
-as timestamped paragraphs (mirror of the client's
+"""Post-process transcripts. For 'meeting' mode, render diarised segments
+as a per-speaker digest (mirror of the client's
 ``meeting_transcript_formatter.dart`` — keep the two in lockstep so a
 transcript written by the server reads identically to one formatted
 on-device)."""
@@ -115,28 +115,73 @@ def _timestamp(start: float) -> str:
 
 
 def format_meeting_transcript(raw: Any) -> str | None:
-    """Render a ``segments`` payload as timestamped paragraphs.
+    """Render a ``segments`` payload as a per-speaker digest (Option A).
 
-    Mirror of the client's ``formatMeetingTranscript``: consecutive segments
-    merge into one paragraph while the speaker label is unchanged (both-None
-    counts as unchanged) — named speakers merge for their whole turn,
-    unattributed segments merge until a minute boundary passes. Attributed
-    paragraphs render as ``[MM:SS] Name: text``; unattributed ones as
-    ``[MM:SS] text``. Returns None when nothing is renderable so the caller
-    keeps the plain transcript.
+    Mirror of the client's ``formatMeetingTranscript`` — keep the two in
+    lockstep, byte for byte. One ``## Speaker N`` section per speaker,
+    ordered by that speaker's FIRST APPEARANCE in the recording (the
+    diarization backend's raw labels are arbitrary, so they are renumbered:
+    whoever speaks first is Speaker 1). Within a section each segment is
+    its own line, in chronological order. Text diarization could not
+    attribute lands in a final ``## [unattributed]`` section, always last.
+
+    When diarization produced no speakers at all, falls back to the
+    timestamped-paragraph rendering — better than one giant unattributed
+    section. Returns None when nothing is renderable so the caller keeps
+    the plain transcript.
     """
     if not isinstance(raw, list):
         return None
-    blocks: list[dict[str, Any]] = []
+    entries: list[dict[str, Any]] = []
     for entry in raw:
         if not isinstance(entry, dict):
             continue
         text = entry.get("text")
         if not isinstance(text, str) or not text.strip():
             continue
-        text = text.strip()
-        start = _seconds(entry.get("start"))
-        speaker = _label(entry.get("speaker"))
+        entries.append(
+            {
+                "start": _seconds(entry.get("start")),
+                "speaker": _label(entry.get("speaker")),
+                "text": text.strip(),
+            }
+        )
+    if not entries:
+        return None
+    if all(entry["speaker"] is None for entry in entries):
+        return _format_timestamped_paragraphs(entries)
+    # Stable chronological order: ties keep payload order.
+    entries.sort(key=lambda entry: entry["start"])
+    attributed: dict[str, list[str]] = {}
+    unattributed: list[str] = []
+    for entry in entries:
+        if entry["speaker"] is None:
+            unattributed.append(entry["text"])
+        else:
+            attributed.setdefault(entry["speaker"], []).append(entry["text"])
+    sections = [
+        f"## Speaker {index}\n\n" + "\n".join(texts)
+        for index, texts in enumerate(attributed.values(), start=1)
+    ]
+    if unattributed:
+        sections.append("## [unattributed]\n\n" + "\n".join(unattributed))
+    return "\n\n".join(sections)
+
+
+def _format_timestamped_paragraphs(entries: list[dict[str, Any]]) -> str:
+    """The pre-digest rendering, kept as the zero-speaker fallback.
+
+    Consecutive segments merge into one paragraph while the speaker label
+    is unchanged (both-None counts as unchanged) — named speakers merge for
+    their whole turn, unattributed segments merge until a minute boundary
+    passes. Attributed paragraphs render as ``[MM:SS] Name: text``;
+    unattributed ones as ``[MM:SS] text``.
+    """
+    blocks: list[dict[str, Any]] = []
+    for entry in entries:
+        text = entry["text"]
+        start = entry["start"]
+        speaker = entry["speaker"]
         last = blocks[-1] if blocks else None
         if last is not None and last["speaker"] == speaker:
             same_minute = int(start) // 60 == int(last["start"]) // 60
@@ -144,8 +189,6 @@ def format_meeting_transcript(raw: Any) -> str | None:
                 last["texts"].append(text)
                 continue
         blocks.append({"start": start, "speaker": speaker, "texts": [text]})
-    if not blocks:
-        return None
     rendered: list[str] = []
     for block in blocks:
         marker = f"[{_timestamp(block['start'])}]"

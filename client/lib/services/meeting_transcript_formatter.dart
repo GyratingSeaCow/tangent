@@ -3,8 +3,8 @@
 /// Meeting-mode transcript presentation.
 ///
 /// The server may return a diarised `segments` array alongside the plain
-/// transcript text. Meeting dumps render those segments as timestamped speaker
-/// blocks; every other mode keeps the plain text untouched. Nothing here
+/// transcript text. Meeting dumps render those segments as a per-speaker
+/// digest; every other mode keeps the plain text untouched. Nothing here
 /// touches storage — the formatted string is simply what the caller persists
 /// into the existing transcript column.
 library;
@@ -69,7 +69,75 @@ List<TranscriptSegment> parseTranscriptSegments(Object? raw) {
   return segments;
 }
 
-/// Renders [segments] as timestamped paragraphs.
+/// Renders [segments] as a per-speaker digest (Option A).
+///
+/// Mirror of the server's `format_meeting_transcript` — keep the two in
+/// lockstep, byte for byte. One `## Speaker N` section per speaker, ordered
+/// by that speaker's FIRST APPEARANCE in the recording (the diarization
+/// backend's raw labels are arbitrary, so they are renumbered: whoever
+/// speaks first is Speaker 1). Within a section each segment is its own
+/// line, in chronological order. Text diarization could not attribute lands
+/// in a final `## [unattributed]` section, always last.
+///
+/// When diarization produced no speakers at all, falls back to the
+/// timestamped-paragraph rendering — better than one giant unattributed
+/// section. Returns null when nothing is renderable, which leaves the
+/// caller on its existing plain-text path.
+String? formatMeetingTranscript(List<TranscriptSegment> segments) {
+  final entries = <_Entry>[];
+  for (final segment in segments) {
+    final text = segment.text.trim();
+    if (text.isEmpty) continue;
+    entries.add(
+      _Entry(_seconds(segment.start), _label(segment.speaker), text),
+    );
+  }
+  if (entries.isEmpty) return null;
+  if (entries.every((entry) => entry.speaker == null)) {
+    return _formatTimestampedParagraphs(entries);
+  }
+  // Stable chronological order: ties keep payload order (List.sort is not
+  // stable, so the original index breaks ties — matching Python's sorted).
+  final indexed = entries.asMap().entries.toList()
+    ..sort((a, b) {
+      final byStart = a.value.start.compareTo(b.value.start);
+      return byStart != 0 ? byStart : a.key.compareTo(b.key);
+    });
+  final attributed = <String, List<String>>{};
+  final unattributed = <String>[];
+  for (final entry in indexed.map((e) => e.value)) {
+    final speaker = entry.speaker;
+    if (speaker == null) {
+      unattributed.add(entry.text);
+    } else {
+      attributed.putIfAbsent(speaker, () => []).add(entry.text);
+    }
+  }
+  final sections = <String>[];
+  var index = 1;
+  for (final texts in attributed.values) {
+    sections.add('## Speaker $index\n\n${texts.join('\n')}');
+    index += 1;
+  }
+  if (unattributed.isNotEmpty) {
+    sections.add('## [unattributed]\n\n${unattributed.join('\n')}');
+  }
+  return sections.join('\n\n');
+}
+
+/// Convenience over [parseTranscriptSegments] + [formatMeetingTranscript] for
+/// callers holding an untyped server payload.
+String? formatMeetingTranscriptFromResult(Object? raw) =>
+    formatMeetingTranscript(parseTranscriptSegments(raw));
+
+final class _Entry {
+  const _Entry(this.start, this.speaker, this.text);
+  final double start;
+  final String? speaker;
+  final String text;
+}
+
+/// The pre-digest rendering, kept as the zero-speaker fallback.
 ///
 /// Consecutive segments merge into one paragraph while the speaker label is
 /// unchanged (both-null counts as unchanged): named speakers merge for their
@@ -78,26 +146,20 @@ List<TranscriptSegment> parseTranscriptSegments(Object? raw) {
 /// whole minutes), so a solo recording reads as prose with a `[MM:SS]` marker
 /// roughly once a minute instead of a heading every few seconds. A speaker
 /// label is never invented; attributed paragraphs render as
-/// `[MM:SS] Name: text`. Returns null when nothing is renderable, which
-/// leaves the caller on its existing plain-text path.
-String? formatMeetingTranscript(List<TranscriptSegment> segments) {
+/// `[MM:SS] Name: text`.
+String _formatTimestampedParagraphs(List<_Entry> entries) {
   final blocks = <_Block>[];
-  for (final segment in segments) {
-    final text = segment.text.trim();
-    if (text.isEmpty) continue;
-    final speaker = _label(segment.speaker);
+  for (final entry in entries) {
     final last = blocks.isEmpty ? null : blocks.last;
-    if (last != null && last.speaker == speaker) {
-      final sameMinute =
-          _seconds(segment.start) ~/ 60 == _seconds(last.start) ~/ 60;
-      if (speaker != null || sameMinute) {
-        last.texts.add(text);
+    if (last != null && last.speaker == entry.speaker) {
+      final sameMinute = entry.start ~/ 60 == last.start ~/ 60;
+      if (entry.speaker != null || sameMinute) {
+        last.texts.add(entry.text);
         continue;
       }
     }
-    blocks.add(_Block(segment.start, speaker, [text]));
+    blocks.add(_Block(entry.start, entry.speaker, [entry.text]));
   }
-  if (blocks.isEmpty) return null;
   return blocks.map((block) {
     final marker = '[${_timestamp(block.start)}]';
     final body = block.texts.join(' ');
@@ -106,11 +168,6 @@ String? formatMeetingTranscript(List<TranscriptSegment> segments) {
         : '$marker ${block.speaker}: $body';
   }).join('\n\n');
 }
-
-/// Convenience over [parseTranscriptSegments] + [formatMeetingTranscript] for
-/// callers holding an untyped server payload.
-String? formatMeetingTranscriptFromResult(Object? raw) =>
-    formatMeetingTranscript(parseTranscriptSegments(raw));
 
 final class _Block {
   _Block(this.start, this.speaker, this.texts);

@@ -82,13 +82,13 @@ void main() {
     });
   });
 
-  group('formatMeetingTranscript (paragraph style)', () {
+  group('formatMeetingTranscript (speaker digest)', () {
     test('returns null when there are no segments', () {
       expect(formatMeetingTranscript(const []), isNull);
     });
 
     test('merges all null-speaker segments within one minute into a single '
-        'paragraph with one leading marker', () {
+        'paragraph with one leading marker (zero-speaker fallback)', () {
       final formatted = formatMeetingTranscript(const [
         TranscriptSegment(start: 0, text: 'First chunk.'),
         TranscriptSegment(start: 6, text: 'Second chunk.'),
@@ -98,7 +98,8 @@ void main() {
       expect(formatted, '[00:00] First chunk. Second chunk. Third chunk.');
     });
 
-    test('starts a new paragraph when a minute boundary passes', () {
+    test('starts a new paragraph when a minute boundary passes '
+        '(zero-speaker fallback)', () {
       final formatted = formatMeetingTranscript(const [
         TranscriptSegment(start: 0, text: 'First chunk.'),
         TranscriptSegment(start: 30, text: 'Same minute.'),
@@ -113,7 +114,8 @@ void main() {
       );
     });
 
-    test('marker carries the start of the paragraph, not the boundary', () {
+    test('marker carries the start of the paragraph, not the boundary '
+        '(zero-speaker fallback)', () {
       final formatted = formatMeetingTranscript(const [
         TranscriptSegment(start: 59, text: 'one'),
         TranscriptSegment(start: 125.7, text: 'two'),
@@ -122,8 +124,7 @@ void main() {
       expect(formatted, '[00:59] one\n\n[02:05] two');
     });
 
-    test('renders speaker turns as their own paragraphs with the label '
-        'after the marker', () {
+    test('renders one section per speaker with everything they said', () {
       final formatted = formatMeetingTranscript(const [
         TranscriptSegment(start: 0, speaker: 'Speaker 1', text: 'Hello there.'),
         TranscriptSegment(
@@ -135,53 +136,113 @@ void main() {
 
       expect(
         formatted,
-        '[00:00] Speaker 1: Hello there.\n'
+        '## Speaker 1\n'
         '\n'
-        '[04:07] Speaker 2: Follow up later.',
+        'Hello there.\n'
+        '\n'
+        '## Speaker 2\n'
+        '\n'
+        'Follow up later.',
       );
     });
 
-    test('merges consecutive same-speaker segments across minute boundaries',
-        () {
+    test("collects a speaker's segments one per line", () {
       final formatted = formatMeetingTranscript(const [
         TranscriptSegment(start: 5, speaker: 'Speaker 1', text: 'One.'),
         TranscriptSegment(start: 40, speaker: 'Speaker 1', text: 'Two.'),
         TranscriptSegment(start: 80, speaker: 'Speaker 1', text: 'Three.'),
       ]);
 
-      expect(formatted, '[00:05] Speaker 1: One. Two. Three.');
+      expect(formatted, '## Speaker 1\n\nOne.\nTwo.\nThree.');
     });
 
-    test('breaks the paragraph when the speaker changes back and forth', () {
+    test('interleaved speakers stay chronological within their sections', () {
       final formatted = formatMeetingTranscript(const [
         TranscriptSegment(start: 0, speaker: 'Ada', text: 'a1'),
         TranscriptSegment(start: 10, speaker: 'Bob', text: 'b1'),
         TranscriptSegment(start: 20, speaker: 'Ada', text: 'a2'),
       ]);
 
+      expect(formatted, '## Speaker 1\n\na1\na2\n\n## Speaker 2\n\nb1');
+    });
+
+    test('renumbers speakers by first appearance in the recording', () {
+      final formatted = formatMeetingTranscript(const [
+        // Payload order deliberately not chronological.
+        TranscriptSegment(
+          start: 12,
+          speaker: 'SPEAKER_07',
+          text: 'Second voice.',
+        ),
+        TranscriptSegment(
+          start: 0,
+          speaker: 'SPEAKER_03',
+          text: 'First voice.',
+        ),
+        TranscriptSegment(
+          start: 20,
+          speaker: 'SPEAKER_03',
+          text: 'First voice again.',
+        ),
+      ]);
+
       expect(
         formatted,
-        '[00:00] Ada: a1\n'
+        '## Speaker 1\n'
         '\n'
-        '[00:10] Bob: b1\n'
+        'First voice.\n'
+        'First voice again.\n'
         '\n'
-        '[00:20] Ada: a2',
+        '## Speaker 2\n'
+        '\n'
+        'Second voice.',
       );
     });
 
-    test('breaks between attributed and unattributed runs without inventing '
+    test('renders unattributed text in a final section without inventing '
         'a label', () {
       final formatted = formatMeetingTranscript(const [
         TranscriptSegment(start: 0, speaker: 'Speaker 1', text: 'named'),
         TranscriptSegment(start: 7, text: 'unnamed'),
       ]);
 
-      expect(formatted, '[00:00] Speaker 1: named\n\n[00:07] unnamed');
+      expect(formatted, '## Speaker 1\n\nnamed\n\n## [unattributed]\n\nunnamed');
       expect(formatted, isNot(contains('null')));
     });
 
-    test('drops the hours field below one hour and shows it unpadded above',
+    test('unattributed section renders last even when it was spoken first',
         () {
+      final formatted = formatMeetingTranscript(const [
+        TranscriptSegment(start: 0, text: 'Mystery opener.'),
+        TranscriptSegment(start: 5, speaker: 'Speaker 1', text: 'Named reply.'),
+      ]);
+
+      expect(
+        formatted,
+        '## Speaker 1\n'
+        '\n'
+        'Named reply.\n'
+        '\n'
+        '## [unattributed]\n'
+        '\n'
+        'Mystery opener.',
+      );
+    });
+
+    test('zero speakers falls back to timestamped paragraphs, never one '
+        'giant unattributed section', () {
+      final formatted = formatMeetingTranscript(const [
+        TranscriptSegment(start: 0, text: 'Solo thought.'),
+        TranscriptSegment(start: 61, text: 'Another minute.'),
+      ]);
+
+      expect(formatted, '[00:00] Solo thought.\n\n[01:01] Another minute.');
+      expect(formatted, isNot(contains('##')));
+      expect(formatted, isNot(contains('[unattributed]')));
+    });
+
+    test('drops the hours field below one hour and shows it unpadded above '
+        '(zero-speaker fallback)', () {
       final formatted = formatMeetingTranscript(const [
         TranscriptSegment(start: 3540, text: 'before the hour'),
         TranscriptSegment(start: 3661.9, text: 'after the hour'),
@@ -198,7 +259,8 @@ void main() {
       );
     });
 
-    test('floors fractional seconds rather than rounding up', () {
+    test('floors fractional seconds rather than rounding up '
+        '(zero-speaker fallback)', () {
       final formatted = formatMeetingTranscript(const [
         TranscriptSegment(start: 59.99, text: 'x'),
       ]);
@@ -206,22 +268,22 @@ void main() {
       expect(formatted, '[00:59] x');
     });
 
-    test('trims each segment text before joining', () {
+    test('trims each segment text', () {
       final formatted = formatMeetingTranscript(const [
-        TranscriptSegment(start: 0, text: '  one  '),
-        TranscriptSegment(start: 2, text: '\ttwo\n'),
+        TranscriptSegment(start: 0, speaker: 'A', text: '  one  '),
+        TranscriptSegment(start: 2, speaker: 'A', text: '\ttwo\n'),
       ]);
 
-      expect(formatted, '[00:00] one two');
+      expect(formatted, '## Speaker 1\n\none\ntwo');
     });
 
     test('skips segments whose text is blank after trimming', () {
       final formatted = formatMeetingTranscript(const [
-        TranscriptSegment(start: 0, text: '   '),
-        TranscriptSegment(start: 4, text: 'kept'),
+        TranscriptSegment(start: 0, speaker: 'A', text: '   '),
+        TranscriptSegment(start: 4, speaker: 'A', text: 'kept'),
       ]);
 
-      expect(formatted, '[00:04] kept');
+      expect(formatted, '## Speaker 1\n\nkept');
     });
 
     test('returns null when every segment is blank', () {
@@ -230,6 +292,45 @@ void main() {
           TranscriptSegment(start: 0, speaker: 'S', text: '  '),
         ]),
         isNull,
+      );
+    });
+
+    test('matches the server formatter byte for byte', () {
+      // Shared cross-check fixture: the server test suite hardcodes THIS
+      // EXACT input and expected string (tests/test_secretary.py,
+      // CROSS_CHECK_SEGMENTS / CROSS_CHECK_EXPECTED). If you change either
+      // side, change both.
+      final formatted = formatMeetingTranscript(const [
+        TranscriptSegment(
+          start: 12,
+          end: 15,
+          speaker: 'SPEAKER_07',
+          text: 'Second speaker opener.',
+        ),
+        TranscriptSegment(
+          start: 0,
+          end: 4,
+          speaker: 'SPEAKER_02',
+          text: 'Kickoff.',
+        ),
+        TranscriptSegment(
+          start: 7.5,
+          end: 11,
+          text: 'Crosstalk nobody owns.',
+        ),
+        TranscriptSegment(
+          start: 18,
+          end: 21,
+          speaker: 'SPEAKER_02',
+          text: 'Wrapping up.',
+        ),
+      ]);
+
+      expect(
+        formatted,
+        '## Speaker 1\n\nKickoff.\nWrapping up.\n\n'
+        '## Speaker 2\n\nSecond speaker opener.\n\n'
+        '## [unattributed]\n\nCrosstalk nobody owns.',
       );
     });
   });
@@ -244,9 +345,14 @@ void main() {
 
       expect(
         formatted,
-        '[00:00] Speaker 1: Hi. Again.\n'
+        '## Speaker 1\n'
         '\n'
-        '[02:05] Speaker 2: Bye.',
+        'Hi.\n'
+        'Again.\n'
+        '\n'
+        '## Speaker 2\n'
+        '\n'
+        'Bye.',
       );
     });
 

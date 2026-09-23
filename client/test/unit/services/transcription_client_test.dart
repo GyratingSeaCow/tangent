@@ -311,7 +311,7 @@ void main() {
       expect(snapshot.segments.last.start, 65.0);
       expect(
         formatMeetingTranscript(snapshot.segments),
-        '[00:00] Speaker 1: Hello.\n\n[01:05] Speaker 2: Bye.',
+        '## Speaker 1\n\nHello.\n\n## Speaker 2\n\nBye.',
       );
     });
 

@@ -5665,9 +5665,14 @@ void main() {
     final saved = (await db.getDump('meet-segments'))!;
     expect(
       saved.transcript,
-      '[00:00] Speaker 1: Hello there. Still me.\n'
+      '## Speaker 1\n'
       '\n'
-      '[04:07] Speaker 2: Follow up later.',
+      'Hello there.\n'
+      'Still me.\n'
+      '\n'
+      '## Speaker 2\n'
+      '\n'
+      'Follow up later.',
     );
     expect(saved.transcriptionStatus, 'completed');
     expect(
@@ -5828,9 +5833,13 @@ void main() {
     final saved = (await db.getDump('meet-recovered-segments'))!;
     expect(
       saved.transcript,
-      '[00:12] Speaker 1: Recovered one.\n'
+      '## Speaker 1\n'
       '\n'
-      '[1:01:01] Speaker 2: Recovered two.',
+      'Recovered one.\n'
+      '\n'
+      '## Speaker 2\n'
+      '\n'
+      'Recovered two.',
     );
   });
 

@@ -127,7 +127,7 @@ def run_job_inline(job_id: str, audio_path: str) -> None:
             segments_json = json.dumps(result.segments)
 
             # For 'meeting' mode, store the transcript in the same
-            # timestamped-paragraph format the client renders, so a synced
+            # speaker-digest format the client renders, so a synced
             # device and an on-device completion read identically. Segment
             # timings stay as transcribed either way.
             dump_row = db.execute(
