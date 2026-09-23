@@ -23,6 +23,10 @@ log = get_logger(__name__)
 DIARIZATION_BACKEND = "pyannote"
 PYANNOTE_PIPELINE = "pyannote/speaker-diarization-3.1"
 
+# Sample rate we decode to before handing audio to pyannote. Matches the
+# rate faster-whisper decodes at, so both consumers hear the same audio.
+DECODE_SAMPLE_RATE = 16000
+
 # (start, end, raw_label) as reported by the diarization backend.
 Turn = tuple[float, float, str]
 
@@ -86,6 +90,33 @@ def reset_pipeline() -> None:
     """Drop the cached pipeline. Useful for tests and config changes."""
     global _pipeline
     _pipeline = None
+
+
+def _decode_waveform(audio_path: str) -> dict[str, Any]:
+    """Decode ``audio_path`` into pyannote's in-memory waveform mapping.
+
+    Returns ``{"waveform": FloatTensor[1, num_samples], "sample_rate": int}``.
+
+    We decode the audio OURSELVES (same ffmpeg/PyAV decode faster-whisper
+    uses for the transcription pass) instead of handing pyannote the file
+    path. pyannote 4.x decodes paths in fixed 10s windows and raises
+    ValueError when the final window of a non-chunk-aligned file comes up
+    short ("resulted in N samples instead of the expected M samples"),
+    which killed diarization on almost every real recording. With an
+    in-memory waveform pyannote never does its own chunked decode, so the
+    short-final-chunk failure cannot occur.
+
+    Raises on decode failure; the caller degrades to speaker=None.
+    """
+    # Lazy imports: torch ships with pyannote's stack and faster_whisper is
+    # the transcription dependency — neither is needed unless diarization
+    # actually runs.
+    import torch  # noqa: PLC0415 -- heavyweight, only needed here
+    from faster_whisper.audio import decode_audio  # noqa: PLC0415 -- reuse whisper's decode
+
+    samples = decode_audio(audio_path, sampling_rate=DECODE_SAMPLE_RATE)
+    waveform = torch.from_numpy(samples).float().reshape(1, -1)
+    return {"waveform": waveform, "sample_rate": DECODE_SAMPLE_RATE}
 
 
 def _extract_turns(annotation: Any) -> list[Turn]:
@@ -167,12 +198,17 @@ def diarize_segments(
 
     try:
         pipeline = _load_pipeline()
-        annotation = pipeline(audio_path)
+        # Feed a decoded in-memory waveform, never the file path: a path
+        # makes pyannote 4.x run its own fixed-size chunked decode, which
+        # raises ValueError on the short final chunk of any recording whose
+        # duration is not a clean multiple of its window (the
+        # "473176 samples instead of the expected 480000" failure).
+        annotation = pipeline(_decode_waveform(audio_path))
         turns = _extract_turns(annotation)
-    except ImportError:
+    except ImportError as exc:
         log.warning(
             "diarization.unavailable",
-            reason="pyannote.audio is not installed",
+            reason=str(exc) or "pyannote.audio is not installed",
             audio=audio_path,
         )
         return [{**segment} for segment in segments]

@@ -11,6 +11,13 @@ No test here loads a real pyannote pipeline — the loader is monkeypatched.
 
 from __future__ import annotations
 
+import math
+import struct
+import sys
+import types
+import wave
+from pathlib import Path
+
 import pytest
 
 from app.services import diarization
@@ -28,6 +35,54 @@ def _segments() -> list[dict]:
         {"start": 0.0, "end": 2.0, "speaker": None, "text": "Hello there."},
         {"start": 2.0, "end": 4.0, "speaker": None, "text": "Hi back."},
     ]
+
+
+class _FakeTensor:
+    """Stands in for torch.Tensor: torch is not installed in the test venv."""
+
+    def __init__(self, array) -> None:
+        self.array = array
+
+    def float(self) -> "_FakeTensor":
+        return _FakeTensor(self.array.astype("float32"))
+
+    def reshape(self, *shape) -> "_FakeTensor":
+        return _FakeTensor(self.array.reshape(*shape))
+
+    @property
+    def shape(self):
+        return tuple(self.array.shape)
+
+    @property
+    def dtype(self):
+        return self.array.dtype
+
+
+def _install_fake_torch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Provide a minimal torch module so _decode_waveform can build a tensor."""
+    fake = types.ModuleType("torch")
+    fake.from_numpy = _FakeTensor  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "torch", fake)
+
+
+def _write_wav(path: Path, seconds: float = 1.35, rate: int = 16000) -> int:
+    """Write a mono 16-bit sine wav; returns the number of samples written.
+
+    1.35s is deliberately NOT a multiple of pyannote's 10s window — the
+    shape of file that triggered the short-final-chunk ValueError live.
+    """
+    n = int(seconds * rate)
+    with wave.open(str(path), "wb") as f:
+        f.setnchannels(1)
+        f.setsampwidth(2)
+        f.setframerate(rate)
+        f.writeframes(
+            b"".join(
+                struct.pack("<h", int(8000 * math.sin(2 * math.pi * 440 * i / rate)))
+                for i in range(n)
+            )
+        )
+    return n
 
 
 class _FakeTurn:
@@ -163,18 +218,97 @@ def test_diarize_segments_assigns_labels_when_enabled(monkeypatch: pytest.Monkey
     monkeypatch.setenv("TANGENT_DIARIZATION", "pyannote")
     monkeypatch.setenv("HF_TOKEN", "hf_fake")
 
-    calls: list[str] = []
+    decoded = {"waveform": "fake-tensor", "sample_rate": 16000}
+    calls: list[object] = []
 
-    def fake_pipeline(audio_path: str):
-        calls.append(audio_path)
+    def fake_pipeline(audio):
+        calls.append(audio)
         return _FakeAnnotation([(0.0, 2.0, "SPEAKER_00"), (2.0, 4.0, "SPEAKER_01")])
 
     monkeypatch.setattr(diarization, "_load_pipeline", lambda: fake_pipeline)
+    monkeypatch.setattr(diarization, "_decode_waveform", lambda path: decoded)
 
     result = diarization.diarize_segments("/tmp/audio.wav", _segments())
 
-    assert calls == ["/tmp/audio.wav"]
+    assert calls == [decoded]
     assert [s["speaker"] for s in result] == ["Speaker 1", "Speaker 2"]
+
+
+def test_diarize_segments_feeds_pipeline_a_waveform_dict_not_a_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The pipeline must receive OUR decoded waveform, never the file path.
+
+    A path makes pyannote 4.x chunk-decode the file itself and raise
+    ValueError on the short final chunk of any non-10s-aligned recording
+    ('473176 samples instead of the expected 480000' — live failure on
+    recording 6699a249). The real _decode_waveform runs here against a real
+    1.35s wav; only torch is faked (not installed in the test venv).
+    """
+    monkeypatch.setenv("TANGENT_DIARIZATION", "pyannote")
+    monkeypatch.setenv("HF_TOKEN", "hf_fake")
+    _install_fake_torch(monkeypatch)
+
+    audio = tmp_path / "short.wav"
+    samples = _write_wav(audio, seconds=1.35, rate=16000)
+
+    received: list[object] = []
+
+    def fake_pipeline(audio_input):
+        received.append(audio_input)
+        return _FakeAnnotation([(0.0, 4.0, "SPEAKER_00")])
+
+    monkeypatch.setattr(diarization, "_load_pipeline", lambda: fake_pipeline)
+
+    result = diarization.diarize_segments(str(audio), _segments())
+
+    assert len(received) == 1
+    payload = received[0]
+    assert not isinstance(payload, (str, Path))
+    assert isinstance(payload, dict)
+    assert set(payload) == {"waveform", "sample_rate"}
+    assert payload["sample_rate"] == diarization.DECODE_SAMPLE_RATE == 16000
+    waveform = payload["waveform"]
+    assert waveform.shape == (1, samples)  # channel-first mono, every sample kept
+    assert str(waveform.dtype) == "float32"
+    assert [s["speaker"] for s in result] == ["Speaker 1", "Speaker 1"]
+
+
+def test_diarize_segments_degrades_when_decode_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A decode failure must warn and degrade to speaker=None, never raise."""
+    monkeypatch.setenv("TANGENT_DIARIZATION", "pyannote")
+    monkeypatch.setenv("HF_TOKEN", "hf_fake")
+
+    warnings: list[tuple[str, dict]] = []
+
+    class _RecordingLog:
+        def warning(self, event: str, **kw) -> None:
+            warnings.append((event, kw))
+
+        def info(self, *args, **kw) -> None:
+            pass
+
+        def debug(self, *args, **kw) -> None:
+            pass
+
+    def broken_decode(_path: str):
+        raise ValueError(
+            "requested chunk [00:01:01 --> 00:01:11] resulted in 473176 "
+            "samples instead of the expected 480000 samples"
+        )
+
+    monkeypatch.setattr(diarization, "_load_pipeline", lambda: object())
+    monkeypatch.setattr(diarization, "_decode_waveform", broken_decode)
+    monkeypatch.setattr(diarization, "log", _RecordingLog())
+
+    result = diarization.diarize_segments("/tmp/audio.opus", _segments())
+
+    assert [s["speaker"] for s in result] == [None, None]
+    assert [s["text"] for s in result] == ["Hello there.", "Hi back."]
+    assert [event for event, _ in warnings] == ["diarization.failed"]
+    assert warnings[0][1]["error_type"] == "ValueError"
 
 
 def test_diarize_segments_returns_null_speakers_when_pyannote_missing(
@@ -201,10 +335,15 @@ def test_diarize_segments_returns_null_speakers_when_pipeline_raises(
     monkeypatch.setenv("TANGENT_DIARIZATION", "pyannote")
     monkeypatch.setenv("HF_TOKEN", "hf_fake")
 
-    def boom(_audio_path: str):
+    def boom(_audio):
         raise RuntimeError("cuda exploded")
 
     monkeypatch.setattr(diarization, "_load_pipeline", lambda: boom)
+    monkeypatch.setattr(
+        diarization,
+        "_decode_waveform",
+        lambda path: {"waveform": "t", "sample_rate": 16000},
+    )
 
     result = diarization.diarize_segments("/tmp/audio.wav", _segments())
 
