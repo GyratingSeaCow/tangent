@@ -110,7 +110,31 @@ lowercase), `BINARY_NAME` in both CMakeLists (executable filename),
 `APPLICATION_ID`/`applicationId` `dev.tangent.tangent` (changing it
 orphans installed apps' data). Display strings only.
 
-### 1.4 Hardware-feedback-gated ideas (no work queued)
+### 1.4 Bulk audio import in Settings (decided 2026-09-23)
+
+Jeff: single-file import already lives on the home screen (his original
+ask, quoted at `home_screen.dart:346`) — "If it's not bulk import, then we
+can just add that into the settings menu." Audited state: bulk does NOT
+exist. `AudioFilePicker.pick()` → platform channel `pickAudioFile` returns
+exactly one file; `AudioImportRunner.run()` takes one sourcePath.
+
+Design when built:
+- Settings gains "Import audio files…" → multi-select picker
+  (`ACTION_OPEN_DOCUMENT` with `EXTRA_ALLOW_MULTIPLE` on Android; the
+  Kotlin handler grows a `pickAudioFiles` method returning a list —
+  keep the copy-to-our-storage step per file, same content://-grant
+  rationale as single pick)
+- Loop the EXISTING `AudioImporter` per file: sequential, progress
+  "n of N" (snackbar → progress sheet), per-file failure surfaced at the
+  end (list of failed names), never silently swallowed — one bad file
+  must not abort the rest
+- Imported items land in the catalog exactly like home-screen imports
+  (same mode default); transcription queues per existing pipeline
+- Home-screen single-file button unchanged
+- Tests: fake picker returning N paths incl. one invalid; assert N-1
+  imported, 1 surfaced; RED-first; full-parity install after
+
+### 1.5 Hardware-feedback-gated ideas (no work queued)
 
 Hover-ring linger/thickness tuning if 250 ms feels wrong on device; toolbar
 `visualDensity.compact` eyeball; flip-to-erase only if this pen ever emits
