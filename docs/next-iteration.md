@@ -88,7 +88,29 @@ bluetooth/sco labels) — so the AirPods can't even be selected today.
    transcribes worse, opt-in), keep the native routing already written.
    RED-first tests; full parity install on all three devices.
 
-### 1.3 Hardware-feedback-gated ideas (no work queued)
+### 1.3 Capitalize the app name everywhere it's user-visible (future release)
+
+Jeff, 2026-09-23: "we need to capitalize the app name … Don't worry about
+changing it now. We can catch that in a future release." The Flutter
+`MaterialApp` title already says 'Tangent'; the launcher/window names
+don't. Audited sites (display strings only):
+
+- `client/android/app/src/main/AndroidManifest.xml:30` —
+  `android:label="tangent"` → `"Tangent"` (the home-screen launcher name;
+  the most visible one)
+- `client/windows/runner/main.cpp:30` — window title `L"tangent"`
+- `client/windows/runner/Runner.rc:93-98` — FileDescription /
+  InternalName / ProductName `"tangent"` (OriginalFilename stays
+  lowercase `tangent.exe`)
+- Linux: `.desktop` entry name under `packaging/` if it says lowercase
+  (check at fix time; AppImage display name rides on it)
+
+Do NOT touch: `pubspec.yaml name: tangent` (Dart package name, must stay
+lowercase), `BINARY_NAME` in both CMakeLists (executable filename),
+`APPLICATION_ID`/`applicationId` `dev.tangent.tangent` (changing it
+orphans installed apps' data). Display strings only.
+
+### 1.4 Hardware-feedback-gated ideas (no work queued)
 
 Hover-ring linger/thickness tuning if 250 ms feels wrong on device; toolbar
 `visualDensity.compact` eyeball; flip-to-erase only if this pen ever emits
