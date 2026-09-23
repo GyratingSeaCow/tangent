@@ -388,7 +388,7 @@ transcription round-trip from the shell:
 
 ```bash
 TOKEN="your-device-token"
-BASE="http://192.168.1.206:8765"
+BASE="http://192.168.1.100:8765"   # wherever YOUR server lives
 
 # 1. create a dump
 curl -X POST "$BASE/v1/dumps" -H "Authorization: Bearer $TOKEN" \
