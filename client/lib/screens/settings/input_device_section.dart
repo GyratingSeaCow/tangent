@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../theme/tangent_tokens.dart';
@@ -39,6 +41,8 @@ class _InputDeviceSectionState extends ConsumerState<InputDeviceSection> {
   // dependencies) merely because Settings was opened. The one case that does
   // need it up front is a REMEMBERED device: the row has to be able to say
   // "unavailable" when the headset is off, rather than implying it is in use.
+  late bool _autoBluetooth = ref.read(settingsStoreProvider).autoBluetoothAudio;
+
   @override
   void initState() {
     super.initState();
@@ -152,8 +156,7 @@ class _InputDeviceSectionState extends ConsumerState<InputDeviceSection> {
               title: const Text('System default'),
               subtitle: const Text('Best transcription quality'),
               selected: _selectedId == null,
-              onTap: () =>
-                  Navigator.of(context).pop(const _DeviceChoice(null)),
+              onTap: () => Navigator.of(context).pop(const _DeviceChoice(null)),
             ),
             for (final device in _devices)
               ListTile(
@@ -210,11 +213,30 @@ class _InputDeviceSectionState extends ConsumerState<InputDeviceSection> {
         const Padding(
           padding: EdgeInsets.fromLTRB(16, 4, 16, 12),
           child: Text(
-            'Choose which built-in microphone records. Bluetooth headsets are '
-            'not listed: Android does not expose a headset mic to this app for '
-            'recording, so offering one would silently record from the phone '
-            'instead. If a chosen microphone is unavailable, recording still '
-            'starts on the system default.',
+            'Choose which built-in microphone records. If a chosen '
+            'microphone is unavailable, recording still starts on the '
+            'system default.',
+            style: TextStyle(fontSize: 12, color: TangentColors.textDim),
+          ),
+        ),
+        SwitchListTile(
+          title: const Text('Auto-enable Bluetooth audio'),
+          value: _autoBluetooth,
+          onChanged: (value) {
+            setState(() => _autoBluetooth = value);
+            unawaited(
+              ref.read(settingsStoreProvider).setAutoBluetoothAudio(value),
+            );
+          },
+        ),
+        const Padding(
+          padding: EdgeInsets.fromLTRB(16, 0, 16, 12),
+          child: Text(
+            'When a Bluetooth headset is connected, record through its '
+            'microphone automatically — the same way phone calls do. With '
+            'no headset connected, the microphone above is used. Note: '
+            'Bluetooth voice audio is narrowband, so headset recordings '
+            'sound thinner than the built-in microphone.',
             style: TextStyle(fontSize: 12, color: TangentColors.textDim),
           ),
         ),

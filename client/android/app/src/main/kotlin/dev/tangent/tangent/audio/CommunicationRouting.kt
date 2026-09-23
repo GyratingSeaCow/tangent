@@ -32,7 +32,14 @@ enum class RoutingState {
     NOT_APPLICABLE,
 }
 
-data class RoutingOutcome(val state: RoutingState, val device: RoutableDevice?)
+data class RoutingOutcome(
+    val state: RoutingState,
+    val device: RoutableDevice?,
+    /** The INPUT-enumeration device that was (or would be) captured from.
+     *  The recorder selects by input id; [device] is the communication-side
+     *  endpoint, which carries a different id for the same headset. */
+    val input: RoutableDevice? = null,
+)
 
 /**
  * The platform surface [CommunicationRouting] drives.
@@ -108,6 +115,40 @@ class CommunicationRouting(private val devices: CommunicationDevices) {
         } else {
             RoutingOutcome(RoutingState.REFUSED, target)
         }
+    }
+
+    /**
+     * Auto mode: route like a phone call does (Jeff, 2026-09-23 — "It
+     * needs to default to the system defaults like it does when you enter
+     * into calls"). No chosen device id: the first connected Bluetooth
+     * headset mic that the platform can take communication audio to wins.
+     * With no headset connected the outcome is ABSENT and the caller
+     * records from the built-in microphone.
+     */
+    fun routeAuto(): RoutingOutcome {
+        if (!devices.supported) return RoutingOutcome(RoutingState.UNSUPPORTED, null)
+
+        val headsets = devices.inputs().filter { isBluetoothHeadset(it) }
+        if (headsets.isEmpty()) return RoutingOutcome(RoutingState.ABSENT, null)
+
+        // Prefer a headset whose communication target shares its address —
+        // an input with no matching target cannot receive call audio and
+        // would strand the route (the "zombie headset" case).
+        val input = headsets.firstOrNull { matchByAddress(it) != null } ?: headsets.first()
+        val target = matchTarget(input)
+            ?: return RoutingOutcome(RoutingState.ABSENT, input)
+
+        return if (devices.apply(target)) {
+            RoutingOutcome(RoutingState.APPLIED, target, input)
+        } else {
+            RoutingOutcome(RoutingState.REFUSED, target, input)
+        }
+    }
+
+    private fun matchByAddress(input: RoutableDevice): RoutableDevice? {
+        val address = input.address ?: return null
+        if (address.isEmpty()) return null
+        return devices.communicationTargets().firstOrNull { it.address == address }
     }
 
     /**

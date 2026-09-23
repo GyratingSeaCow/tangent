@@ -26,6 +26,7 @@ class SettingsStore {
   static const _inputDeviceLabelKey = 'preferred_input_device_label';
   static const _micGainKey = 'microphone_gain';
   static const _handwritingSearchKey = 'handwriting_search_enabled';
+  static const _autoBluetoothKey = 'auto_bluetooth_audio';
 
   final SharedPreferences? _preferences;
 
@@ -38,6 +39,10 @@ class SettingsStore {
   bool autoSync;
   TriggerMode triggerMode;
   bool keepScreenAwakeWhileRecording;
+
+  /// Record through a connected Bluetooth headset automatically, the way
+  /// calls do. Default on; the permission prompt still gates the first use.
+  bool autoBluetoothAudio;
 
   /// When true (the default) no recording is ever uploaded to the server for
   /// storage. Transcription still works, over Wi-Fi or cellular.
@@ -78,6 +83,7 @@ class SettingsStore {
     this.autoSync = true,
     this.triggerMode = TriggerMode.tap,
     this.keepScreenAwakeWhileRecording = true,
+    this.autoBluetoothAudio = true,
     this.keepRecordingsOnDeviceOnly = true,
     this.preferredInputDeviceId,
     this.preferredInputDeviceLabel,
@@ -98,8 +104,8 @@ class SettingsStore {
         orElse: () => TriggerMode.tap,
       ),
       keepScreenAwakeWhileRecording: preferences.getBool(_awakeKey) ?? true,
-      keepRecordingsOnDeviceOnly:
-          preferences.getBool(_deviceOnlyKey) ?? true,
+      autoBluetoothAudio: preferences.getBool(_autoBluetoothKey) ?? true,
+      keepRecordingsOnDeviceOnly: preferences.getBool(_deviceOnlyKey) ?? true,
       preferredInputDeviceId: preferences.getString(_inputDeviceIdKey),
       preferredInputDeviceLabel: preferences.getString(_inputDeviceLabelKey),
       // Clamped on read as well as write: a preference file can be edited by
@@ -135,6 +141,11 @@ class SettingsStore {
   Future<void> setKeepScreenAwakeWhileRecording(bool value) async {
     keepScreenAwakeWhileRecording = value;
     await _preferences?.setBool(_awakeKey, value);
+  }
+
+  Future<void> setAutoBluetoothAudio(bool value) async {
+    autoBluetoothAudio = value;
+    await _preferences?.setBool(_autoBluetoothKey, value);
   }
 
   Future<void> setKeepRecordingsOnDeviceOnly(bool value) async {

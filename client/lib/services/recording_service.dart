@@ -198,6 +198,30 @@ class DefaultRecordingService implements RecordingService {
   /// service.
   final double Function() _micGain;
 
+  /// Whether "auto-enable Bluetooth audio" is on (Settings, default on).
+  final bool Function() _autoRouteBluetooth;
+
+  /// Asks for BLUETOOTH_CONNECT. [interactive] true may show the system
+  /// dialog (record tap); false only reads current state (warmRoute must
+  /// never pop UI out of nowhere).
+  final Future<bool> Function({required bool interactive}) _bluetoothPermission;
+
+  /// Routes like a phone call when auto mode is on and permitted.
+  ///
+  /// Jeff (2026-09-23): "It needs to default to the system defaults like
+  /// it does when you enter into calls ... automatic." Fired unawaited
+  /// from [start] — the T6 rule stands: nothing stalls the record tap.
+  Future<void> _autoRoute({required bool interactive}) async {
+    if (!_autoRouteBluetooth()) return;
+    if (!await _bluetoothPermission(interactive: interactive)) return;
+    _routedDeviceId = _autoRouteSentinel;
+    await _routing
+        .routeAuto()
+        .catchError((_) => CommunicationRoute.unavailable);
+  }
+
+  static const String _autoRouteSentinel = '<auto>';
+
   /// Open sink for an amplified capture, and its running payload size.
   IOSink? _wavSink;
   int _wavPayloadBytes = 0;
@@ -214,9 +238,14 @@ class DefaultRecordingService implements RecordingService {
     InputDevice? initialDevice,
     CommunicationRouting? routing,
     double Function()? micGain,
+    bool Function()? autoRouteBluetooth,
+    Future<bool> Function({required bool interactive})? bluetoothPermission,
   })  : _recorder = recorder,
         _routing = routing ?? CommunicationRouting(),
         _micGain = micGain ?? (() => defaultMicGain),
+        _autoRouteBluetooth = autoRouteBluetooth ?? (() => false),
+        _bluetoothPermission = bluetoothPermission ??
+            (({required bool interactive}) async => false),
         _selectedDevice = initialDevice,
         _outputDir = outputDir ??
             (throw ArgumentError('A staging output directory is required'));
@@ -306,7 +335,11 @@ class DefaultRecordingService implements RecordingService {
   @override
   Future<void> warmRoute() async {
     final selected = _selectedDevice;
-    if (selected == null) return;
+    if (selected == null) {
+      // Auto mode: pre-route silently so SCO is live before the tap.
+      await _autoRoute(interactive: false);
+      return;
+    }
     _routedDeviceId = selected.id;
     await _routing.route(selected.id).catchError(
           (_) => CommunicationRoute.unavailable,
@@ -387,6 +420,10 @@ class DefaultRecordingService implements RecordingService {
               (_) => CommunicationRoute.unavailable,
             ),
       );
+    } else if (device == null) {
+      // No manual choice: behave like a phone call (auto mode). The record
+      // tap is the one moment a permission dialog is acceptable.
+      unawaited(_autoRoute(interactive: true).catchError((_) {}));
     }
     final double gain = clampMicGain(_micGain());
     if (!usesAmplifiedCapture(gain)) {

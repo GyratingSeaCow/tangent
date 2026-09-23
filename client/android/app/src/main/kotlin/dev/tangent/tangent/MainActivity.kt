@@ -192,6 +192,15 @@ class MainActivity : FlutterActivity() {
                             )
                         }
                     }
+                    "routeCommunicationDeviceAuto" -> {
+                        val outcome = communicationRouting.routeAuto()
+                        result.success(
+                            mapOf(
+                                "state" to outcome.state.name.lowercase(),
+                                "label" to outcome.device?.label,
+                            ),
+                        )
+                    }
                     "clearCommunicationDevice" -> {
                         communicationRouting.clear()
                         result.success(null)

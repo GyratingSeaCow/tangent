@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:record/record.dart';
 
 import '../../services/recording_service.dart';
+import '../../services/bluetooth_permission.dart';
 import '../../data/local_db.dart';
 import '../../data/storage/storage_contract.dart';
 import '../../data/storage/storage_providers.dart';
@@ -139,6 +140,11 @@ final recordingServiceProvider = Provider<RecordingService>((ref) {
   final id = settings.preferredInputDeviceId;
   return DefaultRecordingService(
     outputDir: audio.stagingDir,
+    // Auto Bluetooth (default on): with no manually chosen mic, recording
+    // routes to a connected headset the way phone calls do. Read per use so
+    // the Settings toggle applies without rebuilding the service.
+    autoRouteBluetooth: () => settings.autoBluetoothAudio,
+    bluetoothPermission: bluetoothConnectPermission,
     initialDevice: id == null
         ? null
         : InputDevice(id: id, label: settings.preferredInputDeviceLabel ?? id),

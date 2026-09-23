@@ -65,6 +65,22 @@ class CommunicationRouting {
     }
   }
 
+  /// Auto mode: route like a phone call does. The platform picks the
+  /// connected Bluetooth headset (if any) exactly as it would for a call;
+  /// with no headset the reply is `absent` and capture stays built-in.
+  Future<CommunicationRoute> routeAuto() async {
+    try {
+      final reply = await _channel.invokeMapMethod<String, Object?>(
+        'routeCommunicationDeviceAuto',
+        const <String, Object?>{},
+      );
+      return _decode(reply?['state']);
+    } on Object {
+      // Best-effort, same as route(): never blocks a recording.
+      return CommunicationRoute.unavailable;
+    }
+  }
+
   /// Release the route when capture ends.
   ///
   /// Leaving a communication device applied keeps the phone in call-audio mode,

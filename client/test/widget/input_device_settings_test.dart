@@ -68,20 +68,45 @@ void main() {
     expect(find.textContaining('System default'), findsOneWidget);
   });
 
-  testWidgets('explains why Bluetooth headsets are not listed', (tester) async {
-    // The absence needs a reason, or it reads as a missing feature. Device
-    // evidence: Android exposes no input-role device for the headset, so
-    // offering it would silently record from the phone's own mic.
+  testWidgets('offers the auto-Bluetooth toggle, on by default',
+      (tester) async {
+    // 2026-09-23: BLUETOOTH_CONNECT (never requested at runtime) was the
+    // real T5 blocker. Manual BT picking is gone; instead recording routes
+    // like a phone call when a headset is connected — governed by this
+    // toggle, honest about the narrowband quality cost.
     final service = FakeInputService(const [builtIn, buds]);
     await pump(tester, service: service, settings: SettingsStore());
 
+    final toggle = find.widgetWithText(
+      SwitchListTile,
+      'Auto-enable Bluetooth audio',
+    );
+    expect(toggle, findsOneWidget, reason: 'the auto mode must be optional');
+    expect(
+      tester.widget<SwitchListTile>(toggle).value,
+      isTrue,
+      reason: 'automatic is the promise: it works without setup',
+    );
     expect(
       find.textContaining(
-        RegExp('bluetooth headsets are not listed', caseSensitive: false),
+        RegExp('the same way phone calls do', caseSensitive: false),
       ),
       findsOneWidget,
-      reason: 'the omission must be explained, not silent',
+      reason: 'the toggle needs its explanation underneath',
     );
+  });
+
+  testWidgets('flipping the toggle persists the choice', (tester) async {
+    final settings = SettingsStore();
+    final service = FakeInputService(const [builtIn, buds]);
+    await pump(tester, service: service, settings: settings);
+
+    await tester.tap(
+      find.widgetWithText(SwitchListTile, 'Auto-enable Bluetooth audio'),
+    );
+    await tester.pumpAndSettle();
+
+    expect(settings.autoBluetoothAudio, isFalse);
   });
 
   testWidgets('choosing a built-in mic persists it and tells the recorder',

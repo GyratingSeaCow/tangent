@@ -118,6 +118,59 @@ class CommunicationRoutingTest {
         assertEquals(bleTarget, devices.applied)
     }
 
+    // ── Auto mode: "route like a phone call does" (Jeff, 2026-09-23) ──
+    // No chosen device: the FIRST connected Bluetooth headset mic wins;
+    // with none connected the outcome is ABSENT and capture stays on the
+    // built-in microphone.
+
+    @Test fun autoRoutesToTheOnlyConnectedHeadset() {
+        val devices = FakeDevices(inputs = listOf(builtIn, buds), targets = listOf(budsTarget))
+        val outcome = CommunicationRouting(devices).routeAuto()
+
+        assertEquals(RoutingState.APPLIED, outcome.state)
+        assertEquals(budsTarget, devices.applied)
+        // The recorder needs the INPUT id (1535), not the target id (42):
+        // RecordConfig selects among GET_DEVICES_INPUTS entries.
+        assertEquals(buds, outcome.input)
+    }
+
+    @Test fun autoWithNoHeadsetIsAbsentAndRoutesNothing() {
+        val devices = FakeDevices(inputs = listOf(builtIn), targets = emptyList())
+        val outcome = CommunicationRouting(devices).routeAuto()
+
+        assertEquals(RoutingState.ABSENT, outcome.state)
+        assertNull(devices.applied)
+        assertNull(outcome.input)
+    }
+
+    @Test fun autoOnAnUnsupportedPlatformIsUnsupported() {
+        val devices = FakeDevices(supported = false, inputs = listOf(buds))
+        val outcome = CommunicationRouting(devices).routeAuto()
+
+        assertEquals(RoutingState.UNSUPPORTED, outcome.state)
+        assertNull(devices.applied)
+    }
+
+    @Test fun autoPrefersTheHeadsetWhoseTargetSharesItsAddress() {
+        // Two headsets connected: the one the platform can actually take
+        // communication audio to must win, not merely the first listed.
+        val orphan = RoutableDevice(
+            9,
+            "FF:FF:FF:FF:00:01",
+            CommunicationRouting.TYPE_BLUETOOTH_SCO,
+            "Zombie headset",
+        )
+        val devices = FakeDevices(
+            inputs = listOf(builtIn, orphan, buds),
+            targets = listOf(budsTarget),
+        )
+        val outcome = CommunicationRouting(devices).routeAuto()
+
+        assertEquals(RoutingState.APPLIED, outcome.state)
+        assertEquals(budsTarget, devices.applied)
+        assertEquals(buds, outcome.input)
+    }
+
     @Test fun clearingReleasesTheRouteSoThePhoneLeavesCallAudioMode() {
         val devices = FakeDevices(inputs = listOf(buds), targets = listOf(budsTarget))
         val routing = CommunicationRouting(devices)
