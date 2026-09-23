@@ -35,7 +35,51 @@ emulator alias only on Android. An unpaired desktop now fails loud
 (connection refused) instead of black-holing into `10.0.2.2`. Pairing
 before testing is still the right path for checkpoint 6.
 
-### 1.2 Hardware-feedback-gated ideas (no work queued)
+### 1.2 Bluetooth mic: request BLUETOOTH_CONNECT at runtime (TONIGHT — needs Jeff + AirPods)
+
+**Status:** queued for tonight's session (2026-09-23). Jeff is at work and
+cannot record test audio until evening. Blocked only on a human wearing
+the headset.
+
+**Jeff's hypothesis (2026-09-23, likely correct):** Google Meet prompted
+him to "allow local devices" when using Bluetooth — that is Android 12+'s
+**Nearby devices** runtime permission group, i.e. `BLUETOOTH_CONNECT`.
+Tangent declares it in the manifest but NOTHING ever requests it at
+runtime (grep confirms zero request calls), so it sits `granted=false`
+forever — verified live on the Fold via
+`dumpsys package dev.tangent.tangent`.
+
+**Why this explains the T5 failure** (see
+`docs/superpowers/plans/2026-09-17-t5-bluetooth-status.md`): enumeration
+worked and selection persisted, but capture stayed on the built-in mic —
+`mScoAudioState: SCO_STATE_INACTIVE`, `Preferred communication device:
+null`. On Android 12+, bringing up the SCO link requires
+BLUETOOTH_CONNECT, and it fails **silently** without it — exactly the
+corpse we found. The denied permission also kneecaps the native
+`setCommunicationDevice()` routing already written
+(`AndroidCommunicationDevices.kt`, `CommunicationRouting.kt`):
+`availableCommunicationDevices` won't offer BT SCO devices either. The
+deprecated `startBluetoothSco()` in record_android 1.5.2 may have been
+innocent, or at least not the only culprit.
+
+**Wrinkle:** after T5 we HID Bluetooth mics from the Settings picker
+entirely (`input_device_section.dart`, `_isOffered` filters
+bluetooth/sco labels) — so the AirPods can't even be selected today.
+
+**Tonight's plan:**
+
+1. Isolate the variable first, zero code: `adb shell pm grant
+   dev.tangent.tangent android.permission.BLUETOOTH_CONNECT` on the
+   Fold, temporarily un-hide BT devices, Jeff connects AirPods, selects
+   them, records ~10 s; read `dumpsys audio` mid-recording. Confirmed =
+   SCO active + `source client` no longer MIC.
+2. If confirmed, real fix: request Nearby-devices permission when a
+   Bluetooth mic is tapped in the picker (same UX as Meet), un-hide BT
+   devices behind the existing quality caveat (SCO/HFP, mono, 8–16 kHz,
+   transcribes worse, opt-in), keep the native routing already written.
+   RED-first tests; full parity install on all three devices.
+
+### 1.3 Hardware-feedback-gated ideas (no work queued)
 
 Hover-ring linger/thickness tuning if 250 ms feels wrong on device; toolbar
 `visualDensity.compact` eyeball; flip-to-erase only if this pen ever emits
