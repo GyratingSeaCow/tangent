@@ -8,6 +8,15 @@ re-derive it.
 
 ## 1. Open items
 
+### 1.0 Naming: KEEP "Tangent" — decided, closed (2026-09-23)
+
+Jeff evaluated the "Tangent Notes" (tangentnotes.com) collision and decided
+to keep the name: "they are different enough that we can make our own path
+down that lane." Do not re-raise a rename. Differentiate in positioning
+instead — self-hosted voice+ink for Android/Linux vs their lane. Candidate
+research preserved in session history (Inkramble/Sidetangent/Inkmutter all
+had clean namespaces) in case circumstances ever change.
+
 ### 1.1 Linux AppImage: verify handwriting search on desktop (v1.7.0 E2E gate)
 
 **Status:** owed. The v1.7.0 tag's Release workflow builds and attaches
