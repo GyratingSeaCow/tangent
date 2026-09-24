@@ -306,6 +306,19 @@ class DocumentSyncEngine extends ChangeNotifier {
       audioOnServer: payload['audio_kept'] == true,
       createdAt: _tsToDate(payload['created_at']),
       updatedAt: _tsToDate(payload['updated_at']),
+      // Summary fields are server-generated. Absence means an older server
+      // that has never heard of summaries — keep whatever this device
+      // already holds (absence is not an eraser, the notebooks.ink rule).
+      // A PRESENT null is the server's authoritative "no summary exists".
+      summary: payload.containsKey('summary')
+          ? payload['summary'] as String?
+          : LocalDb.absentSummaryField,
+      summaryModel: payload.containsKey('summary_model')
+          ? payload['summary_model'] as String?
+          : LocalDb.absentSummaryField,
+      summarizedAt: payload.containsKey('summarized_at')
+          ? (payload['summarized_at'] as num?)?.toInt()
+          : LocalDb.absentSummaryField,
       seq: change.seq,
     );
   }
