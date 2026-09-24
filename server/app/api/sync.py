@@ -219,6 +219,12 @@ def _apply_dump(conn: sqlite3.Connection, change: SyncChange, now: int) -> None:
 
     Fields the peer did not send keep their stored values (an older client
     is a narrower payload, not an eraser).
+
+    ``summary``/``summary_model``/``summarized_at`` are server-generated and
+    NEVER written from a client payload — deliberately absent from both the
+    INSERT columns and the UPDATE SET below. Absence is not an eraser, an
+    explicit null is not an eraser, and a client-sent value is not an
+    authority: whatever the client sends, the stored summary stands.
     """
     if change.op == "delete":
         conn.execute(
@@ -419,14 +425,21 @@ def sync_push(
                 # sent. A device that never had the audio omits audio_kept,
                 # and echoing that omission tells every other device the
                 # recording is undownloadable while the file sits on disk.
+                # Summary fields get the same treatment: server-held values
+                # replace whatever the client sent (or omitted), so a title
+                # edit can never broadcast a summary-less or forged payload.
                 if change.op != "delete" and change.payload is not None:
                     stored = db.execute(
-                        "SELECT audio_kept FROM dumps WHERE id = ?",
+                        "SELECT audio_kept, summary, summary_model, "
+                        "summarized_at FROM dumps WHERE id = ?",
                         (change.entity_id,),
                     ).fetchone()
                     if stored is not None:
                         publish_payload = dict(change.payload)
                         publish_payload["audio_kept"] = bool(stored["audio_kept"])
+                        publish_payload["summary"] = stored["summary"]
+                        publish_payload["summary_model"] = stored["summary_model"]
+                        publish_payload["summarized_at"] = stored["summarized_at"]
             elif change.entity_type == "notebook":
                 _apply_document(db, "notebooks", change, now)
                 # The OCR worker re-derives this notebook's index (a delete

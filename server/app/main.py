@@ -17,6 +17,7 @@ from app.api.ocr import router as ocr_router
 from app.api.pairing import router as pairing_router
 from app.api.server_info import router as info_router
 from app.api.setup import router as setup_router
+from app.api.summaries import router as summaries_router
 from app.api.sync import router as sync_router
 from app.config import get_settings
 from app.db import init_db
@@ -56,6 +57,16 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         # callback keeps ocr_env from importing the worker (cycle).
         ocr_env.set_on_installed(start_worker_if_installed)
         start_worker_if_installed()
+        # Summarizer worker: same lifecycle contract as the OCR worker — an
+        # install finishing on THIS live server starts summarizing without a
+        # restart, and a boot with the env present starts the worker so
+        # regenerate requests are served immediately.
+        from app.services import summarizer_env, summarizer_worker
+
+        summarizer_env.set_on_installed(
+            summarizer_worker.start_worker_if_installed
+        )
+        summarizer_worker.start_worker_if_installed()
         if not is_setup_complete(db):
             print("")
             print("=" * 60)
@@ -84,11 +95,13 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             next(gen)
 
     yield
-    from app.services import ocr_env
+    from app.services import ocr_env, summarizer_env, summarizer_worker
     from app.services.ocr_worker import stop_worker
 
     ocr_env.set_on_installed(None)  # no worker starts after shutdown
     stop_worker()
+    summarizer_env.set_on_installed(None)
+    summarizer_worker.stop_worker()
     log.info("server.stopping")
 
 
@@ -110,6 +123,7 @@ def create_app() -> FastAPI:
     app.include_router(sync_router)   # /v1/devices, /v1/sync/pull, /v1/sync/push
     app.include_router(pairing_router)  # /v1/pair/*, /v1/devices/{id}/token
     app.include_router(ocr_router)    # /v1/ocr/*
+    app.include_router(summaries_router)  # /v1/summaries/*, /v1/dumps/{id}/summarize
 
     register_exception_handlers(app)
     return app

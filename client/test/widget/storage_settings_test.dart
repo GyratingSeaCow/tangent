@@ -427,11 +427,17 @@ void main() {
     expect(find.text('Chosen recordings'), findsOneWidget);
     expect(settings.saves, isEmpty);
     expect(secure.writes, 0);
+    // The import/export (2026-09-23) and AI-summaries (2026-09-24) sections
+    // sit above these switches; the taller page pushes them below the lazy
+    // ListView's build window, so each must be scrolled INTO EXISTENCE,
+    // not merely into view.
+    await t.scrollUntilVisible(
+      find.text('Tap to toggle'),
+      80,
+      scrollable: find.byType(Scrollable).first,
+    );
     await t.tap(find.text('Tap to toggle'));
     await pumpStorage(t);
-    // The import/export sections (2026-09-23) sit above these switches;
-    // the taller page pushes them below the lazy ListView's build window,
-    // so each must be scrolled INTO EXISTENCE, not merely into view.
     await t.scrollUntilVisible(
       find.text('Upload recordings only on Wi-Fi'),
       80,

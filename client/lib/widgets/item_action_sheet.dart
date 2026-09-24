@@ -31,6 +31,11 @@ enum ItemAction {
   /// Fetch a synced recording's audio from the server onto this device.
   /// Offered only when the server holds audio this device does not.
   download,
+
+  /// Ask the server to (re)generate this recording's AI summary. Offered
+  /// only on transcribed recordings while the AI-summaries capability is
+  /// enabled on this device.
+  regenerateSummary,
   select,
   delete,
 }
@@ -44,6 +49,7 @@ const Set<ItemAction> _destructive = <ItemAction>{ItemAction.delete};
 const List<ItemAction> _canonicalOrder = <ItemAction>[
   ItemAction.open,
   ItemAction.download,
+  ItemAction.regenerateSummary,
   ItemAction.rename,
   ItemAction.move,
   ItemAction.duplicate,
@@ -93,6 +99,8 @@ class ItemActionSheet extends StatelessWidget {
         return 'Export to PDF';
       case ItemAction.download:
         return 'Download audio';
+      case ItemAction.regenerateSummary:
+        return 'Regenerate summary';
       case ItemAction.select:
         return 'Select';
       case ItemAction.delete:
@@ -116,6 +124,8 @@ class ItemActionSheet extends StatelessWidget {
         return Icons.picture_as_pdf_outlined;
       case ItemAction.download:
         return Icons.download_for_offline_outlined;
+      case ItemAction.regenerateSummary:
+        return Icons.auto_awesome_outlined;
       case ItemAction.select:
         return Icons.check_circle_outline;
       case ItemAction.delete:

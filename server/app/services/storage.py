@@ -22,7 +22,11 @@ _DB_SUFFIXES = {".db", ".db-journal", ".db-wal", ".db-shm"}
 # Matched only at the TOP LEVEL of data_dir, where the server creates them.
 # A bare name test would also skip a user directory that happened to be
 # called "ocr-env" at any depth, silently under-reporting real storage.
-_SKIP_DIRS = {"ocr-env", "ocr-env.tmp"}
+#
+# The summarizer env (AI summaries: llama.cpp venv + ~2.5 GB GGUF) follows
+# the same rule, added in the SAME commit that creates the env — the OCR
+# arc shipped the walk-the-env bug and this list is where it was fixed.
+_SKIP_DIRS = {"ocr-env", "ocr-env.tmp", "summarizer-env", "summarizer-env.tmp"}
 
 
 def get_storage_used_bytes(data_dir: str) -> int:

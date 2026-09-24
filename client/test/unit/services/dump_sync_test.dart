@@ -96,6 +96,12 @@ RemoteChange dumpChange({
   bool audioKept = true,
   int? updatedAt,
   SyncOp op = SyncOp.upsert,
+  // Sentinel-defaulted: a test that says nothing builds an OLD-server
+  // payload with NO summary keys at all — the shape the eraser-protection
+  // rule is about. Passing a value (or an explicit null) adds the key.
+  Object? summary = _absent,
+  Object? summaryModel = _absent,
+  Object? summarizedAt = _absent,
 }) {
   final int now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
   return RemoteChange(
@@ -115,9 +121,16 @@ RemoteChange dumpChange({
             'audio_kept': audioKept,
             'created_at': now,
             'updated_at': updatedAt ?? now,
+            if (!identical(summary, _absent)) 'summary': summary,
+            if (!identical(summaryModel, _absent))
+              'summary_model': summaryModel,
+            if (!identical(summarizedAt, _absent))
+              'summarized_at': summarizedAt,
           },
   );
 }
+
+const Object _absent = Object();
 
 void main() {
   late LocalDb db;
@@ -314,6 +327,133 @@ void main() {
       await build(client).syncNow();
 
       expect(await db.getDumpRow('dump-shared-3'), isNull);
+    });
+  });
+
+  group('summary fields (server→client only)', () {
+    test('summary, model and timestamp travel with the recording', () async {
+      final client = _ScriptedClient(
+        incoming: <RemoteChange>[
+          dumpChange(
+            id: 'dump-sum-1',
+            mode: 'meeting',
+            transcript: 'we agreed to ship it',
+            summary: '## Summary\n- We agreed to ship it.',
+            summaryModel: 'Qwen_Qwen3-4B-Instruct-2507-Q4_K_M',
+            summarizedAt: 1758726000,
+          ),
+        ],
+      );
+
+      await build(client).syncNow();
+
+      final DumpRow row = (await db.getDumpRow('dump-sum-1'))!;
+      expect(row.summary, '## Summary\n- We agreed to ship it.');
+      expect(row.summaryModel, 'Qwen_Qwen3-4B-Instruct-2507-Q4_K_M');
+      expect(row.summarizedAt, 1758726000);
+    });
+
+    test('a payload with NO summary keys does not erase a stored summary',
+        () async {
+      // The absence-is-not-an-eraser rule (the notebooks.ink precedent): an
+      // older server, or any path that builds a narrower payload, must not
+      // wipe a summary this device already synced.
+      final client1 = _ScriptedClient(
+        incoming: <RemoteChange>[
+          dumpChange(
+            id: 'dump-sum-2',
+            summary: '## Summary\n- Kept.',
+            summaryModel: 'qwen',
+            summarizedAt: 100,
+          ),
+        ],
+      );
+      await build(client1).syncNow();
+      expect((await db.getDumpRow('dump-sum-2'))!.summary, isNotNull);
+
+      final client2 = _ScriptedClient(
+        incoming: <RemoteChange>[
+          dumpChange(id: 'dump-sum-2', seq: 2, title: 'Renamed elsewhere'),
+        ],
+      );
+      await build(client2).syncNow();
+
+      final DumpRow row = (await db.getDumpRow('dump-sum-2'))!;
+      expect(row.title, 'Renamed elsewhere');
+      expect(
+        row.summary,
+        '## Summary\n- Kept.',
+        reason: 'absence is not an eraser',
+      );
+      expect(row.summaryModel, 'qwen');
+      expect(row.summarizedAt, 100);
+    });
+
+    test('an EXPLICIT null from the server clears the summary', () async {
+      // Present-but-null is the server speaking with authority: no summary
+      // exists (e.g. regenerated away, or the server row truly has none).
+      final client1 = _ScriptedClient(
+        incoming: <RemoteChange>[
+          dumpChange(
+            id: 'dump-sum-3',
+            summary: 'old summary',
+            summaryModel: 'qwen',
+            summarizedAt: 100,
+          ),
+        ],
+      );
+      await build(client1).syncNow();
+
+      final client2 = _ScriptedClient(
+        incoming: <RemoteChange>[
+          dumpChange(
+            id: 'dump-sum-3',
+            seq: 2,
+            summary: null,
+            summaryModel: null,
+            summarizedAt: null,
+          ),
+        ],
+      );
+      await build(client2).syncNow();
+
+      final DumpRow row = (await db.getDumpRow('dump-sum-3'))!;
+      expect(row.summary, isNull);
+      expect(row.summaryModel, isNull);
+      expect(row.summarizedAt, isNull);
+    });
+
+    test('summary fields are never pushed', () async {
+      // Server→client only. The server ignores client-sent summary keys,
+      // but the client must not even send them: a payload carrying them
+      // invites some future server build to trust it.
+      final client1 = _ScriptedClient(
+        incoming: <RemoteChange>[
+          dumpChange(id: 'dump-sum-4', summary: 'server summary'),
+        ],
+      );
+      await build(client1).syncNow();
+      // A later local edit makes the row dirty and pushes it.
+      await db.renameDump(dumpId: 'dump-sum-4', title: 'Edited here');
+      await db.markDumpDirty('dump-sum-4');
+      // A remote-only row is excluded from push; make it this device's own.
+      await db.attachDownloadedAudio(
+        'dump-sum-4',
+        audioPath: '/local/audio.opus',
+        audioSizeBytes: 1,
+      );
+
+      final client2 = _ScriptedClient();
+      await build(client2).syncNow();
+
+      final Map<String, dynamic>? sent = client2.pushed
+          .where((c) => c['entity_id'] == 'dump-sum-4')
+          .firstOrNull;
+      expect(sent, isNotNull);
+      final payload = sent!['payload'] as Map<String, dynamic>;
+      expect(payload.containsKey('summary'), isFalse);
+      expect(payload.containsKey('summary_model'), isFalse);
+      expect(payload.containsKey('summarized_at'), isFalse);
     });
   });
 

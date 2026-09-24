@@ -68,6 +68,19 @@ class Dumps extends Table {
   /// not from anything local.
   BoolColumn get audioOnServer => boolean().nullable()();
 
+  /// Server-generated AI summary (markdown sections), or null when none has
+  /// been generated. These three columns flow server→client ONLY: they
+  /// arrive inside pulled dump payloads, the client never writes its own
+  /// values and never pushes them (the server ignores client-sent summary
+  /// keys anyway). Nullable because every dump predating v17 has none.
+  TextColumn get summary => text().nullable()();
+
+  /// The exact GGUF model stem that produced [summary]; null with it.
+  TextColumn get summaryModel => text().nullable()();
+
+  /// Unix seconds when the server generated [summary]; null with it.
+  IntColumn get summarizedAt => integer().nullable()();
+
   @override
   Set<Column> get primaryKey => {id};
 }
@@ -253,7 +266,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   LocalDb.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 16;
+  int get schemaVersion => 17;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -595,6 +608,30 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
               await m.addColumn(notebooks, notebooks.lastPenStyle);
             }
           }
+          if (from < 17) {
+            // AI summaries: three nullable, server-owned columns on dumps.
+            // Null means "no summary yet", which is what every existing row
+            // truthfully has, so there is nothing to backfill. Ask the
+            // database, never the version number — adding a column twice
+            // throws "duplicate column name" and bricks app launch (the
+            // recurring upgrade-path hazard every step above guards against).
+            final Set<String> dumpCols = <String>{
+              for (final QueryRow row
+                  in await customSelect('PRAGMA table_info(dumps)').get())
+                row.data['name'] as String,
+            };
+            if (dumpCols.isNotEmpty) {
+              if (!dumpCols.contains('summary')) {
+                await m.addColumn(dumps, dumps.summary);
+              }
+              if (!dumpCols.contains('summary_model')) {
+                await m.addColumn(dumps, dumps.summaryModel);
+              }
+              if (!dumpCols.contains('summarized_at')) {
+                await m.addColumn(dumps, dumps.summarizedAt);
+              }
+            }
+          }
         },
       );
 
@@ -780,7 +817,26 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     required DateTime createdAt,
     required DateTime updatedAt,
     required int seq,
+    // Summary fields are server-owned and travel server→client only. The
+    // sentinel default distinguishes "the payload did not carry the key"
+    // (an older server — keep whatever this device already holds; absence
+    // is NOT an eraser, mirroring notebooks.ink handling) from "the server
+    // explicitly sent null" (authoritative: no summary exists).
+    Object? summary = absentSummaryField,
+    Object? summaryModel = absentSummaryField,
+    Object? summarizedAt = absentSummaryField,
   }) async {
+    final Value<String?> summaryValue = identical(summary, absentSummaryField)
+        ? const Value<String?>.absent()
+        : Value<String?>(summary as String?);
+    final Value<String?> summaryModelValue =
+        identical(summaryModel, absentSummaryField)
+            ? const Value<String?>.absent()
+            : Value<String?>(summaryModel as String?);
+    final Value<int?> summarizedAtValue =
+        identical(summarizedAt, absentSummaryField)
+            ? const Value<int?>.absent()
+            : Value<int?>(summarizedAt as int?);
     final DumpRow? existing = await getDumpRow(id);
     if (existing == null) {
       // Re-creating a row the server still holds. If a COMPLETED local
@@ -818,6 +874,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
           syncStatus: 'synced',
           remoteOnly: const Value<bool?>(true),
           audioOnServer: Value<bool?>(audioOnServer),
+          summary: summaryValue,
+          summaryModel: summaryModelValue,
+          summarizedAt: summarizedAtValue,
           syncedSeq: Value(seq),
         ),
         mode: InsertMode.insertOrReplace,
@@ -839,11 +898,18 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
             : const Value('completed'),
         updatedAt: Value(updatedAt),
         audioOnServer: Value<bool?>(audioOnServer),
+        summary: summaryValue,
+        summaryModel: summaryModelValue,
+        summarizedAt: summarizedAtValue,
         syncDirty: const Value<bool?>(false),
         syncedSeq: Value(seq),
       ),
     );
   }
+
+  /// Sentinel distinguishing "payload had no summary keys" (older server —
+  /// keep the stored values) from "server sent null" for [applyRemoteDump].
+  static const Object absentSummaryField = Object();
 
   /// Soft-deletes a recording because a peer deleted it.
   ///

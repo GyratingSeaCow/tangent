@@ -861,6 +861,43 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
           ),
         ],
         const SizedBox(height: 16),
+        // Task 4: the server-generated AI summary, BELOW the transcript per
+        // the spec. Server-owned, arrives via normal dump sync; absent-safe —
+        // a null/blank summary renders nothing at all. The subtle header
+        // (label-sized, muted colour) keeps it visually secondary to the
+        // transcript and meeting notes. Rendered like meeting notes
+        // (SelectableText in a Card): the app has no markdown widget, and
+        // the summary's ## sections read fine as plain text.
+        if (row.summary != null && row.summary!.trim().isNotEmpty) ...[
+          Row(
+            key: ValueKey('ai-summary-header-${widget.dumpId}'),
+            children: [
+              Icon(
+                Icons.auto_awesome,
+                size: 14,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+              const SizedBox(width: 6),
+              Text(
+                'AI summary',
+                style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: SelectableText(
+                row.summary!,
+                key: ValueKey('ai-summary-body-${widget.dumpId}'),
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+        ],
         if (operationActive || transcription == TranscriptionStatus.failed) ...[
           _ServerTranscriptionProgressPanel(
             row: row,

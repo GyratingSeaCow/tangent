@@ -99,6 +99,9 @@ def run_job_inline(job_id: str, audio_path: str) -> None:
     # Open a fresh connection for the background work
     gen = get_db()
     db = next(gen)
+    # Set in the success path: the dump whose finished transcription may
+    # auto-trigger a summarize (meeting mode only; gated in the worker).
+    success_dump: dict | None = None
     try:
         # Mark as running
         db.execute(
@@ -174,6 +177,15 @@ def run_job_inline(job_id: str, audio_path: str) -> None:
             except Exception:
                 # A feed failure must not fail the finished transcription.
                 log.exception("job.sync_publish_failed", job_id=job_id)
+            if dump_row is not None:
+                trigger_row = db.execute(
+                    "SELECT dump_id FROM jobs WHERE id = ?", (job_id,)
+                ).fetchone()
+                if trigger_row is not None:
+                    success_dump = {
+                        "dump_id": trigger_row["dump_id"],
+                        "mode": dump_row["mode"],
+                    }
             log.info(
                 "job.completed",
                 job_id=job_id,
@@ -192,6 +204,22 @@ def run_job_inline(job_id: str, audio_path: str) -> None:
             )
 
         db.commit()
+
+        # Auto-trigger: a finished MEETING transcription enqueues a summarize
+        # when the summarizer is installed and enabled. Fires only after the
+        # commit above so the worker (own connection) observes the committed
+        # transcript; a trigger failure must never fail the finished job.
+        if success_dump is not None:
+            try:
+                from app.services import summarizer_worker
+
+                summarizer_worker.maybe_enqueue_auto(
+                    db, success_dump["dump_id"], success_dump["mode"]
+                )
+            except Exception:
+                log.exception(
+                    "job.summary_trigger_failed", job_id=job_id
+                )
     finally:
         with contextlib.suppress(StopIteration):
             next(gen)

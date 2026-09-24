@@ -185,6 +185,24 @@ class $DumpsTable extends Dumps with TableInfo<$DumpsTable, DumpRow> {
       requiredDuringInsert: false,
       defaultConstraints: GeneratedColumn.constraintIsAlways(
           'CHECK ("audio_on_server" IN (0, 1))'));
+  static const VerificationMeta _summaryMeta =
+      const VerificationMeta('summary');
+  @override
+  late final GeneratedColumn<String> summary = GeneratedColumn<String>(
+      'summary', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _summaryModelMeta =
+      const VerificationMeta('summaryModel');
+  @override
+  late final GeneratedColumn<String> summaryModel = GeneratedColumn<String>(
+      'summary_model', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _summarizedAtMeta =
+      const VerificationMeta('summarizedAt');
+  @override
+  late final GeneratedColumn<int> summarizedAt = GeneratedColumn<int>(
+      'summarized_at', aliasedName, true,
+      type: DriftSqlType.int, requiredDuringInsert: false);
   @override
   List<GeneratedColumn> get $columns => [
         id,
@@ -212,7 +230,10 @@ class $DumpsTable extends Dumps with TableInfo<$DumpsTable, DumpRow> {
         syncDirty,
         syncedSeq,
         remoteOnly,
-        audioOnServer
+        audioOnServer,
+        summary,
+        summaryModel,
+        summarizedAt
       ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -380,6 +401,22 @@ class $DumpsTable extends Dumps with TableInfo<$DumpsTable, DumpRow> {
           audioOnServer.isAcceptableOrUnknown(
               data['audio_on_server']!, _audioOnServerMeta));
     }
+    if (data.containsKey('summary')) {
+      context.handle(_summaryMeta,
+          summary.isAcceptableOrUnknown(data['summary']!, _summaryMeta));
+    }
+    if (data.containsKey('summary_model')) {
+      context.handle(
+          _summaryModelMeta,
+          summaryModel.isAcceptableOrUnknown(
+              data['summary_model']!, _summaryModelMeta));
+    }
+    if (data.containsKey('summarized_at')) {
+      context.handle(
+          _summarizedAtMeta,
+          summarizedAt.isAcceptableOrUnknown(
+              data['summarized_at']!, _summarizedAtMeta));
+    }
     return context;
   }
 
@@ -445,6 +482,12 @@ class $DumpsTable extends Dumps with TableInfo<$DumpsTable, DumpRow> {
           .read(DriftSqlType.bool, data['${effectivePrefix}remote_only']),
       audioOnServer: attachedDatabase.typeMapping
           .read(DriftSqlType.bool, data['${effectivePrefix}audio_on_server']),
+      summary: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}summary']),
+      summaryModel: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}summary_model']),
+      summarizedAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}summarized_at']),
     );
   }
 
@@ -501,6 +544,19 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
   /// the bytes can offer to download them. Comes from the peer's payload,
   /// not from anything local.
   final bool? audioOnServer;
+
+  /// Server-generated AI summary (markdown sections), or null when none has
+  /// been generated. These three columns flow server→client ONLY: they
+  /// arrive inside pulled dump payloads, the client never writes its own
+  /// values and never pushes them (the server ignores client-sent summary
+  /// keys anyway). Nullable because every dump predating v17 has none.
+  final String? summary;
+
+  /// The exact GGUF model stem that produced [summary]; null with it.
+  final String? summaryModel;
+
+  /// Unix seconds when the server generated [summary]; null with it.
+  final int? summarizedAt;
   const DumpRow(
       {required this.id,
       required this.createdAt,
@@ -527,7 +583,10 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
       this.syncDirty,
       this.syncedSeq,
       this.remoteOnly,
-      this.audioOnServer});
+      this.audioOnServer,
+      this.summary,
+      this.summaryModel,
+      this.summarizedAt});
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -589,6 +648,15 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
     if (!nullToAbsent || audioOnServer != null) {
       map['audio_on_server'] = Variable<bool>(audioOnServer);
     }
+    if (!nullToAbsent || summary != null) {
+      map['summary'] = Variable<String>(summary);
+    }
+    if (!nullToAbsent || summaryModel != null) {
+      map['summary_model'] = Variable<String>(summaryModel);
+    }
+    if (!nullToAbsent || summarizedAt != null) {
+      map['summarized_at'] = Variable<int>(summarizedAt);
+    }
     return map;
   }
 
@@ -648,6 +716,15 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
       audioOnServer: audioOnServer == null && nullToAbsent
           ? const Value.absent()
           : Value(audioOnServer),
+      summary: summary == null && nullToAbsent
+          ? const Value.absent()
+          : Value(summary),
+      summaryModel: summaryModel == null && nullToAbsent
+          ? const Value.absent()
+          : Value(summaryModel),
+      summarizedAt: summarizedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(summarizedAt),
     );
   }
 
@@ -689,6 +766,9 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
       syncedSeq: serializer.fromJson<int?>(json['syncedSeq']),
       remoteOnly: serializer.fromJson<bool?>(json['remoteOnly']),
       audioOnServer: serializer.fromJson<bool?>(json['audioOnServer']),
+      summary: serializer.fromJson<String?>(json['summary']),
+      summaryModel: serializer.fromJson<String?>(json['summaryModel']),
+      summarizedAt: serializer.fromJson<int?>(json['summarizedAt']),
     );
   }
   @override
@@ -725,6 +805,9 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
       'syncedSeq': serializer.toJson<int?>(syncedSeq),
       'remoteOnly': serializer.toJson<bool?>(remoteOnly),
       'audioOnServer': serializer.toJson<bool?>(audioOnServer),
+      'summary': serializer.toJson<String?>(summary),
+      'summaryModel': serializer.toJson<String?>(summaryModel),
+      'summarizedAt': serializer.toJson<int?>(summarizedAt),
     };
   }
 
@@ -754,7 +837,10 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
           Value<bool?> syncDirty = const Value.absent(),
           Value<int?> syncedSeq = const Value.absent(),
           Value<bool?> remoteOnly = const Value.absent(),
-          Value<bool?> audioOnServer = const Value.absent()}) =>
+          Value<bool?> audioOnServer = const Value.absent(),
+          Value<String?> summary = const Value.absent(),
+          Value<String?> summaryModel = const Value.absent(),
+          Value<int?> summarizedAt = const Value.absent()}) =>
       DumpRow(
         id: id ?? this.id,
         createdAt: createdAt ?? this.createdAt,
@@ -797,6 +883,11 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
         remoteOnly: remoteOnly.present ? remoteOnly.value : this.remoteOnly,
         audioOnServer:
             audioOnServer.present ? audioOnServer.value : this.audioOnServer,
+        summary: summary.present ? summary.value : this.summary,
+        summaryModel:
+            summaryModel.present ? summaryModel.value : this.summaryModel,
+        summarizedAt:
+            summarizedAt.present ? summarizedAt.value : this.summarizedAt,
       );
   DumpRow copyWithCompanion(DumpsCompanion data) {
     return DumpRow(
@@ -857,6 +948,13 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
       audioOnServer: data.audioOnServer.present
           ? data.audioOnServer.value
           : this.audioOnServer,
+      summary: data.summary.present ? data.summary.value : this.summary,
+      summaryModel: data.summaryModel.present
+          ? data.summaryModel.value
+          : this.summaryModel,
+      summarizedAt: data.summarizedAt.present
+          ? data.summarizedAt.value
+          : this.summarizedAt,
     );
   }
 
@@ -888,7 +986,10 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
           ..write('syncDirty: $syncDirty, ')
           ..write('syncedSeq: $syncedSeq, ')
           ..write('remoteOnly: $remoteOnly, ')
-          ..write('audioOnServer: $audioOnServer')
+          ..write('audioOnServer: $audioOnServer, ')
+          ..write('summary: $summary, ')
+          ..write('summaryModel: $summaryModel, ')
+          ..write('summarizedAt: $summarizedAt')
           ..write(')'))
         .toString();
   }
@@ -920,7 +1021,10 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
         syncDirty,
         syncedSeq,
         remoteOnly,
-        audioOnServer
+        audioOnServer,
+        summary,
+        summaryModel,
+        summarizedAt
       ]);
   @override
   bool operator ==(Object other) =>
@@ -951,7 +1055,10 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
           other.syncDirty == this.syncDirty &&
           other.syncedSeq == this.syncedSeq &&
           other.remoteOnly == this.remoteOnly &&
-          other.audioOnServer == this.audioOnServer);
+          other.audioOnServer == this.audioOnServer &&
+          other.summary == this.summary &&
+          other.summaryModel == this.summaryModel &&
+          other.summarizedAt == this.summarizedAt);
 }
 
 class DumpsCompanion extends UpdateCompanion<DumpRow> {
@@ -981,6 +1088,9 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
   final Value<int?> syncedSeq;
   final Value<bool?> remoteOnly;
   final Value<bool?> audioOnServer;
+  final Value<String?> summary;
+  final Value<String?> summaryModel;
+  final Value<int?> summarizedAt;
   final Value<int> rowid;
   const DumpsCompanion({
     this.id = const Value.absent(),
@@ -1009,6 +1119,9 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
     this.syncedSeq = const Value.absent(),
     this.remoteOnly = const Value.absent(),
     this.audioOnServer = const Value.absent(),
+    this.summary = const Value.absent(),
+    this.summaryModel = const Value.absent(),
+    this.summarizedAt = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   DumpsCompanion.insert({
@@ -1038,6 +1151,9 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
     this.syncedSeq = const Value.absent(),
     this.remoteOnly = const Value.absent(),
     this.audioOnServer = const Value.absent(),
+    this.summary = const Value.absent(),
+    this.summaryModel = const Value.absent(),
+    this.summarizedAt = const Value.absent(),
     this.rowid = const Value.absent(),
   })  : id = Value(id),
         createdAt = Value(createdAt),
@@ -1075,6 +1191,9 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
     Expression<int>? syncedSeq,
     Expression<bool>? remoteOnly,
     Expression<bool>? audioOnServer,
+    Expression<String>? summary,
+    Expression<String>? summaryModel,
+    Expression<int>? summarizedAt,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -1111,6 +1230,9 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
       if (syncedSeq != null) 'synced_seq': syncedSeq,
       if (remoteOnly != null) 'remote_only': remoteOnly,
       if (audioOnServer != null) 'audio_on_server': audioOnServer,
+      if (summary != null) 'summary': summary,
+      if (summaryModel != null) 'summary_model': summaryModel,
+      if (summarizedAt != null) 'summarized_at': summarizedAt,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -1142,6 +1264,9 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
       Value<int?>? syncedSeq,
       Value<bool?>? remoteOnly,
       Value<bool?>? audioOnServer,
+      Value<String?>? summary,
+      Value<String?>? summaryModel,
+      Value<int?>? summarizedAt,
       Value<int>? rowid}) {
     return DumpsCompanion(
       id: id ?? this.id,
@@ -1174,6 +1299,9 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
       syncedSeq: syncedSeq ?? this.syncedSeq,
       remoteOnly: remoteOnly ?? this.remoteOnly,
       audioOnServer: audioOnServer ?? this.audioOnServer,
+      summary: summary ?? this.summary,
+      summaryModel: summaryModel ?? this.summaryModel,
+      summarizedAt: summarizedAt ?? this.summarizedAt,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -1263,6 +1391,15 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
     if (audioOnServer.present) {
       map['audio_on_server'] = Variable<bool>(audioOnServer.value);
     }
+    if (summary.present) {
+      map['summary'] = Variable<String>(summary.value);
+    }
+    if (summaryModel.present) {
+      map['summary_model'] = Variable<String>(summaryModel.value);
+    }
+    if (summarizedAt.present) {
+      map['summarized_at'] = Variable<int>(summarizedAt.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -1298,6 +1435,9 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
           ..write('syncedSeq: $syncedSeq, ')
           ..write('remoteOnly: $remoteOnly, ')
           ..write('audioOnServer: $audioOnServer, ')
+          ..write('summary: $summary, ')
+          ..write('summaryModel: $summaryModel, ')
+          ..write('summarizedAt: $summarizedAt, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -5965,6 +6105,9 @@ typedef $$DumpsTableCreateCompanionBuilder = DumpsCompanion Function({
   Value<int?> syncedSeq,
   Value<bool?> remoteOnly,
   Value<bool?> audioOnServer,
+  Value<String?> summary,
+  Value<String?> summaryModel,
+  Value<int?> summarizedAt,
   Value<int> rowid,
 });
 typedef $$DumpsTableUpdateCompanionBuilder = DumpsCompanion Function({
@@ -5994,6 +6137,9 @@ typedef $$DumpsTableUpdateCompanionBuilder = DumpsCompanion Function({
   Value<int?> syncedSeq,
   Value<bool?> remoteOnly,
   Value<bool?> audioOnServer,
+  Value<String?> summary,
+  Value<String?> summaryModel,
+  Value<int?> summarizedAt,
   Value<int> rowid,
 });
 
@@ -6111,6 +6257,15 @@ class $$DumpsTableFilterComposer extends Composer<_$LocalDb, $DumpsTable> {
 
   ColumnFilters<bool> get audioOnServer => $composableBuilder(
       column: $table.audioOnServer, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get summary => $composableBuilder(
+      column: $table.summary, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get summaryModel => $composableBuilder(
+      column: $table.summaryModel, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get summarizedAt => $composableBuilder(
+      column: $table.summarizedAt, builder: (column) => ColumnFilters(column));
 
   Expression<bool> syncQueueRefs(
       Expression<bool> Function($$SyncQueueTableFilterComposer f) f) {
@@ -6233,6 +6388,17 @@ class $$DumpsTableOrderingComposer extends Composer<_$LocalDb, $DumpsTable> {
   ColumnOrderings<bool> get audioOnServer => $composableBuilder(
       column: $table.audioOnServer,
       builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get summary => $composableBuilder(
+      column: $table.summary, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get summaryModel => $composableBuilder(
+      column: $table.summaryModel,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get summarizedAt => $composableBuilder(
+      column: $table.summarizedAt,
+      builder: (column) => ColumnOrderings(column));
 }
 
 class $$DumpsTableAnnotationComposer extends Composer<_$LocalDb, $DumpsTable> {
@@ -6321,6 +6487,15 @@ class $$DumpsTableAnnotationComposer extends Composer<_$LocalDb, $DumpsTable> {
   GeneratedColumn<bool> get audioOnServer => $composableBuilder(
       column: $table.audioOnServer, builder: (column) => column);
 
+  GeneratedColumn<String> get summary =>
+      $composableBuilder(column: $table.summary, builder: (column) => column);
+
+  GeneratedColumn<String> get summaryModel => $composableBuilder(
+      column: $table.summaryModel, builder: (column) => column);
+
+  GeneratedColumn<int> get summarizedAt => $composableBuilder(
+      column: $table.summarizedAt, builder: (column) => column);
+
   Expression<T> syncQueueRefs<T extends Object>(
       Expression<T> Function($$SyncQueueTableAnnotationComposer a) f) {
     final $$SyncQueueTableAnnotationComposer composer = $composerBuilder(
@@ -6392,6 +6567,9 @@ class $$DumpsTableTableManager extends RootTableManager<
             Value<int?> syncedSeq = const Value.absent(),
             Value<bool?> remoteOnly = const Value.absent(),
             Value<bool?> audioOnServer = const Value.absent(),
+            Value<String?> summary = const Value.absent(),
+            Value<String?> summaryModel = const Value.absent(),
+            Value<int?> summarizedAt = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               DumpsCompanion(
@@ -6421,6 +6599,9 @@ class $$DumpsTableTableManager extends RootTableManager<
             syncedSeq: syncedSeq,
             remoteOnly: remoteOnly,
             audioOnServer: audioOnServer,
+            summary: summary,
+            summaryModel: summaryModel,
+            summarizedAt: summarizedAt,
             rowid: rowid,
           ),
           createCompanionCallback: ({
@@ -6450,6 +6631,9 @@ class $$DumpsTableTableManager extends RootTableManager<
             Value<int?> syncedSeq = const Value.absent(),
             Value<bool?> remoteOnly = const Value.absent(),
             Value<bool?> audioOnServer = const Value.absent(),
+            Value<String?> summary = const Value.absent(),
+            Value<String?> summaryModel = const Value.absent(),
+            Value<int?> summarizedAt = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               DumpsCompanion.insert(
@@ -6479,6 +6663,9 @@ class $$DumpsTableTableManager extends RootTableManager<
             syncedSeq: syncedSeq,
             remoteOnly: remoteOnly,
             audioOnServer: audioOnServer,
+            summary: summary,
+            summaryModel: summaryModel,
+            summarizedAt: summarizedAt,
             rowid: rowid,
           ),
           withReferenceMapper: (p0) => p0
