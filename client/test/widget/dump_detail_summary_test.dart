@@ -193,4 +193,30 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump(const Duration(milliseconds: 1));
   });
+
+  testWidgets(
+      'absent-safe: a dump whose summary is only whitespace renders no AI '
+      'summary header or body', (tester) async {
+    useHandsetViewport(tester);
+    final temp = Directory.systemTemp.createTempSync('tangent-summary-blank-');
+    addTearDown(() => temp.deleteSync(recursive: true));
+    final storage = AudioStorage.test(temp);
+    final row = meetingRow(storage, 'sum-3', summary: '   \n');
+    await mountDetail(tester, row);
+
+    expect(
+      find.byKey(const ValueKey('ai-summary-header-sum-3')),
+      findsNothing,
+      reason: 'a blank/whitespace summary must render exactly as before '
+          'the feature — the guard trims, not just null-checks',
+    );
+    expect(find.text('AI summary'), findsNothing);
+    expect(
+      find.byKey(const ValueKey('ai-summary-body-sum-3')),
+      findsNothing,
+    );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(milliseconds: 1));
+  });
 }
