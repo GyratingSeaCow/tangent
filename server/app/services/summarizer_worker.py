@@ -89,7 +89,7 @@ class _InferChild:
     must NOT be respawned by an in-flight request.
     """
 
-    def __init__(self, argv: list[str]) -> None:
+    def __init__(self, argv: list[str], env: dict | None = None) -> None:
         self.closed = False
         self.proc = subprocess.Popen(
             argv,
@@ -100,6 +100,7 @@ class _InferChild:
             encoding="utf-8",
             errors="replace",
             bufsize=1,
+            env=env,
         )
         self._lines: queue.Queue[str | None] = queue.Queue()
         self._stderr_tail: collections.deque[str] = collections.deque(maxlen=20)
@@ -200,7 +201,11 @@ def _spawn_child() -> _InferChild:
     if py is None:
         raise RuntimeError("summarizer environment is not installed")
     try:
-        return _InferChild([py, str(_infer_script()), "--serve"])
+        # child_env: the SAME environment the installer's selftest verified
+        # (LD_LIBRARY_PATH → the venv's vendored CUDA libs, when present).
+        return _InferChild(
+            [py, str(_infer_script()), "--serve"], env=summarizer_env.child_env(py)
+        )
     except OSError as exc:
         raise RuntimeError(
             f"failed to start summarize_infer --serve: {exc}"

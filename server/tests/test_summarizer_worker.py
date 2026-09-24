@@ -10,7 +10,9 @@ exactly like the ocr_worker tests.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -398,6 +400,45 @@ def test_run_inference_surfaces_child_death_after_one_restart(
     with pytest.raises(RuntimeError, match="exited 3"):
         summarizer_worker.run_inference("d-1", "t")
     assert _spawns(spawn_log) == 2, "one restart attempt, then give up"
+
+
+def test_serve_child_spawns_with_the_env_helpers_ld_library_path(
+    monkeypatch, tmp_path
+):
+    """The worker's serve child must run under summarizer_env.child_env —
+    the SAME env the installer's selftest verified. Without it the cu124
+    llama-cpp wheel dies loading libcudart.so.12 (the live-E2E failure:
+    the container has no system CUDA runtime; the venv vendors its own)."""
+    spawn_log = _install_serve_stub(monkeypatch, tmp_path, _SERVE_FOREVER)
+
+    # A fake installed venv carrying vendored nvidia libs. Its python never
+    # executes: the Popen wrapper swaps the real interpreter back in AFTER
+    # the worker has built the spawn env from this path.
+    venv = tmp_path / "summarizer-env" / "venv"
+    lib = venv / "lib" / "python3.11" / "site-packages" / "nvidia" / "cublas" / "lib"
+    lib.mkdir(parents=True)
+    fake_py = venv / "bin" / "python"
+    fake_py.parent.mkdir(parents=True)
+    fake_py.write_text("")
+    monkeypatch.setattr(
+        summarizer_worker.summarizer_env, "python_path", lambda: str(fake_py)
+    )
+
+    recorded: dict = {}
+    real_popen = subprocess.Popen
+
+    def recording_popen(argv, **kwargs):
+        recorded["env"] = kwargs.get("env")
+        return real_popen([sys.executable, *argv[1:]], **kwargs)
+
+    monkeypatch.setattr(summarizer_worker.subprocess, "Popen", recording_popen)
+
+    assert summarizer_worker.run_inference("d-1", "Sam: hi") == "stub summary"
+    assert _spawns(spawn_log) == 1
+    assert recorded["env"] is not None, "child must not inherit the bare server env"
+    assert str(lib) in recorded["env"]["LD_LIBRARY_PATH"].split(os.pathsep), (
+        "the vendored nvidia lib dir must reach the serve child's LD_LIBRARY_PATH"
+    )
 
 
 def test_stop_worker_kills_the_persistent_child(monkeypatch, tmp_path):

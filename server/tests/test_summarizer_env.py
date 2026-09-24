@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import threading
 import time
 from pathlib import Path
@@ -291,6 +292,7 @@ class RecordingRunner:
         fail_argv_containing: str | None = None,
         block: threading.Event | None = None,
         weights_size: int | None = None,
+        fail_verify_times: int = 0,
     ) -> None:
         self.steps: list[summarizer_env.InstallStep] = []
         self.progress_seen: list[dict] = []
@@ -299,6 +301,8 @@ class RecordingRunner:
         self.fail_argv_containing = fail_argv_containing
         self.block = block
         self.weights_size = weights_size
+        self.fail_verify_times = fail_verify_times
+        self._verify_failures = 0
 
     def __call__(self, step: summarizer_env.InstallStep) -> None:
         self.steps.append(step)
@@ -306,6 +310,13 @@ class RecordingRunner:
         self.final_dir_seen.append(summarizer_env.env_dir().exists())
         if self.block is not None:
             assert self.block.wait(timeout=10), "test never released the blocked runner"
+        if step.phase == "verify" and self.fail_verify_times > 0:
+            self.fail_verify_times -= 1
+            self._verify_failures += 1
+            raise RuntimeError(
+                f"selftest exited 1 (attempt {self._verify_failures}): "
+                "libcudart.so.12 missing"
+            )
         if step.phase == self.fail_on_phase:
             raise RuntimeError(f"boom during {step.phase}")
         if self.fail_argv_containing and any(
@@ -383,6 +394,101 @@ def test_selftest_failure_leaves_no_env_and_phase_failed(temp_data_dir, monkeypa
     assert not summarizer_env.install_running()
 
 
+# ---------------------------------------------------------------------------
+# verify-time CPU downgrade (the live-E2E lesson: a CUDA wheel that INSTALLS
+# fine can still fail its selftest — e.g. missing driver/runtime pieces.
+# CPU is the guaranteed baseline, so the installer retries once on CPU.)
+# ---------------------------------------------------------------------------
+
+
+class _EnvWarningLog:
+    """Records log.warning events on summarizer_env; other levels no-op."""
+
+    def __init__(self) -> None:
+        self.warnings: list[tuple[str, dict]] = []
+
+    def __getattr__(self, name):
+        def _record(event, **kw):
+            if name == "warning":
+                self.warnings.append((event, kw))
+
+        return _record
+
+
+def test_cuda_selftest_failure_downgrades_to_cpu_wheel_once_and_succeeds(
+    temp_data_dir, monkeypatch, small_weights
+):
+    monkeypatch.setattr(summarizer_env, "probe_gpu_visible", lambda: True)
+    fake_log = _EnvWarningLog()
+    monkeypatch.setattr(summarizer_env, "log", fake_log)
+    runner = RecordingRunner(fail_verify_times=1)
+
+    summarizer_env.install(runner=runner)  # must NOT raise — CPU retry saves it
+
+    phases = [s.phase for s in runner.steps]
+    assert phases == ["venv", "runtime", "weights", "verify", "runtime", "verify"], (
+        "one CPU reinstall + one re-selftest, nothing else"
+    )
+    downloads = [s for s in runner.steps if s.kind == "download"]
+    assert len(downloads) == 1, "the retry must NOT re-download the weights"
+
+    retry_pip = runner.steps[4]
+    assert retry_pip.kind == "pip"
+    assert any(summarizer_env.CPU_WHEEL_INDEX in a for a in retry_pip.argv)
+    assert "--force-reinstall" in retry_pip.argv, (
+        "the CUDA wheel is already installed — the CPU wheel must replace it"
+    )
+    assert not any("nvidia-" in a for a in retry_pip.argv), (
+        "the CPU retry must not reinstall CUDA runtime wheels"
+    )
+
+    assert summarizer_env.progress()["phase"] == "done"
+    marker = json.loads(
+        (summarizer_env.env_dir() / "verified.json").read_text(encoding="utf-8")
+    )
+    assert marker["runtime"] == "cpu", "the downgrade must be recorded"
+    assert any(
+        e == "summarizer_env.cuda_selftest_failed_downgrading"
+        for e, _ in fake_log.warnings
+    ), "the downgrade must be logged"
+
+
+def test_both_selftests_failing_fails_install_with_the_cpu_error(
+    temp_data_dir, monkeypatch, small_weights
+):
+    monkeypatch.setattr(summarizer_env, "probe_gpu_visible", lambda: True)
+    runner = RecordingRunner(fail_verify_times=2)
+
+    with pytest.raises(summarizer_env.InstallError):
+        summarizer_env.install(runner=runner)
+
+    phases = [s.phase for s in runner.steps]
+    assert phases == ["venv", "runtime", "weights", "verify", "runtime", "verify"], (
+        "exactly ONE downgrade retry — never a loop"
+    )
+    prog = summarizer_env.progress()
+    assert prog["phase"] == "failed"
+    assert "attempt 2" in prog["detail"], (
+        "the CPU selftest's error (the final word) must be the one surfaced"
+    )
+    assert not summarizer_env.env_dir().exists()
+    assert not summarizer_env.tmp_env_dir().exists()
+
+
+def test_cpu_selftest_failure_never_triggers_a_downgrade_retry(
+    temp_data_dir, monkeypatch, small_weights
+):
+    """No GPU → the runtime already IS the guaranteed baseline; a selftest
+    failure is final (no reinstall to retry with)."""
+    monkeypatch.setattr(summarizer_env, "probe_gpu_visible", lambda: False)
+    runner = RecordingRunner(fail_verify_times=2)
+
+    with pytest.raises(summarizer_env.InstallError):
+        summarizer_env.install(runner=runner)
+
+    assert [s.phase for s in runner.steps] == ["venv", "runtime", "weights", "verify"]
+
+
 def test_weights_size_verification_uses_the_real_floor(temp_data_dir, monkeypatch):
     """A sparse file JUST over the real 2.4 GB floor passes verification.
 
@@ -427,6 +533,37 @@ def test_gpu_visible_attempts_cuda_then_falls_back_to_cpu(temp_data_dir, monkeyp
     )
     assert marker["runtime"] == "cpu"
     assert summarizer_env.progress()["phase"] == "done"
+
+
+def test_cuda_install_also_installs_vendored_cuda_runtime_packages(
+    temp_data_dir, monkeypatch, small_weights
+):
+    """The container ships no CUDA runtime — the cu124 wheel needs libcudart
+    AND libcublas, so the CUDA pip step must vendor both nvidia wheels into
+    the venv (the live-E2E failure: libcudart.so.12 not found)."""
+    monkeypatch.setattr(summarizer_env, "probe_gpu_visible", lambda: True)
+    runner = RecordingRunner()
+    summarizer_env.install(runner=runner)
+
+    cuda_step = next(
+        s
+        for s in runner.steps
+        if s.phase == "runtime" and any(summarizer_env.CUDA_WHEEL_INDEX in a for a in s.argv)
+    )
+    for pkg in ("nvidia-cuda-runtime-cu12", "nvidia-cublas-cu12"):
+        assert pkg in cuda_step.argv, f"CUDA install must also pip-install {pkg}"
+
+
+def test_cpu_install_never_installs_cuda_runtime_packages(
+    temp_data_dir, monkeypatch, small_weights
+):
+    monkeypatch.setattr(summarizer_env, "probe_gpu_visible", lambda: False)
+    runner = RecordingRunner()
+    summarizer_env.install(runner=runner)
+    for step in runner.steps:
+        assert not any("nvidia-" in a for a in step.argv), (
+            "CPU installs must not drag in CUDA runtime wheels"
+        )
 
 
 def test_gpu_visible_cuda_success_records_cuda_runtime(temp_data_dir, monkeypatch, small_weights):
@@ -579,3 +716,86 @@ def test_infer_script_exists_at_the_path_the_installer_verifies():
         Path(summarize_infer.__file__).resolve()
         == summarizer_env._summarize_infer_path().resolve()
     )
+
+
+# ---------------------------------------------------------------------------
+# summarizer_env: child_env (LD_LIBRARY_PATH for pip-vendored CUDA libs)
+# ---------------------------------------------------------------------------
+#
+# The live-container failure this guards: the cu124 llama-cpp wheel links
+# libcudart.so.12/libcublas, but the tangent-server image ships NO CUDA
+# runtime (whisper works only because ctranslate2 vendors its own libs).
+# The venv carries nvidia-cuda-runtime-cu12 + nvidia-cublas-cu12 instead,
+# and every child process (installer selftest AND worker serve child) needs
+# LD_LIBRARY_PATH pointing at those vendored lib dirs.
+
+
+def _make_nvidia_libs(venv: Path) -> list[Path]:
+    """Create the pip-vendored nvidia lib layout under a fake venv."""
+    site = venv / "lib" / "python3.11" / "site-packages" / "nvidia"
+    dirs = [site / "cuda_runtime" / "lib", site / "cublas" / "lib"]
+    for d in dirs:
+        d.mkdir(parents=True)
+    return dirs
+
+
+def test_child_env_prepends_nvidia_lib_dirs_to_existing_ld_library_path(
+    tmp_path, monkeypatch
+):
+    venv = tmp_path / "venv"
+    lib_dirs = _make_nvidia_libs(venv)
+    (venv / "bin").mkdir()
+    py = venv / "bin" / "python"
+    py.write_text("")
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/existing/libs")
+
+    env = summarizer_env.child_env(str(py))
+
+    parts = env["LD_LIBRARY_PATH"].split(os.pathsep)
+    assert parts[-1] == "/existing/libs", "existing LD_LIBRARY_PATH must survive, last"
+    assert sorted(parts[:-1]) == sorted(str(d) for d in lib_dirs), (
+        "every vendored nvidia lib dir must be prepended"
+    )
+
+
+def test_child_env_without_nvidia_dirs_leaves_ld_library_path_alone(
+    tmp_path, monkeypatch
+):
+    venv = tmp_path / "venv"
+    (venv / "bin").mkdir(parents=True)
+    py = venv / "bin" / "python"
+    py.write_text("")
+    monkeypatch.delenv("LD_LIBRARY_PATH", raising=False)
+
+    env = summarizer_env.child_env(str(py))
+
+    assert "LD_LIBRARY_PATH" not in env, "a CPU env must not invent LD_LIBRARY_PATH"
+    assert env["PATH"] == os.environ["PATH"], "the rest of the environment passes through"
+
+
+def test_default_runner_gives_the_selftest_child_env(tmp_path, monkeypatch):
+    """The verify step must run under child_env — otherwise the selftest
+    can't see the venv's vendored CUDA libs (the live-E2E failure)."""
+    tmp = tmp_path / "summarizer-env.tmp"
+    venv = tmp / "venv"
+    lib = venv / "lib" / "python3.11" / "site-packages" / "nvidia" / "cuda_runtime" / "lib"
+    lib.mkdir(parents=True)
+
+    recorded: dict = {}
+
+    def fake_run(argv, **kwargs):
+        recorded["argv"] = argv
+        recorded["env"] = kwargs.get("env")
+
+        class Proc:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        return Proc()
+
+    monkeypatch.setattr(summarizer_env.subprocess, "run", fake_run)
+    summarizer_env.default_runner(summarizer_env._verify_step(tmp))
+
+    assert recorded["env"] is not None, "selftest must not inherit the bare server env"
+    assert str(lib) in recorded["env"]["LD_LIBRARY_PATH"].split(os.pathsep)

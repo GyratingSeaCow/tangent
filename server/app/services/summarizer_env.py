@@ -28,6 +28,7 @@ or the ~2.5 GB model download happen. ``default_runner`` executes for real.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -52,6 +53,12 @@ RUNTIMES = ("cuda", "cpu")
 CUDA_WHEEL_INDEX = "https://abetlen.github.io/llama-cpp-python/whl/cu124"
 CPU_WHEEL_INDEX = "https://abetlen.github.io/llama-cpp-python/whl/cpu"
 LLAMA_CPP_SPEC = "llama-cpp-python>=0.3,<0.4"
+#: pip-vendored CUDA runtime for the venv: the tangent-server image ships NO
+#: system CUDA libs (whisper's GPU path works only because ctranslate2
+#: vendors its own), so the cu124 llama-cpp wheel needs libcudart AND
+#: libcublas installed alongside it. child_env() puts their lib dirs on
+#: LD_LIBRARY_PATH.
+CUDA_RUNTIME_PKGS = ("nvidia-cuda-runtime-cu12", "nvidia-cublas-cu12")
 
 _IDLE = {"phase": "idle", "percent": 0, "detail": ""}
 
@@ -169,6 +176,30 @@ def _summarize_infer_path() -> Path:
     return Path(__file__).resolve().parent.parent / "summarize_infer.py"
 
 
+def child_env(python_path: str) -> dict:
+    """Environment for a summarizer-venv child process (installer selftest
+    AND the worker's serve child — the SAME env, or the selftest proves
+    nothing about what the worker later runs).
+
+    The container ships no CUDA runtime: the CUDA install vendors
+    nvidia-cuda-runtime-cu12 + nvidia-cublas-cu12 wheels into the venv, and
+    their lib dirs must be on LD_LIBRARY_PATH or the cu124 llama-cpp
+    extension dies loading libcudart.so.12. Vendored dirs are PREPENDED so
+    they win over any system paths; a CPU env has no nvidia/ dirs and the
+    environment passes through untouched.
+    """
+    env = dict(os.environ)
+    venv = Path(python_path).resolve().parent.parent
+    lib_dirs = sorted(
+        str(d) for d in venv.glob("lib/python*/site-packages/nvidia/*/lib") if d.is_dir()
+    )
+    if lib_dirs:
+        existing = env.get("LD_LIBRARY_PATH", "")
+        parts = lib_dirs + ([existing] if existing else [])
+        env["LD_LIBRARY_PATH"] = os.pathsep.join(parts)
+    return env
+
+
 def _read_marker(base: Path) -> dict | None:
     marker = base / "verified.json"
     if not marker.is_file():
@@ -263,6 +294,10 @@ def _venv_step(tmp: Path) -> InstallStep:
 
 def _runtime_step(tmp: Path, runtime: str) -> InstallStep:
     index = CUDA_WHEEL_INDEX if runtime == "cuda" else CPU_WHEEL_INDEX
+    packages: tuple[str, ...] = (LLAMA_CPP_SPEC,)
+    if runtime == "cuda":
+        # The venv must carry its own CUDA runtime — see CUDA_RUNTIME_PKGS.
+        packages += CUDA_RUNTIME_PKGS
     return InstallStep(
         phase="runtime",
         kind="pip",
@@ -271,7 +306,7 @@ def _runtime_step(tmp: Path, runtime: str) -> InstallStep:
             "-m",
             "pip",
             "install",
-            LLAMA_CPP_SPEC,
+            *packages,
             "--extra-index-url",
             index,
         ),
@@ -308,6 +343,33 @@ def _verify_step(tmp: Path) -> InstallStep:
     )
 
 
+def _cpu_retry_step(tmp: Path) -> InstallStep:
+    """Replace an already-installed CUDA llama-cpp with the CPU wheel.
+
+    ``--force-reinstall`` because the CUDA build satisfies the same version
+    spec — plain pip would call it already-installed and do nothing.
+    ``--no-cache-dir`` because both indexes publish the SAME version number
+    for different builds; a cached CUDA artifact must never be reused.
+    """
+    return InstallStep(
+        phase="runtime",
+        kind="pip",
+        argv=(
+            _tmp_python(tmp),
+            "-m",
+            "pip",
+            "install",
+            "--force-reinstall",
+            "--no-cache-dir",
+            LLAMA_CPP_SPEC,
+            "--extra-index-url",
+            CPU_WHEEL_INDEX,
+        ),
+        detail="reinstalling llama.cpp runtime (cpu fallback after CUDA self-test failure)",
+        percent=86,
+    )
+
+
 def default_runner(step: InstallStep) -> None:
     """Execute a step for real. Raises on any failure."""
     if step.kind == "download":
@@ -323,7 +385,15 @@ def default_runner(step: InstallStep) -> None:
             local_dir=str(dest.parent),
         )
         return
-    proc = subprocess.run(list(step.argv), capture_output=True, text=True)
+    proc = subprocess.run(
+        list(step.argv),
+        capture_output=True,
+        text=True,
+        # 'run' steps execute the venv python (the selftest): they need the
+        # venv's vendored CUDA lib dirs on LD_LIBRARY_PATH, exactly like the
+        # worker's serve child. venv/pip steps keep the plain env.
+        env=child_env(step.argv[0]) if step.kind == "run" else None,
+    )
     if proc.returncode != 0:
         tail = (proc.stderr or proc.stdout or "").strip()[-500:]
         raise RuntimeError(f"{' '.join(step.argv)} exited {proc.returncode}: {tail}")
@@ -387,7 +457,28 @@ def _run_install(runner: Runner) -> None:
         phase = "verify"
         step = _verify_step(tmp)
         _set_progress(step.phase, step.percent, step.detail)
-        runner(step)
+        try:
+            runner(step)
+        except Exception as exc:
+            if runtime != "cuda":
+                raise
+            # The CUDA wheel installed but cannot actually run (the live-E2E
+            # failure shape: a runtime lib the container lacks). CPU is the
+            # guaranteed baseline with IDENTICAL accuracy — downgrade ONCE
+            # and re-verify. Weights stay: they are runtime-independent and
+            # already sit in tmp.
+            log.warning(
+                "summarizer_env.cuda_selftest_failed_downgrading", error=str(exc)
+            )
+            phase = "runtime"
+            retry = _cpu_retry_step(tmp)
+            _set_progress(retry.phase, retry.percent, retry.detail)
+            runner(retry)
+            runtime = "cpu"
+            phase = "verify"
+            step = _verify_step(tmp)
+            _set_progress(step.phase, step.percent, step.detail)
+            runner(step)
 
         (tmp / "verified.json").write_text(
             json.dumps({"runtime": runtime, "model": MODEL_FILENAME}),
