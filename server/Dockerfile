@@ -31,6 +31,10 @@ RUN if [ "$TANGENT_WITH_DIARIZATION" = "1" ]; then \
 # are inert on CPU-only hosts; resolve_whisper_device() still probes before
 # selecting cuda.
 RUN uv pip install --system --no-cache nvidia-cublas-cu12 nvidia-cudnn-cu12
+# The wheels land under site-packages/nvidia/*/lib, which is NOT on the
+# default loader path — without this, the libs are installed yet still
+# "MISSING" to dlopen and the device probe stays on cpu.
+ENV LD_LIBRARY_PATH=/usr/local/lib/python3.11/site-packages/nvidia/cublas/lib:/usr/local/lib/python3.11/site-packages/nvidia/cudnn/lib
 
 # Copy app code
 COPY app ./app
