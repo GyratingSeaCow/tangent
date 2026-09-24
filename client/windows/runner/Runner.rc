@@ -90,12 +90,12 @@ BEGIN
         BLOCK "040904e4"
         BEGIN
             VALUE "CompanyName", "dev.tangent" "\0"
-            VALUE "FileDescription", "tangent" "\0"
+            VALUE "FileDescription", "Tangent" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "tangent" "\0"
+            VALUE "InternalName", "Tangent" "\0"
             VALUE "LegalCopyright", "Copyright (C) 2026 dev.tangent. All rights reserved." "\0"
             VALUE "OriginalFilename", "tangent.exe" "\0"
-            VALUE "ProductName", "tangent" "\0"
+            VALUE "ProductName", "Tangent" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END
