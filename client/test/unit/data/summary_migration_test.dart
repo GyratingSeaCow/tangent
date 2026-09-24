@@ -67,8 +67,8 @@ void main() {
       () async {
     final sqlite3.Database raw = _v16Database();
     raw.execute(
-      "INSERT INTO dumps (id, created_at, updated_at, mode, "
-      "duration_seconds, title, transcript, audio_path, audio_size_bytes, "
+      'INSERT INTO dumps (id, created_at, updated_at, mode, '
+      'duration_seconds, title, transcript, audio_path, audio_size_bytes, '
       "sync_status) VALUES ('old-dump', 100, 200, 'meeting', 60, "
       "'Standup', 'we talked', '/audio/standup.opus', 4096, 'synced');",
     );
