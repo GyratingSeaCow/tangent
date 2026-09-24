@@ -335,6 +335,8 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
       // Notebooks have no server-side audio to fetch, so this action is
       // never offered here; the branch exists to keep the switch exhaustive.
       case ItemAction.download:
+      // Notebooks have no transcript to summarize either.
+      case ItemAction.regenerateSummary:
         break;
     }
   }

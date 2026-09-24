@@ -19,8 +19,11 @@ import '../../widgets/sync_button.dart';
 import '../home/home_providers.dart' show documentSyncEngineProvider;
 import '../../services/bulk_dump_actions.dart';
 import '../../services/server_transcription_service.dart';
+import '../../services/summaries_client.dart';
 import '../../services/synced_audio_download.dart';
 import '../home/home_providers.dart' show serverTranscriptionServiceProvider;
+import '../settings/ai_summaries_section.dart'
+    show summariesClientProvider, summariesEnabledProvider;
 import '../../widgets/item_action_sheet.dart';
 import '../../widgets/folder_header_actions.dart';
 import '../../widgets/folder_picker.dart';
@@ -569,6 +572,15 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
     final bool downloadable = dumpNeedsAudioDownload(dump);
     final bool canDownload =
         downloadable && ref.read(syncedAudioDownloaderProvider) != null;
+    // Task 4: offered only when it can apply — the regenerate endpoint
+    // accepts any dump WITH a transcript, and the capability gate is this
+    // device's AI-summaries mirror (rests ON only after the Settings wizard
+    // installed + enabled; the OCR precedent: while a feature is off, none
+    // of its UI appears). Hidden rather than disabled, matching Download:
+    // both gates describe rows/devices where the action can NEVER work
+    // right now, not a transient condition worth explaining.
+    final bool summarizable = (dump.transcript?.trim().isNotEmpty ?? false) &&
+        ref.read(summariesEnabledProvider);
     final ItemAction? action = await showItemActionSheet(
       context,
       title: dump.title.isEmpty ? '(untitled)' : dump.title,
@@ -576,6 +588,7 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
       actions: <ItemAction>[
         ItemAction.open,
         if (downloadable) ItemAction.download,
+        if (summarizable) ItemAction.regenerateSummary,
         ItemAction.rename,
         ItemAction.move,
         ItemAction.select,
@@ -620,10 +633,46 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
         await _deleteSelected();
       case ItemAction.download:
         await _downloadAudio(dump);
+      case ItemAction.regenerateSummary:
+        await _regenerateSummary(dump);
       case ItemAction.duplicate:
       case ItemAction.share:
       case ItemAction.exportPdf:
         break;
+    }
+  }
+
+  /// Asks the server to (re)generate one recording's AI summary.
+  ///
+  /// A 202 means enqueued: the summary lands on the dump via normal sync,
+  /// so there is deliberately NO client-side polling here. The two typed
+  /// 409s route differently — a missing capability sends the user to the
+  /// Settings wizard (the fix lives there), while a transcript-less dump
+  /// is explained on the spot.
+  Future<void> _regenerateSummary(DumpRow dump) async {
+    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+    try {
+      final SummariesClient client =
+          await ref.read(summariesClientProvider.future);
+      await client.summarizeDump(dump.id);
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Summary queued')),
+      );
+    } on SummarizeConflictException catch (e) {
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(switch (e.reason) {
+            SummarizeConflictReason.notInstalled =>
+              'Install AI summaries in Settings first',
+            SummarizeConflictReason.noTranscript =>
+              'This recording has no transcript yet',
+          },),
+        ),
+      );
+    } catch (e) {
+      messenger.showSnackBar(
+        SnackBar(content: Text('Could not queue summary: $e')),
+      );
     }
   }
 
