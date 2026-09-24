@@ -1,6 +1,6 @@
 [project]
 name = "tangent-server"
-version = "1.7.2"
+version = "1.8.0"
 description = "Tangent v1 server: voice brain-dump storage + transcription"
 requires-python = ">=3.11"
 license = { text = "AGPL-3.0-or-later" }

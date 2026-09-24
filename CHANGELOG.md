@@ -5,6 +5,41 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.0] - 2026-09-23
+
+Feature release: capture and export round out the daily loop.
+
+### Added
+- **Automatic Bluetooth microphone routing.** Recording now behaves like a
+  phone call: when a Bluetooth headset is connected its mic is used,
+  otherwise the built-in mic — no manual picking. First record prompts for
+  the Nearby-devices permission it needs, and a new "Auto-enable Bluetooth
+  audio" toggle in Settings (default on) explains the narrowband quality
+  tradeoff.
+- **Bulk audio import.** Settings → Import → "Import audio files..." accepts
+  a multi-selection and imports sequentially with per-file progress; one
+  bad file is named in the summary and never aborts the rest.
+- **One-shot Obsidian export.** Settings can export the library as a folder
+  of Markdown notes suitable for dropping into an Obsidian vault.
+- **Notebook home-screen widget (Android).** A 2×2 launcher widget that
+  opens straight into a chosen notebook.
+- **Published REST API docs.** The server's interactive `/docs` endpoint is
+  now enforced and documented in the README.
+
+### Changed
+- The app's display name is capitalized ("Tangent") on the Android
+  launcher and in the Windows window title and file metadata. Package ids
+  and executable names are unchanged — installed apps keep their data.
+- The notebooks list streams headers instead of decoding full ink
+  documents, keeping the home screen fast as the library grows.
+
+### Fixed
+- GPU transcription is restored on CUDA-capable servers: the container now
+  ships the CUDA 12 runtime libraries the inference engine actually links
+  (verified by real in-container inference on an RTX 5070 — a 71-second
+  recording transcribes in ~4.5 s vs ~40 s on CPU). CPU-only hosts are
+  unaffected; the device probe from v1.7.2 keeps them on CPU.
+
 ## [1.7.2] - 2026-09-23
 
 Patch release: three user-visible fixes found on real devices, plus a
