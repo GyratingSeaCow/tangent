@@ -5,6 +5,10 @@ import '../../support/storage_fixture.dart';
 
 void main() {
   test('watch search preserves escaped phrase ranking and 100 candidate cap',
+      // 102 sequential seeds are ~1s alone but can exceed the default 30s
+      // per-test budget when the full suite's concurrent isolates contend
+      // for the same disk (observed deterministically on the Windows bench).
+      timeout: const Timeout(Duration(minutes: 2)),
       () async {
     final f = StorageFixture.create();
     addTearDown(f.close);
