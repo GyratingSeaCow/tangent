@@ -30,6 +30,12 @@ CREATE TABLE IF NOT EXISTS dumps (
     title TEXT NOT NULL,
     transcript TEXT,
     meeting_notes TEXT,
+    -- AI summary (server-generated, nullable): the markdown summary itself,
+    -- the exact GGUF stem that wrote it, and when. Sync rule: these flow
+    -- server->client only; a client push never sets or clears them.
+    summary TEXT,
+    summary_model TEXT,
+    summarized_at INTEGER,
     audio_kept INTEGER NOT NULL DEFAULT 0,
     deleted_at INTEGER
 );
@@ -197,6 +203,14 @@ CREATE TABLE IF NOT EXISTS folders (
     deleted_at INTEGER,
     origin_device_id TEXT
 );
+
+-- Server-side persisted settings (key/value). First user: the AI-summaries
+-- toggle — it gates a SERVER worker, so it must live where the worker can
+-- read it, not in a client's secure storage.
+CREATE TABLE IF NOT EXISTS app_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 """
 
 
@@ -288,6 +302,9 @@ def _backfill_dump_change_feed(conn: sqlite3.Connection) -> None:
                 "title": row["title"],
                 "transcript": row["transcript"],
                 "meeting_notes": row["meeting_notes"],
+                "summary": row["summary"],
+                "summary_model": row["summary_model"],
+                "summarized_at": row["summarized_at"],
                 "duration_seconds": row["duration_seconds"],
                 "audio_kept": bool(row["audio_kept"]),
                 "created_at": row["created_at"],
@@ -313,6 +330,22 @@ def _migrate_dumps_meeting_notes(conn: sqlite3.Connection) -> None:
     cols = {r[1] for r in conn.execute("PRAGMA table_info(dumps)")}
     if "meeting_notes" not in cols:
         conn.execute("ALTER TABLE dumps ADD COLUMN meeting_notes TEXT")
+
+
+def _migrate_dumps_summary(conn: sqlite3.Connection) -> None:
+    """AI-summaries columns: additive, nullable, per the existing pattern.
+
+    NULL means "never summarized" — deliberately distinct from '' (which a
+    fully-empty postprocessed output could produce but the worker never
+    stores; it leaves NULL and logs instead).
+    """
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(dumps)")}
+    if "summary" not in cols:
+        conn.execute("ALTER TABLE dumps ADD COLUMN summary TEXT")
+    if "summary_model" not in cols:
+        conn.execute("ALTER TABLE dumps ADD COLUMN summary_model TEXT")
+    if "summarized_at" not in cols:
+        conn.execute("ALTER TABLE dumps ADD COLUMN summarized_at INTEGER")
 
 
 def _migrate_dumps_mode_check(conn: sqlite3.Connection) -> None:
@@ -564,6 +597,7 @@ def init_db(data_dir: str) -> None:
         _migrate_jobs_result_segments(conn)
         _migrate_dumps_mode_check(conn)
         _migrate_dumps_meeting_notes(conn)
+        _migrate_dumps_summary(conn)
         _migrate_notebooks_folder_id(conn)
         _migrate_change_log_folder_entity(conn)
         _migrate_change_log_ink_index_entity(conn)
