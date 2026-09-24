@@ -26,6 +26,7 @@ class SettingsStore {
   static const _inputDeviceLabelKey = 'preferred_input_device_label';
   static const _micGainKey = 'microphone_gain';
   static const _handwritingSearchKey = 'handwriting_search_enabled';
+  static const _aiSummariesKey = 'ai_summaries_enabled';
   static const _autoBluetoothKey = 'auto_bluetooth_audio';
 
   final SharedPreferences? _preferences;
@@ -78,6 +79,15 @@ class SettingsStore {
   /// wizard's explicit confirm. While off, no OCR UI appears anywhere.
   bool handwritingSearchEnabled;
 
+  /// AI summaries of meeting recordings (server-side Qwen summarizer).
+  ///
+  /// OFF by default for the same reason as [handwritingSearchEnabled]:
+  /// turning it on downloads ~2.5 GB onto the user's server, so it only
+  /// ever happens through the Settings wizard's explicit confirm. This is
+  /// the LOCAL mirror used to seed the toggle; the auto-summarize gate
+  /// itself lives server-side (it changes behavior for every device).
+  bool aiSummariesEnabled;
+
   SettingsStore({
     this.wifiOnlySync = true,
     this.autoSync = true,
@@ -89,6 +99,7 @@ class SettingsStore {
     this.preferredInputDeviceLabel,
     this.micGain = defaultMicGain,
     this.handwritingSearchEnabled = false,
+    this.aiSummariesEnabled = false,
     SharedPreferences? preferences,
   }) : _preferences = preferences;
 
@@ -114,6 +125,7 @@ class SettingsStore {
       micGain: clampMicGain(preferences.getDouble(_micGainKey)),
       handwritingSearchEnabled:
           preferences.getBool(_handwritingSearchKey) ?? false,
+      aiSummariesEnabled: preferences.getBool(_aiSummariesKey) ?? false,
     );
   }
 
@@ -156,6 +168,11 @@ class SettingsStore {
   Future<void> setHandwritingSearchEnabled(bool value) async {
     handwritingSearchEnabled = value;
     await _preferences?.setBool(_handwritingSearchKey, value);
+  }
+
+  Future<void> setAiSummariesEnabled(bool value) async {
+    aiSummariesEnabled = value;
+    await _preferences?.setBool(_aiSummariesKey, value);
   }
 
   /// Records the user's explicit microphone choice. Passing a null [id] clears
