@@ -758,6 +758,33 @@ def test_child_env_prepends_nvidia_lib_dirs_to_existing_ld_library_path(
     )
 
 
+def test_child_env_survives_a_symlinked_venv_python(tmp_path):
+    """The real venv's bin/python is a SYMLINK to the system interpreter.
+
+    Path.resolve() would follow it OUT of the venv and the nvidia glob would
+    silently find nothing — the exact live-container failure mode. child_env
+    must derive the venv root from the literal path it was given.
+    """
+    venv = tmp_path / "venv"
+    lib_dirs = _make_nvidia_libs(venv)
+    (venv / "bin").mkdir()
+    real = tmp_path / "system-python"
+    real.write_text("")
+    py = venv / "bin" / "python"
+    try:
+        py.symlink_to(real)
+    except OSError:
+        pytest.skip("symlinks unavailable on this bench (Windows non-dev-mode); Linux CI is authority")
+
+    env = summarizer_env.child_env(str(py))
+
+    assert "LD_LIBRARY_PATH" in env, "symlinked python must still find the venv's nvidia dirs"
+    parts = env["LD_LIBRARY_PATH"].split(os.pathsep)
+    assert sorted(str(d) for d in lib_dirs) == sorted(
+        p for p in parts if "nvidia" in p
+    ), "vendored lib dirs must come from the venv, not the resolved system path"
+
+
 def test_child_env_without_nvidia_dirs_leaves_ld_library_path_alone(
     tmp_path, monkeypatch
 ):

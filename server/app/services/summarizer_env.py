@@ -189,7 +189,11 @@ def child_env(python_path: str) -> dict:
     environment passes through untouched.
     """
     env = dict(os.environ)
-    venv = Path(python_path).resolve().parent.parent
+    # NO resolve(): venv/bin/python is a SYMLINK to the system interpreter,
+    # and resolving it escapes the venv entirely (glob then searches
+    # /usr/local, finds no nvidia dirs, and CUDA silently loses its
+    # runtime). Caught live in the container; keep the literal venv path.
+    venv = Path(python_path).parent.parent
     lib_dirs = sorted(
         str(d) for d in venv.glob("lib/python*/site-packages/nvidia/*/lib") if d.is_dir()
     )
