@@ -11,11 +11,14 @@ from __future__ import annotations
 
 import io
 import json
+import threading
+import time
 from pathlib import Path
 
 import pytest
 
 from app import summarize_infer
+from app.services import summarizer_env
 
 # ---------------------------------------------------------------------------
 # summarize_infer: constants + system prompt (binding per the plan)
@@ -251,3 +254,328 @@ def test_selftest_fails_nonzero_when_summary_is_empty(monkeypatch, capsys):
 def test_main_requires_exactly_one_mode():
     with pytest.raises(SystemExit):
         summarize_infer.main([])
+
+
+# ---------------------------------------------------------------------------
+# summarizer_env: install engine (fake runner — no pip, no 2.5 GB download)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _reset_summarizer_state():
+    """summarizer_env keeps module-level install state; isolate every test."""
+    summarizer_env._reset_state_for_tests()
+    yield
+    summarizer_env._reset_state_for_tests()
+
+
+@pytest.fixture
+def small_weights(monkeypatch):
+    """Shrink the GGUF size floor so fakes need not create 2.5 GB files.
+
+    Two dedicated tests exercise the REAL floor (sparse file / tiny file);
+    everything else only needs 'big enough'.
+    """
+    monkeypatch.setattr(summarizer_env, "MIN_MODEL_BYTES", 1000)
+
+
+class RecordingRunner:
+    """Fake step runner: records steps + visible progress, emulates venv
+    creation and the weights download (sparse file), optionally blocks on an
+    Event, raises at a phase, or fails only argv containing a marker (the
+    CUDA-attempt seam)."""
+
+    def __init__(
+        self,
+        fail_on_phase: str | None = None,
+        fail_argv_containing: str | None = None,
+        block: threading.Event | None = None,
+        weights_size: int | None = None,
+    ) -> None:
+        self.steps: list[summarizer_env.InstallStep] = []
+        self.progress_seen: list[dict] = []
+        self.final_dir_seen: list[bool] = []
+        self.fail_on_phase = fail_on_phase
+        self.fail_argv_containing = fail_argv_containing
+        self.block = block
+        self.weights_size = weights_size
+
+    def __call__(self, step: summarizer_env.InstallStep) -> None:
+        self.steps.append(step)
+        self.progress_seen.append(dict(summarizer_env.progress()))
+        self.final_dir_seen.append(summarizer_env.env_dir().exists())
+        if self.block is not None:
+            assert self.block.wait(timeout=10), "test never released the blocked runner"
+        if step.phase == self.fail_on_phase:
+            raise RuntimeError(f"boom during {step.phase}")
+        if self.fail_argv_containing and any(
+            self.fail_argv_containing in a for a in step.argv
+        ):
+            raise RuntimeError(f"boom on argv containing {self.fail_argv_containing}")
+        if step.kind == "venv":
+            dest = Path(step.dest)
+            for cand in (dest / "Scripts" / "python.exe", dest / "bin" / "python"):
+                cand.parent.mkdir(parents=True, exist_ok=True)
+                cand.write_text("")
+        if step.kind == "download":
+            dest = Path(step.dest)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            size = (
+                self.weights_size
+                if self.weights_size is not None
+                else summarizer_env.MIN_MODEL_BYTES + 1
+            )
+            with open(dest, "wb") as f:
+                f.truncate(size)
+
+
+def _wait_not_running(timeout: float = 10.0) -> None:
+    deadline = time.time() + timeout
+    while summarizer_env.install_running() and time.time() < deadline:
+        time.sleep(0.01)
+    assert not summarizer_env.install_running(), "install never finished"
+
+
+def test_install_phase_sequence_and_monotonic_percent(temp_data_dir, monkeypatch, small_weights):
+    monkeypatch.setattr(summarizer_env, "probe_gpu_visible", lambda: False)
+    runner = RecordingRunner()
+    summarizer_env.install(runner=runner)
+
+    assert [s.phase for s in runner.steps] == ["venv", "runtime", "weights", "verify"]
+    percents = [p["percent"] for p in runner.progress_seen]
+    percents.append(summarizer_env.progress()["percent"])
+    assert all(b > a for a, b in zip(percents, percents[1:], strict=False)), (
+        f"percent must strictly increase across phases, got {percents}"
+    )
+    done = summarizer_env.progress()
+    assert done["phase"] == "done"
+    assert done["percent"] == 100
+
+
+def test_install_is_atomic_and_writes_verified_marker(temp_data_dir, monkeypatch, small_weights):
+    monkeypatch.setattr(summarizer_env, "probe_gpu_visible", lambda: False)
+    runner = RecordingRunner()
+    summarizer_env.install(runner=runner)
+
+    assert not any(runner.final_dir_seen), "final env dir appeared mid-install"
+    env = summarizer_env.env_dir()
+    assert env.is_dir()
+    assert not summarizer_env.tmp_env_dir().exists(), "tmp dir must be renamed away"
+    marker = json.loads((env / "verified.json").read_text(encoding="utf-8"))
+    assert marker["model"] == summarize_infer.MODEL_FILENAME
+    assert marker["runtime"] == "cpu"
+
+
+def test_selftest_failure_leaves_no_env_and_phase_failed(temp_data_dir, monkeypatch, small_weights):
+    """The plan-named failure case: verify (--selftest) fails so the progress
+    phase goes 'failed' AND the tmp dir is removed. Nothing is published."""
+    monkeypatch.setattr(summarizer_env, "probe_gpu_visible", lambda: False)
+    runner = RecordingRunner(fail_on_phase="verify")
+    with pytest.raises(summarizer_env.InstallError):
+        summarizer_env.install(runner=runner)
+
+    assert not summarizer_env.env_dir().exists(), "failed install must leave NO env"
+    assert not summarizer_env.tmp_env_dir().exists(), "failed install must clean up tmp"
+    prog = summarizer_env.progress()
+    assert prog["phase"] == "failed"
+    assert "verify" in prog["detail"]
+    assert "boom" in prog["detail"]
+    assert not summarizer_env.install_running()
+
+
+def test_weights_size_verification_uses_the_real_floor(temp_data_dir, monkeypatch):
+    """A sparse file JUST over the real 2.4 GB floor passes verification.
+
+    Uses the REAL MIN_MODEL_BYTES (no small_weights fixture): NTFS creates
+    the sparse file in ~2 s without writing gigabytes.
+    """
+    monkeypatch.setattr(summarizer_env, "probe_gpu_visible", lambda: False)
+    assert summarizer_env.MIN_MODEL_BYTES == 2_400_000_000
+    summarizer_env.install(runner=RecordingRunner())
+    gguf = summarizer_env.env_dir() / "models" / summarize_infer.MODEL_FILENAME
+    assert gguf.stat().st_size > summarizer_env.MIN_MODEL_BYTES
+
+
+def test_truncated_weights_download_fails_the_install(temp_data_dir, monkeypatch):
+    """A too-small GGUF (interrupted download, HTML error page saved as the
+    file) must fail the weights phase — real floor, no fixture."""
+    monkeypatch.setattr(summarizer_env, "probe_gpu_visible", lambda: False)
+    runner = RecordingRunner(weights_size=1_000_000)
+    with pytest.raises(summarizer_env.InstallError):
+        summarizer_env.install(runner=runner)
+    assert [s.phase for s in runner.steps] == ["venv", "runtime", "weights"], (
+        "verify must never run against a truncated model"
+    )
+    assert not summarizer_env.env_dir().exists()
+    assert not summarizer_env.tmp_env_dir().exists()
+    prog = summarizer_env.progress()
+    assert prog["phase"] == "failed"
+    assert "weights" in prog["detail"]
+
+
+def test_gpu_visible_attempts_cuda_then_falls_back_to_cpu(temp_data_dir, monkeypatch, small_weights):
+    monkeypatch.setattr(summarizer_env, "probe_gpu_visible", lambda: True)
+    runner = RecordingRunner(fail_argv_containing=summarizer_env.CUDA_WHEEL_INDEX)
+    summarizer_env.install(runner=runner)  # must NOT raise — CPU fallback
+
+    runtime_steps = [s for s in runner.steps if s.phase == "runtime"]
+    assert len(runtime_steps) == 2, "CUDA attempt then CPU fallback"
+    assert any(summarizer_env.CUDA_WHEEL_INDEX in a for a in runtime_steps[0].argv)
+    assert any(summarizer_env.CPU_WHEEL_INDEX in a for a in runtime_steps[1].argv)
+    marker = json.loads(
+        (summarizer_env.env_dir() / "verified.json").read_text(encoding="utf-8")
+    )
+    assert marker["runtime"] == "cpu"
+    assert summarizer_env.progress()["phase"] == "done"
+
+
+def test_gpu_visible_cuda_success_records_cuda_runtime(temp_data_dir, monkeypatch, small_weights):
+    monkeypatch.setattr(summarizer_env, "probe_gpu_visible", lambda: True)
+    runner = RecordingRunner()
+    summarizer_env.install(runner=runner)
+
+    runtime_steps = [s for s in runner.steps if s.phase == "runtime"]
+    assert len(runtime_steps) == 1
+    assert any(summarizer_env.CUDA_WHEEL_INDEX in a for a in runtime_steps[0].argv)
+    marker = json.loads(
+        (summarizer_env.env_dir() / "verified.json").read_text(encoding="utf-8")
+    )
+    assert marker["runtime"] == "cuda"
+    cap = summarizer_env.capability()
+    assert cap["installed"] is True
+    assert cap["runtime"] == "cuda"
+
+
+def test_no_gpu_never_attempts_cuda_wheel(temp_data_dir, monkeypatch, small_weights):
+    monkeypatch.setattr(summarizer_env, "probe_gpu_visible", lambda: False)
+    runner = RecordingRunner()
+    summarizer_env.install(runner=runner)
+    for step in runner.steps:
+        assert not any(summarizer_env.CUDA_WHEEL_INDEX in a for a in step.argv)
+
+
+def test_verify_step_runs_selftest_with_tmp_python_and_tmp_model_path(
+    temp_data_dir, monkeypatch, small_weights
+):
+    monkeypatch.setattr(summarizer_env, "probe_gpu_visible", lambda: False)
+    runner = RecordingRunner()
+    summarizer_env.install(runner=runner)
+    verify = next(s for s in runner.steps if s.phase == "verify")
+
+    assert "summarizer-env.tmp" in verify.argv[0], "verify runs the TMP venv python"
+    assert verify.argv[1].endswith("summarize_infer.py")
+    assert "--selftest" in verify.argv
+    model_path = verify.argv[verify.argv.index("--model-path") + 1]
+    assert "summarizer-env.tmp" in model_path, (
+        "selftest must target the tmp GGUF — the env is not published yet"
+    )
+    assert model_path.endswith(summarize_infer.MODEL_FILENAME)
+
+    weights = next(s for s in runner.steps if s.phase == "weights")
+    assert weights.kind == "download"
+    assert weights.repo_id == summarizer_env.GGUF_REPO_ID
+    assert weights.filename == summarize_infer.MODEL_FILENAME
+
+
+def test_second_install_while_running_raises_conflict(temp_data_dir, monkeypatch, small_weights):
+    monkeypatch.setattr(summarizer_env, "probe_gpu_visible", lambda: False)
+    release = threading.Event()
+    runner = RecordingRunner(block=release)
+    thread = summarizer_env.start_install(runner=runner)
+    try:
+        with pytest.raises(summarizer_env.InstallInProgress):
+            summarizer_env.install(runner=RecordingRunner())
+        assert summarizer_env.install_running()
+    finally:
+        release.set()
+        thread.join(timeout=10)
+    _wait_not_running()
+    assert summarizer_env.progress()["phase"] == "done"
+
+
+def test_python_path_none_until_verified_install(temp_data_dir, monkeypatch, small_weights):
+    monkeypatch.setattr(summarizer_env, "probe_gpu_visible", lambda: False)
+    assert summarizer_env.python_path() is None
+    summarizer_env.install(runner=RecordingRunner())
+    p = summarizer_env.python_path()
+    assert p is not None
+    path = Path(p)
+    assert path.exists()
+    assert "summarizer-env" in path.parts
+    assert "venv" in path.parts
+
+
+def test_capability_truth_table(temp_data_dir, monkeypatch, small_weights):
+    monkeypatch.setattr(summarizer_env, "probe_gpu_visible", lambda: False)
+    cap = summarizer_env.capability()
+    assert cap["installed"] is False
+    assert cap["runtime"] is None
+    assert cap["gpu_visible"] is False
+    assert cap["install_running"] is False
+    assert isinstance(cap["disk_free_bytes"], int)
+    assert cap["disk_free_bytes"] > 0
+
+    summarizer_env.install(runner=RecordingRunner())
+    cap = summarizer_env.capability()
+    assert cap["installed"] is True
+    assert cap["runtime"] == "cpu"
+
+
+def test_capability_dir_without_verify_marker_is_not_installed(temp_data_dir):
+    summarizer_env.env_dir().mkdir(parents=True)
+    cap = summarizer_env.capability()
+    assert cap["installed"] is False
+    assert cap["runtime"] is None
+
+
+def test_uninstall_removes_env_and_stale_tmp_keeps_nothing_else(
+    temp_data_dir, monkeypatch, small_weights
+):
+    """Uninstall deletes the env (and crashed-install debris). It takes no
+    db handle at all — stored dump summaries are user data and survive by
+    construction (the wizard promise: env deleted, summaries KEPT)."""
+    monkeypatch.setattr(summarizer_env, "probe_gpu_visible", lambda: False)
+    summarizer_env.install(runner=RecordingRunner())
+    stale_tmp = summarizer_env.tmp_env_dir()
+    stale_tmp.mkdir(parents=True)
+    (stale_tmp / "leftover.txt").write_text("crashed install debris", encoding="utf-8")
+
+    assert summarizer_env.uninstall() is True
+
+    assert not summarizer_env.env_dir().exists()
+    assert not summarizer_env.tmp_env_dir().exists()
+    assert summarizer_env.python_path() is None
+    assert summarizer_env.capability()["installed"] is False
+    assert summarizer_env.progress() == {"phase": "idle", "percent": 0, "detail": ""}
+
+
+def test_uninstall_conflict_while_install_running(temp_data_dir, monkeypatch, small_weights):
+    monkeypatch.setattr(summarizer_env, "probe_gpu_visible", lambda: False)
+    release = threading.Event()
+    runner = RecordingRunner(block=release)
+    thread = summarizer_env.start_install(runner=runner)
+    try:
+        with pytest.raises(summarizer_env.InstallInProgress):
+            summarizer_env.uninstall()
+    finally:
+        release.set()
+        thread.join(timeout=10)
+    _wait_not_running()
+
+
+def test_on_installed_hook_fires_after_publish(temp_data_dir, monkeypatch, small_weights):
+    monkeypatch.setattr(summarizer_env, "probe_gpu_visible", lambda: False)
+    seen: list[bool] = []
+    summarizer_env.set_on_installed(
+        lambda: seen.append(summarizer_env.env_dir().exists())
+    )
+    summarizer_env.install(runner=RecordingRunner())
+    assert seen == [True], "hook must fire once, after the env dir is published"
+
+
+def test_infer_script_exists_at_the_path_the_installer_verifies():
+    assert summarizer_env._summarize_infer_path().exists()
+    assert (
+        Path(summarize_infer.__file__).resolve()
+        == summarizer_env._summarize_infer_path().resolve()
+    )

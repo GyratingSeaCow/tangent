@@ -101,3 +101,56 @@ def test_nested_ocr_env_is_still_counted(tmp_path):
     (nested / "note.m4a").write_bytes(b"y" * 321)
 
     assert get_storage_used_bytes(str(tmp_path)) == 321
+
+
+def test_excludes_summarizer_env_and_tmp(tmp_path: Path):
+    """The summarizer venv + GGUF (~2.5 GB) is reinstallable machinery, not
+    user storage — same rule (and same shipped-bug history) as ocr-env."""
+    _write(tmp_path / "audio" / "a.m4a", 100)
+    _write(tmp_path / "summarizer-env" / "models" / "qwen.gguf", 5000)
+    _write(tmp_path / "summarizer-env" / "venv" / "lib" / "llama.dll", 4000)
+    _write(tmp_path / "summarizer-env.tmp" / "models" / "qwen.gguf", 3000)
+    assert get_storage_used_bytes(str(tmp_path)) == 100
+
+
+def test_does_not_descend_into_summarizer_env(tmp_path: Path):
+    """Pruned, not filtered: the walk must never scandir under either
+    summarizer-env dir (statting the venv's files and discarding the sizes
+    is exactly the 74 s /v1/server/info hang the OCR arc shipped)."""
+    _write(tmp_path / "audio" / "a.m4a", 100)
+    for env_name in ("summarizer-env", "summarizer-env.tmp"):
+        deep = tmp_path / env_name
+        for i in range(20):
+            _write(deep / f"pkg{i}" / f"mod{i}.py", 10)
+
+    visited: list[str] = []
+    import os
+
+    real_scandir = os.scandir
+
+    def counting_scandir(path):
+        visited.append(str(path))
+        return real_scandir(path)
+
+    os.scandir = counting_scandir
+    try:
+        total = get_storage_used_bytes(str(tmp_path))
+    finally:
+        os.scandir = real_scandir
+
+    assert total == 100
+    offenders = [v for v in visited if "summarizer-env" in v]
+    assert not offenders, f"walk descended into the summarizer env: {offenders}"
+
+
+def test_nested_summarizer_env_is_still_counted(tmp_path: Path):
+    """Only the server's own top-level summarizer-env is machinery; a user
+    directory that shares the name deeper in the tree is real storage."""
+    (tmp_path / "summarizer-env").mkdir()
+    (tmp_path / "summarizer-env" / "big.gguf").write_bytes(b"x" * 5000)
+
+    nested = tmp_path / "audio" / "summarizer-env"
+    nested.mkdir(parents=True)
+    (nested / "note.m4a").write_bytes(b"y" * 321)
+
+    assert get_storage_used_bytes(str(tmp_path)) == 321
