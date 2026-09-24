@@ -37,7 +37,7 @@ Jeff's voice-recorder app. Repo `C:/Users/Jeff/Documents/ADH2`: `client/` (Flutt
 Kotlin Android) and `server/` (FastAPI + faster-whisper in Docker, container
 `tangent-server`, host port 8765). Feature work happens in git worktrees under
 `.worktrees/`. Package `dev.tangent.tangent`. Two test devices may be attached at
-once — a Samsung Fold (`RFGL82VCV6V`) and a Galaxy Tab S10 FE (`R5GL65VR7JZ`,
+once — a Samsung Fold (`<fold-serial>`) and a Galaxy Tab S10 FE (`<tab-s10fe-serial>`,
 `SM_X520`, active EMR pen). Always pass `adb -s <serial>`; an unqualified `adb`
 command fails or, worse, targets whichever device is listed first.
 

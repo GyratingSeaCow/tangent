@@ -149,7 +149,7 @@ mid-gesture, and HiDPI scaling.
 
 Jeff runs the Tangent server on his Windows box, in Docker:
 
-- **Tailscale**: `http://100.88.126.107:8765` — reachable if this machine
+- **Tailscale**: `http://<server-tailscale-ip>:8765` — reachable if this machine
   is on his tailnet. Discovery ("Find my server") sweeps the local /24
   only, so over Tailscale use **manual entry** on the connect screen.
 - **Same LAN**: the sweep should find it automatically — this is itself a

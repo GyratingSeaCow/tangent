@@ -76,10 +76,10 @@ rule about committing device-unverified work.
 
 ### Environment
 
-- Devices attached: tablet `R5GL65VR7JZ` (SM-X520), Fold `RFGL82VCV6V`
+- Devices attached: tablet `<tab-s10fe-serial>` (SM-X520), Fold `<fold-serial>`
   (SM-F971U1). Both currently run the app built at `473cb19`, schema v12.
 - Server: container `tangent-server`, `Up (healthy)`, image
-  `tangent-server:1.0.0`. Port 8765, Tailscale `100.88.126.107:8765`.
+  `tangent-server:1.0.0`. Port 8765, Tailscale `<server-tailscale-ip>:8765`.
   **The running image does NOT contain the uncommitted work** — but none of
   the uncommitted work is server-side, so no rebuild is needed.
 - Library state on device: tablet 76 recordings, Fold 75. Real user data.
@@ -248,7 +248,7 @@ Unit tests are NOT hardware acceptance here. Required evidence:
    Installing force-stops the app and would interrupt a live recording of
    Jeff's.
 2. Build + install both devices.
-3. On the **Fold** (`RFGL82VCV6V`), find a row with `audio_on_server=1` and
+3. On the **Fold** (`<fold-serial>`), find a row with `audio_on_server=1` and
    `remote_only=1`, tap download.
 4. Pull the DB and confirm `remote_only=0`, `audio_path` non-empty,
    `audio_size_bytes` matches, and a `recording_bindings` row exists.
@@ -317,7 +317,7 @@ Dart      C:/Users/Jeff/AppData/Local/flutter/bin/dart.bat
 JDK       C:/Program Files/Microsoft/jdk-17.0.20.8-hotspot
 APK       client/build/app/outputs/flutter-apk/app-debug.apk
 Package   dev.tangent.tangent/.MainActivity
-Devices   R5GL65VR7JZ (tablet), RFGL82VCV6V (Fold)
+Devices   <tab-s10fe-serial> (tablet), <fold-serial> (Fold)
 ```
 
 Kotlin tests (the bash `gradlew` wrapper fails under MSYS):

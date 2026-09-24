@@ -41,8 +41,8 @@ Complex backslash one-liners break — write a `.py` file instead.
 ```
 adb      C:/Users/Jeff/AppData/Local/Android/Sdk/platform-tools/adb.exe
 flutter  C:/Users/Jeff/AppData/Local/flutter/bin/flutter.bat
-devices  R5GL65VR7JZ (tablet SM-X520) · RFGL82VCV6V (Z Fold SM-F971U1)
-server   http://localhost:8765 · tailscale 100.88.126.107:8765
+devices  <tab-s10fe-serial> (tablet SM-X520) · <fold-serial> (Z Fold SM-F971U1)
+server   http://localhost:8765 · tailscale <server-tailscale-ip>:8765
 ```
 
 ## Working style

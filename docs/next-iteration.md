@@ -35,49 +35,17 @@ emulator alias only on Android. An unpaired desktop now fails loud
 (connection refused) instead of black-holing into `10.0.2.2`. Pairing
 before testing is still the right path for checkpoint 6.
 
-### 1.2 Bluetooth mic: request BLUETOOTH_CONNECT at runtime (TONIGHT — needs Jeff + AirPods)
+### 1.2 Bluetooth mic — DONE (2026-09-23, confirmed by Jeff on device)
 
-**Status:** queued for tonight's session (2026-09-23). Jeff is at work and
-cannot record test audio until evening. Blocked only on a human wearing
-the headset.
-
-**Jeff's hypothesis (2026-09-23, likely correct):** Google Meet prompted
-him to "allow local devices" when using Bluetooth — that is Android 12+'s
-**Nearby devices** runtime permission group, i.e. `BLUETOOTH_CONNECT`.
-Tangent declares it in the manifest but NOTHING ever requests it at
-runtime (grep confirms zero request calls), so it sits `granted=false`
-forever — verified live on the Fold via
-`dumpsys package dev.tangent.tangent`.
-
-**Why this explains the T5 failure** (see
-`docs/superpowers/plans/2026-09-17-t5-bluetooth-status.md`): enumeration
-worked and selection persisted, but capture stayed on the built-in mic —
-`mScoAudioState: SCO_STATE_INACTIVE`, `Preferred communication device:
-null`. On Android 12+, bringing up the SCO link requires
-BLUETOOTH_CONNECT, and it fails **silently** without it — exactly the
-corpse we found. The denied permission also kneecaps the native
-`setCommunicationDevice()` routing already written
-(`AndroidCommunicationDevices.kt`, `CommunicationRouting.kt`):
-`availableCommunicationDevices` won't offer BT SCO devices either. The
-deprecated `startBluetoothSco()` in record_android 1.5.2 may have been
-innocent, or at least not the only culprit.
-
-**Wrinkle:** after T5 we HID Bluetooth mics from the Settings picker
-entirely (`input_device_section.dart`, `_isOffered` filters
-bluetooth/sco labels) — so the AirPods can't even be selected today.
-
-**Tonight's plan:**
-
-1. Isolate the variable first, zero code: `adb shell pm grant
-   dev.tangent.tangent android.permission.BLUETOOTH_CONNECT` on the
-   Fold, temporarily un-hide BT devices, Jeff connects AirPods, selects
-   them, records ~10 s; read `dumpsys audio` mid-recording. Confirmed =
-   SCO active + `source client` no longer MIC.
-2. If confirmed, real fix: request Nearby-devices permission when a
-   Bluetooth mic is tapped in the picker (same UX as Meet), un-hide BT
-   devices behind the existing quality caveat (SCO/HFP, mono, 8–16 kHz,
-   transcribes worse, opt-in), keep the native routing already written.
-   RED-first tests; full parity install on all three devices.
+Root cause: BLUETOOTH_CONNECT was declared but never runtime-requested, so
+Android 12+ refused SCO bring-up silently. Shipped (6b58d64): automatic
+call-style routing — BT headset mic when connected, built-in otherwise —
+with a runtime Nearby-devices prompt on first record, and an
+"Auto-enable Bluetooth audio" toggle (default ON) in Settings explaining
+the narrowband quality tradeoff. Manual per-device picking removed.
+Verified live on the Fold: flinger patch moved capture from
+AUDIO_DEVICE_IN_BUILTIN_MIC to AUDIO_DEVICE_IN_BLUETOOTH_SCO_HEADSET;
+Jeff confirmed end-to-end recording works.
 
 ### 1.3 Capitalize the app name everywhere it's user-visible (future release)
 
@@ -109,6 +77,25 @@ handler), sequential runs of the same AudioImportRunner the home
 button uses, per-file progress on the tile, failures named in the
 summary (one bad file never aborts the rest — sabotage-proven).
 Home-screen single-file button unchanged.
+
+### 1.6 GPU transcription restore — in progress (2026-09-23)
+
+Dockerfile now installs nvidia-cublas-cu12 + nvidia-cudnn-cu12 (ctranslate2
+links the CUDA-12 runtime; torch's transitive wheels are CUDA-13 and do not
+satisfy it). resolve_whisper_device() probes before selecting cuda, so the
+wheels are inert on CPU-only hosts. Verification bar: run a REAL inference
+in the container and consume the generator — construction succeeding proves
+nothing (lazy CUDA load).
+
+### 1.7 Release v1.8.0 (queued LAST, after everything above lands)
+
+Bundle since v1.7.1/1.7.2: notebook home widget (9fe1aca), automatic
+Bluetooth mic routing (6b58d64), bulk audio import (9e9d9c3), Obsidian
+export (91f8622), REST API docs (46be553), perf/pen fixes. FOLD IN item
+1.3 (capitalize display name) per Jeff 2026-09-23: "take care of this in
+the next release." CHANGELOG, tag, GitHub release, Licenses tab check,
+AGENTS.md test counts, parity install on all three devices (S10 FE returns
+after this round of updates).
 
 ### 1.5 Hardware-feedback-gated ideas (no work queued)
 

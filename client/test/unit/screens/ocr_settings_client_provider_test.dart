@@ -61,7 +61,7 @@ class _FakeSecureStorage extends FlutterSecureStorage {
 void main() {
   test('the OCR client follows a server URL change', () async {
     final Map<String, String> stored = <String, String>{
-      'server_url': 'http://192.168.1.206:8765',
+      'server_url': 'http://192.168.1.50:8765',
       'api_token': 'tok',
     };
     final SecureStore store =
@@ -75,22 +75,22 @@ void main() {
 
     expect(
       (await container.read(ocrSettingsClientProvider.future)).baseUrl,
-      'http://192.168.1.206:8765',
+      'http://192.168.1.50:8765',
       reason: 'the first build reads the stored URL',
     );
 
     // Exactly what the connection screen does: persist the new URL, then
     // publish the rebuilt transcription client.
-    await store.setServerUrl('http://100.88.126.107:8765');
+    await store.setServerUrl('http://192.168.1.60:8765');
     container.read(transcriptionClientProvider.notifier).state =
         TranscriptionClient(
-      baseUrl: 'http://100.88.126.107:8765',
+      baseUrl: 'http://192.168.1.60:8765',
       token: 'tok',
     );
 
     expect(
       (await container.read(ocrSettingsClientProvider.future)).baseUrl,
-      'http://100.88.126.107:8765',
+      'http://192.168.1.60:8765',
       reason: 'reconnecting to another server must rebuild the OCR client; '
           'a cached client silently calls the old host forever',
     );

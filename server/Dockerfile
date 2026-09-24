@@ -24,6 +24,14 @@ RUN if [ "$TANGENT_WITH_DIARIZATION" = "1" ]; then \
         uv pip install --system --no-cache .; \
     fi
 
+# ctranslate2 (faster-whisper's engine) links the CUDA-12 runtime
+# (libcublas.so.12, libcudnn_ops.so.9). torch's transitive nvidia-* wheels
+# are CUDA-13 and do NOT satisfy it — without the cu12 set, GPU visibility
+# tricks device probes while first inference dies mid-request. The wheels
+# are inert on CPU-only hosts; resolve_whisper_device() still probes before
+# selecting cuda.
+RUN uv pip install --system --no-cache nvidia-cublas-cu12 nvidia-cudnn-cu12
+
 # Copy app code
 COPY app ./app
 

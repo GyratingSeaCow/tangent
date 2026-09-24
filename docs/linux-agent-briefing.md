@@ -1,7 +1,7 @@
 # Linux agent briefing — Tangent v1.7.1 (written 2026-09-22)
 
 You are the Hermes agent on Jeff's Linux box (`jeff-cachyos`, CachyOS,
-KDE Plasma Wayland, Tailscale `100.111.111.44`). This file tells you
+KDE Plasma Wayland, Tailscale `<linux-box-tailscale-ip>`). This file tells you
 everything the Windows-side agent knows that you need, so you do not
 re-derive it. Read AGENTS.md first for repo conventions.
 
@@ -35,7 +35,7 @@ Steps:
 2. `chmod +x`, run it. Known-good on this exact desktop (v1.6.x verified:
    tray icon, global hotkey, close-to-tray).
 3. **Pair first** — unpaired now fails fast at localhost:8765, it does not
-   sync. Server: `http://100.88.126.107:8765` (win-jeff over Tailscale).
+   sync. Server: `http://<server-tailscale-ip>:8765` (win-jeff over Tailscale).
    Settings → server connection; pairing codes are in Settings on the
    server side (Settings → Pairing on any paired device, or ask Jeff).
    Do NOT test search while unpaired and report it broken.

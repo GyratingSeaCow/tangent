@@ -84,7 +84,7 @@ tangent-server | tangent-server:1.0.0 | Up 8 hours (healthy)
 ```
 
 - Local: `http://localhost:8765`
-- Tailscale: `http://100.88.126.107:8765`
+- Tailscale: `http://<server-tailscale-ip>:8765`
 - DB: `server/data/tangent.db` (1,077,248 bytes)
 - Audio: `server/data/audio/` — **71 real recordings**
 - Unauthenticated request → **401**. Bearer token auth.
@@ -93,8 +93,8 @@ tangent-server | tangent-server:1.0.0 | Up 8 hours (healthy)
 
 | Role | Serial | Model | Screen |
 |---|---|---|---|
-| Tablet | `R5GL65VR7JZ` | SM-X520 | 1440×2304 |
-| Phone (Z Fold) | `RFGL82VCV6V` | SM-F971U1 | 1248×1972 |
+| Tablet | `<tab-s10fe-serial>` | SM-X520 | 1440×2304 |
+| Phone (Z Fold) | `<fold-serial>` | SM-F971U1 | 1248×1972 |
 
 Both currently run the `473cb19` build, client schema **v12**, holding **76**
 and **75** recordings respectively.
@@ -201,13 +201,13 @@ Output: `client/build/app/outputs/flutter-apk/app-debug.apk`
 
 ```bash
 # 1. confirm idle (must print 0)
-adb -s R5GL65VR7JZ shell dumpsys activity services dev.tangent.tangent | grep -ci RecordingService
+adb -s <tab-s10fe-serial> shell dumpsys activity services dev.tangent.tangent | grep -ci RecordingService
 # 2. install over the top — NEVER uninstall first
-adb -s R5GL65VR7JZ install -r "C:/Users/Jeff/Documents/ADH2/client/build/app/outputs/flutter-apk/app-debug.apk"
+adb -s <tab-s10fe-serial> install -r "C:/Users/Jeff/Documents/ADH2/client/build/app/outputs/flutter-apk/app-debug.apk"
 # 3. launch (this runs migrations)
-adb -s R5GL65VR7JZ shell am start -n dev.tangent.tangent/.MainActivity
+adb -s <tab-s10fe-serial> shell am start -n dev.tangent.tangent/.MainActivity
 # 4. wait ~25 s, then confirm it did not crash on migration
-adb -s R5GL65VR7JZ shell pidof dev.tangent.tangent
+adb -s <tab-s10fe-serial> shell pidof dev.tangent.tangent
 ```
 
 ### Kotlin unit tests

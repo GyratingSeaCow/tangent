@@ -1284,13 +1284,13 @@ Expected: `✓ Built`, and `CN=Tangent` in the certificate. A debug APK will not
 
 ```bash
 export PATH="$LOCALAPPDATA/Android/Sdk/platform-tools:$PATH"
-adb connect 100.92.184.58:5555
-for D in R5GL65VR7JZ 100.92.184.58:5555; do
+adb connect <fold-tailscale-ip>:5555
+for D in <tab-s10fe-serial> <fold-tailscale-ip>:5555; do
   adb -s $D shell dumpsys activity services dev.tangent.tangent | grep -c RecordingService
   adb -s $D install -r build/app/outputs/flutter-apk/app-release.apk
 done
 ```
-The RecordingService count must be `0` before installing. Note the Fold's USB serial `RFGL82VCV6V` and the tailnet address are the **same device** — install once.
+The RecordingService count must be `0` before installing. Note the Fold's USB serial `<fold-serial>` and the tailnet address are the **same device** — install once.
 
 - [ ] **Step 4: On-device check**
 
