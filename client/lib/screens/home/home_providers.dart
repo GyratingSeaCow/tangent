@@ -194,6 +194,10 @@ final transcriptionNotificationOwnerProvider = Provider<void>((ref) {
       notifier.sync(
         hasActive: service.isTranscribing,
         queuedCount: service.queuedDumpIds.length,
+        // The LOCAL MIRROR, deliberately — never a network read. This runs on
+        // every queue and stream event (many per second during a job), and a
+        // notification must never wait on, or fail with, the server.
+        model: ref.read(settingsStoreProvider).whisperModel,
       ),
     );
   }

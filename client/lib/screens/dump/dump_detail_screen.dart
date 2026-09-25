@@ -16,9 +16,12 @@ import '../../models/sync_status.dart';
 import '../../models/transcription_status.dart';
 import '../../services/meeting_notes_processor.dart';
 import '../../services/recording_playback.dart';
+import '../../services/transcription_notifications.dart'
+    show describedWhisperModel;
 import 'local_deletion_presentation.dart';
 import 'sync_status_presentation.dart';
 import '../home/home_screen.dart' show localDbProvider;
+import '../settings/settings_screen.dart' show settingsStoreProvider;
 import '../home/home_providers.dart'
     show
         recordingPlaybackEngineFactoryProvider,
@@ -925,6 +928,11 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
           _ServerTranscriptionProgressPanel(
             row: row,
             status: transcription,
+            // The offline MIRROR of the server's active model, so the running
+            // line names the model actually decoding rather than the engine.
+            // Read here, where a Consumer already exists, and passed down: a
+            // panel that rebuilds once a second must not own a provider read.
+            whisperModel: ref.read(settingsStoreProvider).whisperModel,
           ),
           const SizedBox(height: 16),
         ],
@@ -1096,10 +1104,15 @@ class _ServerTranscriptionProgressPanel extends StatefulWidget {
   const _ServerTranscriptionProgressPanel({
     required this.row,
     required this.status,
+    required this.whisperModel,
   });
 
   final DumpRow row;
   final TranscriptionStatus status;
+
+  /// The model this device last saw the server transcribing with, from the
+  /// local mirror. Empty until the catalogue has been fetched at least once.
+  final String whisperModel;
 
   @override
   State<_ServerTranscriptionProgressPanel> createState() =>
@@ -1208,13 +1221,19 @@ class _ServerTranscriptionProgressPanelState
 
   String _detailText(TranscriptionStatus status, Duration elapsed) {
     final elapsedText = _formatElapsed(elapsed);
+    // Name the MODEL that is decoding, not the engine: once the model became
+    // selectable, "faster-whisper" stopped answering "which one is running?".
+    // With nothing mirrored yet the engine name is still true, so that is the
+    // fallback — better than a sentence with an empty slot in it.
+    final String decoder =
+        describedWhisperModel(widget.whisperModel) ?? 'faster-whisper';
     return switch (status) {
       TranscriptionStatus.uploading =>
         'Streaming the preserved recording to your personal Docker container · Elapsed $elapsedText',
       TranscriptionStatus.queued =>
         'Waiting for the server worker · Elapsed $elapsedText',
       TranscriptionStatus.running =>
-        'The server is decoding audio with faster-whisper. This continues if you leave this screen · Elapsed $elapsedText',
+        'The server is decoding audio with $decoder. This continues if you leave this screen · Elapsed $elapsedText',
       TranscriptionStatus.failed =>
         'The previous transcript and raw recording are preserved on this device.',
       TranscriptionStatus.completed => 'Saved locally',
