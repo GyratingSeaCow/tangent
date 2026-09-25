@@ -11,6 +11,7 @@ Dump _dump({
   String title = 'Morning ideas',
   DumpMode mode = DumpMode.brainDump,
   int durationSeconds = 95,
+  String? summary,
 }) {
   final at = DateTime(2026, 9, 17, 10, 30);
   return Dump(
@@ -23,6 +24,7 @@ Dump _dump({
     audioPath: '/audio/$id.m4a',
     audioSizeBytes: 2048,
     syncStatus: SyncStatus.localOnly,
+    summary: summary,
   );
 }
 
@@ -165,6 +167,38 @@ void main() {
     expect(find.text('1m 35s'), findsOneWidget);
     expect(find.byIcon(Icons.mic), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+
+  testWidgets('shows the first summary line under the title when a summary '
+      'exists', (tester) async {
+    await _pumpCard(
+      tester,
+      dump: _dump(
+        mode: DumpMode.meeting,
+        summary: '## Summary\n- We agreed to ship on Friday.\n## Open questions',
+      ),
+    );
+    expect(find.text('We agreed to ship on Friday.'), findsOneWidget);
+    expect(find.byKey(const ValueKey<String>('dump-card-summary-d1')),
+        findsOneWidget,);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('no summary line when the dump has no summary (absent-safe)',
+      (tester) async {
+    await _pumpCard(tester, dump: _dump(mode: DumpMode.meeting));
+    expect(find.byKey(const ValueKey<String>('dump-card-summary-d1')),
+        findsNothing,);
+  });
+
+  testWidgets('no summary line for a headings-only summary', (tester) async {
+    await _pumpCard(
+      tester,
+      dump: _dump(mode: DumpMode.meeting, summary: '## Summary\n\n## Decisions'),
+    );
+    expect(find.byKey(const ValueKey<String>('dump-card-summary-d1')),
+        findsNothing,);
   });
 
   testWidgets('uses the meeting icon for meeting dumps', (tester) async {

@@ -19,6 +19,11 @@ _$DumpImpl _$$DumpImplFromJson(Map<String, dynamic> json) => _$DumpImpl(
       syncStatus: $enumDecode(_$SyncStatusEnumMap, json['sync_status']),
       syncAttempts: (json['sync_attempts'] as num?)?.toInt() ?? 0,
       lastSyncError: json['last_sync_error'] as String?,
+      summary: json['summary'] as String?,
+      summaryModel: json['summary_model'] as String?,
+      summarizedAt: json['summarized_at'] == null
+          ? null
+          : DateTime.parse(json['summarized_at'] as String),
     );
 
 Map<String, dynamic> _$$DumpImplToJson(_$DumpImpl instance) =>
@@ -35,6 +40,9 @@ Map<String, dynamic> _$$DumpImplToJson(_$DumpImpl instance) =>
       'sync_status': _$SyncStatusEnumMap[instance.syncStatus]!,
       'sync_attempts': instance.syncAttempts,
       'last_sync_error': instance.lastSyncError,
+      'summary': instance.summary,
+      'summary_model': instance.summaryModel,
+      'summarized_at': instance.summarizedAt?.toIso8601String(),
     };
 
 const _$DumpModeEnumMap = {

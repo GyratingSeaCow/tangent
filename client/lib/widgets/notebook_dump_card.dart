@@ -3,6 +3,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 import '../models/dump.dart';
+import '../services/summary_page_text.dart';
 import '../models/dump_mode.dart';
 
 /// Material icon representing a dump's capture mode.
@@ -256,6 +257,7 @@ class _DumpBody extends StatelessWidget {
     final colors = theme.colorScheme;
     final showDuration =
         dump.mode != DumpMode.textNote && dump.durationSeconds > 0;
+    final String? summaryLine = summaryFirstLine(dump.summary);
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -287,6 +289,23 @@ class _DumpBody extends StatelessWidget {
             padding: const EdgeInsets.only(left: 24),
             child: Text(
               formatDumpDuration(dump.durationSeconds),
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: colors.onSurfaceVariant,
+              ),
+            ),
+          ),
+        ],
+        // The bubble is a live view of the dump, so a summary written after
+        // the card was placed shows up here without re-importing.
+        if (summaryLine != null) ...[
+          const SizedBox(height: 4),
+          Padding(
+            padding: const EdgeInsets.only(left: 24),
+            child: Text(
+              summaryLine,
+              key: ValueKey<String>('dump-card-summary-${dump.id}'),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
               style: theme.textTheme.labelSmall?.copyWith(
                 color: colors.onSurfaceVariant,
               ),

@@ -13,6 +13,8 @@ import 'package:tangent/models/notebook.dart';
 import 'package:tangent/models/notebook_ruling.dart';
 import 'package:tangent/screens/dump/dumps_providers.dart';
 import 'package:tangent/screens/notebook/notebook_editor_screen.dart';
+import 'package:tangent/screens/settings/ai_summaries_section.dart'
+    show summariesEnabledProvider;
 import 'package:tangent/services/notebook_persistence.dart';
 import 'package:tangent/widgets/dump_picker_sheet.dart';
 import 'package:tangent/widgets/notebook_dump_card.dart';
@@ -28,6 +30,7 @@ DumpRow _dumpRow(
   String title, {
   String mode = 'brain_dump',
   String? transcript,
+  String? summary,
 }) =>
     DumpRow(
       id: id,
@@ -43,6 +46,7 @@ DumpRow _dumpRow(
       syncAttempts: 0,
       transcriptionStatus: 'not_transcribed',
       transcriptionAttempt: 0,
+      summary: summary,
     );
 
 /// Records notebooks handed to the durable-publication path so a test can
@@ -79,6 +83,7 @@ void main() {
     required Notebook notebook,
     List<DumpRow> dumps = const <DumpRow>[],
     bool setViewSize = true,
+    bool summariesEnabled = false,
   }) async {
     if (setViewSize) {
       tester.view.physicalSize = const Size(1080, 2340);
@@ -97,6 +102,7 @@ void main() {
             _RecordingNotebookPersistence(repository, publishedNotebooks),
           ),
           dumpsProvider.overrideWith((_) => Stream<List<DumpRow>>.value(dumps)),
+          summariesEnabledProvider.overrideWith((_) => summariesEnabled),
         ],
         child: MaterialApp(
           home: Builder(
@@ -3120,6 +3126,258 @@ void main() {
         reason: 'imported text is placed, not flow-laid over placed blocks',
       );
       expect(imported.y, greaterThan(500));
+
+      await unmount(tester);
+    });
+  });
+
+  group('summary import shapes', () {
+    /// Drives the Meeting notes import through the picker to the shape
+    /// sheet; summaries live on meetings, so that is the entry Jeff uses.
+    Future<void> importMeeting(WidgetTester tester, String pickKey) async {
+      await tester.tap(find.byKey(const ValueKey('notebook-insert-menu')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Meeting notes'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(ValueKey(pickKey)));
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('dump-picker-add')));
+      await tester.pumpAndSettle();
+    }
+
+    Future<List<NotebookTextBlock>> saveAndReadTexts(
+      WidgetTester tester,
+    ) async {
+      await tester.tap(find.byIcon(Icons.save));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      return repository.saved.single.document.blocks
+          .whereType<NotebookTextBlock>()
+          .toList();
+    }
+
+    testWidgets('choosing Summary inserts the summary as one text box',
+        (tester) async {
+      await mountEditor(
+        tester,
+        notebook: testNotebook(id: 'nb-1'),
+        dumps: <DumpRow>[
+          _dumpRow(
+            'm1',
+            'Standup',
+            mode: 'meeting',
+            transcript: 'we talked about shipping on friday',
+            summary: '## Summary\n- ship on Friday',
+          ),
+        ],
+        summariesEnabled: true,
+      );
+
+      await importMeeting(tester, 'dump-pick-m1');
+      await tester.tap(find.byKey(const ValueKey('import-as-summary')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(find.byType(NotebookDumpCard), findsNothing);
+      expect(
+        find.text('Summary\n- ship on Friday'),
+        findsOneWidget,
+        reason: 'the summary lands in an editable text box, page-normalised '
+            '(heading pounds dropped, heading text kept)',
+      );
+      expect(
+        find.text('we talked about shipping on friday'),
+        findsNothing,
+        reason: 'Summary alone must not also drag the transcript in',
+      );
+
+      final List<NotebookTextBlock> texts = await saveAndReadTexts(tester);
+      expect(texts, hasLength(1));
+      expect(texts.single.text, 'Summary\n- ship on Friday');
+      expect(tester.takeException(), isNull);
+
+      await unmount(tester);
+    });
+
+    testWidgets(
+        'choosing Transcript + summary inserts two boxes, summary above',
+        (tester) async {
+      await mountEditor(
+        tester,
+        notebook: testNotebook(id: 'nb-1'),
+        dumps: <DumpRow>[
+          _dumpRow(
+            'm1',
+            'Standup',
+            mode: 'meeting',
+            transcript: 'we talked about shipping on friday',
+            summary: '## Summary\n- ship on Friday',
+          ),
+        ],
+        summariesEnabled: true,
+      );
+
+      await importMeeting(tester, 'dump-pick-m1');
+      await tester.tap(find.byKey(const ValueKey('import-as-both')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(find.text('Summary\n- ship on Friday'), findsOneWidget);
+      expect(find.text('we talked about shipping on friday'), findsOneWidget);
+
+      final List<NotebookTextBlock> texts = await saveAndReadTexts(tester);
+      expect(texts, hasLength(2));
+      final NotebookTextBlock summary = texts.singleWhere(
+        (NotebookTextBlock t) => t.text == 'Summary\n- ship on Friday',
+      );
+      final NotebookTextBlock transcript = texts.singleWhere(
+        (NotebookTextBlock t) => t.text == 'we talked about shipping on friday',
+      );
+      expect(
+        summary.y!,
+        lessThan(transcript.y!),
+        reason: 'summary first, transcript below it',
+      );
+      expect(
+        summary.x,
+        transcript.x,
+        reason: 'both land in the same typed column',
+      );
+      expect(tester.takeException(), isNull);
+
+      await unmount(tester);
+    });
+
+    testWidgets('a dump with no summary yet imports as Summary, honestly',
+        (tester) async {
+      await mountEditor(
+        tester,
+        notebook: testNotebook(id: 'nb-1'),
+        dumps: <DumpRow>[
+          _dumpRow(
+            'm1',
+            'Standup',
+            mode: 'meeting',
+            transcript: 'we talked',
+          ),
+        ],
+        summariesEnabled: true,
+      );
+
+      await importMeeting(tester, 'dump-pick-m1');
+      await tester.tap(find.byKey(const ValueKey('import-as-summary')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(
+        find.text('(no summary yet for "Standup")'),
+        findsOneWidget,
+        reason: 'an empty text box would read as a broken import',
+      );
+
+      await unmount(tester);
+    });
+
+    testWidgets(
+        'Transcript + summary falls back independently for each half',
+        (tester) async {
+      // Summary present, transcript missing: the summary box carries the
+      // real summary and ONLY the transcript box is the honest placeholder.
+      await mountEditor(
+        tester,
+        notebook: testNotebook(id: 'nb-1'),
+        dumps: <DumpRow>[
+          _dumpRow(
+            'm1',
+            'Standup',
+            mode: 'meeting',
+            summary: '## Summary\n- ship on Friday',
+          ),
+        ],
+        summariesEnabled: true,
+      );
+
+      await importMeeting(tester, 'dump-pick-m1');
+      await tester.tap(find.byKey(const ValueKey('import-as-both')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(find.text('Summary\n- ship on Friday'), findsOneWidget);
+      expect(find.text('(no transcript for "Standup")'), findsOneWidget);
+      expect(find.textContaining('no summary yet'), findsNothing);
+
+      await unmount(tester);
+    });
+
+    testWidgets(
+        'summary shapes are hidden while summaries are off and no picked '
+        'dump has one', (tester) async {
+      await mountEditor(
+        tester,
+        notebook: testNotebook(id: 'nb-1'),
+        dumps: <DumpRow>[
+          _dumpRow('m1', 'Standup', mode: 'meeting', transcript: 'we talked'),
+        ],
+        summariesEnabled: false,
+      );
+
+      await importMeeting(tester, 'dump-pick-m1');
+
+      expect(find.byKey(const ValueKey('import-as-card')), findsOneWidget);
+      expect(find.byKey(const ValueKey('import-as-text')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('import-as-summary')),
+        findsNothing,
+        reason: 'while summaries are off, none of the feature\'s UI appears',
+      );
+      expect(find.byKey(const ValueKey('import-as-both')), findsNothing);
+
+      await unmount(tester);
+    });
+
+    testWidgets(
+        'summary shapes appear when summaries are off but a picked dump '
+        'already carries one', (tester) async {
+      // A summary synced from another device is real content; hiding the
+      // option because THIS device has the toggle off would strand it.
+      await mountEditor(
+        tester,
+        notebook: testNotebook(id: 'nb-1'),
+        dumps: <DumpRow>[
+          _dumpRow(
+            'm1',
+            'Standup',
+            mode: 'meeting',
+            summary: '## Summary\n- ship on Friday',
+          ),
+        ],
+        summariesEnabled: false,
+      );
+
+      await importMeeting(tester, 'dump-pick-m1');
+
+      expect(find.byKey(const ValueKey('import-as-summary')), findsOneWidget);
+      expect(find.byKey(const ValueKey('import-as-both')), findsOneWidget);
+
+      await unmount(tester);
+    });
+
+    testWidgets(
+        'summary shapes appear when summaries are on even with no summary yet',
+        (tester) async {
+      await mountEditor(
+        tester,
+        notebook: testNotebook(id: 'nb-1'),
+        dumps: <DumpRow>[
+          _dumpRow('m1', 'Standup', mode: 'meeting', transcript: 'we talked'),
+        ],
+        summariesEnabled: true,
+      );
+
+      await importMeeting(tester, 'dump-pick-m1');
+
+      expect(find.byKey(const ValueKey('import-as-summary')), findsOneWidget);
+      expect(find.byKey(const ValueKey('import-as-both')), findsOneWidget);
 
       await unmount(tester);
     });
