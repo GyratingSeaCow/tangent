@@ -106,11 +106,25 @@ def enqueue_transcription(
 
     request_id = payload.request_id or f"legacy:{uuid.uuid4()}"
     existing = db.execute(
-        "SELECT id FROM jobs WHERE request_id = ?", (request_id,)
+        "SELECT id, model FROM jobs WHERE request_id = ?", (request_id,)
     ).fetchone()
+
+    # An omitted model means "whatever the server has selected" — resolved
+    # HERE so the job row records the engine's actual choice (item 1.0b).
+    # On a replay the original job's model wins: re-resolving after the
+    # selection moved on would 409 a legitimately idempotent retry.
+    model = payload.model
+    if model is None:
+        if existing is not None:
+            model = existing["model"]
+        else:
+            from app.services.storage import resolve_active_model
+
+            model = resolve_active_model(db)
+
     if existing is not None:
         try:
-            job_id, _created = enqueue_job(db, dump_id, payload.model, request_id)
+            job_id, _created = enqueue_job(db, dump_id, model, request_id)
         except RequestIdConflict as exc:
             raise HTTPException(status_code=409, detail="request_id conflict") from exc
         response.status_code = status.HTTP_200_OK
@@ -131,7 +145,7 @@ def enqueue_transcription(
     audio_path = str(audio_path_obj)
 
     try:
-        job_id, created = enqueue_job(db, dump_id, payload.model, request_id)
+        job_id, created = enqueue_job(db, dump_id, model, request_id)
     except RequestIdConflict as exc:
         raise HTTPException(status_code=409, detail="request_id conflict") from exc
 

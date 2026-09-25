@@ -120,7 +120,7 @@ class _FakeTranscriptionClient implements TranscriptionClient {
   final FutureOr<TranscriptionJobSnapshot> Function(
     String dumpId,
     String requestId,
-    String model,
+    String? model,
   )? onEnqueue;
   final FutureOr<TranscriptionJobSnapshot> Function(String jobId)? onGetJob;
   final Stream<JobEvent> Function(String jobId)? streamForJob;
@@ -180,7 +180,7 @@ class _FakeTranscriptionClient implements TranscriptionClient {
   Future<TranscriptionJobSnapshot> enqueueTranscription(
     String dumpId, {
     required String requestId,
-    String model = 'large-v3',
+    String? model,
   }) async {
     enqueueCalls += 1;
     calls.add('enqueue');
@@ -194,7 +194,7 @@ class _FakeTranscriptionClient implements TranscriptionClient {
       requestId: requestId,
       dumpId: dumpId,
       status: 'queued',
-      model: model,
+      model: model ?? 'large-v3',
     );
   }
 
@@ -2952,7 +2952,7 @@ void main() {
         requestId: requestId,
         dumpId: dumpId,
         status: 'queued',
-        model: model,
+        model: model ?? 'large-v3',
       ),
       streamForJob: (jobId) {
         streamCalls += 1;
@@ -3538,7 +3538,7 @@ void main() {
           requestId: requestId,
           dumpId: dumpId,
           status: 'queued',
-          model: model,
+          model: model ?? 'large-v3',
         );
       },
       streamForJob: (_) => Stream<JobEvent>.fromFuture(
@@ -3700,7 +3700,7 @@ void main() {
         requestId: requestId,
         dumpId: dumpId,
         status: 'queued',
-        model: model,
+        model: model ?? 'large-v3',
       ),
       streamForJob: (_) => const Stream<JobEvent>.empty(),
     );
@@ -3743,7 +3743,7 @@ void main() {
         requestId: requestId,
         dumpId: dumpId,
         status: 'completed',
-        model: model,
+        model: model ?? 'large-v3',
         transcript: 'already completed',
       ),
       streamForJob: (_) => const Stream<JobEvent>.empty(),
@@ -3801,7 +3801,7 @@ void main() {
           requestId: requestId,
           dumpId: dumpId,
           status: 'queued',
-          model: model,
+          model: model ?? 'large-v3',
         );
       },
       streamForJob: (_) => Stream<JobEvent>.fromIterable(const [
@@ -3888,7 +3888,7 @@ void main() {
           requestId: requestId,
           dumpId: dumpId,
           status: 'queued',
-          model: model,
+          model: model ?? 'large-v3',
         );
       },
       streamForJob: (_) => const Stream<JobEvent>.empty(),
@@ -4224,7 +4224,7 @@ void main() {
               requestId: requestId,
               dumpId: dumpId,
               status: 'queued',
-              model: model,
+              model: model ?? 'large-v3',
             ),
           );
           if (loseFirstResponse) {
@@ -4380,7 +4380,7 @@ void main() {
             requestId: requestId,
             dumpId: dumpId,
             status: 'queued',
-            model: model,
+            model: model ?? 'large-v3',
           );
         },
       );
@@ -4977,7 +4977,7 @@ void main() {
         id: 'job-$id',
         requestId: request,
         dumpId: id,
-        model: model,
+        model: model ?? 'large-v3',
         status: 'completed',
         transcript: 'Recovered $id',
       ),
@@ -5132,7 +5132,7 @@ void main() {
         id: 'job-replacement',
         requestId: request,
         dumpId: id,
-        model: model,
+        model: model ?? 'large-v3',
         status: 'completed',
         transcript: 'Recovered',
       ),
@@ -5201,7 +5201,7 @@ void main() {
             id: 'recovered-job',
             requestId: request,
             dumpId: id,
-            model: model,
+            model: model ?? 'large-v3',
             status: 'completed',
             transcript: 'Recovered late acceptance',
           ),

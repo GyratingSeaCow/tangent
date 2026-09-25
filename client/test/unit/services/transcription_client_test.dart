@@ -150,8 +150,9 @@ void main() {
         ),
       ).captured.single;
 
+      // No model key: the SERVER resolves its selected model at enqueue
+      // time (item 1.0b) — the client must not ship a hardcoded guess.
       expect(request, {
-        'model': 'large-v3',
         'request_id': 'request-client-001',
       });
       expect(snapshot.id, 'job-1');

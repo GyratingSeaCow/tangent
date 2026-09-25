@@ -81,9 +81,15 @@ class TranscriptSegment(BaseModel):
 
 
 class JobCreate(BaseModel):
-    """Request to enqueue a transcription job."""
+    """Request to enqueue a transcription job.
 
-    model: str = Field(default="large-v3", min_length=1, max_length=50)
+    ``model`` is optional: when omitted the server resolves its own selected
+    model (``storage.resolve_active_model``) at enqueue time, so the job row
+    records what the engine will actually load instead of a client-side
+    guess that can drift from the server's selection.
+    """
+
+    model: str | None = Field(default=None, min_length=1, max_length=50)
     request_id: str = Field(min_length=8, max_length=128)
 
 

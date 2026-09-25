@@ -86,14 +86,14 @@ class _NoopTranscriptionClient implements TranscriptionClient {
   Future<TranscriptionJobSnapshot> enqueueTranscription(
     String dumpId, {
     required String requestId,
-    String model = 'large-v3',
+    String? model,
   }) async =>
       TranscriptionJobSnapshot(
         id: 'job',
         requestId: requestId,
         dumpId: dumpId,
         status: 'queued',
-        model: model,
+        model: model ?? 'large-v3',
       );
   @override
   Future<TranscriptionJobSnapshot> getJob(String jobId) async =>

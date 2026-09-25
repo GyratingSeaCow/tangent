@@ -104,7 +104,7 @@ class _RecordingClient implements TranscriptionClient {
   Future<TranscriptionJobSnapshot> enqueueTranscription(
     String dumpId, {
     required String requestId,
-    String model = 'large-v3',
+    String? model,
   }) async {
     calls.add('enqueue');
     return TranscriptionJobSnapshot(
@@ -112,7 +112,7 @@ class _RecordingClient implements TranscriptionClient {
       requestId: requestId,
       dumpId: dumpId,
       status: 'queued',
-      model: model,
+      model: model ?? 'large-v3',
     );
   }
 

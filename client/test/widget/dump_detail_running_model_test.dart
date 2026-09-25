@@ -97,7 +97,7 @@ class _UnusedTranscriptionClient implements TranscriptionClient {
   Future<TranscriptionJobSnapshot> enqueueTranscription(
     String dumpId, {
     required String requestId,
-    String model = 'large-v3',
+    String? model,
   }) async =>
       throw UnimplementedError();
 

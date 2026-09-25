@@ -322,7 +322,6 @@ class ServerTranscriptionService extends ChangeNotifier {
               () => _client.enqueueTranscription(
                 row.id,
                 requestId: requestId,
-                model: 'large-v3',
               ),
             );
             _throwIfDisposed();

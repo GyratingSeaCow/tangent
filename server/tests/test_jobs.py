@@ -84,6 +84,70 @@ def test_enqueue_transcription_returns_job(authed_client_with_dump):
     assert body["status"] in ("queued", "running", "completed", "failed")
 
 
+def test_enqueue_without_model_uses_server_selection(
+    authed_client_with_dump, temp_data_dir
+):
+    """Omitting `model` resolves to the server-selected model (item 1.0b).
+
+    The engine loads the server-selected model regardless of the job row, so
+    a hardcoded request default lets the two drift (a job row said large-v3
+    while the engine logged model=small). The row must record what the
+    engine will actually use.
+    """
+    client, token, dump_id = authed_client_with_dump
+    conn = sqlite3.connect(temp_data_dir / "tangent.db")
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO app_settings (key, value) "
+            "VALUES ('whisper_model', 'small')"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    resp = client.post(
+        f"/v1/dumps/{dump_id}/transcribe",
+        json={"request_id": "request-model-omit-001"},
+        headers=_auth(token),
+    )
+    assert resp.status_code == 201
+    assert resp.json()["model"] == "small"
+
+
+def test_enqueue_replay_without_model_reuses_job_model(
+    authed_client_with_dump, temp_data_dir
+):
+    """A model-less replay of an existing request_id must return the original
+    job unchanged — not re-resolve the selection and 409 on the mismatch."""
+    client, token, dump_id = authed_client_with_dump
+    first = client.post(
+        f"/v1/dumps/{dump_id}/transcribe",
+        json={"model": "small", "request_id": "request-model-replay-001"},
+        headers=_auth(token),
+    )
+    assert first.status_code == 201
+
+    # Selection moves on after the job was created.
+    conn = sqlite3.connect(temp_data_dir / "tangent.db")
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO app_settings (key, value) "
+            "VALUES ('whisper_model', 'medium')"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    replay = client.post(
+        f"/v1/dumps/{dump_id}/transcribe",
+        json={"request_id": "request-model-replay-001"},
+        headers=_auth(token),
+    )
+    assert replay.status_code == 200
+    assert replay.json()["id"] == first.json()["id"]
+    assert replay.json()["model"] == "small"
+
+
 def test_get_job_by_id(authed_client_with_dump):
     client, token, dump_id = authed_client_with_dump
     enq = client.post(

@@ -160,15 +160,22 @@ class TranscriptionClient {
   }
 
   /// Enqueue a transcription job on the server.
+  ///
+  /// [model] is optional: when omitted the SERVER resolves its own selected
+  /// model at enqueue time, so the job row records what the engine will
+  /// actually load. Pass a name only for an explicit per-job override.
   Future<TranscriptionJobSnapshot> enqueueTranscription(
     String dumpId, {
     required String requestId,
-    String model = 'large-v3',
+    String? model,
   }) async {
     final resp = await _fetch(
       '/v1/dumps/$dumpId/transcribe',
       method: 'POST',
-      data: {'model': model, 'request_id': requestId},
+      data: {
+        if (model != null) 'model': model,
+        'request_id': requestId,
+      },
     );
     return _snapshotFromJson(resp);
   }
