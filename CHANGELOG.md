@@ -5,6 +5,42 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.0] - 2026-09-25
+
+Feature release: your server reads the meeting so you don't have to.
+
+### Added
+- **AI meeting summaries.** After a meeting is transcribed, the server
+  writes a short summary — what was discussed, decisions, action items,
+  open questions — below the transcript, and it syncs to every device.
+  Entirely local: a 4B-parameter instruct model (Qwen 3 4B Instruct 2507,
+  Q4_K_M) runs on your own server via llama.cpp; nothing leaves your
+  network. Off by default behind a Settings toggle with a one-time install
+  wizard (about 2.5 GB, progress in-line and in the notification shade;
+  survives app restarts). Sections with nothing to report are omitted
+  rather than invented. Uninstalling keeps every summary already written.
+  GPU is used when the runtime supports it; otherwise CPU — accuracy is
+  identical either way, only speed differs.
+- **Regenerate summary** from a meeting's ⋮ menu.
+- **Summaries in notebooks.** "Import meetings" now offers *Summary* and
+  *Transcript + summary* alongside the audio bubble and transcript, and
+  audio bubbles show the summary's first line under the title — a summary
+  that arrives later appears without re-importing.
+- Summaries render as formatted text (headings, bullets) on the recording
+  screen.
+
+### Fixed
+- The AI-summaries toggle reflects the server's setting when Settings
+  opens, so a change made from another device is not shown stale.
+- The summarizer's CUDA runtime is vendored into its own environment and
+  found even though the venv's Python is a symlink; when the GPU selftest
+  fails the install falls back to CPU instead of failing.
+
+### Known
+- On Blackwell GPUs (RTX 50-series) the prebuilt CUDA llama.cpp wheel does
+  not yet include sm_120 kernels; summaries run on CPU there (~40 s each)
+  until upstream ships CUDA 12.8+ wheels.
+
 ## [1.8.0] - 2026-09-23
 
 Feature release: capture and export round out the daily loop.
