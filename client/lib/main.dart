@@ -38,6 +38,7 @@ import 'package:device_info_plus/device_info_plus.dart';
 
 import 'services/background_sync_scheduler.dart';
 import 'services/close_to_tray.dart';
+import 'services/record_hotkey.dart';
 import 'services/connectivity_service.dart';
 import 'services/document_sync_engine.dart';
 import 'services/instance_commands.dart';
@@ -124,17 +125,19 @@ Future<void> main(List<String> args) async {
   initPlatformAudio();
   // window_manager backs the tray's Open App (show/focus); it requires an
   // explicit init before any call and is desktop-only.
-  if (Platform.isLinux) {
+  final bool desktop = Platform.isLinux || Platform.isWindows;
+  if (desktop) {
     await windowManager.ensureInitialized();
   }
 
-  // Desktop single-instance + hotkey plumbing. A KDE global shortcut runs
-  // `tangent --record`: when an instance already owns the socket this
-  // process forwards the command and exits without ever showing a window;
-  // otherwise this process becomes the instance and serves the socket.
+  // Desktop single-instance + hotkey plumbing. Linux: a KDE global shortcut
+  // runs `tangent --record` and the socket turns it into a command. Windows:
+  // the second process (double-click or future protocol launch) forwards the
+  // same way over loopback TCP; the global hotkey is registered in-process
+  // (RegisterHotKey) further down, once the app is running.
   SingleInstanceServer? instance;
   final wantsRecord = args.contains('--record');
-  if (Platform.isLinux) {
+  if (desktop) {
     final socketPath = defaultInstanceSocketPath();
     instance = await SingleInstanceServer.bind(socketPath);
     if (instance == null) {
@@ -275,6 +278,19 @@ Future<void> main(List<String> args) async {
       // would strand the user, so close-to-tray only arms after the tray
       // is confirmed present.
       debugPrint('tangent.tray unavailable: $e');
+    }
+    // Windows global record hotkey (Ctrl+Alt+R), routed through the same
+    // instance-command path as the tray and the Linux CLI forwarder.
+    // Registration failure (combo taken by another app) is logged, never
+    // fatal.
+    if (platformUsesInProcessHotkey) {
+      final hotkey = RecordHotkey(
+        onToggleRecord: () async =>
+            sendInstanceCommand(ownedInstance.path, 'toggle-record'),
+      );
+      if (!await hotkey.install()) {
+        debugPrint('tangent.hotkey: Ctrl+Alt+R unavailable (already taken)');
+      }
     }
   }
 }

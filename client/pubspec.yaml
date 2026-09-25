@@ -44,6 +44,8 @@ dependencies:
   file_selector: ^1.0.3
   package_info_plus: ^8.3.1
   flutter_markdown_plus: ^1.0.3
+  tray_manager: ^0.5.3
+  hotkey_manager: ^0.2.3
 
 dev_dependencies:
   flutter_test:
@@ -63,4 +65,5 @@ flutter:
   uses-material-design: true
   assets:
     - assets/tray/tray_icon.png
+    - assets/tray/tray_icon.ico
     - assets/licenses/AGPL-3.0.txt
