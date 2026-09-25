@@ -8,10 +8,42 @@ re-derive it.
 
 ## 1. Open items
 
-### 1.0 Name the active Whisper model in the transcription notification
+### 1.0 Name the active Whisper model — DONE (2026-09-25, unreleased)
 
-**Status:** requested by Jeff 2026-09-25, right after the model picker
-shipped. Now that the model is selectable, the progress UI must say which
+Shipped on `feature/notice-names-model`, merged as `ae01276`. The shade
+reads `1 recording · large-v3` and the recording screen "decoding audio
+with large-v3", both from the `SettingsStore.whisper_model` mirror (no
+network wait), with the unknown case falling back to exactly the old
+wording. Sabotage (removing the fallback) produced `1 recording · null`
+across 4 tests. A pre-existing end-to-end test pinning the old copy was
+updated, not deleted — it is the only proof the mirror reaches the shade
+through the production path. Full suite `+1795 ~1 -5`.
+
+STILL OWED from this item: `JobCreate.model` (server `app/models.py:86`)
+defaults to a hardcoded `"large-v3"` while the engine loads the
+server-selected model. They demonstrably disagree (a job row said
+large-v3 while the engine logged `model=small`); nothing user-visible
+reads the job field today, but that default should go so the two cannot
+drift.
+
+### 1.9 Bottom action row cut off by the system bar — DONE (2026-09-25, unreleased)
+
+Jeff, on device: "look at how the bottom of the screen gets cut off by the
+buttons?" The Save / Transcribe again row is the last child of the
+recording screen's `ListView`, whose padding was a flat
+`EdgeInsets.all(16)` — nothing reserved the navigation bar, so the Fold's
+taskbar covered most of "Save". Fixed in `30ae500` by reserving
+`MediaQuery.viewPaddingOf(context).bottom`; `viewPadding` rather than
+`padding` so raising the keyboard cannot collapse the reservation.
+RED proof `Expected: <64> / Actual: <16.0>`; verified on-device.
+
+Audited the other scrolling screens (settings, pair-device, notebook list,
+server connection) — none has a pinned action row as its last child, so
+this was the only affected screen. Worth re-checking whenever a screen
+gains a bottom button row.
+
+**Original note:** requested by Jeff 2026-09-25, right after the model
+picker shipped. Now that the model is selectable, the progress UI must say which
 one is actually working — "faster-whisper" is the engine, not the choice.
 
 Two places say the wrong thing today:
