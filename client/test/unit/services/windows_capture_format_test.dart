@@ -4,6 +4,8 @@
 // decoder), so encoded-opus start fails on Windows — proven on the bench
 // 2026-09-25. Capture there must take the PCM→WAV stream path even at
 // unity gain, riding the exact pipeline the mic-gain feature proved.
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tangent/data/storage/storage_contract.dart'
     show publishableContentSuffixes;
@@ -39,6 +41,21 @@ void main() {
   });
 
   group('captureExtensionForGain', () {
+    test('the real default follows the host platform (no override)', () {
+      // The suite-wide config pins the override to false; every other test
+      // relies on that. This one deliberately clears it to prove the
+      // UNPINNED default is wired to Platform.isWindows — a sabotage that
+      // hardcodes it (e.g. `?? false`) must fail HERE on a Windows bench
+      // even though every override-driven test stays green.
+      debugIsWindowsCaptureOverride = null;
+      addTearDown(() => debugIsWindowsCaptureOverride = false);
+      expect(
+        usesPcmCapture(defaultMicGain),
+        Platform.isWindows,
+        reason: 'unity gain must stage PCM/WAV exactly on Windows hosts',
+      );
+    });
+
     test('Windows audio capture stages as wav at unity gain', () {
       debugIsWindowsCaptureOverride = true;
       expect(captureExtensionForGain('brain_dump', defaultMicGain), 'wav');
