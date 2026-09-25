@@ -12,7 +12,11 @@ from app.auth import require_auth
 from app.config import get_settings
 from app.db import get_db
 from app.models import PublicServerInfo, ServerInfo
-from app.services.storage import SUPPORTED_MODELS, get_storage_used_bytes
+from app.services.storage import (
+    SUPPORTED_MODELS,
+    get_storage_used_bytes,
+    resolve_active_model,
+)
 from app.version import __version__
 
 router = APIRouter()
@@ -55,7 +59,11 @@ def get_server_info(
     return ServerInfo(
         version=__version__,
         setup_complete=db.execute("SELECT 1 FROM auth WHERE id = 1").fetchone() is not None,
-        default_model=settings.whisper_model,
+        # The model this server will ACTUALLY transcribe with: the persisted
+        # selection when there is one, then the env default. Echoing
+        # settings.whisper_model here made the field lie the moment a user
+        # picked a model.
+        default_model=resolve_active_model(db),
         available_models=list(SUPPORTED_MODELS),
         storage_used_bytes=get_storage_used_bytes(settings.data_dir),
         dump_count=dump_count,

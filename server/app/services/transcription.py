@@ -76,11 +76,43 @@ class TranscriptionResult:
     segments: list[dict[str, Any]] = field(default_factory=list)
 
 
+def resolve_configured_model() -> str:
+    """The model the server should transcribe with, resolved against the db.
+
+    Opens its OWN short-lived connection (and only when the database file
+    already exists) so a model load never creates or migrates the schema as
+    a side effect. Any failure degrades to the env/default resolution rather
+    than failing the transcription — see ``storage.resolve_active_model``.
+    """
+    import sqlite3
+
+    from app.services.storage import resolve_active_model
+
+    db_path = Path(get_settings().data_dir) / "tangent.db"
+    if not db_path.exists():
+        return resolve_active_model(None)
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        return resolve_active_model(conn)
+    except Exception as exc:
+        log.warning("transcription.model_resolution_failed", error=str(exc))
+        return resolve_active_model(None)
+    finally:
+        if conn is not None:
+            conn.close()
+
+
 class TranscriptionService:
     """Lazy-loads Whisper model on first use, caches it for the process lifetime."""
 
     def __init__(self, model_name: str | None = None) -> None:
-        self._model_name = model_name or get_settings().whisper_model
+        #: An EXPLICIT name pins the service to that model (the /pull route
+        #: and tests). None means "whatever is selected", resolved at LOAD
+        #: time — never in __init__ — so a selection made through the API
+        #: takes effect on the next load with no container restart.
+        self._pinned_name = model_name
+        self._model_name = model_name or resolve_configured_model()
         self._model: WhisperModel | None = None
 
     @property
@@ -91,7 +123,7 @@ class TranscriptionService:
         """Explicitly load (or reload) the model."""
         from faster_whisper import WhisperModel
 
-        target = model_name or self._model_name
+        target = model_name or self._pinned_name or resolve_configured_model()
         download_root = Path(get_settings().data_dir) / "models"
         download_root.mkdir(parents=True, exist_ok=True)
         log.info(
