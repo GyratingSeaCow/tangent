@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../data/secure_storage.dart';
+import '../../services/lan_candidate_ranking.dart';
 import '../../services/pairing_client.dart';
 import '../../services/server_discovery.dart';
 import '../../services/transcription_client.dart';
@@ -107,24 +108,10 @@ class _ServerConnectionScreenState
   }
 
   /// The device's own LAN IPv4, or null when there is none (cellular,
-  /// airplane mode). Sweeping a carrier NAT range is pointless and looks
-  /// like scanning behaviour, so no address means no sweep.
-  Future<String?> _localIPv4() async {
-    try {
-      final List<NetworkInterface> interfaces = await NetworkInterface.list(
-        type: InternetAddressType.IPv4,
-        includeLinkLocal: false,
-      );
-      for (final NetworkInterface iface in interfaces) {
-        for (final InternetAddress addr in iface.addresses) {
-          if (!addr.isLoopback) return addr.address;
-        }
-      }
-    } on Object {
-      // Fall through: no address, no sweep.
-    }
-    return null;
-  }
+  /// airplane mode) — no address means no sweep. Ranked, not first-wins:
+  /// desktops carry Tailscale/WSL/Hyper-V adapters whose /24 is not the
+  /// LAN (see lan_candidate_ranking.dart).
+  Future<String?> _localIPv4() => rankedLocalIPv4();
 
   Future<void> _scan() async {
     final String? self = await (widget.localAddress ?? _localIPv4)();
