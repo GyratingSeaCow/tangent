@@ -13,7 +13,7 @@
 /// lines are trimmed so blank input stays blank rather than becoming a box
 /// of whitespace.
 String summaryToPageText(String summary) {
-  final List<String> lines = summary.split('\n');
+  final List<String> lines = _normaliseNewlines(summary).split('\n');
   final List<String> out = <String>[
     for (final String line in lines) _stripHeading(line),
   ];
@@ -30,16 +30,26 @@ String summaryToPageText(String summary) {
 /// caller can render exactly as it did before summaries existed.
 String? summaryFirstLine(String? summary) {
   if (summary == null) return null;
-  for (final String raw in summary.split('\n')) {
+  for (final String raw in _normaliseNewlines(summary).split('\n')) {
     final String line = raw.trim();
     if (line.isEmpty) continue;
-    if (_atxHeading.hasMatch(line)) continue;
-    return line.replaceFirst(_bulletMarker, '');
+    if (_atxHeading.hasMatch(line) || _bareHeading.hasMatch(line)) continue;
+    final String body = line.replaceFirst(_bulletMarker, '').trim();
+    if (body.isEmpty) continue;
+    return body;
   }
   return null;
 }
 
-final RegExp _bulletMarker = RegExp(r'^[-*+]\s+');
+/// Summaries are LF on the wire, but a summary edited or pasted on Windows
+/// may carry CRLF; normalise so no `\r` leaks into a text block.
+String _normaliseNewlines(String s) => s.replaceAll('\r\n', '\n');
+
+/// `## ` with nothing after it — a heading with no text; not content.
+final RegExp _bareHeading = RegExp(r'^\s{0,3}#{1,6}\s*$');
+
+/// A bullet marker, or a bare marker with nothing after it (an empty bullet).
+final RegExp _bulletMarker = RegExp(r'^[-*+](\s+|$)');
 
 /// `#`, `##`, ... followed by at least one space at the start of the line is
 /// an ATX heading; anything else (a `#42` ticket reference, `C#`) is body

@@ -94,4 +94,17 @@ void main() {
       expect(summaryFirstLine('## Summary\n## Action items'), isNull);
     });
   });
+
+  group('input hardening (review minor 4)', () {
+    test('CRLF summaries normalise cleanly in both helpers', () {
+      const String crlf = '## Summary\r\n- ship on Friday\r\n\r\n## Action items\r\n';
+      expect(summaryToPageText(crlf), 'Summary\n- ship on Friday\n\nAction items');
+      expect(summaryFirstLine(crlf), 'ship on Friday');
+    });
+
+    test('bullets-only and empty-heading summaries yield no first line', () {
+      expect(summaryFirstLine('- \n- '), isNull);
+      expect(summaryFirstLine('## \n'), isNull);
+    });
+  });
 }
