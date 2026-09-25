@@ -231,6 +231,80 @@ jobs:
           files: packaging/out/Tangent-x86_64.AppImage
           generate_release_notes: true
 
+  windows-installer:
+    name: Build + attach Windows installer
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.27.1"
+          channel: stable
+          cache: true
+
+      - name: Pub get
+        working-directory: client
+        run: flutter pub get
+
+      # The same gates the other release jobs run. `flutter test` here also
+      # exercises the Windows branches (TCP single-instance, wav capture)
+      # that ubuntu runners can never reach.
+      - name: Analyze
+        working-directory: client
+        run: flutter analyze
+
+      - name: Test
+        working-directory: client
+        run: flutter test
+
+      - name: Build Windows release bundle
+        working-directory: client
+        run: flutter build windows --release
+
+      # Inno Setup: preinstalled on windows-2022/2025 images; choco is the
+      # fallback so an image change cannot silently drop the installer.
+      - name: Ensure Inno Setup
+        shell: pwsh
+        run: |
+          if (-not (Get-Command ISCC -ErrorAction SilentlyContinue)) {
+            if (-not (Test-Path "C:\Program Files (x86)\Inno Setup 6\ISCC.exe")) {
+              choco install innosetup -y --no-progress
+            }
+          }
+
+      - name: Build the installer
+        shell: bash
+        run: packaging/build-windows-installer.sh
+
+      # An installer that unpacks nothing looks identical to a good one on
+      # the Releases page. Prove the payload: silent-install into the
+      # runner's user profile and require the exe to land.
+      - name: Verify the installer payload
+        shell: pwsh
+        run: |
+          $p = Start-Process packaging/windows/out/tangent-setup-x64.exe `
+            -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' `
+            -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "installer exited $($p.ExitCode)" }
+          $exe = "$env:LOCALAPPDATA\Programs\Tangent\tangent.exe"
+          if (-not (Test-Path $exe)) { throw "install produced no $exe" }
+          Write-Host "installer payload verified: $exe"
+
+      - name: Upload as a build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tangent-setup-x64
+          path: packaging/windows/out/tangent-setup-x64.exe
+          if-no-files-found: error
+
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: packaging/windows/out/tangent-setup-x64.exe
+          generate_release_notes: true
+
   server-image:
     name: Publish server image to GHCR
     runs-on: ubuntu-latest
