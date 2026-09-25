@@ -45,8 +45,15 @@ class _FakeSummariesClient extends SummariesClient {
   /// how the 409 'install already running' race is staged.
   ApiException? installError;
 
+  /// When set, [getSettings] throws this — an unreachable server at init.
+  Object? settingsError;
+
   @override
-  Future<SummarySettings> getSettings() async => _settings;
+  Future<SummarySettings> getSettings() async {
+    final Object? err = settingsError;
+    if (err != null) throw err;
+    return _settings;
+  }
 
   @override
   Future<SummarySettings> setEnabled(bool enabled) async {
@@ -136,7 +143,9 @@ Future<_Harness> _mount(
   bool gpuVisible = true,
   bool installed = false,
   bool enabled = false,
+  bool? serverEnabled,
   bool installRunning = false,
+  Object? settingsError,
   List<SummaryInstallProgress>? script,
   TranscriptionNotificationPort? port,
 }) async {
@@ -148,9 +157,12 @@ Future<_Harness> _mount(
       gpuVisible: gpuVisible,
       diskFreeBytes: 64424509440,
       installRunning: installRunning,
-      enabled: enabled,
+      // The server's gate normally agrees with this device's mirror; the
+      // reconcile tests pull them apart on purpose.
+      enabled: serverEnabled ?? enabled,
     ),
   );
+  client.settingsError = settingsError;
   // Rehydration polls during init, so a scripted progress sequence must be
   // in place BEFORE the first pump.
   if (script != null) client.script = script;
@@ -214,6 +226,78 @@ void main() {
   testWidgets('toggle seeds from the persisted setting', (tester) async {
     await _mount(tester, enabled: true, installed: true);
     expect(_toggleValue(tester), isTrue);
+  });
+
+  // ---- reconcile with the server on open ------------------------------------
+  //
+  // The auto-summarize gate is SERVER-side (one toggle for every device);
+  // the provider is only this device's last-confirmed mirror. Another
+  // device (or the API) may have flipped the gate since, so opening the
+  // section must adopt the server's answer — reading, never writing.
+
+  testWidgets(
+      'server says enabled=false while this device remembers ON: the toggle '
+      'lands OFF, persisted, with nothing POSTed', (tester) async {
+    final _Harness h = await _mount(
+      tester,
+      enabled: true,
+      serverEnabled: false,
+      installed: true,
+    );
+    await tester.pumpAndSettle();
+
+    expect(_toggleValue(tester), isFalse);
+    expect(h.container.read(summariesEnabledProvider), isFalse);
+    expect(h.store.aiSummariesEnabled, isFalse);
+    // Reconciling is a READ: the server is the source of truth, so this
+    // device must not push its stale value back.
+    expect(h.client.setEnabledCalls, isEmpty);
+    expect(h.client.installCalls, 0);
+    expect(h.client.uninstallCalls, 0);
+    expect(h.client.progressCalls, 0);
+  });
+
+  testWidgets(
+      'server says enabled=true while this device remembers OFF: the toggle '
+      'lands ON, persisted, with nothing POSTed', (tester) async {
+    final _Harness h = await _mount(
+      tester,
+      enabled: false,
+      serverEnabled: true,
+      installed: true,
+    );
+    await tester.pumpAndSettle();
+
+    expect(_toggleValue(tester), isTrue);
+    expect(h.container.read(summariesEnabledProvider), isTrue);
+    expect(h.store.aiSummariesEnabled, isTrue);
+    expect(h.client.setEnabledCalls, isEmpty);
+    expect(h.client.installCalls, 0);
+    expect(h.client.uninstallCalls, 0);
+    expect(h.client.progressCalls, 0);
+  });
+
+  testWidgets(
+      'an unreachable server at open leaves the remembered toggle untouched',
+      (tester) async {
+    // No answer is not an answer of "off": the mirror keeps its last
+    // confirmed value and the toggle stays interactive, as before.
+    final _Harness h = await _mount(
+      tester,
+      enabled: true,
+      serverEnabled: false,
+      settingsError: Exception('connection refused'),
+    );
+    await tester.pumpAndSettle();
+
+    expect(_toggleValue(tester), isTrue);
+    expect(h.container.read(summariesEnabledProvider), isTrue);
+    expect(h.store.aiSummariesEnabled, isTrue);
+    expect(tester.widget<SwitchListTile>(_toggle).onChanged, isNotNull);
+    expect(
+      find.byKey(const ValueKey<String>('ai-summaries-error')),
+      findsNothing,
+    );
   });
 
   testWidgets('GPU-visible server asks with the GPU wording and the ~2.5 GB '

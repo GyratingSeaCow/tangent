@@ -22,9 +22,14 @@
 ///      settings check missed), so we attach and watch it like our own.
 ///
 /// An install that COMPLETES while the user is away is deliberately
-/// different: rehydration sees install_running=false and does nothing, so
-/// the toggle rests OFF until the user flips it — which takes the
+/// different: rehydration sees install_running=false and starts nothing,
+/// so the toggle rests OFF until the user flips it — which takes the
 /// already-installed fast path (no second download). OCR precedent.
+///
+/// Separately, every open RECONCILES the toggle with the server's `enabled`
+/// gate (it is server-side, shared by every device): if another device or
+/// the API flipped it, this device adopts the server's answer without
+/// POSTing anything. An unreachable server leaves the remembered value.
 library;
 
 import 'dart:async';
@@ -170,6 +175,13 @@ class _AiSummariesSectionState extends ConsumerState<AiSummariesSection> {
   /// running (it survived our last dispose — only the watching stopped),
   /// pick the progress UI, the 2 s poll, and the notification mirror back
   /// up exactly where they were. POSTs nothing.
+  ///
+  /// Also reconciles the toggle: the auto-summarize gate is SERVER-side
+  /// (one toggle for every device) and [summariesEnabledProvider] is only
+  /// this device's last-confirmed mirror. Another device — or the API — may
+  /// have flipped the gate since, so a successful settings read adopts the
+  /// server's `enabled` and persists it. A read, never a write: the stale
+  /// local value is never pushed back.
   Future<void> _rehydrate() async {
     final SummariesClient client;
     final SummarySettings settings;
@@ -180,6 +192,10 @@ class _AiSummariesSectionState extends ConsumerState<AiSummariesSection> {
       // Unreachable server at init is not an error banner — the user did
       // nothing yet. The toggle stays interactive and complains on use.
       return;
+    }
+    if (!mounted) return;
+    if (settings.enabled != ref.read(summariesEnabledProvider)) {
+      await _restToggle(settings.enabled);
     }
     if (!mounted || !settings.installRunning || _installing) return;
     _installConfirmed = true;
