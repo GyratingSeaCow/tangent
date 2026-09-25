@@ -8,6 +8,43 @@ re-derive it.
 
 ## 1. Open items
 
+### 1.0 Name the active Whisper model in the transcription notification
+
+**Status:** requested by Jeff 2026-09-25, right after the model picker
+shipped. Now that the model is selectable, the progress UI must say which
+one is actually working — "faster-whisper" is the engine, not the choice.
+
+Two places say the wrong thing today:
+
+- `client/lib/services/transcription_notifications.dart:57` — the shade
+  notice is `title: 'Transcribing'` / `body: '1 recording'` with no model
+  anywhere. Wanted: the active model named, e.g.
+  `Transcribing with large-v3` (or body `1 recording · large-v3`).
+- `client/lib/screens/dump/dump_detail_screen.dart:1217` — the in-screen
+  line reads "The server is decoding audio with faster-whisper." Wanted:
+  the model name, e.g. "decoding audio with large-v3 on your server".
+  `client/lib/screens/settings/settings_screen.dart:209` describes the
+  architecture generally, so "faster-whisper" is still correct THERE.
+
+Implementation notes:
+
+- The active model already arrives from `GET /v1/transcription/models`
+  (`active`) and from `/v1/server/info` (`default_model`, made truthful in
+  the picker arc). `WhisperModelClient` and the `SettingsStore`
+  `whisper_model` offline mirror both exist — read the mirror so the notice
+  never blocks on the network, and refresh it whenever the catalogue is
+  fetched.
+- `buildTranscriptionNotice(...)` is a pure function with a
+  `TranscriptionNotificationPort` double in tests — add the model as a
+  parameter and pin the copy, including the unknown-model fallback (never
+  render "Transcribing with null"; fall back to today's wording).
+- Per-job override exists: `JobCreate.model` (server `app/models.py:86`)
+  defaults to a hardcoded `"large-v3"` while the engine actually loads the
+  server-selected model (proved live: job row said large-v3, engine logged
+  `model=small`). The notice must report what the ENGINE will use, not the
+  job row's field — and that stale default is itself worth fixing so the
+  two cannot disagree.
+
 ### 1.1 Linux AppImage: verify handwriting search on desktop (v1.7.0 E2E gate)
 
 **Status:** owed. The v1.7.0 tag's Release workflow builds and attaches
