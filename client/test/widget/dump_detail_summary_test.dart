@@ -10,6 +10,7 @@ import 'dart:io';
 
 import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tangent/data/local_db.dart';
@@ -143,7 +144,7 @@ void main() {
       reason: 'a dump carrying a summary must present it',
     );
     expect(find.text('AI summary'), findsOneWidget);
-    final SelectableText body = tester.widget<SelectableText>(
+    final MarkdownBody body = tester.widget<MarkdownBody>(
       find.byKey(const ValueKey('ai-summary-body-sum-1')),
     );
     expect(
@@ -163,6 +164,55 @@ void main() {
       summaryY,
       greaterThan(transcriptY),
       reason: 'the summary block must sit below the transcript',
+    );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(milliseconds: 1));
+  });
+
+  testWidgets(
+      'the summary body renders its markdown — headings and bullets, not '
+      'literal pound signs', (tester) async {
+    // The server writes markdown ('## Summary', '- point'). Rendered as a
+    // plain string the user sees '## ' on screen; rendered as markdown the
+    // heading text and the bullet text appear and the syntax does not.
+    useHandsetViewport(tester);
+    final temp = Directory.systemTemp.createTempSync('tangent-summary-md-');
+    addTearDown(() => temp.deleteSync(recursive: true));
+    final storage = AudioStorage.test(temp);
+    final row = meetingRow(storage, 'sum-md', summary: '## Summary\n- point');
+    await mountDetail(tester, row);
+
+    final Finder body = find.byKey(const ValueKey('ai-summary-body-sum-md'));
+    expect(body, findsOneWidget);
+    expect(
+      find.descendant(
+        of: body,
+        matching: find.byType(MarkdownBody),
+        matchRoot: true,
+      ),
+      findsOneWidget,
+      reason: 'the summary body must be a markdown widget, not raw text',
+    );
+    expect(
+      find.descendant(of: body, matching: find.textContaining('## ')),
+      findsNothing,
+      reason: 'markdown heading syntax must not reach the screen',
+    );
+    expect(
+      find.descendant(of: body, matching: find.textContaining('- point')),
+      findsNothing,
+      reason: 'markdown bullet syntax must not reach the screen',
+    );
+    expect(
+      find.descendant(of: body, matching: find.textContaining('Summary')),
+      findsOneWidget,
+      reason: 'the heading text itself is rendered',
+    );
+    expect(
+      find.descendant(of: body, matching: find.textContaining('point')),
+      findsOneWidget,
+      reason: 'the bullet text itself is rendered',
     );
 
     await tester.pumpWidget(const SizedBox.shrink());

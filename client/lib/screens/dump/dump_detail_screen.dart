@@ -2,6 +2,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 
@@ -29,6 +30,25 @@ final dumpByIdProvider =
   final db = ref.watch(localDbProvider);
   return db.watchDump(id);
 });
+
+/// Markdown styling for the AI summary body: headings are label-sized so
+/// the server's '## Summary' / '## Action items' sections read as compact
+/// section labels inside a card, never as page titles competing with the
+/// recording's own title; body copy matches the transcript.
+MarkdownStyleSheet _summaryStyleSheet(ThemeData theme) {
+  final TextTheme text = theme.textTheme;
+  final TextStyle? heading = text.titleSmall;
+  return MarkdownStyleSheet.fromTheme(theme).copyWith(
+    p: text.bodyMedium,
+    h1: heading,
+    h2: heading,
+    h3: heading,
+    h4: heading,
+    h5: heading,
+    h6: heading,
+    listBullet: text.bodyMedium,
+  );
+}
 
 class DumpDetailScreen extends ConsumerStatefulWidget {
   final String dumpId;
@@ -865,9 +885,10 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
         // the spec. Server-owned, arrives via normal dump sync; absent-safe —
         // a null/blank summary renders nothing at all. The subtle header
         // (label-sized, muted colour) keeps it visually secondary to the
-        // transcript and meeting notes. Rendered like meeting notes
-        // (SelectableText in a Card): the app has no markdown widget, and
-        // the summary's ## sections read fine as plain text.
+        // transcript and meeting notes. The body is MARKDOWN (the server
+        // writes '## Summary' sections and '- ' bullets), rendered with
+        // deliberately modest heading styles so '## Summary' reads as a
+        // compact label rather than a page title.
         if (row.summary != null && row.summary!.trim().isNotEmpty) ...[
           Row(
             key: ValueKey('ai-summary-header-${widget.dumpId}'),
@@ -890,9 +911,11 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
           Card(
             child: Padding(
               padding: const EdgeInsets.all(12),
-              child: SelectableText(
-                row.summary!,
+              child: MarkdownBody(
                 key: ValueKey('ai-summary-body-${widget.dumpId}'),
+                data: row.summary!,
+                selectable: true,
+                styleSheet: _summaryStyleSheet(Theme.of(context)),
               ),
             ),
           ),
