@@ -31,6 +31,7 @@ import '../../models/sync_status.dart';
 import '../../services/image_file_picker.dart';
 import '../../services/ink_search.dart';
 import '../../services/notebook_persistence.dart';
+import '../../services/summary_page_text.dart';
 import '../../widgets/dump_picker_sheet.dart';
 import '../../widgets/ink_palette_popup.dart';
 import '../../widgets/notebook_dump_card.dart';
@@ -38,6 +39,7 @@ import '../../widgets/notebook_image_block.dart';
 import '../../widgets/notebook_ink_canvas.dart';
 import '../dump/dump_detail_screen.dart';
 import '../dump/dumps_providers.dart';
+import '../settings/ai_summaries_section.dart' show summariesEnabledProvider;
 import '../settings/handwriting_search_section.dart'
     show handwritingSearchEnabledProvider;
 import 'notebook_find_bar.dart';
@@ -93,7 +95,10 @@ const double _importBlockHeight = 90;
 const double _importCardSpacing = 104;
 
 /// How a picked dump lands on the page.
-enum _ImportShape { card, text }
+///
+/// [summary] and [both] exist only while AI summaries are in play (see
+/// `_askImportShape`); the sheet never lists them otherwise.
+enum _ImportShape { card, text, summary, both }
 
 /// Width of the typed-block column on the canvas.
 ///
@@ -644,22 +649,47 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
         .where((String id) => !embedded.contains(id))
         .toList(growable: false);
     if (added.isEmpty) return;
+    final Map<String, Dump> dumpsById = <String, Dump>{
+      for (final Dump dump in dumps) dump.id: dump,
+    };
 
     // Audio bubble or text? Asked AFTER picking so one answer covers the
     // whole batch, and nothing lands until the user has answered.
-    final _ImportShape? shape = await _askImportShape();
+    final List<Dump> pickedDumps = <Dump>[
+      for (final String id in added)
+        if (dumpsById[id] != null) dumpsById[id]!,
+    ];
+    final _ImportShape? shape = await _askImportShape(
+      offerSummary: _summaryShapesApply(pickedDumps),
+    );
     if (shape == null || !mounted) return;
 
     // Content-aware insert: everything new starts below the lowest existing
     // content (blocks AND ink), never on top of what is already there.
     double insertY = _contentBottom() + _importSpacing;
-    final Map<String, Dump> dumpsById = <String, Dump>{
-      for (final Dump dump in dumps) dump.id: dump,
-    };
 
     setState(() {
       final List<NotebookBlock> newBlocks = <NotebookBlock>[];
+
+      /// Lands one text box at the cursor and advances it. Transcripts and
+      /// summaries vary in length; leave room proportional to the text so
+      /// consecutive imports do not overlap each other.
+      void addText(String text) {
+        final String id = _uuid.v4();
+        _controllerFor(id, text);
+        newBlocks.add(
+          NotebookTextBlock(
+            id: id,
+            text: text,
+            x: _pagePadding + 4,
+            y: insertY,
+          ),
+        );
+        insertY += _importSpacing + (text.length / 40).ceil() * 24.0;
+      }
+
       for (final String dumpId in added) {
+        final Dump? dump = dumpsById[dumpId];
         switch (shape) {
           case _ImportShape.card:
             newBlocks.add(
@@ -672,26 +702,14 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
             );
             insertY += _importCardSpacing;
           case _ImportShape.text:
-            final Dump? dump = dumpsById[dumpId];
-            final String? transcript = dump?.transcript?.trim();
-            // Honest fallback: an empty text box would read as a broken
-            // import, so a missing transcript says so in the box.
-            final String text = (transcript == null || transcript.isEmpty)
-                ? '(no transcript for "${dump?.title ?? dumpId}")'
-                : transcript;
-            final String id = _uuid.v4();
-            _controllerFor(id, text);
-            newBlocks.add(
-              NotebookTextBlock(
-                id: id,
-                text: text,
-                x: _pagePadding + 4,
-                y: insertY,
-              ),
-            );
-            // Transcripts vary in length; leave room proportional to the
-            // text so consecutive imports do not overlap each other.
-            insertY += _importSpacing + (text.length / 40).ceil() * 24.0;
+            addText(_transcriptPageText(dump, dumpId));
+          case _ImportShape.summary:
+            addText(_summaryPageText(dump, dumpId));
+          case _ImportShape.both:
+            // Summary first, transcript beneath it: the whole record lands
+            // in one import, each half honest on its own.
+            addText(_summaryPageText(dump, dumpId));
+            addText(_transcriptPageText(dump, dumpId));
         }
       }
       _blocks = <NotebookBlock>[..._blocks, ...newBlocks];
@@ -699,8 +717,41 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
     });
   }
 
-  /// Asks whether the import lands as audio bubbles or transcript text.
-  Future<_ImportShape?> _askImportShape() => showModalBottomSheet<_ImportShape>(
+  /// The transcript as page text. Honest fallback: an empty text box would
+  /// read as a broken import, so a missing transcript says so in the box.
+  String _transcriptPageText(Dump? dump, String dumpId) {
+    final String? transcript = dump?.transcript?.trim();
+    return (transcript == null || transcript.isEmpty)
+        ? '(no transcript for "${dump?.title ?? dumpId}")'
+        : transcript;
+  }
+
+  /// The AI summary as page text (markdown headings flattened for the plain
+  /// block editor). Mirrors the transcript's fallback: a dump the server has
+  /// not summarized yet says so rather than landing an empty box.
+  String _summaryPageText(Dump? dump, String dumpId) {
+    final String normalised = summaryToPageText(dump?.summary ?? '');
+    return normalised.isEmpty
+        ? '(no summary yet for "${dump?.title ?? dumpId}")'
+        : normalised;
+  }
+
+  /// Whether the Summary shapes belong on the sheet for this batch.
+  ///
+  /// Shown when at least one picked dump already carries a summary OR
+  /// summaries are enabled on this device. While neither holds the feature
+  /// is invisible — the OCR/summaries precedent: "while off, none of its UI
+  /// appears".
+  bool _summaryShapesApply(List<Dump> picked) =>
+      ref.read(summariesEnabledProvider) ||
+      picked.any(
+        (Dump dump) => (dump.summary ?? '').trim().isNotEmpty,
+      );
+
+  /// Asks whether the import lands as audio bubbles or transcript text —
+  /// plus, when [offerSummary], the summary alone or summary-and-transcript.
+  Future<_ImportShape?> _askImportShape({required bool offerSummary}) =>
+      showModalBottomSheet<_ImportShape>(
         context: context,
         builder: (BuildContext sheetContext) => SafeArea(
           child: Column(
@@ -720,6 +771,28 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                 subtitle: const Text('The transcript, in an editable text box'),
                 onTap: () => Navigator.of(sheetContext).pop(_ImportShape.text),
               ),
+              if (offerSummary) ...<Widget>[
+                ListTile(
+                  key: const ValueKey<String>('import-as-summary'),
+                  leading: const Icon(Icons.auto_awesome_outlined),
+                  title: const Text('Summary'),
+                  subtitle: const Text(
+                    'Key points and action items, in an editable text box',
+                  ),
+                  onTap: () =>
+                      Navigator.of(sheetContext).pop(_ImportShape.summary),
+                ),
+                ListTile(
+                  key: const ValueKey<String>('import-as-both'),
+                  leading: const Icon(Icons.library_books),
+                  title: const Text('Transcript + summary'),
+                  subtitle: const Text(
+                    'Both, as two text boxes — summary first',
+                  ),
+                  onTap: () =>
+                      Navigator.of(sheetContext).pop(_ImportShape.both),
+                ),
+              ],
             ],
           ),
         ),
