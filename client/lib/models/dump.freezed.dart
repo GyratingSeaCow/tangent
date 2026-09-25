@@ -38,6 +38,18 @@ mixin _$Dump {
   @JsonKey(name: 'last_sync_error')
   String? get lastSyncError => throw _privateConstructorUsedError;
 
+  /// Server-generated AI summary (markdown sections). Null until the
+  /// server has summarized this recording; never written by the client.
+  String? get summary => throw _privateConstructorUsedError;
+
+  /// The model stem that produced [summary]; null with it.
+  @JsonKey(name: 'summary_model')
+  String? get summaryModel => throw _privateConstructorUsedError;
+
+  /// When the server generated [summary]; null with it.
+  @JsonKey(name: 'summarized_at')
+  DateTime? get summarizedAt => throw _privateConstructorUsedError;
+
   /// Serializes this Dump to a JSON map.
   Map<String, dynamic> toJson() => throw _privateConstructorUsedError;
 
@@ -64,7 +76,10 @@ abstract class $DumpCopyWith<$Res> {
       @JsonKey(name: 'audio_size_bytes') int audioSizeBytes,
       @JsonKey(name: 'sync_status') SyncStatus syncStatus,
       @JsonKey(name: 'sync_attempts') int syncAttempts,
-      @JsonKey(name: 'last_sync_error') String? lastSyncError});
+      @JsonKey(name: 'last_sync_error') String? lastSyncError,
+      String? summary,
+      @JsonKey(name: 'summary_model') String? summaryModel,
+      @JsonKey(name: 'summarized_at') DateTime? summarizedAt});
 }
 
 /// @nodoc
@@ -94,6 +109,9 @@ class _$DumpCopyWithImpl<$Res, $Val extends Dump>
     Object? syncStatus = null,
     Object? syncAttempts = null,
     Object? lastSyncError = freezed,
+    Object? summary = freezed,
+    Object? summaryModel = freezed,
+    Object? summarizedAt = freezed,
   }) {
     return _then(_value.copyWith(
       id: null == id
@@ -144,6 +162,18 @@ class _$DumpCopyWithImpl<$Res, $Val extends Dump>
           ? _value.lastSyncError
           : lastSyncError // ignore: cast_nullable_to_non_nullable
               as String?,
+      summary: freezed == summary
+          ? _value.summary
+          : summary // ignore: cast_nullable_to_non_nullable
+              as String?,
+      summaryModel: freezed == summaryModel
+          ? _value.summaryModel
+          : summaryModel // ignore: cast_nullable_to_non_nullable
+              as String?,
+      summarizedAt: freezed == summarizedAt
+          ? _value.summarizedAt
+          : summarizedAt // ignore: cast_nullable_to_non_nullable
+              as DateTime?,
     ) as $Val);
   }
 }
@@ -167,7 +197,10 @@ abstract class _$$DumpImplCopyWith<$Res> implements $DumpCopyWith<$Res> {
       @JsonKey(name: 'audio_size_bytes') int audioSizeBytes,
       @JsonKey(name: 'sync_status') SyncStatus syncStatus,
       @JsonKey(name: 'sync_attempts') int syncAttempts,
-      @JsonKey(name: 'last_sync_error') String? lastSyncError});
+      @JsonKey(name: 'last_sync_error') String? lastSyncError,
+      String? summary,
+      @JsonKey(name: 'summary_model') String? summaryModel,
+      @JsonKey(name: 'summarized_at') DateTime? summarizedAt});
 }
 
 /// @nodoc
@@ -194,6 +227,9 @@ class __$$DumpImplCopyWithImpl<$Res>
     Object? syncStatus = null,
     Object? syncAttempts = null,
     Object? lastSyncError = freezed,
+    Object? summary = freezed,
+    Object? summaryModel = freezed,
+    Object? summarizedAt = freezed,
   }) {
     return _then(_$DumpImpl(
       id: null == id
@@ -244,6 +280,18 @@ class __$$DumpImplCopyWithImpl<$Res>
           ? _value.lastSyncError
           : lastSyncError // ignore: cast_nullable_to_non_nullable
               as String?,
+      summary: freezed == summary
+          ? _value.summary
+          : summary // ignore: cast_nullable_to_non_nullable
+              as String?,
+      summaryModel: freezed == summaryModel
+          ? _value.summaryModel
+          : summaryModel // ignore: cast_nullable_to_non_nullable
+              as String?,
+      summarizedAt: freezed == summarizedAt
+          ? _value.summarizedAt
+          : summarizedAt // ignore: cast_nullable_to_non_nullable
+              as DateTime?,
     ));
   }
 }
@@ -264,7 +312,10 @@ class _$DumpImpl implements _Dump {
       @JsonKey(name: 'audio_size_bytes') required this.audioSizeBytes,
       @JsonKey(name: 'sync_status') required this.syncStatus,
       @JsonKey(name: 'sync_attempts') this.syncAttempts = 0,
-      @JsonKey(name: 'last_sync_error') this.lastSyncError});
+      @JsonKey(name: 'last_sync_error') this.lastSyncError,
+      this.summary,
+      @JsonKey(name: 'summary_model') this.summaryModel,
+      @JsonKey(name: 'summarized_at') this.summarizedAt});
 
   factory _$DumpImpl.fromJson(Map<String, dynamic> json) =>
       _$$DumpImplFromJson(json);
@@ -299,9 +350,24 @@ class _$DumpImpl implements _Dump {
   @JsonKey(name: 'last_sync_error')
   final String? lastSyncError;
 
+  /// Server-generated AI summary (markdown sections). Null until the
+  /// server has summarized this recording; never written by the client.
+  @override
+  final String? summary;
+
+  /// The model stem that produced [summary]; null with it.
+  @override
+  @JsonKey(name: 'summary_model')
+  final String? summaryModel;
+
+  /// When the server generated [summary]; null with it.
+  @override
+  @JsonKey(name: 'summarized_at')
+  final DateTime? summarizedAt;
+
   @override
   String toString() {
-    return 'Dump(id: $id, createdAt: $createdAt, updatedAt: $updatedAt, mode: $mode, durationSeconds: $durationSeconds, title: $title, transcript: $transcript, audioPath: $audioPath, audioSizeBytes: $audioSizeBytes, syncStatus: $syncStatus, syncAttempts: $syncAttempts, lastSyncError: $lastSyncError)';
+    return 'Dump(id: $id, createdAt: $createdAt, updatedAt: $updatedAt, mode: $mode, durationSeconds: $durationSeconds, title: $title, transcript: $transcript, audioPath: $audioPath, audioSizeBytes: $audioSizeBytes, syncStatus: $syncStatus, syncAttempts: $syncAttempts, lastSyncError: $lastSyncError, summary: $summary, summaryModel: $summaryModel, summarizedAt: $summarizedAt)';
   }
 
   @override
@@ -329,7 +395,12 @@ class _$DumpImpl implements _Dump {
             (identical(other.syncAttempts, syncAttempts) ||
                 other.syncAttempts == syncAttempts) &&
             (identical(other.lastSyncError, lastSyncError) ||
-                other.lastSyncError == lastSyncError));
+                other.lastSyncError == lastSyncError) &&
+            (identical(other.summary, summary) || other.summary == summary) &&
+            (identical(other.summaryModel, summaryModel) ||
+                other.summaryModel == summaryModel) &&
+            (identical(other.summarizedAt, summarizedAt) ||
+                other.summarizedAt == summarizedAt));
   }
 
   @JsonKey(includeFromJson: false, includeToJson: false)
@@ -347,7 +418,10 @@ class _$DumpImpl implements _Dump {
       audioSizeBytes,
       syncStatus,
       syncAttempts,
-      lastSyncError);
+      lastSyncError,
+      summary,
+      summaryModel,
+      summarizedAt);
 
   /// Create a copy of Dump
   /// with the given fields replaced by the non-null parameter values.
@@ -378,7 +452,10 @@ abstract class _Dump implements Dump {
           @JsonKey(name: 'audio_size_bytes') required final int audioSizeBytes,
           @JsonKey(name: 'sync_status') required final SyncStatus syncStatus,
           @JsonKey(name: 'sync_attempts') final int syncAttempts,
-          @JsonKey(name: 'last_sync_error') final String? lastSyncError}) =
+          @JsonKey(name: 'last_sync_error') final String? lastSyncError,
+          final String? summary,
+          @JsonKey(name: 'summary_model') final String? summaryModel,
+          @JsonKey(name: 'summarized_at') final DateTime? summarizedAt}) =
       _$DumpImpl;
 
   factory _Dump.fromJson(Map<String, dynamic> json) = _$DumpImpl.fromJson;
@@ -412,6 +489,21 @@ abstract class _Dump implements Dump {
   @override
   @JsonKey(name: 'last_sync_error')
   String? get lastSyncError;
+
+  /// Server-generated AI summary (markdown sections). Null until the
+  /// server has summarized this recording; never written by the client.
+  @override
+  String? get summary;
+
+  /// The model stem that produced [summary]; null with it.
+  @override
+  @JsonKey(name: 'summary_model')
+  String? get summaryModel;
+
+  /// When the server generated [summary]; null with it.
+  @override
+  @JsonKey(name: 'summarized_at')
+  DateTime? get summarizedAt;
 
   /// Create a copy of Dump
   /// with the given fields replaced by the non-null parameter values.

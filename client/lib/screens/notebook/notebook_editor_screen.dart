@@ -2201,4 +2201,12 @@ Dump dumpFromRow(DumpRow row) => Dump(
       ),
       syncAttempts: row.syncAttempts,
       lastSyncError: row.lastSyncError,
+      summary: row.summary,
+      summaryModel: row.summaryModel,
+      summarizedAt: row.summarizedAt == null
+          ? null
+          : DateTime.fromMillisecondsSinceEpoch(
+              row.summarizedAt! * 1000,
+              isUtc: true,
+            ),
     );
