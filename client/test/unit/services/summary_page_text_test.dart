@@ -63,4 +63,35 @@ void main() {
       expect(summaryToPageText(line), line);
     });
   });
+
+  group('summaryFirstLine', () {
+    test('returns the first content line under the heading, bullet stripped',
+        () {
+      const String summary = '## Summary\n'
+          '- We agreed to ship on Friday.\n'
+          '- Sam owns the tag.\n'
+          '\n'
+          '## Action items\n'
+          '- Jeff: release notes';
+      expect(summaryFirstLine(summary), 'We agreed to ship on Friday.');
+    });
+
+    test('skips blank lines and heading-only lines', () {
+      expect(
+        summaryFirstLine('## Summary\n\n\n## Decisions\nShip it.'),
+        'Ship it.',
+      );
+    });
+
+    test('plain prose without a heading yields its first line', () {
+      expect(summaryFirstLine('first sentence\nsecond'), 'first sentence');
+    });
+
+    test('null, blank, and heading-only summaries yield null', () {
+      expect(summaryFirstLine(null), isNull);
+      expect(summaryFirstLine(''), isNull);
+      expect(summaryFirstLine('  \n \n'), isNull);
+      expect(summaryFirstLine('## Summary\n## Action items'), isNull);
+    });
+  });
 }

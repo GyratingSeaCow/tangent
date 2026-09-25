@@ -20,6 +20,27 @@ String summaryToPageText(String summary) {
   return out.join('\n').trim();
 }
 
+/// The first line of actual content in a summary — what an audio bubble
+/// shows beneath its title so the page tells you what the meeting was
+/// about at a glance.
+///
+/// Headings (`## Summary`) and blank lines are skipped, and a leading
+/// bullet marker is dropped so the line reads as a sentence. `null` when
+/// there is nothing to show (no summary, blank, or headings only), so the
+/// caller can render exactly as it did before summaries existed.
+String? summaryFirstLine(String? summary) {
+  if (summary == null) return null;
+  for (final String raw in summary.split('\n')) {
+    final String line = raw.trim();
+    if (line.isEmpty) continue;
+    if (_atxHeading.hasMatch(line)) continue;
+    return line.replaceFirst(_bulletMarker, '');
+  }
+  return null;
+}
+
+final RegExp _bulletMarker = RegExp(r'^[-*+]\s+');
+
 /// `#`, `##`, ... followed by at least one space at the start of the line is
 /// an ATX heading; anything else (a `#42` ticket reference, `C#`) is body
 /// text and is returned untouched.
