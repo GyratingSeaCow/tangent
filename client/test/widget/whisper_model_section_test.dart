@@ -397,8 +397,16 @@ void main() {
     await _tapRow(tester, 'medium');
 
     // The size is named BEFORE anything is downloaded — that is the whole
-    // point of the confirm.
-    expect(find.textContaining('~1.5 GB'), findsWidgets);
+    // point of the confirm. Pin it to the DIALOG, not just the row: the row
+    // shows the size too, so a findsWidgets match would still pass if the
+    // dialog's copy silently lost it.
+    expect(
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.textContaining('1.5 GB'),
+      ),
+      findsOneWidget,
+    );
     expect(find.textContaining('medium'), findsWidgets);
     expect(h.client.installCalls, isEmpty);
     expect(h.client.selectCalls, isEmpty);

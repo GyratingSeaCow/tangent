@@ -750,7 +750,7 @@ class _InstallConfirmDialog extends StatelessWidget {
           // The size is the whole point of asking: this lands on the user's
           // server, over their connection, before anything else happens.
           Text(
-            'Your server will download the $model model — about ~$size — '
+            'Your server will download the $model model — about $size — '
             'and keep it on disk.',
           ),
           const SizedBox(height: 12),
@@ -788,7 +788,7 @@ class _DeleteConfirmDialog extends StatelessWidget {
     return AlertDialog(
       title: Text('Delete $model?'),
       content: Text(
-        'Your server frees about ~${formatWhisperSize(bytesOnDisk)} of disk. '
+        'Your server frees about ${formatWhisperSize(bytesOnDisk)} of disk. '
         'Nothing already transcribed changes, and you can download $model '
         'again later.',
       ),
