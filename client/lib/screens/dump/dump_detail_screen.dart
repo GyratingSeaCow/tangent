@@ -27,6 +27,24 @@ import '../home/home_providers.dart'
         recordingPlaybackEngineFactoryProvider,
         serverTranscriptionServiceProvider;
 
+/// Padding for the recording screen's scrolling body.
+///
+/// The Save / Transcribe again row is the LAST child of that list, so nothing
+/// below it pushes it clear of the system navigation bar: without reserving
+/// the inset the Fold's taskbar sits on top of the buttons and swallows most
+/// of "Save".
+///
+/// Reads `viewPadding` rather than `padding` deliberately — Flutter zeroes
+/// `padding` where the on-screen keyboard covers the inset, so using it would
+/// collapse the reservation the moment the title editor is focused and drop
+/// the buttons back behind the bar mid-edit.
+EdgeInsets actionRowSafePadding(BuildContext context) => EdgeInsets.fromLTRB(
+      16,
+      16,
+      16,
+      16 + MediaQuery.viewPaddingOf(context).bottom,
+    );
+
 /// Watch a single dump by id.
 final dumpByIdProvider =
     StreamProvider.autoDispose.family<DumpRow?, String>((ref, id) {
@@ -707,7 +725,11 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
     final displayTranscript = row.transcript;
 
     return ListView(
-      padding: const EdgeInsets.all(16),
+      // The action row is the LAST child, so the scroll view must reserve the
+      // system bar's height on top of its own padding — otherwise the taskbar
+      // (taller than a gesture pill on the Fold) sits on Save and Transcribe
+      // again.
+      padding: actionRowSafePadding(context),
       children: [
         TextField(
           key: ValueKey('title-editor-${widget.dumpId}'),
