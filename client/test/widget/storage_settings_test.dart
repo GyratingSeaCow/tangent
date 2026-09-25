@@ -612,7 +612,24 @@ void main() {
       client.info.complete(syntheticInfo);
       await pumpStorage(t);
       expect(find.text(SyntheticSecureStore.url), findsOneWidget);
-      expect(find.textContaining('default model: large-v3'), findsOneWidget);
+      // Requirement 8: the status line is a STATUS line — the model list
+      // moved into WhisperModelSection's radios, so 'default model:' and the
+      // 'available:' pseudo-menu are gone from here.
+      expect(find.textContaining('Connected · 2 dumps'), findsOneWidget);
+      expect(find.textContaining('default model:'), findsNothing);
+      expect(find.textContaining('available:'), findsNothing);
+      // This test's original intent — the user can see WHICH model the
+      // server uses — re-pointed at the picker that now owns it. No live
+      // server in a widget test, so the section is on its offline path and
+      // shows the last known model; it must still name one, selected.
+      expect(
+        t
+            .widget<RadioListTile<String>>(
+              find.byKey(const ValueKey('whisper-model-row-large-v3')),
+            )
+            .groupValue,
+        'large-v3',
+      );
       expect(t.takeException(), isNull);
     });
   }
