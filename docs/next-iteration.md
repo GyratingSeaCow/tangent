@@ -19,12 +19,14 @@ across 4 tests. A pre-existing end-to-end test pinning the old copy was
 updated, not deleted — it is the only proof the mirror reaches the shade
 through the production path. Full suite `+1795 ~1 -5`.
 
-STILL OWED from this item: `JobCreate.model` (server `app/models.py:86`)
-defaults to a hardcoded `"large-v3"` while the engine loads the
-server-selected model. They demonstrably disagree (a job row said
-large-v3 while the engine logged `model=small`); nothing user-visible
-reads the job field today, but that default should go so the two cannot
-drift.
+STILL OWED from this item: ~~`JobCreate.model`~~ — DONE (2026-09-25,
+`e627539`). `JobCreate.model` is now optional; an omitted model resolves
+via `storage.resolve_active_model` at enqueue time (replays reuse the
+original job's model so a selection change never 409s an idempotent
+retry), and the client omits the key entirely. Sabotage-proven both
+ways: reintroducing a hardcoded fallback and re-resolving on replay
+each fail their pinned test. The `_wait_for` flake widening for the two
+`test_uninstall_*` tests shipped alongside (`d678afe`).
 
 ### 1.9 Bottom action row cut off by the system bar — DONE (2026-09-25, unreleased)
 
