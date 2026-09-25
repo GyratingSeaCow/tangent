@@ -59,6 +59,29 @@ def test_server_info_requires_auth(client):
     assert resp.status_code == 401
 
 
+def test_server_info_reports_the_persisted_model_selection(client, temp_data_dir):
+    """default_model must be the model the server will ACTUALLY use.
+
+    Before the picker existed this field echoed TANGENT_WHISPER_MODEL, so a
+    server transcribing with a user-selected model still advertised the env
+    default — the client's status line lied about its own behavior.
+    """
+    cli, token = client
+    conn = sqlite3.connect(temp_data_dir / "tangent.db")
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)",
+            ("whisper_model", "small"),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    body = cli.get("/v1/server/info", headers=_auth(token)).json()
+
+    assert body["default_model"] == "small"
+
+
 def test_list_models_returns_supported(client):
     cli, token = client
     resp = cli.get("/v1/models", headers=_auth(token))
