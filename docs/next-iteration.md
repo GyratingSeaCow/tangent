@@ -84,7 +84,11 @@ Verified live on the Fold: flinger patch moved capture from
 AUDIO_DEVICE_IN_BUILTIN_MIC to AUDIO_DEVICE_IN_BLUETOOTH_SCO_HEADSET;
 Jeff confirmed end-to-end recording works.
 
-### 1.3 Capitalize the app name everywhere it's user-visible (future release)
+### 1.3 Capitalize the app name — DONE (shipped in v1.8.0)
+
+Verified 2026-09-25: `android:label="Tangent"` (AndroidManifest.xml:30) and
+the Windows window title `L"Tangent"` (main.cpp:30). Original note kept
+below for the Linux `.desktop` check, the one site not re-verified.
 
 Jeff, 2026-09-23: "we need to capitalize the app name … Don't worry about
 changing it now. We can catch that in a future release." The Flutter
@@ -115,7 +119,11 @@ button uses, per-file progress on the tile, failures named in the
 summary (one bad file never aborts the rest — sabotage-proven).
 Home-screen single-file button unchanged.
 
-### 1.6 GPU transcription restore — in progress (2026-09-23)
+### 1.6 GPU transcription restore — DONE (shipped in v1.8.0)
+
+Verified live: whisper runs `device=cuda` on the RTX 5070 (a 71 s recording
+transcribes in ~4.5 s vs ~40 s on CPU). Note the SEPARATE Blackwell block
+for llama.cpp summaries, which is NOT fixed by this — see 1.8.
 
 Dockerfile now installs nvidia-cublas-cu12 + nvidia-cudnn-cu12 (ctranslate2
 links the CUDA-12 runtime; torch's transitive wheels are CUDA-13 and do not
@@ -124,7 +132,7 @@ wheels are inert on CPU-only hosts. Verification bar: run a REAL inference
 in the container and consume the generator — construction succeeding proves
 nothing (lazy CUDA load).
 
-### 1.7 Release v1.8.0 (queued LAST, after everything above lands)
+### 1.7 Release v1.8.0 — DONE (2026-09-23); v1.9.0 shipped 2026-09-25
 
 Bundle since v1.7.1/1.7.2: notebook home widget (9fe1aca), automatic
 Bluetooth mic routing (6b58d64), bulk audio import (9e9d9c3), Obsidian
@@ -134,11 +142,34 @@ the next release." CHANGELOG, tag, GitHub release, Licenses tab check,
 AGENTS.md test counts, parity install on all three devices (S10 FE returns
 after this round of updates).
 
+### 1.8 Blackwell CUDA for AI summaries — BLOCKED on upstream
+
+The summarizer's llama-cpp-python cu124 wheel SIGILLs (exit -4) on the RTX
+5070: Blackwell needs sm_120 kernels, which require CUDA 12.8+, and abetlen
+ships cu121–cu124 only. The install's CPU-downgrade path is therefore the
+shipped runtime on this host (~40 s per summary including model load).
+Accuracy is identical — GPU only changes speed — so nothing is lost but
+time. The LD_LIBRARY_PATH and symlinked-venv bugs found on the way are
+fixed and pinned (`9c2f433`, `7fd02c3`); this is purely a wheel-availability
+wait. Revisit when cu128+ wheels exist, or vendor a source build.
+
+Note: whisper transcription is UNAFFECTED and does run on CUDA (item 1.6) —
+ctranslate2 vendors its own runtime and has Blackwell support.
+
 ### 1.5 Hardware-feedback-gated ideas (no work queued)
 
 Hover-ring linger/thickness tuning if 250 ms feels wrong on device; toolbar
-`visualDensity.compact` eyeball; flip-to-erase only if this pen ever emits
-`invertedStylus`. New arcs come from daily-use annoyances.
+`visualDensity.compact` eyeball. Jeff 2026-09-25 on the hover ring and
+toolbar density: "that feels fine" — no change wanted.
+
+Flip-to-erase: **untestable, no hardware.** Jeff has no flip-to-erase pen
+(2026-09-25). His expectation when one appears: it should behave like the
+side-button press already does — i.e. route through the SAME erase path the
+barrel button takes, not a second parallel implementation. Whenever a pen
+that emits `PointerDeviceKind.invertedStylus` shows up, wire it to that
+existing handler and verify on hardware before shipping.
+
+New arcs come from daily-use annoyances.
 
 ## 2. Done (2026-09-21, v1.6.0 → v1.6.1)
 
