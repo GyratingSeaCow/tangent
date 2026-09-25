@@ -79,7 +79,7 @@ void main() {
   group('transcriptionNoticeFor', () {
     test('nothing active means no notification at all', () {
       expect(
-        transcriptionNoticeFor(hasActive: false, queuedCount: 0),
+        transcriptionNoticeFor(hasActive: false, queuedCount: 0, model: null),
         isNull,
         reason: 'an idle app must not sit in the shade',
       );
@@ -89,15 +89,18 @@ void main() {
       // The instant between accepting a job and starting it. Announcing
       // "transcribing" here would describe work that has not begun.
       expect(
-        transcriptionNoticeFor(hasActive: false, queuedCount: 3),
+        transcriptionNoticeFor(hasActive: false, queuedCount: 3, model: null),
         isNull,
         reason: 'queued is not the same as running',
       );
     });
 
     test('a single active job names one recording', () {
-      final TranscriptionNotice? notice =
-          transcriptionNoticeFor(hasActive: true, queuedCount: 0);
+      final TranscriptionNotice? notice = transcriptionNoticeFor(
+        hasActive: true,
+        queuedCount: 0,
+        model: null,
+      );
 
       expect(notice, isNotNull);
       expect(notice!.title, 'Transcribing');
@@ -110,8 +113,11 @@ void main() {
 
     test('a backlog counts the active job plus everything waiting', () {
       // queuedCount excludes the running job, so three waiting is four total.
-      final TranscriptionNotice? notice =
-          transcriptionNoticeFor(hasActive: true, queuedCount: 3);
+      final TranscriptionNotice? notice = transcriptionNoticeFor(
+        hasActive: true,
+        queuedCount: 3,
+        model: null,
+      );
 
       expect(notice!.body, '1 of 4 recordings');
     });
@@ -120,8 +126,11 @@ void main() {
       // This is a dismissible notification, not a foreground service: it
       // reports work, it does not keep it alive. Copy claiming otherwise
       // would be a promise the system does not make.
-      final TranscriptionNotice notice =
-          transcriptionNoticeFor(hasActive: true, queuedCount: 2)!;
+      final TranscriptionNotice notice = transcriptionNoticeFor(
+        hasActive: true,
+        queuedCount: 2,
+        model: 'large-v3',
+      )!;
       final String text = '${notice.title} ${notice.body}'.toLowerCase();
 
       expect(
@@ -133,12 +142,145 @@ void main() {
     });
   });
 
+  group('transcriptionNoticeFor names the active model', () {
+    // The model became selectable, so "faster-whisper" (the engine) stopped
+    // answering the question the user actually asks of this notification:
+    // which model is working on my recording right now. The name has to be
+    // in the COLLAPSED shade line, so it goes in the body next to the count
+    // rather than behind an expand.
+
+    test('a single active job names the model in the shade line', () {
+      final TranscriptionNotice notice = transcriptionNoticeFor(
+        hasActive: true,
+        queuedCount: 0,
+        model: 'large-v3',
+      )!;
+
+      expect(
+        notice.title,
+        'Transcribing',
+        reason: 'the title is the stable anchor; the model rides in the body',
+      );
+      expect(
+        notice.body,
+        '1 recording · large-v3',
+        reason: 'the model must be visible without expanding the notification',
+      );
+    });
+
+    test('a backlog names the model as well as the count', () {
+      final TranscriptionNotice notice = transcriptionNoticeFor(
+        hasActive: true,
+        queuedCount: 3,
+        model: 'large-v3',
+      )!;
+
+      expect(notice.body, '1 of 4 recordings · large-v3');
+    });
+
+    test('the model name is passed through verbatim, not prettified', () {
+      // The server's catalogue owns these names; re-spelling them here would
+      // make the shade disagree with the picker the user just used.
+      final TranscriptionNotice notice = transcriptionNoticeFor(
+        hasActive: true,
+        queuedCount: 0,
+        model: 'distil-large-v3.5',
+      )!;
+
+      expect(notice.body, '1 recording · distil-large-v3.5');
+    });
+
+    test('an unknown model falls back to exactly today wording', () {
+      // The mirror is empty before the first catalogue fetch, and on a device
+      // that has never reached the server. Naming nothing is correct there;
+      // naming "null" would be a bug the user reads as a broken app.
+      final TranscriptionNotice notice = transcriptionNoticeFor(
+        hasActive: true,
+        queuedCount: 0,
+        model: null,
+      )!;
+
+      expect(notice.body, '1 recording');
+    });
+
+    test('an unknown model never renders a dangling separator', () {
+      final TranscriptionNotice single = transcriptionNoticeFor(
+        hasActive: true,
+        queuedCount: 0,
+        model: null,
+      )!;
+      final TranscriptionNotice batch = transcriptionNoticeFor(
+        hasActive: true,
+        queuedCount: 2,
+        model: null,
+      )!;
+
+      for (final TranscriptionNotice notice in <TranscriptionNotice>[
+        single,
+        batch,
+      ]) {
+        expect(
+          notice.body,
+          isNot(contains('·')),
+          reason: 'a separator with nothing after it reads as truncated copy',
+        );
+        expect(
+          notice.body.toLowerCase(),
+          isNot(contains('null')),
+          reason: 'the literal word null must never reach the shade',
+        );
+      }
+      expect(batch.body, '1 of 3 recordings');
+    });
+
+    test('an empty or whitespace model counts as unknown', () {
+      // SharedPreferences can hold '' from a cleared mirror, and a trimmed
+      // blank is the same absence of knowledge as null.
+      for (final String blank in <String>['', '   ', '\n']) {
+        final TranscriptionNotice notice = transcriptionNoticeFor(
+          hasActive: true,
+          queuedCount: 1,
+          model: blank,
+        )!;
+
+        expect(
+          notice.body,
+          '1 of 2 recordings',
+          reason: 'blank is not a model name: "$blank"',
+        );
+      }
+    });
+
+    test('a model name is trimmed before it is shown', () {
+      final TranscriptionNotice notice = transcriptionNoticeFor(
+        hasActive: true,
+        queuedCount: 0,
+        model: '  small  ',
+      )!;
+
+      expect(notice.body, '1 recording · small');
+    });
+
+    test('an unknown model still says nothing about the engine', () {
+      // The fallback is today's wording, which deliberately does NOT name
+      // faster-whisper in the shade. Reintroducing the engine name here
+      // would put back the thing Jeff asked to have removed.
+      final TranscriptionNotice notice = transcriptionNoticeFor(
+        hasActive: true,
+        queuedCount: 0,
+        model: null,
+      )!;
+
+      expect(notice.body.toLowerCase(), isNot(contains('whisper')));
+    });
+  });
+
   group('TranscriptionNotifier', () {
     test('shows a notification when a job starts', () async {
       final _RecordingPort port = _RecordingPort();
       final TranscriptionNotifier notifier = TranscriptionNotifier(port: port);
 
-      await notifier.sync(hasActive: true, queuedCount: 0);
+      await notifier.sync(hasActive: true, queuedCount: 0, model: null);
 
       expect(port.shown, hasLength(1));
       expect(port.shown.single.body, '1 recording');
@@ -149,8 +291,8 @@ void main() {
       final _RecordingPort port = _RecordingPort();
       final TranscriptionNotifier notifier = TranscriptionNotifier(port: port);
 
-      await notifier.sync(hasActive: true, queuedCount: 0);
-      await notifier.sync(hasActive: false, queuedCount: 0);
+      await notifier.sync(hasActive: true, queuedCount: 0, model: null);
+      await notifier.sync(hasActive: false, queuedCount: 0, model: null);
 
       expect(
         port.cancels,
@@ -167,9 +309,9 @@ void main() {
       final _RecordingPort port = _RecordingPort();
       final TranscriptionNotifier notifier = TranscriptionNotifier(port: port);
 
-      await notifier.sync(hasActive: true, queuedCount: 1);
-      await notifier.sync(hasActive: true, queuedCount: 1);
-      await notifier.sync(hasActive: true, queuedCount: 1);
+      await notifier.sync(hasActive: true, queuedCount: 1, model: null);
+      await notifier.sync(hasActive: true, queuedCount: 1, model: null);
+      await notifier.sync(hasActive: true, queuedCount: 1, model: null);
 
       expect(
         port.shown,
@@ -184,9 +326,9 @@ void main() {
       final _RecordingPort port = _RecordingPort();
       final TranscriptionNotifier notifier = TranscriptionNotifier(port: port);
 
-      await notifier.sync(hasActive: true, queuedCount: 2);
-      await notifier.sync(hasActive: true, queuedCount: 1);
-      await notifier.sync(hasActive: true, queuedCount: 0);
+      await notifier.sync(hasActive: true, queuedCount: 2, model: null);
+      await notifier.sync(hasActive: true, queuedCount: 1, model: null);
+      await notifier.sync(hasActive: true, queuedCount: 0, model: null);
 
       expect(port.shown.map((TranscriptionNotice n) => n.body), <String>[
         '1 of 3 recordings',
@@ -195,12 +337,39 @@ void main() {
       ]);
     });
 
+    test('a model change re-posts the notification', () async {
+      // The mirror is refreshed whenever the catalogue is fetched, which can
+      // land mid-job. Suppression keys on the whole notice, so a model that
+      // changed under a steady count must still reach the shade — otherwise
+      // the notification keeps naming the model the user just switched away
+      // from.
+      final _RecordingPort port = _RecordingPort();
+      final TranscriptionNotifier notifier = TranscriptionNotifier(port: port);
+
+      await notifier.sync(hasActive: true, queuedCount: 0, model: 'small');
+      await notifier.sync(hasActive: true, queuedCount: 0, model: 'large-v3');
+
+      expect(port.shown.map((TranscriptionNotice n) => n.body), <String>[
+        '1 recording · small',
+        '1 recording · large-v3',
+      ]);
+    });
+
+    test('the model reaches the platform alongside the count', () async {
+      final _RecordingPort port = _RecordingPort();
+      final TranscriptionNotifier notifier = TranscriptionNotifier(port: port);
+
+      await notifier.sync(hasActive: true, queuedCount: 2, model: 'large-v3');
+
+      expect(port.shown.single.body, '1 of 3 recordings · large-v3');
+    });
+
     test('an idle app never posts anything', () async {
       final _RecordingPort port = _RecordingPort();
       final TranscriptionNotifier notifier = TranscriptionNotifier(port: port);
 
-      await notifier.sync(hasActive: false, queuedCount: 0);
-      await notifier.sync(hasActive: false, queuedCount: 0);
+      await notifier.sync(hasActive: false, queuedCount: 0, model: null);
+      await notifier.sync(hasActive: false, queuedCount: 0, model: null);
 
       expect(port.shown, isEmpty);
       expect(
@@ -216,9 +385,9 @@ void main() {
       final _RecordingPort port = _RecordingPort();
       final TranscriptionNotifier notifier = TranscriptionNotifier(port: port);
 
-      await notifier.sync(hasActive: true, queuedCount: 0);
-      await notifier.sync(hasActive: false, queuedCount: 0);
-      await notifier.sync(hasActive: true, queuedCount: 0);
+      await notifier.sync(hasActive: true, queuedCount: 0, model: null);
+      await notifier.sync(hasActive: false, queuedCount: 0, model: null);
+      await notifier.sync(hasActive: true, queuedCount: 0, model: null);
 
       expect(port.shown, hasLength(2));
       expect(port.cancels, 1);
@@ -230,7 +399,7 @@ void main() {
       final _RecordingPort port = _RecordingPort();
       final TranscriptionNotifier notifier = TranscriptionNotifier(port: port);
 
-      await notifier.sync(hasActive: true, queuedCount: 0);
+      await notifier.sync(hasActive: true, queuedCount: 0, model: null);
       await notifier.dispose();
 
       expect(port.cancels, 1);
@@ -256,11 +425,11 @@ void main() {
 
       final Completer<void> prompt = port.gate();
       final Future<void> showing =
-          notifier.sync(hasActive: true, queuedCount: 0);
+          notifier.sync(hasActive: true, queuedCount: 0, model: null);
 
       // The job finishes while the prompt is still on screen.
       final Future<void> cancelling =
-          notifier.sync(hasActive: false, queuedCount: 0);
+          notifier.sync(hasActive: false, queuedCount: 0, model: null);
 
       prompt.complete(); // the user finally taps Allow
       await showing;
@@ -281,8 +450,8 @@ void main() {
       final TranscriptionNotifier notifier = TranscriptionNotifier(port: port);
 
       final Completer<void> first = port.gate();
-      final Future<void> a = notifier.sync(hasActive: true, queuedCount: 0);
-      final Future<void> b = notifier.sync(hasActive: true, queuedCount: 2);
+      final Future<void> a = notifier.sync(hasActive: true, queuedCount: 0, model: null);
+      final Future<void> b = notifier.sync(hasActive: true, queuedCount: 2, model: null);
 
       first.complete();
       await a;
@@ -299,9 +468,9 @@ void main() {
       final TranscriptionNotifier notifier = TranscriptionNotifier(port: port);
 
       final Completer<void> first = port.gate();
-      final Future<void> a = notifier.sync(hasActive: true, queuedCount: 0);
-      final Future<void> b = notifier.sync(hasActive: true, queuedCount: 5);
-      final Future<void> c = notifier.sync(hasActive: false, queuedCount: 0);
+      final Future<void> a = notifier.sync(hasActive: true, queuedCount: 0, model: null);
+      final Future<void> b = notifier.sync(hasActive: true, queuedCount: 5, model: null);
+      final Future<void> c = notifier.sync(hasActive: false, queuedCount: 0, model: null);
 
       first.complete();
       await a;
@@ -334,7 +503,7 @@ void main() {
       final _RecordingPort port = _RecordingPort();
       final TranscriptionNotifier notifier = TranscriptionNotifier(port: port);
 
-      await notifier.sync(hasActive: true, queuedCount: 0);
+      await notifier.sync(hasActive: true, queuedCount: 0, model: null);
       await notifier.reconcileStaleNotification();
 
       expect(port.cancels, 0);
@@ -347,7 +516,7 @@ void main() {
       final TranscriptionNotifier notifier = TranscriptionNotifier(port: port);
 
       await notifier.dispose();
-      await notifier.sync(hasActive: true, queuedCount: 0);
+      await notifier.sync(hasActive: true, queuedCount: 0, model: null);
 
       expect(port.shown, isEmpty);
     });
@@ -366,7 +535,7 @@ void main() {
       final TranscriptionNotifier notifier = TranscriptionNotifier(port: port);
 
       await expectLater(
-        notifier.sync(hasActive: true, queuedCount: 0),
+        notifier.sync(hasActive: true, queuedCount: 0, model: null),
         completes,
         reason: 'startup awaits this; a throw here stops everything after it',
       );
@@ -392,13 +561,13 @@ void main() {
       final _ThrowingPort port = _ThrowingPort();
       final TranscriptionNotifier notifier = TranscriptionNotifier(port: port);
 
-      await notifier.sync(hasActive: true, queuedCount: 0);
+      await notifier.sync(hasActive: true, queuedCount: 0, model: null);
       await expectLater(
-        notifier.sync(hasActive: true, queuedCount: 2),
+        notifier.sync(hasActive: true, queuedCount: 2, model: null),
         completes,
       );
       await expectLater(
-        notifier.sync(hasActive: false, queuedCount: 0),
+        notifier.sync(hasActive: false, queuedCount: 0, model: null),
         completes,
       );
 
@@ -414,7 +583,7 @@ void main() {
       final _ThrowingPort port = _ThrowingPort();
       final TranscriptionNotifier notifier = TranscriptionNotifier(port: port);
 
-      await notifier.sync(hasActive: true, queuedCount: 0);
+      await notifier.sync(hasActive: true, queuedCount: 0, model: null);
       await expectLater(notifier.dispose(), completes);
     });
 
@@ -426,7 +595,7 @@ void main() {
       final TranscriptionNotifier notifier = TranscriptionNotifier(port: port);
 
       await expectLater(
-        notifier.sync(hasActive: true, queuedCount: 1),
+        notifier.sync(hasActive: true, queuedCount: 1, model: null),
         completes,
       );
       await expectLater(notifier.dispose(), completes);

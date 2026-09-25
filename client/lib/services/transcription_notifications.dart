@@ -41,9 +41,18 @@ final class TranscriptionNotice {
 ///
 /// [queuedCount] counts jobs WAITING behind the active one, so the number of
 /// recordings involved is `1 + queuedCount` whenever a job is active.
+///
+/// [model] is the Whisper model the server is actually decoding with, read
+/// from the local mirror by the caller. The engine ("faster-whisper") stopped
+/// answering the user's question once the model became selectable: the shade
+/// has to say WHICH model is working. It is nullable because the mirror is
+/// empty until this device has seen the server's catalogue at least once, and
+/// an unknown model falls back to the plain count rather than printing a
+/// placeholder or a separator with nothing behind it.
 TranscriptionNotice? transcriptionNoticeFor({
   required bool hasActive,
   required int queuedCount,
+  required String? model,
 }) {
   if (!hasActive) {
     // Nothing is being worked on. Queued-without-active is the brief instant
@@ -53,10 +62,25 @@ TranscriptionNotice? transcriptionNoticeFor({
   }
 
   final int total = 1 + (queuedCount < 0 ? 0 : queuedCount);
+  final String count = total == 1 ? '1 recording' : '1 of $total recordings';
+  // The model rides in the BODY, not the title: Android shows the body on the
+  // collapsed line, so the name is readable without expanding the shade.
+  final String? named = describedWhisperModel(model);
   return TranscriptionNotice(
     title: 'Transcribing',
-    body: total == 1 ? '1 recording' : '1 of $total recordings',
+    body: named == null ? count : '$count · $named',
   );
+}
+
+/// The model name fit to show a user, or null when nothing is known.
+///
+/// Whitespace-only and empty are the same absence of knowledge as null: a
+/// cleared mirror stores '', and either one must degrade to the wording that
+/// shipped before the model was nameable rather than rendering "null" or a
+/// dangling separator.
+String? describedWhisperModel(String? model) {
+  final String trimmed = model?.trim() ?? '';
+  return trimmed.isEmpty ? null : trimmed;
 }
 
 /// Where a notice is delivered. Narrow on purpose: the platform plugin is a
@@ -126,11 +150,13 @@ class TranscriptionNotifier {
   Future<void> sync({
     required bool hasActive,
     required int queuedCount,
+    required String? model,
   }) async {
     if (_disposed) return;
     final TranscriptionNotice? next = transcriptionNoticeFor(
       hasActive: hasActive,
       queuedCount: queuedCount,
+      model: model,
     );
     if (next == _intended) return;
     _intended = next;
