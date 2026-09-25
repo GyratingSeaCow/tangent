@@ -42,14 +42,25 @@ class _MicGainSectionState extends ConsumerState<MicGainSection> {
 
   String get _label {
     final String value = _gain.toStringAsFixed(1);
-    return _gain == defaultMicGain ? '$value'
-        'x (normal)' : '${value}x';
+    return _gain == defaultMicGain
+        ? '$value'
+            'x (normal)'
+        : '${value}x';
   }
 
-  String get _formatNote => usesAmplifiedCapture(_gain)
-      ? 'Recordings will be saved as WAV, which is roughly 8x larger than '
-          'the usual Opus files. Only new recordings are affected.'
-      : 'Recordings stay in the usual compressed Opus format.';
+  String get _formatNote {
+    if (usesAmplifiedCapture(_gain)) {
+      return 'Recordings will be saved as WAV, which is roughly 8x larger '
+          'than compressed Opus files. Only new recordings are affected.';
+    }
+    // Windows has no system Opus encoder, so capture is WAV there even at
+    // normal gain — the note must not promise a format the recorder cannot
+    // produce.
+    return usesPcmCapture(_gain)
+        ? 'Recordings are saved as WAV on Windows. Recordings on your other '
+            'devices are unaffected.'
+        : 'Recordings stay in the usual compressed Opus format.';
+  }
 
   @override
   Widget build(BuildContext context) {

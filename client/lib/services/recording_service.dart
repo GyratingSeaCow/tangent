@@ -426,7 +426,7 @@ class DefaultRecordingService implements RecordingService {
       unawaited(_autoRoute(interactive: true).catchError((_) {}));
     }
     final double gain = clampMicGain(_micGain());
-    if (!usesAmplifiedCapture(gain)) {
+    if (!usesPcmCapture(gain)) {
       // Unchanged encoded path: same encoder, same bitrate, same container.
       await recorder.start(
         RecordConfig(

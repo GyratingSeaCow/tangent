@@ -13,6 +13,7 @@
 // So gain is applied to the samples. The recorder is asked for PCM16 through
 // `startStream`, each chunk is multiplied here, and the result is written with
 // a WAV header. The server already accepts `.wav` alongside `.opus`.
+import 'dart:io' show Platform;
 import 'dart:math' as math;
 import 'dart:typed_data';
 
@@ -41,14 +42,16 @@ double clampMicGain(double? value) {
 
 /// File extension a capture should use, given its mode and the chosen gain.
 ///
-/// Text notes are always markdown. Audio keeps Opus at unity gain -- the
-/// default costs nothing extra -- and switches to WAV whenever gain is
-/// applied, because package:record only exposes raw samples on the PCM stream
-/// path. There is deliberately no dead band: if the slider moved at all, the
-/// gain must really apply, or the setting would silently do nothing.
+/// Text notes are always markdown. Audio keeps Opus when the encoded path
+/// is available and unity gain applies -- the default costs nothing extra --
+/// and switches to WAV whenever the PCM stream path is in play: applied
+/// gain (raw samples are the only place the multiplier exists) or Windows
+/// (no system Opus encoder; see [usesPcmCapture]). There is deliberately no
+/// dead band: if the slider moved at all, the gain must really apply, or
+/// the setting would silently do nothing.
 String captureExtensionForGain(String mode, double gain) {
   if (mode == 'text_note') return 'md';
-  return usesAmplifiedCapture(gain) ? amplifiedContentExtension : 'opus';
+  return usesPcmCapture(gain) ? amplifiedContentExtension : 'opus';
 }
 
 /// Container an amplified capture is written to.
@@ -70,8 +73,28 @@ const String amplifiedContentExtension = 'wav';
 /// Any departure from unity qualifies, including attenuation: the multiplier
 /// can only be applied on the PCM path, so treating 0.5x as "close enough to
 /// unity" would leave the slider visibly moved while doing nothing.
-bool usesAmplifiedCapture(double gain) =>
-    clampMicGain(gain) != defaultMicGain;
+bool usesAmplifiedCapture(double gain) => clampMicGain(gain) != defaultMicGain;
+
+/// Whether capture must take the raw-PCM stream path at all.
+///
+/// True when gain departs from unity (the multiplier only exists on the
+/// stream path) — and ALWAYS on Windows: Media Foundation ships an Opus
+/// DECODER but no encoder, so `record`'s encoded-opus start fails outright
+/// (proven on the bench, 2026-09-25). PCM→WAV rides the exact pipeline the
+/// gain feature already proved end-to-end: staging names, allow-lists,
+/// playback, upload, and server-side decode all accept `.wav`.
+///
+/// Anything deciding capture format must call THIS, not
+/// [usesAmplifiedCapture]; the latter only answers "does gain apply".
+bool usesPcmCapture(double gain) =>
+    usesAmplifiedCapture(gain) || _isWindowsCapture;
+
+bool get _isWindowsCapture =>
+    debugIsWindowsCaptureOverride ?? Platform.isWindows;
+
+/// Test seam: forces the Windows-capture branch on or off. Tests that set
+/// it MUST reset it to null in tearDown.
+bool? debugIsWindowsCaptureOverride;
 
 /// Multiplies every 16-bit sample in [bytes] by [gain], saturating at the
 /// rails.
