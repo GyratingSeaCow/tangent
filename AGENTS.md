@@ -50,13 +50,20 @@ ADH2/
 
 ## Status
 
-Shipping — **v1.8.0** (see CHANGELOG.md). Client and server are both
-implemented and tested (1633
-Flutter tests, 296 server tests, 100 Kotlin tests). The client runs
+Shipping — **v1.9.0** (see CHANGELOG.md). Client and server are both
+implemented and tested (1740
+Flutter tests, 414 server tests, 100 Kotlin tests). The client runs
 natively on Linux (tray icon, global record hotkey, close-to-tray,
 right-click = long-press, AppImage packaging under `packaging/`) —
 verified on CachyOS/KDE Plasma Wayland; see the README's Desktop
 section.
+
+v1.9.0 adds **AI meeting summaries**: a local llama.cpp model (Qwen 3 4B
+Instruct 2507) on the server summarizes meeting transcripts — decisions,
+action items, open questions — and the summary syncs to every device and
+can be imported into notebooks. Off by default behind an install wizard,
+mirroring handwriting search. See `docs/design/2026-09-24-ai-summaries.md`
+and `docs/design/2026-09-24-summary-notebook-import.md`.
 
 v1.7.0 adds **handwriting search**: server-side OCR indexes notebook ink,
 the word index syncs down to every device, and search itself runs locally
