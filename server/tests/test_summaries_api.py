@@ -51,7 +51,15 @@ def client(temp_data_dir: Path, monkeypatch):
         yield cli, {"Authorization": f"Bearer {token}"}, temp_data_dir
 
 
-def _wait_for(cond, timeout: float = 10.0) -> bool:
+def _wait_for(cond, timeout: float = 30.0) -> bool:
+    """Poll ``cond`` until true or ``timeout``.
+
+    30 s is deliberately generous: under full-suite load the install/worker
+    threads these tests wait on can take well over the old 10 s to get
+    scheduled (the two uninstall tests were flaky at 10 s while passing
+    15/15 in isolation). A passing test never waits the full budget — the
+    timeout only bounds a genuine failure.
+    """
     deadline = time.time() + timeout
     while not cond() and time.time() < deadline:
         time.sleep(0.01)
