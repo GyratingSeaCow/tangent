@@ -5,6 +5,53 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.0] - 2026-09-25
+
+Feature release: Tangent runs natively on Windows, at full parity with
+the Linux desktop app.
+
+### Added
+
+- **Windows desktop app.** `tangent-setup-x64.exe` (per-user Inno Setup
+  installer, no admin prompt; optional desktop icon and start-at-sign-in)
+  attached to every release alongside the AppImage and APK. Everything
+  the Linux app does: system tray (left-click opens, right-click menus),
+  close-to-tray, single instance (a second launch focuses the running
+  window), and a **global Ctrl+Alt+R record hotkey** that works with the
+  window hidden. Playback via media_kit/libmpv.
+- Release CI builds and *verifies* the Windows installer on a
+  `windows-latest` runner (silent-install, then require the exe to land)
+  before attaching it, mirroring the AppImage payload check.
+
+### Changed
+
+- Windows records **WAV (PCM)** rather than Opus: Media Foundation ships
+  an Opus decoder but no encoder, so the app uses the raw-PCM capture
+  path the mic-gain feature already proved end-to-end. Transcription
+  accuracy is unaffected — the server decodes both through ffmpeg. Linux
+  and Android keep Opus. The Settings mic-gain note now says which format
+  applies on the current platform.
+- The Windows single-instance rendezvous is a loopback-TCP socket with
+  an OS-assigned port recorded in `%LOCALAPPDATA%\Tangent\instance.port`
+  (Dart has no Unix sockets on Windows); the Linux Unix-socket path and
+  the `show`/`toggle-record` command protocol are unchanged.
+
+### Fixed
+
+- **Find my server** on desktop. The sweep took the first non-loopback
+  IPv4 it found, so a Tailscale (CGNAT) or WSL/Hyper-V adapter could win
+  and the /24 probe scanned the wrong network. Candidates are now ranked
+  (physical 192.168/10.x first, virtual adapters and 172.16/12 last,
+  CGNAT never swept), and the device's **own** address is probed too —
+  a desktop hosting the server in Docker answers on its LAN address.
+- Real Tangent icon on Windows (window, taskbar, tray) instead of the
+  Flutter template icon.
+- The Linux AppImage now bundles the tray_manager (appindicator) and
+  hotkey_manager (keybinder) runtime libraries with the rest of the
+  non-baseline closure.
+- Client test suite is host-agnostic: fully green on a Windows bench
+  (1819 passed, 2 skipped) as well as Linux CI.
+
 ## [1.10.0] - 2026-09-25
 
 Feature release: pick your Whisper model, and always know which one is running.

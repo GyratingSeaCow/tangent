@@ -5,7 +5,7 @@
 > Built for ADHD minds. Self-hosted. Offline-first. No subscriptions.
 
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](./LICENSE)
-[![Version: 1.10.0](https://img.shields.io/badge/version-1.10.0-blue.svg)](./CHANGELOG.md)
+[![Version: 1.11.0](https://img.shields.io/badge/version-1.11.0-blue.svg)](./CHANGELOG.md)
 [![Client tests: 1623 passing](https://img.shields.io/badge/client_tests-1623%20passing-brightgreen.svg)]()
 [![Server tests: 284 passing](https://img.shields.io/badge/server_tests-284%20passing-brightgreen.svg)]()
 
@@ -263,7 +263,7 @@ Wayland):
   runs, unpaired, and says why.
 
 Build from source (must be on a Linux host — Flutter doesn't
-cross-compile desktop):
+cross-compile desktop; Windows builds below):
 
 ```bash
 cd client
@@ -273,6 +273,42 @@ flutter build linux
 # Optional: package it as an AppImage (needs appimagetool)
 ../packaging/build-appimage.sh
 # Output: packaging/out/Tangent-x86_64.AppImage
+```
+
+### Desktop (Windows)
+
+Download `tangent-setup-x64.exe` from
+[Releases](https://github.com/GyratingSeaCow/tangent/releases) and run
+it. It installs per-user (no admin prompt) under
+`%LOCALAPPDATA%\Programs\Tangent`, adds a Start Menu entry, and offers
+an optional desktop icon and start-at-sign-in. The installer is
+unsigned (self-hosted AGPL software has no code-signing budget), so
+SmartScreen will ask once — More info → Run anyway.
+
+The Windows app matches the Linux one feature for feature:
+
+- **Recording** to WAV via Media Foundation (Windows has no Opus
+  encoder; the server decodes either, accuracy is identical), playback
+  via libmpv.
+- **System tray**, close-to-tray, and **single instance** — launching
+  Tangent again just focuses the running window.
+- **Global record hotkey: Ctrl+Alt+R**, registered by the app itself
+  (no shortcut setup needed); works while the window is hidden.
+- Find my server, handwriting search, summaries, PDF export to
+  `Documents\Tangent\Exports\` — all as on Linux.
+
+Build from source (on a Windows host with Visual Studio 2022 Build Tools
+including the *C++ ATL* component — `flutter_secure_storage` needs
+`atlstr.h`):
+
+```powershell
+cd client
+flutter build windows --release
+# Output: client\build\windows\x64\runner\Release\tangent.exe
+
+# Optional: package the installer (needs Inno Setup 6)
+bash ../packaging/build-windows-installer.sh
+# Output: packaging\windows\out\tangent-setup-x64.exe
 ```
 
 ---

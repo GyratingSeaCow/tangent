@@ -50,13 +50,21 @@ ADH2/
 
 ## Status
 
-Shipping — **v1.10.0** (see CHANGELOG.md). Client and server are both
-implemented and tested (1795
-Flutter tests, 473 server tests, 100 Kotlin tests). The client runs
-natively on Linux (tray icon, global record hotkey, close-to-tray,
-right-click = long-press, AppImage packaging under `packaging/`) —
-verified on CachyOS/KDE Plasma Wayland; see the README's Desktop
-section.
+Shipping — **v1.11.0** (see CHANGELOG.md). Client and server are both
+implemented and tested (1819
+Flutter tests, 475 server tests, 100 Kotlin tests). The client runs
+natively on Linux AND Windows (tray icon, global record hotkey,
+close-to-tray, single instance, right-click = long-press; AppImage and
+Inno Setup installer under `packaging/`) — verified on CachyOS/KDE
+Plasma Wayland and Windows 11; see the README's Desktop sections.
+
+v1.11.0 adds the **Windows desktop app** at full Linux parity: WAV
+capture (Media Foundation has no Opus encoder), media_kit playback,
+loopback-TCP single instance, Shell_NotifyIcon tray, Ctrl+Alt+R global
+record hotkey, per-user `tangent-setup-x64.exe`. Find-my-server now
+ranks interfaces (Tailscale/WSL adapters no longer hijack the sweep)
+and probes the device's own address (self-hosted servers). See
+`docs/design/2026-09-25-windows-desktop-parity.md`.
 
 v1.10.0 adds a **Whisper model picker**: Settings lists all five sizes in
 accuracy order with Installed badges, installs on demand with a download
