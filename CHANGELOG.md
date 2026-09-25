@@ -5,6 +5,41 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.0] - 2026-09-25
+
+Feature release: pick your Whisper model, and always know which one is running.
+
+### Added
+
+- **Whisper model picker** in Settings → Server transcription. All five
+  sizes (`large-v3`, `medium`, `small`, `base`, `tiny`) listed in accuracy
+  order with Installed badges; `large-v3` is the default and recommended.
+  Selecting an uninstalled model prompts with the download size, shows
+  progress inline and in the notification shade (id 1004), and
+  auto-selects when the download completes. Reopening Settings during an
+  install re-attaches to the running progress instead of starting a second
+  download. Installed non-active models can be deleted; the active model
+  cannot.
+- Server: `GET /v1/transcription/models`, `PUT /v1/transcription/model`,
+  `POST /v1/transcription/models/install` + `/progress`, and
+  `DELETE /v1/transcription/models/{name}`. The persisted selection
+  overrides the `WHISPER_MODEL` env default, and the engine resolves it at
+  load time, so switching models needs no container restart.
+- The transcription notification and the recording screen's progress line
+  name the active model (`1 recording · large-v3`) instead of the engine.
+
+### Fixed
+
+- Save and Transcribe again no longer sit behind the Android navigation
+  bar on devices with a tall taskbar (the Fold); the recording screen
+  reserves the system inset, and keeps it while the keyboard is up.
+- `/v1/server/info` reports the model actually in use rather than the env
+  default.
+- Model installs are atomic: a failed or interrupted download leaves no
+  half-published model directory, and a model is only reported Installed
+  when its weights are a real file (guards against the hub cache's
+  dangling-symlink layout).
+
 ## [1.9.0] - 2026-09-25
 
 Feature release: your server reads the meeting so you don't have to.

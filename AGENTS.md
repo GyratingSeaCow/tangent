@@ -50,13 +50,19 @@ ADH2/
 
 ## Status
 
-Shipping — **v1.9.0** (see CHANGELOG.md). Client and server are both
-implemented and tested (1740
-Flutter tests, 414 server tests, 100 Kotlin tests). The client runs
+Shipping — **v1.10.0** (see CHANGELOG.md). Client and server are both
+implemented and tested (1795
+Flutter tests, 473 server tests, 100 Kotlin tests). The client runs
 natively on Linux (tray icon, global record hotkey, close-to-tray,
 right-click = long-press, AppImage packaging under `packaging/`) —
 verified on CachyOS/KDE Plasma Wayland; see the README's Desktop
 section.
+
+v1.10.0 adds a **Whisper model picker**: Settings lists all five sizes in
+accuracy order with Installed badges, installs on demand with a download
+prompt and progress, and the server swaps the active model without a
+restart. Accuracy is identical either way — the GPU only changes speed.
+See `docs/design/2026-09-25-whisper-model-selection.md`.
 
 v1.9.0 adds **AI meeting summaries**: a local llama.cpp model (Qwen 3 4B
 Instruct 2507) on the server summarizes meeting transcripts — decisions,
