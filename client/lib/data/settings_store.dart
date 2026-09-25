@@ -3,6 +3,12 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../services/audio_gain.dart';
 
+/// What a device assumes the server transcribes with before it has ever
+/// spoken to one. Matches the server's own fallback (spec requirement 1:
+/// app_settings → env → large-v3), so a first run shows the truth rather
+/// than an empty picker.
+const String defaultWhisperModel = 'large-v3';
+
 enum TriggerMode {
   tap('tap'),
   hold('hold');
@@ -28,6 +34,7 @@ class SettingsStore {
   static const _handwritingSearchKey = 'handwriting_search_enabled';
   static const _aiSummariesKey = 'ai_summaries_enabled';
   static const _autoBluetoothKey = 'auto_bluetooth_audio';
+  static const _whisperModelKey = 'whisper_model';
 
   final SharedPreferences? _preferences;
 
@@ -88,6 +95,15 @@ class SettingsStore {
   /// itself lives server-side (it changes behavior for every device).
   bool aiSummariesEnabled;
 
+  /// The Whisper model this device last saw the server transcribing with.
+  ///
+  /// A LOCAL MIRROR only — the active model is server state (one answer for
+  /// every device) and the server's catalogue is always the authority. This
+  /// exists so an unreachable server still shows the user something true
+  /// instead of an empty picker: the section renders its rows disabled
+  /// around this remembered name.
+  String whisperModel;
+
   SettingsStore({
     this.wifiOnlySync = true,
     this.autoSync = true,
@@ -100,6 +116,7 @@ class SettingsStore {
     this.micGain = defaultMicGain,
     this.handwritingSearchEnabled = false,
     this.aiSummariesEnabled = false,
+    this.whisperModel = defaultWhisperModel,
     SharedPreferences? preferences,
   }) : _preferences = preferences;
 
@@ -126,6 +143,8 @@ class SettingsStore {
       handwritingSearchEnabled:
           preferences.getBool(_handwritingSearchKey) ?? false,
       aiSummariesEnabled: preferences.getBool(_aiSummariesKey) ?? false,
+      whisperModel:
+          preferences.getString(_whisperModelKey) ?? defaultWhisperModel,
     );
   }
 
@@ -173,6 +192,13 @@ class SettingsStore {
   Future<void> setAiSummariesEnabled(bool value) async {
     aiSummariesEnabled = value;
     await _preferences?.setBool(_aiSummariesKey, value);
+  }
+
+  /// Remembers the active Whisper model so an offline Settings screen can
+  /// still show the truth. Written only after the SERVER confirms a change.
+  Future<void> setWhisperModel(String value) async {
+    whisperModel = value;
+    await _preferences?.setString(_whisperModelKey, value);
   }
 
   /// Records the user's explicit microphone choice. Passing a null [id] clears
