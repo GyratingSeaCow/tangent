@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 import 'package:tangent/services/desktop_pdf_share.dart';
 
 /// share_plus's shareXFiles is UnimplementedError on Linux: there is no
@@ -36,7 +37,7 @@ void main() {
       subject: 'My Notes',
     );
 
-    final written = File('${dir.path}/My Notes.pdf');
+    final written = File(p.join(dir.path, 'My Notes.pdf'));
     expect(written.existsSync(), isTrue);
     expect(await written.readAsBytes(), [1, 2, 3, 4]);
     expect(opened, [written.path]);
@@ -67,7 +68,7 @@ void main() {
     expect(files.length, 2, reason: 'both exports must survive');
     expect(files, containsAll(['notes.pdf', 'notes (2).pdf']));
     expect(
-      await File('${dir.path}/notes.pdf').readAsBytes(),
+      await File(p.join(dir.path, 'notes.pdf')).readAsBytes(),
       [1],
       reason: 'the original is untouched',
     );

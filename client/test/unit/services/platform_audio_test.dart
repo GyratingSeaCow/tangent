@@ -8,11 +8,18 @@ import 'package:tangent/services/platform_audio.dart';
 
 void main() {
   test(
-    'Linux playback routes just_audio through media_kit (libmpv)',
+    'desktop playback routes just_audio through media_kit (libmpv)',
     () {
-      // just_audio ships no Linux platform implementation at all: without an
-      // installed backend every AudioPlayer call throws MissingPluginException
-      // and playback of synced recordings is silently dead on desktop.
+      // just_audio ships no Linux or Windows platform implementation at
+      // all: without an installed backend every AudioPlayer call throws
+      // MissingPluginException and playback of synced recordings is
+      // silently dead on desktop.
+      //
+      // Only Linux can assert this in a test: libmpv is a system library
+      // there, present on the bare test host. On Windows the mpv DLL ships
+      // inside the built app bundle (media_kit_libs_windows_audio), so
+      // ensureInitialized can only succeed in a real app process — the
+      // wiring is exercised by launching the built exe, not here.
       initPlatformAudio();
       expect(
         JustAudioPlatform.instance,
@@ -20,15 +27,20 @@ void main() {
         reason: 'desktop playback must be bridged to libmpv via media_kit',
       );
     },
-    skip: Platform.isLinux ? false : 'Linux-only playback backend wiring',
+    skip: Platform.isLinux
+        ? false
+        : 'libmpv lives in the app bundle off-Linux; untestable on a bare '
+            'test host',
   );
 
   test(
-    'non-Linux platforms keep their native just_audio backend',
+    'mobile platforms keep their native just_audio backend',
     () {
       initPlatformAudio();
       expect(JustAudioPlatform.instance, isNot(isA<JustAudioMediaKit>()));
     },
-    skip: Platform.isLinux ? 'covered by the Linux test above' : false,
+    skip: (Platform.isLinux || Platform.isWindows)
+        ? 'desktop routes through media_kit by design'
+        : false,
   );
 }
