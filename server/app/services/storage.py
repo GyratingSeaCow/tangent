@@ -5,6 +5,10 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import sqlite3
 
 _DB_SUFFIXES = {".db", ".db-journal", ".db-wal", ".db-shm"}
 
@@ -60,6 +64,64 @@ def get_storage_used_bytes(data_dir: str) -> int:
 
 SUPPORTED_MODELS = ("tiny", "base", "small", "medium", "large-v3")
 
+#: Accuracy order, most accurate first. The client renders the picker in
+#: exactly this order (Jeff's accuracy-first copy rule), so it lives beside
+#: SUPPORTED_MODELS rather than being re-derived per caller.
+MODELS_BY_ACCURACY = ("large-v3", "medium", "small", "base", "tiny")
+
+#: The fallback when neither a persisted selection nor the env names a
+#: supported model. Matches Settings.whisper_model's own default.
+DEFAULT_MODEL = "large-v3"
+
+#: app_settings key holding the user's model selection. A selection made
+#: from ANY device changes what the SERVER transcribes with, so it belongs
+#: in the server's settings table (summarizer_worker.SETTINGS_KEY precedent).
+MODEL_SETTINGS_KEY = "whisper_model"
+
 
 def is_supported_model(name: str) -> bool:
     return name in SUPPORTED_MODELS
+
+
+def resolve_active_model(db: sqlite3.Connection | None) -> str:
+    """The model this server should transcribe with, right now.
+
+    Resolution order (requirement 1 of the model-selection spec):
+
+    1. ``app_settings['whisper_model']`` when it names a SUPPORTED model —
+       the user's explicit choice, made from any paired device;
+    2. ``settings.whisper_model`` (``TANGENT_WHISPER_MODEL``) when supported —
+       the operator's container default;
+    3. ``DEFAULT_MODEL``.
+
+    An unsupported value at either layer falls THROUGH rather than raising: a
+    stale or hand-edited row must never leave the server unable to
+    transcribe. ``db`` may be None (a load racing first-run init).
+    """
+    if db is not None:
+        try:
+            row = db.execute(
+                "SELECT value FROM app_settings WHERE key = ?", (MODEL_SETTINGS_KEY,)
+            ).fetchone()
+        except Exception:
+            # The table not existing yet (pre-init boot) is not a reason to
+            # fail a transcription; fall through to the env default.
+            row = None
+        if row is not None:
+            value = row[0]
+            if is_supported_model(value):
+                return value
+
+    from app.config import get_settings
+
+    env_choice = get_settings().whisper_model
+    return env_choice if is_supported_model(env_choice) else DEFAULT_MODEL
+
+
+def set_active_model(db: sqlite3.Connection, name: str) -> None:
+    """Persist the active-model selection. Caller validates ``name``."""
+    db.execute(
+        "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)",
+        (MODEL_SETTINGS_KEY, name),
+    )
+    db.commit()
