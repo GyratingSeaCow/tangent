@@ -55,7 +55,11 @@ ln -sf "$(basename "$LIBMPV")" "$APPDIR/usr/lib/libmpv.so"
 BASELINE_RE='^(ld-linux|linux-vdso|libc\.so|libm\.so|libdl\.so|libpthread\.so|librt\.so|libresolv\.so|libgcc_s|libstdc\+\+|libz\.so|libglib|libgobject|libgio|libgmodule|libgtk|libgdk|libpango|libcairo|libatk|libX|libxcb|libxkb|libwayland|libEGL|libGL|libGLX|libGLdispatch|libOpenGL|libvulkan|libdrm|libgbm|libdbus|libsystemd|libudev|libasound|libpulse|libfontconfig|libfreetype|libharfbuzz|libfribidi|libexpat|libffi|libpcre|libmount|libblkid|libselinux|libcap\.so|libgcrypt|libgpg-error|liblzma|liblz4|libzstd\.so|libbz2|libpng|libjpeg|libbrotli|libssl|libcrypto|libnghttp|libcurl|libidn|libunistring|libpsl|libkrb5|libgssapi|libcom_err|libk5crypto|libkrb5support|libkeyutils|libuuid\.so|libsecret|libjson)'
 
 for _pass in 1 2 3; do
-  for so in "$APPDIR"/usr/lib/*.so*; do
+  # Both our lib dir AND the Flutter bundle's plugin .so files: plugins can
+  # link non-baseline libs of their own (tray_manager -> ayatana-appindicator,
+  # hotkey_manager -> keybinder-3.0 — neither ships on a stock GNOME host),
+  # and whatever they need must ride along just like libmpv's closure.
+  for so in "$APPDIR"/usr/lib/*.so* "$APPDIR"/usr/bundle/lib/*.so*; do
     ldd "$so" 2>/dev/null | awk '/=>/ {print $1, $3}' | while read -r name path; do
       [ -f "$path" ] || continue
       base="$(basename "$name")"
