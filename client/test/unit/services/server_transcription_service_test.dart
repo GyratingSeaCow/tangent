@@ -4899,14 +4899,17 @@ void main() {
       isNotEmpty,
       reason: 'a running job must reach the notification shade',
     );
-    expect(posted.first, '1 recording');
+    // The model rides the production path into the shade, not just the
+    // pure function: this is the only test that proves the mirror is
+    // actually wired through the notifier.
+    expect(posted.first, '1 recording · large-v3');
 
     // A second recording queued behind the first must be counted.
     final second = service.transcribeDump('notify-second');
     await pumpEventQueue();
     expect(
       posted,
-      contains('1 of 2 recordings'),
+      contains('1 of 2 recordings · large-v3'),
       reason: 'the backlog must be visible, not just the active job',
     );
 
