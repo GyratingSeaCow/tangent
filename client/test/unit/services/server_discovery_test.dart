@@ -4,10 +4,16 @@ import 'package:tangent/services/server_discovery.dart';
 
 void main() {
   group('subnetHosts', () {
-    test('enumerates the /24 excluding self, network, and broadcast', () {
+    test('enumerates the /24 including self, excluding network/broadcast',
+        () {
       final List<String> hosts = subnetHosts('192.168.1.57');
-      expect(hosts, hasLength(253));
-      expect(hosts, isNot(contains('192.168.1.57')), reason: 'never self');
+      expect(hosts, hasLength(254));
+      expect(
+        hosts,
+        contains('192.168.1.57'),
+        reason: 'self is swept: a desktop hosting its own server answers '
+            'on its LAN address (bench, 2026-09-25)',
+      );
       expect(hosts, isNot(contains('192.168.1.0')), reason: 'network addr');
       expect(hosts, isNot(contains('192.168.1.255')), reason: 'broadcast');
       expect(hosts.first, '192.168.1.1');

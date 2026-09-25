@@ -79,7 +79,13 @@ const List<int> kDiscoveryPorts = <int>[8765, 8000];
 /// enough not to look like a SYN flood to consumer routers.
 const int kSweepConcurrency = 32;
 
-/// Enumerates every OTHER host on [selfAddress]'s /24.
+/// Enumerates every host on [selfAddress]'s /24 — INCLUDING self.
+///
+/// Self is swept deliberately: a desktop that hosts its own server in
+/// Docker answers on its LAN address (bench, 2026-09-25 — excluding self
+/// made Find-my-server blind to the one address that mattered). A device
+/// that is not hosting a server simply fails the probe like any other
+/// silent host; one extra probe is free.
 ///
 /// Only /24 (or narrower, treated as /24) is swept. Enumerating a /16 means
 /// 65k probes — scanning behaviour, and minutes of runtime. On a wider
@@ -88,10 +94,7 @@ List<String> subnetHosts(String selfAddress) {
   final List<String> parts = selfAddress.split('.');
   if (parts.length != 4) return const <String>[];
   final String prefix = '${parts[0]}.${parts[1]}.${parts[2]}';
-  return <String>[
-    for (int i = 1; i < 255; i++)
-      if ('$prefix.$i' != selfAddress) '$prefix.$i',
-  ];
+  return <String>[for (int i = 1; i < 255; i++) '$prefix.$i'];
 }
 
 /// Sweeps the subnet for Tangent servers.
