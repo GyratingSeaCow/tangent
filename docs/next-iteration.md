@@ -77,9 +77,22 @@ Implementation notes:
   job row's field — and that stale default is itself worth fixing so the
   two cannot disagree.
 
-### 1.1 Linux AppImage: verify handwriting search on desktop (v1.7.0 E2E gate)
+### 1.1 Linux AppImage: verify handwriting search on desktop — DONE (2026-09-25)
 
-**Status:** owed. The v1.7.0 tag's Release workflow builds and attaches
+Verified by Jeff on jeff-cachyos (CachyOS/KDE Plasma Wayland) with the
+v1.10.0 release `Tangent-x86_64.AppImage`: paired, no install wizard
+reachable (toggle only — the desktop consumes the synced index, never
+installs an OCR env), search icon on Notebooks home and in-notebook,
+query → match counts/snippets, tap opens at the highlighted match,
+next/prev wraps. Server-side proof from the container log (16:48 UTC):
+new device paired, repeated `GET /v1/sync/pull?...include_ink_index=true
+200`, and the enable toggle's best-effort `POST /v1/ocr/index/backfill
+200` re-announced 11 notebooks (since_seq advanced 570 → 581 as the
+backfill rows were consumed). Index at verification: 436 rows / 11
+notebooks / 0 error rows. This closes E2E checkpoint 6 — the whole
+reason the feature is server-side — owed since v1.7.0.
+
+**Original note:** owed. The v1.7.0 tag's Release workflow builds and attaches
 `Tangent-x86_64.AppImage`, so no local Linux build is needed — download it
 from the release and run the checks below.
 
