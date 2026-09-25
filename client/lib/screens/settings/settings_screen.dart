@@ -16,6 +16,7 @@ import 'input_device_section.dart';
 import 'mic_gain_section.dart';
 import 'storage_settings_section.dart';
 import 'trash_screen.dart';
+import 'whisper_model_section.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -211,6 +212,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               style: TextStyle(fontSize: 12, color: TangentColors.textDim),
             ),
           ),
+          const WhisperModelSection(),
           const Divider(),
           const HandwritingSearchSection(),
           const Divider(),
@@ -309,8 +311,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final info = _serverInfo;
     if (info == null) return 'Not configured — tap Server above to set up';
     final parts = <String>['Connected'];
-    if (info.model != null) parts.add('default model: ${info.model}');
-    if (info.models != null) parts.add('available: ${info.models!.join(", ")}');
+    // Requirement 8: the model list is a real picker now
+    // ([WhisperModelSection] below), so the status line is a STATUS line —
+    // no 'default model:' note and no 'available:' pseudo-menu that
+    // selected nothing.
     if (info.dumpCount != null) parts.add('${info.dumpCount} dumps');
     if (info.setupComplete == false) parts.add('SETUP INCOMPLETE — open the server URL in a browser');
     return parts.join(' · ');
