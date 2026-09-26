@@ -50,13 +50,22 @@ ADH2/
 
 ## Status
 
-Shipping — **v1.13.0** (see CHANGELOG.md). Client and server are both
-implemented and tested (1939
-Flutter tests, 511 server tests, 100 Kotlin tests). The client runs
+Shipping — **v1.14.0** (see CHANGELOG.md). Client and server are both
+implemented and tested (1961
+Flutter tests, 523 server tests, 100 Kotlin tests). The client runs
 natively on Linux AND Windows (tray icon, global record hotkey,
 close-to-tray, single instance, right-click = long-press; AppImage and
 Inno Setup installer under `packaging/`) — verified on CachyOS/KDE
 Plasma Wayland and Windows 11; see the README's Desktop sections.
+
+v1.14.0 adds **custom vocabulary**: one global boost-word list
+(`app_settings['custom_vocabulary']`, `GET/PUT
+/v1/transcription/vocabulary`) fed to faster-whisper `hotwords` on
+every window, resolved at job RUN time, and appended as a preferred-
+spellings suffix to every summary prompt when non-empty. Settings gets
+a 'Custom vocabulary' editor with a live term/token count and a
+223-token budget warning. No client DB change. See
+`docs/design/2026-09-26-custom-vocabulary.md`.
 
 v1.13.0 adds **transcript search depth** (snippets + match counts on
 search results, open-at-match with a prev/next match bar, highlights in

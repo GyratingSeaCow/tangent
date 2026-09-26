@@ -5,6 +5,29 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.14.0] - 2026-09-26
+
+Feature release: **teach it your words.**
+
+### Added
+
+- **Custom vocabulary (boost words).** Settings → *Custom vocabulary*: one
+  global list of names, products and jargon (one per line or comma-
+  separated) that the server feeds to faster-whisper as `hotwords` on
+  every decoding window — so "Hermes" stops coming back as "Hermays".
+  Live term and ~token count with a warning past the 223-token budget.
+  Applies to every new transcription; use *Transcribe again* on older
+  recordings. Server-owned and shared by every paired device.
+- Summaries use the same list: when non-empty, a preferred-spellings
+  suffix rides every summary prompt so transcript and summary agree.
+- Server: `GET/PUT /v1/transcription/vocabulary` (canonicalised, case-
+  insensitive first-spelling-wins dedupe, 422 on >64-char terms or >200
+  terms). The list is resolved when a job *runs*, not when it is queued.
+
+### Changed
+
+- Transcription logs record the hotword *count* only, never the terms.
+
 ## [1.13.0] - 2026-09-26
 
 Feature release: **find it in the transcript, and shape the summary.**
