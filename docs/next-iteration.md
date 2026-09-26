@@ -8,6 +8,23 @@ re-derive it.
 
 ## 1. Open items
 
+### 1.14 Timestamped Markdown export — DONE (2026-09-26, v1.16.0)
+
+Shipped per `docs/design/2026-09-26-timestamped-markdown-export.md`
+(E1=a segment lines, E2=a Obsidian toggles + per-recording ⋮, E3=y
+frontmatter + summary). Client-only. Two defects caught in orchestrator
+verification, both fixed before merge: vault shape drifted with both
+switches off (now byte-identical to 1.15.0, golden-pinned), and real
+summaries' own `## Summary` heading was doubled (12/12 in the live DB).
+
+Candidates left open (not built):
+- Word-level inline timestamps (E1=b).
+- Mobile share_plus branch has no automated coverage (platform channel);
+  desktop branch is driven end-to-end with fakes.
+- Name resolution relies on `## ` heading order matching `Speaker N`
+  first-appearance order; a user who reorders headings by hand gets raw
+  labels (documented fallback, never a wrong name).
+
 ### 1.13 Speaker naming — DONE (2026-09-26, v1.15.0)
 
 Shipped per `docs/design/2026-09-26-speaker-naming.md` (S1=b rewrite-in-
