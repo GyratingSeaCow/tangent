@@ -85,8 +85,9 @@ class ListenTranscriptViewState extends State<ListenTranscriptView> {
   }
 
   @override
-  void didUpdateWidget(ListenTranscriptView old) {
-    super.didUpdateWidget(old);
+  void didUpdateWidget(ListenTranscriptView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final old = oldWidget;
     if (old.position != widget.position) {
       old.position.removeListener(_onPosition);
       widget.position.addListener(_onPosition);

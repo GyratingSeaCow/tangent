@@ -124,8 +124,11 @@ void main() {
     expect(find.byKey(const ValueKey('listen-segment-1')), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('listen-segment-1')));
     expect(seeks, [const Duration(milliseconds: 1700)]);
-    expect(find.text('Re-transcribe for word timing'), findsOneWidget,
-        reason: 'upgrade path offered when only sentences are timed');
+    expect(
+      find.text('Re-transcribe for word timing'),
+      findsOneWidget,
+      reason: 'upgrade path offered when only sentences are timed',
+    );
   });
 
   testWidgets('no timings at all: plain text plus the re-transcribe action',
@@ -189,8 +192,11 @@ void main() {
     expect(seeks, isEmpty, reason: 'an inserted word has no moment');
     expect(find.textContaining('Timings follow your edits'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('listen-word-3'))); // world
-    expect(seeks, [const Duration(milliseconds: 700)],
-        reason: 'later matched words keep their own time');
+    expect(
+      seeks,
+      [const Duration(milliseconds: 700)],
+      reason: 'later matched words keep their own time',
+    );
   });
 
   testWidgets('low-confidence words are tinted per bucket', (tester) async {
