@@ -5,6 +5,28 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.15.0] - 2026-09-26
+
+Feature release: **call Speaker 1 by name.**
+
+### Added
+
+- **Name speakers.** On any diarized recording, ⋮ → *Name speakers* (list
+  or detail) or tap a speaker header in Listen mode. One field per
+  speaker with the first thing they said as a hint; names you've used on
+  other recordings appear as tap-to-fill chips. Save rewrites the
+  transcript in place (`## Speaker 1` → `## Jeff`), so search, summaries
+  and exports all see the name. Two speakers can't share a name.
+
+### Changed
+
+- *Transcribe again* warns when it will reset speaker names you added.
+
+### Known limits
+
+- Listen mode keeps the original `Speaker N` labels (they come from the
+  server's timings, not the text). Re-transcribing resets names.
+
 ## [1.14.0] - 2026-09-26
 
 Feature release: **teach it your words.**
