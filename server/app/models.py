@@ -55,6 +55,8 @@ class DumpResponse(BaseModel):
     mode: DumpMode
     title: str
     transcript: str | None
+    transcript_timings: str | None
+    timings_version: int | None
     duration_seconds: int
     created_at: datetime
     updated_at: datetime

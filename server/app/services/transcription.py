@@ -162,6 +162,7 @@ class TranscriptionService:
             audio_path,
             beam_size=5,
             vad_filter=True,
+            word_timestamps=True,
             language=None,  # auto-detect
         )
         log.info("transcription.detected_language", language=info.language)
@@ -177,6 +178,16 @@ class TranscriptionService:
                     "end": float(segment.end),
                     "speaker": None,
                     "text": text,
+                    "words": [
+                        {
+                            "w": word.word.strip(),
+                            "s": float(word.start),
+                            "e": float(word.end),
+                            "p": float(word.probability),
+                        }
+                        for word in getattr(segment, "words", ())
+                        if word.word.strip()
+                    ],
                 }
             )
 

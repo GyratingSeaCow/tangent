@@ -108,6 +108,11 @@ def run_job_inline(job_id: str, audio_path: str) -> None:
             "UPDATE jobs SET status = 'running', started_at = ? WHERE id = ?",
             (_now_ts(), job_id),
         )
+        db.execute(
+            "UPDATE dumps SET transcript_timings = NULL, timings_version = NULL "
+            "WHERE id = (SELECT dump_id FROM jobs WHERE id = ?)",
+            (job_id,),
+        )
         db.commit()
 
         # Look up the job's model choice
@@ -160,9 +165,10 @@ def run_job_inline(job_id: str, audio_path: str) -> None:
             )
             # Also update the dump's transcript if not already set or if server transcript is better
             db.execute(
-                "UPDATE dumps SET transcript = ?, updated_at = ? "
+                "UPDATE dumps SET transcript = ?, transcript_timings = ?, "
+                "timings_version = 1, updated_at = ? "
                 "WHERE id = (SELECT dump_id FROM jobs WHERE id = ?)",
-                (transcript, _now_ts(), job_id),
+                (transcript, segments_json, _now_ts(), job_id),
             )
             # Publish to the sync feed so other devices receive the finished
             # transcript. Attributed to the server: no device pushed this.
