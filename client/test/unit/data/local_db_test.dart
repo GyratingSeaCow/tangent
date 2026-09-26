@@ -193,7 +193,7 @@ void main() {
           )
           .single['sql'] as String;
       expect(trigger, contains("VALUES ('delete'"));
-      expect(sqlite.userVersion, 17);
+      expect(sqlite.userVersion, 18);
     });
 
     test('migrates v2 by adding meeting notes without changing transcript',
@@ -231,7 +231,7 @@ void main() {
 
       final row = await migrated.getDump('meeting-1');
 
-      expect(sqlite.userVersion, 17);
+      expect(sqlite.userVersion, 18);
       expect(row!.transcript, 'Raw legacy transcript');
       expect(row.meetingNotes, isNull);
       expect(row.syncStatus, 'local_only');
@@ -345,7 +345,7 @@ void main() {
       final blank = await migrated.getDump('blank');
       final done = await migrated.getDump('done');
 
-      expect(sqlite.userVersion, 17);
+      expect(sqlite.userVersion, 18);
       expect(blank!.transcriptionStatus, 'not_transcribed');
       expect(blank.transcriptionAttempt, 0);
       expect(blank.transcriptionCompletedAt, isNull);

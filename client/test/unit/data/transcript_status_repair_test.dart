@@ -253,7 +253,7 @@ void main() {
     addTearDown(db.close);
     await db.listDumps();
 
-    expect(raw.userVersion, 17);
+    expect(raw.userVersion, 18);
     final List<DumpRow> all = await db.select(db.dumps).get();
     expect(all, hasLength(6));
     expect(
@@ -313,7 +313,7 @@ void main() {
         .customSelect('SELECT id, title, audio_path FROM dumps')
         .get();
 
-    expect(raw.userVersion, 17);
+    expect(raw.userVersion, 18);
     expect(rows, hasLength(1));
     expect(rows.single.data['id'], 'ancient');
     expect(rows.single.data['title'], 'Old one');
