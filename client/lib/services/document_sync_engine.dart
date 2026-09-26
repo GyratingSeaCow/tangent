@@ -341,6 +341,12 @@ class DocumentSyncEngine extends ChangeNotifier {
       summaryTemplate: payload.containsKey('summary_template')
           ? payload['summary_template'] as String?
           : LocalDb.absentSummaryField,
+      // Speaker names: device-authored, same absent-vs-null contract. The
+      // column is JSON text on both sides; a structured object is accepted
+      // too and stored as its canonical JSON (same helper as timings).
+      speakerNames: payload.containsKey('speaker_names')
+          ? _timingsText(payload['speaker_names'])
+          : LocalDb.absentSpeakerNamesField,
       seq: change.seq,
     );
   }
@@ -500,6 +506,9 @@ class DocumentSyncEngine extends ChangeNotifier {
             'mode': row.mode,
             'title': row.title,
             'transcript': row.transcript,
+            // The speaker name map travels with every push; null means
+            // "no names" and the server stores it verbatim.
+            'speaker_names': row.speakerNames,
             'meeting_notes': row.meetingNotes,
             'duration_seconds': row.durationSeconds,
             'created_at': row.createdAt.millisecondsSinceEpoch ~/ 1000,
