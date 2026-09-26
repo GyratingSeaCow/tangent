@@ -17,6 +17,7 @@ import 'input_device_section.dart';
 import 'mic_gain_section.dart';
 import 'storage_settings_section.dart';
 import 'trash_screen.dart';
+import 'custom_vocabulary_section.dart';
 import 'whisper_model_section.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
@@ -214,6 +215,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ),
           ),
           const WhisperModelSection(),
+          const CustomVocabularySection(),
           const Divider(),
           const HandwritingSearchSection(),
           const Divider(),

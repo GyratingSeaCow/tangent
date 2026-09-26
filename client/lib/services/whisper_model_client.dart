@@ -117,6 +117,50 @@ final class WhisperInstallProgress {
   final String? model;
 }
 
+/// GET/PUT /v1/transcription/vocabulary — the one global boost-word list
+/// (spec docs/design/2026-09-26-custom-vocabulary.md §3). Server-owned,
+/// never cached in Drift; the Settings editor fetches it live.
+@immutable
+final class VocabularySettings {
+  const VocabularySettings({
+    required this.terms,
+    required this.text,
+    required this.tokenEstimate,
+    required this.overBudget,
+  });
+
+  /// Defensive like `SummaryTemplate.fromJson`: every field has a safe
+  /// default so a partial or older-server body never throws in the section.
+  factory VocabularySettings.fromJson(Map<String, dynamic> json) =>
+      VocabularySettings(
+        terms: ((json['terms'] as List<dynamic>?) ?? const <dynamic>[])
+            .whereType<String>()
+            .toList(growable: false),
+        text: json['text'] as String? ?? '',
+        tokenEstimate: (json['token_estimate'] as num?)?.toInt() ?? 0,
+        overBudget: json['over_budget'] == true,
+      );
+
+  static const VocabularySettings empty = VocabularySettings(
+    terms: <String>[],
+    text: '',
+    tokenEstimate: 0,
+    overBudget: false,
+  );
+
+  /// Canonical terms: split, trimmed, de-duped case-insensitively.
+  final List<String> terms;
+
+  /// The canonical comma-joined text (`"Hermes, CachyOS, Tangent"`).
+  final String text;
+
+  /// The server's count with its tokenizer when loaded, else `len // 4`.
+  final int tokenEstimate;
+
+  /// `tokenEstimate > 223`: faster-whisper will silently drop later terms.
+  final bool overBudget;
+}
+
 /// PUT /v1/transcription/model refused: the model exists but its weights are
 /// not on the server. The fix is an install, not an error banner.
 final class WhisperModelNotInstalledException extends ApiException {
@@ -269,6 +313,31 @@ class WhisperModelClient {
 
   WhisperModelCatalog _catalogOf(Response<dynamic> resp) =>
       WhisperModelCatalog.fromJson(
+        (resp.data as Map<String, dynamic>?) ?? const {},
+      );
+
+  /// GET /v1/transcription/vocabulary — the saved boost-word list.
+  Future<VocabularySettings> fetchVocabulary() async {
+    final resp = await _dio.get<dynamic>('/v1/transcription/vocabulary');
+    _checkStatus(resp);
+    return _vocabularyOf(resp);
+  }
+
+  /// PUT /v1/transcription/vocabulary with the RAW editor text; the server
+  /// canonicalises and answers with what it kept. Blank clears. A 422 (term
+  /// over 64 chars, more than 200 terms) surfaces as an [ApiException]
+  /// whose message is the server's detail — the section shows it verbatim.
+  Future<VocabularySettings> setVocabulary(String text) async {
+    final resp = await _dio.put<dynamic>(
+      '/v1/transcription/vocabulary',
+      data: <String, dynamic>{'text': text},
+    );
+    _checkStatus(resp);
+    return _vocabularyOf(resp);
+  }
+
+  VocabularySettings _vocabularyOf(Response<dynamic> resp) =>
+      VocabularySettings.fromJson(
         (resp.data as Map<String, dynamic>?) ?? const {},
       );
 

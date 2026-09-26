@@ -431,11 +431,16 @@ void main() {
     // sit above these switches; the taller page pushes them below the lazy
     // ListView's build window, so each must be scrolled INTO EXISTENCE,
     // not merely into view.
+    // scrollUntilVisible stops as soon as the widget EXISTS, which (since the
+    // custom-vocabulary section, 2026-09-26) can leave it a few px past the
+    // viewport edge — so ensureVisible before tapping.
     await t.scrollUntilVisible(
       find.text('Tap to toggle'),
       80,
       scrollable: find.byType(Scrollable).first,
     );
+    await t.ensureVisible(find.text('Tap to toggle'));
+    await t.pump();
     await t.tap(find.text('Tap to toggle'));
     await pumpStorage(t);
     await t.scrollUntilVisible(
@@ -443,6 +448,8 @@ void main() {
       80,
       scrollable: find.byType(Scrollable).first,
     );
+    await t.ensureVisible(find.text('Upload recordings only on Wi-Fi'));
+    await t.pump();
     await t.tap(find.text('Upload recordings only on Wi-Fi'));
     await pumpStorage(t);
     await t.scrollUntilVisible(
@@ -450,6 +457,8 @@ void main() {
       80,
       scrollable: find.byType(Scrollable).first,
     );
+    await t.ensureVisible(find.text('Keep screen awake while recording'));
+    await t.pump();
     await t.tap(find.text('Keep screen awake while recording'));
     await pumpStorage(t);
     // Completing server info must not reset edits made while that read was held.
