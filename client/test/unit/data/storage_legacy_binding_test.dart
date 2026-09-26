@@ -806,6 +806,10 @@ void main() {
   });
   test(
       'restart after committed freeze and partially frozen chunks preserves keys and all columns',
+      // 70 sequential seeds plus a mid-test reopen: ~1s alone, but the
+      // Windows Release runner's concurrent isolates push it past the
+      // default 30s per-test budget (observed on the v1.13.0 release job).
+      timeout: const Timeout(Duration(minutes: 2)),
       () async {
     final h = CatalogHarness();
     addTearDown(h.close);
