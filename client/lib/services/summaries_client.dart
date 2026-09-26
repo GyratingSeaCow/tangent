@@ -26,6 +26,8 @@ final class SummarySettings {
     required this.diskFreeBytes,
     required this.installRunning,
     required this.enabled,
+    this.customPrompt,
+    this.customConfigured = false,
   });
 
   factory SummarySettings.fromJson(Map<String, dynamic> json) =>
@@ -36,6 +38,10 @@ final class SummarySettings {
         diskFreeBytes: (json['disk_free_bytes'] as num?)?.toInt() ?? 0,
         installRunning: json['install_running'] == true,
         enabled: json['enabled'] == true,
+        // Both absent on a server predating summary templates: no custom
+        // prompt, so the editor starts empty and pickers hide 'Custom'.
+        customPrompt: json['custom_prompt'] as String?,
+        customConfigured: json['custom_configured'] == true,
       );
 
   final bool installed;
@@ -52,6 +58,59 @@ final class SummarySettings {
   /// The SERVER-side auto-summarize toggle (gates the auto-trigger for
   /// every device, unlike the OCR toggle which is per-device).
   final bool enabled;
+
+  /// The user-authored 'custom' template prompt (one server-side slot), or
+  /// null when the slot is empty. Server-owned like [enabled]: every device
+  /// edits the same text.
+  final String? customPrompt;
+
+  /// Whether the 'custom' template can be chosen — true iff [customPrompt]
+  /// is non-blank on the server. Pickers hide the 'Custom' row otherwise.
+  final bool customConfigured;
+}
+
+/// One entry from GET /v1/summaries/templates.
+@immutable
+final class SummaryTemplate {
+  const SummaryTemplate({required this.id, required this.displayName});
+
+  factory SummaryTemplate.fromJson(Map<String, dynamic> json) =>
+      SummaryTemplate(
+        id: json['id'] as String? ?? '',
+        displayName:
+            json['display_name'] as String? ?? json['id'] as String? ?? '',
+      );
+
+  /// Stable wire id ('meeting', 'brain_dump', 'lecture', 'actions_only',
+  /// 'custom'). The server owns this list; the client never hardcodes it.
+  final String id;
+  final String displayName;
+}
+
+/// GET /v1/summaries/templates — the server's template catalogue plus
+/// whether the custom slot is configured. Pickers render FROM this: the
+/// client holds no template list of its own, so a server that adds a preset
+/// shows it on every device without a client release.
+@immutable
+final class SummaryTemplates {
+  const SummaryTemplates({
+    required this.templates,
+    required this.customConfigured,
+  });
+
+  factory SummaryTemplates.fromJson(Map<String, dynamic> json) =>
+      SummaryTemplates(
+        templates: <SummaryTemplate>[
+          for (final Object? raw
+              in json['templates'] as List<dynamic>? ?? const <dynamic>[])
+            if (raw is Map<String, dynamic>) SummaryTemplate.fromJson(raw),
+        ],
+        customConfigured: json['custom_configured'] == true,
+      );
+
+  /// In server order.
+  final List<SummaryTemplate> templates;
+  final bool customConfigured;
 }
 
 /// GET /v1/summaries/install/progress — where the running install is.
@@ -97,6 +156,14 @@ final class SummarizeConflictException extends ApiException {
   }) : super(statusCode: 409, code: 'conflict');
 
   final SummarizeConflictReason reason;
+}
+
+/// A typed 422 from [SummariesClient.summarizeDump]: the template id was
+/// unknown, or 'custom' was requested while the custom slot is empty. The
+/// server's detail is the user-facing wording (it names which case).
+final class SummaryTemplateException extends ApiException {
+  const SummaryTemplateException({required super.message})
+      : super(statusCode: 422, code: 'invalid_template');
 }
 
 /// Talks to /v1/summaries/* with the same Dio conventions as
@@ -155,6 +222,34 @@ class SummariesClient {
     );
   }
 
+  /// POST the custom template prompt. Null or blank CLEARS the slot (the
+  /// server then reports custom_configured=false and pickers hide 'Custom');
+  /// the enabled toggle is deliberately not sent alongside. Returns the
+  /// fresh state. Over-long text is a 422 [ApiException] with the limit.
+  Future<SummarySettings> setCustomPrompt(String? prompt) async {
+    final String? text =
+        (prompt == null || prompt.trim().isEmpty) ? null : prompt;
+    final resp = await _dio.post<dynamic>(
+      '/v1/summaries/settings',
+      data: <String, dynamic>{'custom_prompt': text},
+    );
+    _checkStatus(resp);
+    return SummarySettings.fromJson(
+      (resp.data as Map<String, dynamic>?) ?? const {},
+    );
+  }
+
+  /// GET /v1/summaries/templates — ids + display names in server order and
+  /// whether 'custom' is configured. An older server without the route
+  /// 404s as a plain [ApiException]; the caller decides what to show.
+  Future<SummaryTemplates> listTemplates() async {
+    final resp = await _dio.get<dynamic>('/v1/summaries/templates');
+    _checkStatus(resp);
+    return SummaryTemplates.fromJson(
+      (resp.data as Map<String, dynamic>?) ?? const {},
+    );
+  }
+
   /// POST /v1/summaries/install — a 202 means the background install
   /// started. A second install while one runs is a 409 [ApiException]; the
   /// wizard treats that as attach-and-watch, never an error.
@@ -188,8 +283,27 @@ class SummariesClient {
   /// [SummarizeConflictException] so callers can tell "no transcript"
   /// (this dump can never summarize) from "capability not installed"
   /// (the Settings wizard is the fix) without matching server strings.
-  Future<void> summarizeDump(String dumpId) async {
-    final resp = await _dio.post<dynamic>('/v1/dumps/$dumpId/summarize');
+  ///
+  /// [template] is a template id from [listTemplates]; when given, the
+  /// server persists it on the dump and summarizes with it. When omitted
+  /// NO body is sent and the server uses the dump's effective template. A
+  /// 422 (unknown id / custom not configured) is a typed
+  /// [SummaryTemplateException].
+  Future<void> summarizeDump(String dumpId, {String? template}) async {
+    final resp = template == null
+        ? await _dio.post<dynamic>('/v1/dumps/$dumpId/summarize')
+        : await _dio.post<dynamic>(
+            '/v1/dumps/$dumpId/summarize',
+            data: <String, dynamic>{'template': template},
+          );
+    if (resp.statusCode == 422) {
+      throw SummaryTemplateException(
+        message: switch (resp.data) {
+          {'detail': final String d} => d,
+          _ => 'Summary template is not available',
+        },
+      );
+    }
     if (resp.statusCode == 409) {
       final String detail = switch (resp.data) {
         {'detail': final String d} => d,

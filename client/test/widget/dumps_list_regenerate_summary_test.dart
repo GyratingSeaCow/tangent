@@ -38,7 +38,7 @@ class _FakeSummariesClient extends SummariesClient {
   Exception? summarizeError;
 
   @override
-  Future<void> summarizeDump(String dumpId) async {
+  Future<void> summarizeDump(String dumpId, {String? template}) async {
     summarizeCalls.add(dumpId);
     final Exception? err = summarizeError;
     if (err != null) throw err;
