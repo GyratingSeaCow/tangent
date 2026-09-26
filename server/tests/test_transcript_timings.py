@@ -14,8 +14,9 @@ from fastapi.testclient import TestClient
 
 from app.api.dumps import _publish_dump_change
 from app.api.dumps import router as dumps_router
+from app.api.sync import router as sync_router
 from app.auth import generate_token, hash_token
-from app.db import init_db
+from app.db import SCHEMA, init_db
 from app.services.job_queue import run_job_inline
 from app.services.transcription import TranscriptionResult, TranscriptionService
 
@@ -146,6 +147,17 @@ def test_retranscribe_start_clears_stale_timings(temp_data_dir: Path, monkeypatc
                 conn.close()
             assert row["transcript_timings"] is None
             assert row["timings_version"] is None
+            conn = _connect(temp_data_dir)
+            try:
+                change = conn.execute(
+                    "SELECT payload FROM change_log WHERE entity_id = 'dump-timing' "
+                    "ORDER BY seq DESC LIMIT 1"
+                ).fetchone()
+            finally:
+                conn.close()
+            payload = json.loads(change["payload"])
+            assert payload["transcript_timings"] is None
+            assert payload["timings_version"] is None
             return TranscriptionResult(text="replacement", segments=[])
 
     monkeypatch.setattr(
@@ -223,7 +235,13 @@ def test_get_dump_exposes_timing_fields(temp_data_dir: Path):
 def test_backfill_uses_latest_completed_segments_and_adds_empty_words(
     temp_data_dir: Path,
 ):
-    init_db(str(temp_data_dir))
+    db_path = temp_data_dir / "tangent.db"
+    legacy = SCHEMA.replace("    transcript_timings TEXT,\n", "").replace(
+        "    timings_version INTEGER,\n", ""
+    )
+    conn = sqlite3.connect(db_path)
+    conn.executescript(legacy)
+    conn.close()
     conn = _connect(temp_data_dir)
     segment = {"start": 2.0, "end": 3.0, "speaker": None, "text": "latest"}
     try:
@@ -255,6 +273,15 @@ def test_backfill_uses_latest_completed_segments_and_adds_empty_words(
         conn.close()
     assert json.loads(row["transcript_timings"]) == [{**segment, "words": []}]
     assert row["timings_version"] == 1
+    conn = _connect(temp_data_dir)
+    try:
+        change = conn.execute(
+            "SELECT payload FROM change_log WHERE entity_id = 'needs-backfill' "
+            "ORDER BY seq DESC LIMIT 1"
+        ).fetchone()
+    finally:
+        conn.close()
+    assert json.loads(change["payload"])["transcript_timings"] is not None
 
 
 def test_backfill_does_not_overwrite_existing_timings(temp_data_dir: Path):
@@ -281,6 +308,89 @@ def test_backfill_does_not_overwrite_existing_timings(temp_data_dir: Path):
     finally:
         conn.close()
     assert row["transcript_timings"] == stored
+
+
+def test_startup_does_not_restore_timings_cleared_by_retranscription(
+    temp_data_dir: Path,
+):
+    stored = json.dumps(TIMINGS)
+    _seed_dump_and_job(temp_data_dir, timings=stored)
+    conn = _connect(temp_data_dir)
+    try:
+        conn.execute(
+            "UPDATE jobs SET status = 'completed', completed_at = 20, "
+            "result_segments = ? WHERE id = 'job-timing'",
+            (stored,),
+        )
+        conn.execute(
+            "UPDATE dumps SET transcript_timings = NULL, timings_version = NULL "
+            "WHERE id = 'dump-timing'"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    init_db(str(temp_data_dir))
+
+    conn = _connect(temp_data_dir)
+    try:
+        row = conn.execute(
+            "SELECT transcript_timings FROM dumps WHERE id = 'dump-timing'"
+        ).fetchone()
+    finally:
+        conn.close()
+    assert row["transcript_timings"] is None
+
+
+def test_sync_push_republishes_server_timing_truth(temp_data_dir: Path):
+    stored = json.dumps(TIMINGS)
+    _seed_dump_and_job(temp_data_dir, timings=stored)
+    token = generate_token()
+    conn = _connect(temp_data_dir)
+    try:
+        conn.execute(
+            "INSERT INTO auth (id, token_hash, display_name, created_at) "
+            "VALUES (1, ?, 'Test', ?)",
+            (hash_token(token), int(time.time())),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    app = FastAPI()
+    app.include_router(sync_router)
+
+    response = TestClient(app).post(
+        "/v1/sync/push",
+        json={
+            "device_id": "device-edit-1",
+            "changes": [
+                {
+                    "entity_type": "dump",
+                    "entity_id": "dump-timing",
+                    "op": "upsert",
+                    "payload": {
+                        "transcript": "edited text",
+                        "transcript_timings": None,
+                        "timings_version": None,
+                    },
+                }
+            ],
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    conn = _connect(temp_data_dir)
+    try:
+        change = conn.execute(
+            "SELECT payload FROM change_log WHERE entity_id = 'dump-timing' "
+            "ORDER BY seq DESC LIMIT 1"
+        ).fetchone()
+    finally:
+        conn.close()
+    payload = json.loads(change["payload"])
+    assert payload["transcript_timings"] == stored
+    assert payload["timings_version"] == 1
 
 
 def test_sync_feed_payload_carries_timing_fields(temp_data_dir: Path):

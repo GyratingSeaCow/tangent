@@ -267,6 +267,24 @@ def test_get_job_returns_segments_alongside_transcript(
     assert body["segments"] == SEGMENTS
 
 
+def test_get_job_preserves_word_timestamps(api_client, temp_data_dir: Path) -> None:
+    client, token = api_client
+    timed = [
+        {
+            **SEGMENTS[0],
+            "words": [{"w": "Hello", "s": 0.0, "e": 0.5, "p": 0.9}],
+        }
+    ]
+    _insert_job(temp_data_dir, "job-api-words", json.dumps(timed))
+
+    resp = client.get(
+        "/v1/jobs/job-api-words", headers={"Authorization": f"Bearer {token}"}
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["segments"] == timed
+
+
 def test_get_job_returns_speaker_labels_when_present(
     api_client, temp_data_dir: Path
 ) -> None:
