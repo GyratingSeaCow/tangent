@@ -7,7 +7,10 @@ this module changes prompts only.
 
 from __future__ import annotations
 
+import sqlite3
 from dataclasses import dataclass
+
+CUSTOM_PROMPT_SETTINGS_KEY = "summary_custom_prompt"
 
 MEETING_PROMPT = """\
 You are a meeting-summarization assistant. Given a raw meeting transcript,
@@ -162,3 +165,30 @@ def assemble_prompt(template_id: str, *, custom_prompt: str | None = None) -> st
     prompt = _PROMPTS[template_id]
     assert prompt is not None
     return prompt
+
+
+def get_custom_prompt(db: sqlite3.Connection) -> str | None:
+    """Return the configured custom prompt, treating blank text as absent."""
+    row = db.execute(
+        "SELECT value FROM app_settings WHERE key = ?",
+        (CUSTOM_PROMPT_SETTINGS_KEY,),
+    ).fetchone()
+    if row is None:
+        return None
+    value = str(row[0]).strip()
+    return value or None
+
+
+def set_custom_prompt(db: sqlite3.Connection, prompt: str | None) -> None:
+    """Persist the one custom slot; blank text clears it."""
+    value = (prompt or "").strip()
+    if value:
+        db.execute(
+            "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)",
+            (CUSTOM_PROMPT_SETTINGS_KEY, value),
+        )
+    else:
+        db.execute(
+            "DELETE FROM app_settings WHERE key = ?", (CUSTOM_PROMPT_SETTINGS_KEY,)
+        )
+    db.commit()

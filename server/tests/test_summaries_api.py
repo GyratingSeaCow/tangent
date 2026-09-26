@@ -7,6 +7,7 @@ and the worker's inference is stubbed. Auth is required on everything.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import sys
 import time
@@ -123,8 +124,10 @@ class TestSettings:
         assert body["install_running"] is False
         assert set(body) == {
             "installed", "runtime", "gpu_visible", "disk_free_bytes",
-            "install_running", "enabled",
+            "install_running", "enabled", "custom_prompt", "custom_configured",
         }
+        assert body["custom_prompt"] is None
+        assert body["custom_configured"] is False
 
     def test_post_persists_the_toggle_server_side(self, client):
         cli, auth, data_dir = client
@@ -143,6 +146,36 @@ class TestSettings:
         finally:
             conn.close()
         assert row["value"] == "1"
+
+    def test_post_persists_and_clears_the_custom_prompt(self, client):
+        cli, auth, data_dir = client
+        authored = "Use these headings:\n## Wins\n## Risks"
+        saved = cli.post(
+            "/v1/summaries/settings",
+            json={"custom_prompt": f"  {authored}  "},
+            headers=auth,
+        )
+        assert saved.status_code == 200
+        assert saved.json()["custom_prompt"] == authored
+        assert saved.json()["custom_configured"] is True
+        conn = _open_db(data_dir)
+        try:
+            row = conn.execute(
+                "SELECT value FROM app_settings "
+                "WHERE key = 'summary_custom_prompt'"
+            ).fetchone()
+        finally:
+            conn.close()
+        assert row["value"] == authored
+
+        cleared = cli.post(
+            "/v1/summaries/settings",
+            json={"custom_prompt": "   "},
+            headers=auth,
+        )
+        assert cleared.status_code == 200
+        assert cleared.json()["custom_prompt"] is None
+        assert cleared.json()["custom_configured"] is False
 
     def test_settings_require_auth(self, client):
         cli, _, _ = client
@@ -260,6 +293,37 @@ class TestInstall:
 # ---------------------------------------------------------------------------
 
 
+class TestTemplates:
+    def test_list_has_stable_exact_wire_shape(self, client):
+        cli, auth, _ = client
+        response = cli.get("/v1/summaries/templates", headers=auth)
+        assert response.status_code == 200
+        assert response.json() == {
+            "templates": [
+                {"id": "meeting", "display_name": "Meeting"},
+                {"id": "brain_dump", "display_name": "Brain dump"},
+                {"id": "lecture", "display_name": "Lecture"},
+                {"id": "actions_only", "display_name": "Actions only"},
+                {"id": "custom", "display_name": "Custom"},
+            ],
+            "custom_configured": False,
+        }
+
+    def test_list_reports_configured_custom_slot(self, client):
+        cli, auth, _ = client
+        cli.post(
+            "/v1/summaries/settings",
+            json={"custom_prompt": "## My format"},
+            headers=auth,
+        )
+        body = cli.get("/v1/summaries/templates", headers=auth).json()
+        assert body["custom_configured"] is True
+
+    def test_list_requires_auth(self, client):
+        cli, _, _ = client
+        assert cli.get("/v1/summaries/templates").status_code == 401
+
+
 class TestRegenerate:
     def test_unknown_dump_is_404(self, client, monkeypatch):
         cli, auth, _ = client
@@ -297,6 +361,81 @@ class TestRegenerate:
         assert res.status_code == 202
         assert res.json() == {"dump_id": "d-go", "status": "queued"}
         assert summarizer_worker.pending() == ["d-go"]
+
+    def test_selected_template_is_committed_and_published_before_enqueue(
+        self, client, monkeypatch
+    ):
+        cli, auth, data_dir = client
+        _install(monkeypatch)
+        _insert_dump(data_dir, "d-template", "Sam: hi")
+        observed: dict[str, object] = {}
+
+        def inspect_enqueue(dump_id: str) -> None:
+            conn = _open_db(data_dir)
+            try:
+                row = conn.execute(
+                    "SELECT summary_template FROM dumps WHERE id = ?", (dump_id,)
+                ).fetchone()
+                change = conn.execute(
+                    "SELECT payload FROM change_log WHERE entity_id = ? "
+                    "ORDER BY seq DESC",
+                    (dump_id,),
+                ).fetchone()
+            finally:
+                conn.close()
+            observed["template"] = row["summary_template"]
+            observed["payload"] = change["payload"]
+
+        monkeypatch.setattr(summarizer_worker, "enqueue", inspect_enqueue)
+        monkeypatch.setattr(summarizer_worker, "start_worker_if_installed", lambda: None)
+
+        response = cli.post(
+            "/v1/dumps/d-template/summarize",
+            json={"template": "lecture"},
+            headers=auth,
+        )
+
+        assert response.status_code == 202
+        assert observed["template"] == "lecture"
+        assert json.loads(observed["payload"])["summary_template"] == "lecture"
+
+    @pytest.mark.parametrize("template", ["unknown", "", 42])
+    def test_invalid_template_is_422_without_persist_or_enqueue(
+        self, client, monkeypatch, template
+    ):
+        cli, auth, data_dir = client
+        _install(monkeypatch)
+        monkeypatch.setattr(summarizer_worker, "start_worker_if_installed", lambda: None)
+        _insert_dump(data_dir, "d-invalid", "Sam: hi")
+
+        response = cli.post(
+            "/v1/dumps/d-invalid/summarize",
+            json={"template": template},
+            headers=auth,
+        )
+
+        assert response.status_code == 422
+        conn = _open_db(data_dir)
+        try:
+            stored = conn.execute(
+                "SELECT summary_template FROM dumps WHERE id = 'd-invalid'"
+            ).fetchone()["summary_template"]
+        finally:
+            conn.close()
+        assert stored is None
+        assert summarizer_worker.pending() == []
+
+    def test_unconfigured_custom_template_is_422(self, client, monkeypatch):
+        cli, auth, data_dir = client
+        _install(monkeypatch)
+        _insert_dump(data_dir, "d-custom", "Sam: hi")
+        response = cli.post(
+            "/v1/dumps/d-custom/summarize",
+            json={"template": "custom"},
+            headers=auth,
+        )
+        assert response.status_code == 422
+        assert "not configured" in response.json()["detail"].lower()
 
     def test_regenerate_accepts_non_meeting_dumps(self, client, monkeypatch):
         """Auto-trigger is meeting-only; regenerate accepts ANY transcript."""
