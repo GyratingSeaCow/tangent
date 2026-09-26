@@ -335,6 +335,12 @@ class DocumentSyncEngine extends ChangeNotifier {
       transcriptTimings: payload.containsKey('transcript_timings')
           ? _timingsText(payload['transcript_timings'])
           : LocalDb.absentSummaryField,
+      // Template choice: same absent-vs-null contract. A server that has
+      // never heard of templates leaves the stored choice alone; a present
+      // null is authoritative "mode default".
+      summaryTemplate: payload.containsKey('summary_template')
+          ? payload['summary_template'] as String?
+          : LocalDb.absentSummaryField,
       seq: change.seq,
     );
   }

@@ -78,7 +78,7 @@ void main() {
     await db.listDumps();
 
     // The upgrade runs to the CURRENT schema, past 17 (v18 added timings).
-    expect(raw.userVersion, 18);
+    expect(raw.userVersion, 19);
     expect(
       _columns(raw, 'dumps'),
       containsAll(<String>['summary', 'summary_model', 'summarized_at']),
@@ -106,7 +106,7 @@ void main() {
     await db.listDumps();
 
     // The upgrade runs to the CURRENT schema, past 17 (v18 added timings).
-    expect(raw.userVersion, 18);
+    expect(raw.userVersion, 19);
     expect(
       _columns(raw, 'dumps'),
       containsAll(<String>['summary', 'summary_model', 'summarized_at']),

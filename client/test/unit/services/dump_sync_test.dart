@@ -106,6 +106,7 @@ RemoteChange dumpChange({
   Object? summaryModel = _absent,
   Object? summarizedAt = _absent,
   Object? transcriptTimings = _absent,
+  Object? summaryTemplate = _absent,
 }) {
   final int now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
   return RemoteChange(
@@ -132,6 +133,8 @@ RemoteChange dumpChange({
               'summarized_at': summarizedAt,
             if (!identical(transcriptTimings, _absent))
               'transcript_timings': transcriptTimings,
+            if (!identical(summaryTemplate, _absent))
+              'summary_template': summaryTemplate,
           },
   );
 }
@@ -525,6 +528,63 @@ void main() {
       expect((await db.getDumpRow('dump-tt-3'))!.transcriptTimings, isNull);
     });
 
+    test('the summary template travels with the recording', () async {
+      final client = _ScriptedClient(
+        incoming: <RemoteChange>[
+          dumpChange(id: 'dump-st-1', summaryTemplate: 'lecture'),
+        ],
+      );
+      await build(client).syncNow();
+      expect((await db.getDumpRow('dump-st-1'))!.summaryTemplate, 'lecture');
+    });
+
+    test('a payload with NO summary_template key keeps the stored template',
+        () async {
+      // Same absence-is-not-an-eraser rule as the summary fields: a server
+      // predating templates never sends the key and must not wipe the
+      // choice this device already synced.
+      await build(
+        _ScriptedClient(
+          incoming: <RemoteChange>[
+            dumpChange(id: 'dump-st-2', summaryTemplate: 'actions_only'),
+          ],
+        ),
+      ).syncNow();
+      await build(
+        _ScriptedClient(
+          incoming: <RemoteChange>[
+            dumpChange(id: 'dump-st-2', seq: 2, title: 'Renamed elsewhere'),
+          ],
+        ),
+      ).syncNow();
+      final DumpRow row = (await db.getDumpRow('dump-st-2'))!;
+      expect(row.title, 'Renamed elsewhere');
+      expect(
+        row.summaryTemplate,
+        'actions_only',
+        reason: 'absence is not null',
+      );
+    });
+
+    test('an EXPLICIT null summary_template clears the stored template',
+        () async {
+      await build(
+        _ScriptedClient(
+          incoming: <RemoteChange>[
+            dumpChange(id: 'dump-st-3', summaryTemplate: 'lecture'),
+          ],
+        ),
+      ).syncNow();
+      await build(
+        _ScriptedClient(
+          incoming: <RemoteChange>[
+            dumpChange(id: 'dump-st-3', seq: 2, summaryTemplate: null),
+          ],
+        ),
+      ).syncNow();
+      expect((await db.getDumpRow('dump-st-3'))!.summaryTemplate, isNull);
+    });
+
     test('summary fields are never pushed', () async {
       // Server→client only. The server ignores client-sent summary keys,
       // but the client must not even send them: a payload carrying them
@@ -557,6 +617,7 @@ void main() {
       expect(payload.containsKey('summary_model'), isFalse);
       expect(payload.containsKey('summarized_at'), isFalse);
       expect(payload.containsKey('transcript_timings'), isFalse);
+      expect(payload.containsKey('summary_template'), isFalse);
     });
   });
 
