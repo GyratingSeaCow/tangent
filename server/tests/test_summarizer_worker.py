@@ -56,14 +56,15 @@ def _insert_dump(
     transcript: str | None = "Sam: let's ship it.\nLee: agreed.",
     mode: str = "meeting",
     template: str | None = None,
+    speaker_names: str | None = None,
     deleted: bool = False,
 ) -> None:
     db.execute(
         "INSERT INTO dumps (id, client_id, created_at, updated_at, mode, "
-        "duration_seconds, title, transcript, summary_template, audio_kept, "
+        "duration_seconds, title, transcript, summary_template, speaker_names, audio_kept, "
         "deleted_at) "
-        "VALUES (?, 'single-user', 1, 1, ?, 60, 'T', ?, ?, 0, ?)",
-        (dump_id, mode, transcript, template, 1 if deleted else None),
+        "VALUES (?, 'single-user', 1, 1, ?, 60, 'T', ?, ?, ?, 0, ?)",
+        (dump_id, mode, transcript, template, speaker_names, 1 if deleted else None),
     )
     db.commit()
 
@@ -301,6 +302,33 @@ class TestSummarizeDump:
         )
 
         assert seen == [LECTURE_PROMPT]
+
+    def test_speaker_names_are_rendered_before_inference(self, db):
+        transcript = (
+            "## Speaker 1\nSpeaker 1: Let's ship it.\n\n"
+            "## Speaker 2\nSpeaker 2: Agreed."
+        )
+        _insert_dump(
+            db,
+            "d-names",
+            transcript=transcript,
+            speaker_names=json.dumps({"Speaker 1": "Jeff", "Speaker 2": "Sarah"}),
+        )
+        seen: list[tuple[str, str]] = []
+
+        ok = summarizer_worker.summarize_dump(
+            db,
+            "d-names",
+            infer=lambda i, text, prompt: seen.append((text, prompt)) or SUMMARY_MD,
+        )
+
+        assert ok is True
+        rendered, prompt = seen[0]
+        assert "## Jeff" in rendered
+        assert "Jeff: Let's ship it." in rendered
+        assert "## Sarah" in rendered
+        assert "Speaker 1" not in rendered
+        assert prompt == MEETING_PROMPT, "Meeting prompt drift guard"
 
     def test_custom_template_reads_setting_and_appends_contract(self, db):
         authored = "Use exactly:\n## Wins\n## Risks"

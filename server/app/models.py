@@ -3,10 +3,11 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 DumpMode = Literal["brain_dump", "meeting", "text_note"]
 JobStatus = Literal["queued", "running", "completed", "failed"]
@@ -56,6 +57,7 @@ class DumpResponse(BaseModel):
     title: str
     transcript: str | None
     summary_template: str | None
+    speaker_names: str | None
     transcript_timings: str | None
     timings_version: int | None
     duration_seconds: int
@@ -215,6 +217,28 @@ class SyncChange(BaseModel):
     #: Server-assigned. Ignored on push, populated on pull.
     seq: int | None = None
     device_id: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_dump_speaker_names(self) -> SyncChange:
+        if self.entity_type != "dump" or not self.payload or "speaker_names" not in self.payload:
+            return self
+        raw = self.payload["speaker_names"]
+        if raw is None:
+            return self
+        if not isinstance(raw, str):
+            raise ValueError("speaker_names must be null or JSON text encoding an object of strings")
+        try:
+            decoded = json.loads(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "speaker_names must be null or JSON text encoding an object of strings"
+            ) from exc
+        if not isinstance(decoded, dict) or not all(
+            isinstance(key, str) and isinstance(value, str)
+            for key, value in decoded.items()
+        ):
+            raise ValueError("speaker_names must be null or JSON text encoding an object of strings")
+        return self
 
 
 class SyncPullResponse(BaseModel):

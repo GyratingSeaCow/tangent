@@ -28,6 +28,7 @@ from pathlib import Path
 from app import vocabulary
 from app.logging_config import get_logger
 from app.services import summarizer_env
+from app.services.speaker_names import render_speaker_names
 from app.summarize_infer import MODEL_FILENAME
 from app.summary_templates import assemble_prompt, default_template_id, get_custom_prompt
 
@@ -304,7 +305,7 @@ def summarize_dump(
         now = int(_time.time())
 
     row = db.execute(
-        "SELECT transcript, mode, summary_template, deleted_at "
+        "SELECT transcript, mode, summary_template, speaker_names, deleted_at "
         "FROM dumps WHERE id = ?",
         (dump_id,),
     ).fetchone()
@@ -323,7 +324,8 @@ def summarize_dump(
             custom_prompt=get_custom_prompt(db),
         )
         system_prompt += vocabulary.summary_suffix(vocabulary.load_terms(db))
-        summary = infer(dump_id, transcript, system_prompt)
+        rendered_transcript = render_speaker_names(transcript, row["speaker_names"])
+        summary = infer(dump_id, rendered_transcript, system_prompt)
     except Exception as exc:
         log.warning(
             "summarizer_worker.summarize_failed",

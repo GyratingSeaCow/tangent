@@ -248,14 +248,15 @@ def _apply_dump(conn: sqlite3.Connection, change: SyncChange, now: int) -> None:
         """
         INSERT INTO dumps
             (id, client_id, created_at, updated_at, mode, duration_seconds,
-             title, transcript, meeting_notes, audio_kept, deleted_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+             title, transcript, meeting_notes, speaker_names, audio_kept, deleted_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
         ON CONFLICT(id) DO UPDATE SET
             mode = excluded.mode,
             duration_seconds = excluded.duration_seconds,
             title = excluded.title,
             transcript = excluded.transcript,
             meeting_notes = excluded.meeting_notes,
+            speaker_names = excluded.speaker_names,
             updated_at = excluded.updated_at,
             deleted_at = NULL
         """,
@@ -269,6 +270,7 @@ def _apply_dump(conn: sqlite3.Connection, change: SyncChange, now: int) -> None:
             val("title", "Untitled"),
             val("transcript"),
             val("meeting_notes"),
+            val("speaker_names"),
             int(existing["audio_kept"]) if existing is not None else 0,
         ),
     )
@@ -431,7 +433,7 @@ def sync_push(
                 if change.op != "delete" and change.payload is not None:
                     stored = db.execute(
                         "SELECT audio_kept, summary, summary_model, "
-                        "summarized_at, summary_template, transcript_timings, "
+                        "summarized_at, summary_template, speaker_names, transcript_timings, "
                         "timings_version "
                         "FROM dumps WHERE id = ?",
                         (change.entity_id,),
@@ -445,6 +447,7 @@ def sync_push(
                         publish_payload["summary_template"] = stored[
                             "summary_template"
                         ]
+                        publish_payload["speaker_names"] = stored["speaker_names"]
                         publish_payload["transcript_timings"] = stored[
                             "transcript_timings"
                         ]
