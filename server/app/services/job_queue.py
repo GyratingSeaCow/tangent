@@ -141,6 +141,9 @@ def run_job_inline(job_id: str, audio_path: str) -> None:
             # Segment timings describe the raw audio, so they are stored as
             # transcribed and are NOT rewritten by mode-specific formatting.
             segments_json = json.dumps(result.segments)
+            timings_json = json.dumps(
+                {"segments": result.segments, "peaks": result.peaks}
+            )
 
             # For 'meeting' mode, store the transcript in the same
             # speaker-digest format the client renders, so a synced
@@ -176,7 +179,7 @@ def run_job_inline(job_id: str, audio_path: str) -> None:
                 "UPDATE dumps SET transcript = ?, transcript_timings = ?, "
                 "timings_version = 1, updated_at = ? "
                 "WHERE id = (SELECT dump_id FROM jobs WHERE id = ?)",
-                (transcript, segments_json, _now_ts(), job_id),
+                (transcript, timings_json, _now_ts(), job_id),
             )
             # Publish to the sync feed so other devices receive the finished
             # transcript. Attributed to the server: no device pushed this.

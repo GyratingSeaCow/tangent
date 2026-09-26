@@ -392,7 +392,13 @@ def _migrate_dumps_transcript_timings(conn: sqlite3.Connection) -> list[str]:
             continue
         if not all(isinstance(segment, dict) for segment in segments):
             continue
-        backfilled = [{**segment, "words": segment.get("words", [])} for segment in segments]
+        backfilled = {
+            "segments": [
+                {**segment, "words": segment.get("words", [])}
+                for segment in segments
+            ],
+            "peaks": [],
+        }
         conn.execute(
             "UPDATE dumps SET transcript_timings = ?, timings_version = 1, "
             "updated_at = ? WHERE id = ? AND transcript_timings IS NULL",

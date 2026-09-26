@@ -44,6 +44,9 @@ def _diarization_off(monkeypatch: pytest.MonkeyPatch) -> None:
     """Transcription tests must never depend on diarization being configured."""
     monkeypatch.delenv("TANGENT_DIARIZATION", raising=False)
     monkeypatch.delenv("HF_TOKEN", raising=False)
+    monkeypatch.setattr(
+        "app.services.transcription._decode_audio_samples", lambda _path: [0.0]
+    )
 
 
 def test_service_loads_model_lazy(monkeypatch, tmp_path):

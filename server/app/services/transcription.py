@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -15,6 +16,43 @@ if TYPE_CHECKING:
     from faster_whisper import WhisperModel
 
 log = get_logger(__name__)
+
+WAVEFORM_BUCKETS = 600
+
+
+def _decode_audio_samples(audio_path: str) -> Any:
+    """Decode once to Whisper's canonical 16 kHz float32 mono waveform."""
+    from faster_whisper.audio import decode_audio
+
+    return decode_audio(audio_path, sampling_rate=16000)
+
+
+def compute_waveform_peaks(
+    samples: Any, bucket_count: int = WAVEFORM_BUCKETS
+) -> list[float]:
+    """Return fixed-width normalized RMS buckets for waveform rendering."""
+    sample_count = len(samples)
+    if sample_count == 0:
+        return [0.0] * bucket_count
+
+    rms_values: list[float] = []
+    for index in range(bucket_count):
+        start = index * sample_count // bucket_count
+        end = (index + 1) * sample_count // bucket_count
+        if start == end:
+            rms_values.append(0.0)
+            continue
+        bucket = samples[start:end]
+        try:
+            mean_square = float((bucket * bucket).mean())
+        except (AttributeError, TypeError):
+            mean_square = sum(float(sample) ** 2 for sample in bucket) / len(bucket)
+        rms_values.append(math.sqrt(mean_square))
+
+    maximum = max(rms_values)
+    if maximum == 0.0:
+        return [0.0] * bucket_count
+    return [round(value / maximum, 3) for value in rms_values]
 
 
 def _cuda_runtime_loadable() -> bool:
@@ -74,6 +112,7 @@ class TranscriptionResult:
 
     text: str
     segments: list[dict[str, Any]] = field(default_factory=list)
+    peaks: list[float] = field(default_factory=list)
 
 
 def resolve_configured_model() -> str:
@@ -156,10 +195,12 @@ class TranscriptionService:
             self.load_model()
 
         log.info("transcription.start", audio=audio_path, model=self._model_name)
+        audio_samples = _decode_audio_samples(audio_path)
+        peaks = compute_waveform_peaks(audio_samples)
         segments: Any
         info: Any
         segments, info = self._model.transcribe(
-            audio_path,
+            audio_samples,
             beam_size=5,
             vad_filter=True,
             word_timestamps=True,
@@ -210,7 +251,7 @@ class TranscriptionService:
             segments=len(collected),
             characters=len(joined),
         )
-        return TranscriptionResult(text=joined, segments=collected)
+        return TranscriptionResult(text=joined, segments=collected, peaks=peaks)
 
 
 # Module-level singleton

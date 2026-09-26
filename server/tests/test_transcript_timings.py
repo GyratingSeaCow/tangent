@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import math
 import sqlite3
 import time
 from pathlib import Path
@@ -18,7 +19,11 @@ from app.api.sync import router as sync_router
 from app.auth import generate_token, hash_token
 from app.db import SCHEMA, init_db
 from app.services.job_queue import run_job_inline
-from app.services.transcription import TranscriptionResult, TranscriptionService
+from app.services.transcription import (
+    TranscriptionResult,
+    TranscriptionService,
+    compute_waveform_peaks,
+)
 
 TIMINGS = [
     {
@@ -99,6 +104,13 @@ def test_transcribe_requests_word_timestamps_and_emits_compact_words(monkeypatch
     model = FakeModel()
     service = TranscriptionService(model_name="large-v3")
     service._model = model
+    samples = [
+        math.sin(2 * math.pi * 440 * i / 16000) if i < 8000 else 0.0
+        for i in range(16000)
+    ]
+    monkeypatch.setattr(
+        "app.services.transcription._decode_audio_samples", lambda _path: samples
+    )
     monkeypatch.setattr(
         "app.services.transcription.diarize_segments", lambda _path, segments: segments
     )
@@ -107,6 +119,18 @@ def test_transcribe_requests_word_timestamps_and_emits_compact_words(monkeypatch
 
     assert model.kwargs["word_timestamps"] is True
     assert result.segments[0]["words"] == TIMINGS[0]["words"]
+    assert len(result.peaks) == 600
+    assert max(result.peaks[:300]) == 1.0
+    assert sum(result.peaks[:300]) / 300 >= 0.9
+    assert result.peaks[-1] == 0.0
+
+
+def test_waveform_peaks_short_clip_still_has_600_buckets():
+    peaks = compute_waveform_peaks([1.0, -1.0])
+
+    assert len(peaks) == 600
+    assert max(peaks) == 1.0
+    assert peaks.count(1.0) == 2
 
 
 def test_completion_promotes_timings_to_dump(temp_data_dir: Path, monkeypatch):
@@ -114,7 +138,7 @@ def test_completion_promotes_timings_to_dump(temp_data_dir: Path, monkeypatch):
     monkeypatch.setattr(
         "app.services.job_queue.get_transcription_service",
         lambda: _FakeService(
-            TranscriptionResult(text="Hello world.", segments=TIMINGS)
+            TranscriptionResult(text="Hello world.", segments=TIMINGS, peaks=[1.0, 0.0])
         ),
     )
 
@@ -128,7 +152,10 @@ def test_completion_promotes_timings_to_dump(temp_data_dir: Path, monkeypatch):
         ).fetchone()
     finally:
         conn.close()
-    assert json.loads(row["transcript_timings"]) == TIMINGS
+    assert json.loads(row["transcript_timings"]) == {
+        "segments": TIMINGS,
+        "peaks": [1.0, 0.0],
+    }
     assert row["timings_version"] == 1
 
 
@@ -271,7 +298,10 @@ def test_backfill_uses_latest_completed_segments_and_adds_empty_words(
         ).fetchone()
     finally:
         conn.close()
-    assert json.loads(row["transcript_timings"]) == [{**segment, "words": []}]
+    assert json.loads(row["transcript_timings"]) == {
+        "segments": [{**segment, "words": []}],
+        "peaks": [],
+    }
     assert row["timings_version"] == 1
     conn = _connect(temp_data_dir)
     try:
