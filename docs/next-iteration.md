@@ -8,6 +8,27 @@ re-derive it.
 
 ## 1. Open items
 
+### 1.11 Transcript search depth + summary templates — DONE (2026-09-26, v1.13.0)
+
+Spec: `docs/design/2026-09-26-search-and-summary-templates.md`. Shipped
+exactly the picks (A1=a, A2=y, B1=a, B2=y). Live-proven on the container:
+`POST /v1/dumps/{id}/summarize {"template":"actions_only"}` rewrote a real
+meeting summary to an actions-only list in ~16 s on CPU, and `meeting`
+restored the prior shape; unknown id → 422.
+
+Left deliberately unpinned (candidates, not defects):
+
+- Edit/Listen match highlight COLOURS are rendered but not asserted by any
+  test (presence and index are).
+- Scroll-to-match on the detail screen is the minimal approach (caret
+  collapse + `ensureVisible` on the match bar); no dedicated test.
+- `actions_only` on a transcript with no actionable content yields a
+  summary of literally `None` (4 chars) — correct per the contract, but
+  the client renders it as a one-word summary. Consider treating an
+  all-`None` summary as "no summary" on the client.
+- Custom slot is one prompt; multiple named custom templates were
+  explicitly out of scope.
+
 ### 1.10 Tap a word, hear that moment — DONE (2026-09-26, v1.12.0)
 
 Full V1 scope shipped and live-verified on bench Windows AND the Fold:
