@@ -15,6 +15,7 @@ import 'package:tangent/services/note_persistence.dart';
 import 'package:tangent/services/recording_playback.dart';
 import '../support/bound_widget_lifetime.dart';
 import '../support/scripted_storage_backend.dart';
+import '../support/storage_fixture.dart';
 
 /// Task 7: NoteComposeScreen — explicit Save gated on non-blank text, a
 /// discard confirmation on back with typed text, pushReplacement to the
@@ -115,7 +116,7 @@ void main() {
         await h.backend.drain();
         await h.f.backend.drain();
         await h.f.db.close();
-        await h.f.root.delete(recursive: true);
+        await deleteTempTree(h.f.root);
       });
     });
     return h;
@@ -246,8 +247,8 @@ void main() {
     await tester.pump(const Duration(milliseconds: 1));
   });
 
-  testWidgets(
-      'back with typed text saves the note on the way out', (tester) async {
+  testWidgets('back with typed text saves the note on the way out',
+      (tester) async {
     useHandsetViewport(tester);
     final h = harnessFor(tester);
     await bootstrapPumped(tester, h);
