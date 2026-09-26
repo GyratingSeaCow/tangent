@@ -102,6 +102,7 @@ RemoteChange dumpChange({
   Object? summary = _absent,
   Object? summaryModel = _absent,
   Object? summarizedAt = _absent,
+  Object? transcriptTimings = _absent,
 }) {
   final int now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
   return RemoteChange(
@@ -126,6 +127,8 @@ RemoteChange dumpChange({
               'summary_model': summaryModel,
             if (!identical(summarizedAt, _absent))
               'summarized_at': summarizedAt,
+            if (!identical(transcriptTimings, _absent))
+              'transcript_timings': transcriptTimings,
           },
   );
 }
@@ -423,6 +426,64 @@ void main() {
       expect(row.summarizedAt, isNull);
     });
 
+    test('word timings travel with the recording', () async {
+      const timings =
+          '{"segments":[{"start":0,"end":1,"text":"hi","words":[]}],"peaks":[]}';
+      final client = _ScriptedClient(
+        incoming: <RemoteChange>[
+          dumpChange(id: 'dump-tt-1', transcriptTimings: timings),
+        ],
+      );
+      await build(client).syncNow();
+      expect((await db.getDumpRow('dump-tt-1'))!.transcriptTimings, timings);
+    });
+
+    test('a payload with NO timings key does not erase stored timings',
+        () async {
+      // Same absence-is-not-an-eraser rule as the summary fields: an
+      // older server never sends the key and must not wipe timings.
+      const timings =
+          '{"segments":[{"start":0,"end":1,"text":"hi","words":[]}],"peaks":[]}';
+      await build(
+        _ScriptedClient(
+          incoming: <RemoteChange>[
+            dumpChange(id: 'dump-tt-2', transcriptTimings: timings),
+          ],
+        ),
+      ).syncNow();
+      await build(
+        _ScriptedClient(
+          incoming: <RemoteChange>[
+            dumpChange(id: 'dump-tt-2', seq: 2, title: 'Renamed elsewhere'),
+          ],
+        ),
+      ).syncNow();
+      final DumpRow row = (await db.getDumpRow('dump-tt-2'))!;
+      expect(row.title, 'Renamed elsewhere');
+      expect(row.transcriptTimings, timings, reason: 'absence is not null');
+    });
+
+    test('an EXPLICIT null clears stored timings (re-transcribe started)',
+        () async {
+      const timings =
+          '{"segments":[{"start":0,"end":1,"text":"hi","words":[]}],"peaks":[]}';
+      await build(
+        _ScriptedClient(
+          incoming: <RemoteChange>[
+            dumpChange(id: 'dump-tt-3', transcriptTimings: timings),
+          ],
+        ),
+      ).syncNow();
+      await build(
+        _ScriptedClient(
+          incoming: <RemoteChange>[
+            dumpChange(id: 'dump-tt-3', seq: 2, transcriptTimings: null),
+          ],
+        ),
+      ).syncNow();
+      expect((await db.getDumpRow('dump-tt-3'))!.transcriptTimings, isNull);
+    });
+
     test('summary fields are never pushed', () async {
       // Server→client only. The server ignores client-sent summary keys,
       // but the client must not even send them: a payload carrying them
@@ -454,6 +515,7 @@ void main() {
       expect(payload.containsKey('summary'), isFalse);
       expect(payload.containsKey('summary_model'), isFalse);
       expect(payload.containsKey('summarized_at'), isFalse);
+      expect(payload.containsKey('transcript_timings'), isFalse);
     });
   });
 

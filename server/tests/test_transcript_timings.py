@@ -172,8 +172,6 @@ def test_retranscribe_start_clears_stale_timings(temp_data_dir: Path, monkeypatc
                 ).fetchone()
             finally:
                 conn.close()
-            assert row["transcript_timings"] is None
-            assert row["timings_version"] is None
             conn = _connect(temp_data_dir)
             try:
                 change = conn.execute(
@@ -183,14 +181,34 @@ def test_retranscribe_start_clears_stale_timings(temp_data_dir: Path, monkeypatc
             finally:
                 conn.close()
             payload = json.loads(change["payload"])
-            assert payload["transcript_timings"] is None
-            assert payload["timings_version"] is None
+            # Record what we saw rather than asserting here: an assert
+            # inside transcribe() is swallowed by the job runner's
+            # except-Exception (the job just fails) and the test would
+            # pass vacuously. Sabotage-proven: the clear was removed and
+            # the original form of this test stayed green.
+            seen["row"] = (row["transcript_timings"], row["timings_version"])
+            seen["payload"] = (
+                payload["transcript_timings"],
+                payload["timings_version"],
+            )
             return TranscriptionResult(text="replacement", segments=[])
 
+    seen: dict = {}
     monkeypatch.setattr(
         "app.services.job_queue.get_transcription_service", InspectingService
     )
     run_job_inline("job-timing", audio)
+    assert seen, "transcribe() never ran"
+    assert seen["row"] == (None, None), "stale timings survived job start"
+    assert seen["payload"] == (None, None), "clear was not published to sync"
+    conn = _connect(temp_data_dir)
+    try:
+        status = conn.execute(
+            "SELECT status FROM jobs WHERE id = 'job-timing'"
+        ).fetchone()["status"]
+    finally:
+        conn.close()
+    assert status == "completed"
 
 
 def test_dump_edit_leaves_timings_intact(temp_data_dir: Path):
