@@ -22,6 +22,7 @@ import '../support/bound_service_fixture.dart';
 import '../support/bound_widget_lifetime.dart';
 import '../support/legacy_audio_storage_fixture.dart';
 import '../support/scripted_storage_backend.dart';
+import '../support/storage_fixture.dart';
 import '../support/resolved_temp.dart';
 
 /// Task 9: note-aware detail presentation. A `text_note` row hides the
@@ -78,7 +79,7 @@ void main() {
         await h.backend.drain();
         await h.f.backend.drain();
         await h.f.db.close();
-        await h.f.root.delete(recursive: true);
+        await deleteTempTree(h.f.root);
       });
     });
     return h;
@@ -121,9 +122,9 @@ void main() {
     await tester.runAsync(() async {
       unawaited(
         notes.saveNote(text: text, now: DateTime.utc(2030, 1, 2, 3, 4, 5)).then(
-          (r) => row = r,
-          onError: (Object e) => error = e,
-        ),
+              (r) => row = r,
+              onError: (Object e) => error = e,
+            ),
       );
     });
     await pumpBoundUntil(tester, () => row != null || error != null);

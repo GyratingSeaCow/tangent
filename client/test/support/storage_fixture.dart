@@ -129,6 +129,29 @@ final class StorageFixture {
   Future<void> close() async {
     await backend.drain();
     await db.close();
-    await root.delete(recursive: true);
+    await deleteTempTree(root);
+  }
+}
+
+/// Removes a fixture directory, tolerating Windows' sharing-violation
+/// window.
+///
+/// `db.close()` returns before drift's background isolate has finished
+/// releasing the SQLite handle. On NTFS an open file cannot be unlinked
+/// (`errno = 32`, "being used by another process"), so on a slow CI runner
+/// the recursive delete raced the close and the whole test timed out. The
+/// bench never lost that race, which is why it only showed on the tag
+/// build. Retry briefly; give up loudly rather than hang.
+Future<void> deleteTempTree(Directory root) async {
+  const attempts = 20;
+  for (var i = 1;; i++) {
+    try {
+      if (await root.exists()) await root.delete(recursive: true);
+      return;
+    } on FileSystemException catch (e) {
+      final sharing = e.osError?.errorCode == 32;
+      if (!sharing || i >= attempts) rethrow;
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    }
   }
 }
