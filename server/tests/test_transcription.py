@@ -132,8 +132,20 @@ def test_transcribe_returns_segment_level_timestamps(monkeypatch, tmp_path):
     # Joined transcript keeps its old value/behavior.
     assert result.text == "Hello world. Second part."
     assert result.segments == [
-        {"start": 0.0, "end": 2.5, "speaker": None, "text": "Hello world."},
-        {"start": 2.5, "end": 5.25, "speaker": None, "text": "Second part."},
+        {
+            "start": 0.0,
+            "end": 2.5,
+            "speaker": None,
+            "text": "Hello world.",
+            "words": [],
+        },
+        {
+            "start": 2.5,
+            "end": 5.25,
+            "speaker": None,
+            "text": "Second part.",
+            "words": [],
+        },
     ]
 
 
@@ -183,7 +195,13 @@ def test_blank_segments_are_dropped_from_segments_and_text(monkeypatch, tmp_path
 
     assert result.text == "real words"
     assert result.segments == [
-        {"start": 1.0, "end": 2.0, "speaker": None, "text": "real words"}
+        {
+            "start": 1.0,
+            "end": 2.0,
+            "speaker": None,
+            "text": "real words",
+            "words": [],
+        }
     ]
 
 
