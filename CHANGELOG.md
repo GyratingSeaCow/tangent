@@ -5,6 +5,27 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.17.0] - 2026-09-26
+
+Feature release: **speaker names that stick.**
+
+### Changed
+
+- Speaker names are now stored per recording instead of rewriting the
+  transcript text. Name someone once and it shows everywhere — the
+  transcript, Listen mode headers, search results, Markdown export and
+  the AI summary — and **re-transcribing keeps the names**. The
+  "names will be reset" warning is gone.
+- The Name-speakers sheet prefills current names, offers Clear, and
+  suggests names you have used on other recordings.
+- Recordings you renamed in 1.15.0 are converted automatically on first
+  launch (names kept, raw labels restored under the hood) and synced.
+
+### Server
+
+- New `speaker_names` dump field on sync and `GET /v1/dumps/{id}`;
+  invalid values are rejected with 422. Summaries see real names.
+
 ## [1.16.0] - 2026-09-26
 
 Feature release: **take the transcript with you, with the clock on it.**

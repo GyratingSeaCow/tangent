@@ -50,13 +50,24 @@ ADH2/
 
 ## Status
 
-Shipping — **v1.16.0** (see CHANGELOG.md). Client and server are both
-implemented and tested (2042
-Flutter tests, 523 server tests, 100 Kotlin tests). The client runs
+Shipping — **v1.17.0** (see CHANGELOG.md). Client and server are both
+implemented and tested (2078
+Flutter tests, 534 server tests, 100 Kotlin tests). The client runs
 natively on Linux AND Windows (tray icon, global record hotkey,
 close-to-tray, single instance, right-click = long-press; AppImage and
 Inno Setup installer under `packaging/`) — verified on CachyOS/KDE
 Plasma Wayland and Windows 11; see the README's Desktop sections.
+
+v1.17.0 adds the **speaker name map** (supersedes 1.15.0's rewrite-in-
+place): names live in `dumps.speaker_names` (JSON `{"Speaker 1":
+"Jeff"}`, client DB v20, device-authored sync field with the absent-vs-
+null sentinel); transcript text keeps raw `## Speaker N`. Every surface
+renders by look-up — detail read/Edit (unrendered on save), Listen
+headers, search snippets, Markdown export (map first, heading pairing
+only as fallback) and the server summarizer (substitutes before
+`infer`). Re-transcribe keeps names. A one-time client back-fill turns
+1.15.0-renamed headings into the map and restores raw labels, refusing
+ambiguous pairings. See `docs/design/2026-09-26-speaker-name-map.md`.
 
 v1.16.0 adds **timestamped Markdown export** (client-only): one renderer
 (`transcriptMarkdown`) emits frontmatter (title, speakers, template,
