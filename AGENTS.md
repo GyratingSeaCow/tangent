@@ -50,13 +50,22 @@ ADH2/
 
 ## Status
 
-Shipping — **v1.11.0** (see CHANGELOG.md). Client and server are both
-implemented and tested (1819
-Flutter tests, 475 server tests, 100 Kotlin tests). The client runs
+Shipping — **v1.12.0** (see CHANGELOG.md). Client and server are both
+implemented and tested (1879
+Flutter tests, 487 server tests, 100 Kotlin tests). The client runs
 natively on Linux AND Windows (tray icon, global record hotkey,
 close-to-tray, single instance, right-click = long-press; AppImage and
 Inno Setup installer under `packaging/`) — verified on CachyOS/KDE
 Plasma Wayland and Windows 11; see the README's Desktop sections.
+
+v1.12.0 adds **tap-to-hear**: transcripts get an Edit | Listen toggle;
+Listen renders tappable words with karaoke highlighting, confidence
+tinting, and a server-computed waveform scrubber. Word timestamps and
+peaks ride a server-owned `transcript_timings` dump field (client DB
+v18, absent-vs-null sentinel like the summary columns). Server-authored
+sync changes now bypass the newer-wins gate — the recording device's own
+completion timestamp used to shadow them. See
+`docs/design/2026-09-25-tap-to-hear.md`.
 
 v1.11.0 adds the **Windows desktop app** at full Linux parity: WAV
 capture (Media Foundation has no Opus encoder), media_kit playback,

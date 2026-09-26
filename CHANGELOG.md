@@ -5,6 +5,51 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.12.0] - 2026-09-26
+
+Feature release: **tap a word, hear that moment.**
+
+### Added
+
+- **Listen mode.** Transcripts get an Edit | Listen toggle. Listen shows
+  the transcript as tappable words: tap one and playback jumps to just
+  before that word (0.3 s lead-in) and plays. The current word highlights
+  and auto-scrolls as audio plays — karaoke style. Low-confidence words
+  are tinted so a suspect transcription is visible at a glance.
+- **Waveform scrubber** above the Listen view: the recording's real
+  amplitude envelope (600 buckets, computed server-side during
+  transcription — Opus never has to be decoded on-device), draggable to
+  seek.
+- Word-level timestamps from faster-whisper (`word_timestamps=True`),
+  synced to every device as a new server-owned `transcript_timings`
+  field alongside the transcript (client DB schema v18). Recordings
+  transcribed before 1.12.0 carry segment-level timing (tap a sentence)
+  until re-transcribed; a **Re-transcribe for word timing** button is
+  offered on those.
+- Settings → **Export database copy**: writes a consistent snapshot of
+  the local metadata database (no audio) to a folder reachable by
+  `adb pull` on release builds. Diagnostic tooling; it found the sync
+  bug below.
+
+### Fixed
+
+- **Server-authored sync changes were silently discarded** on the device
+  that made the recording: its own completion timestamp was newer than
+  the server's row time, so the newer-wins rule dropped the incoming
+  timings (and would have dropped any future server-computed field).
+  Server-authored changes now always land; device edits still compete on
+  updated_at.
+- Ethernet counted as a metered connection, so the default Wi-Fi-only
+  preference refused every audio download on a wired desktop. Ethernet
+  now ranks with Wi-Fi.
+- just_audio keeps its playing flag raised after a clip completes, and
+  play() is a no-op while it is set — so after one full listen, a word
+  tap (seek + play) went dead. Seeking a completed player now pauses
+  first.
+- Audio-download failures surfaced only in a status line far below the
+  fold; they now also raise a SnackBar at the tap site, and the playback
+  panel says "Audio is on the server. Download it to play." instead of
+  "Recording storage is unresolved".
 ## [1.11.0] - 2026-09-25
 
 Feature release: Tangent runs natively on Windows, at full parity with

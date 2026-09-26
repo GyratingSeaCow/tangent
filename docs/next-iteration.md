@@ -8,6 +8,36 @@ re-derive it.
 
 ## 1. Open items
 
+### 1.10 Tap a word, hear that moment — DONE (2026-09-26, v1.12.0)
+
+Full V1 scope shipped and live-verified on bench Windows AND the Fold:
+Edit | Listen toggle, tappable words (seek to start − 0.3 s), karaoke
+highlight + auto-scroll, confidence tinting, server-computed waveform
+scrubber (600 RMS buckets in the `transcript_timings` envelope —
+no on-device Opus decode), LCS re-alignment after manual edits,
+segment-level fallback + "Re-transcribe for word timing" on pre-1.12
+recordings. Spec: `docs/design/2026-09-25-tap-to-hear.md`. Server work
+(word_timestamps, dump promotion, backfill, peaks) by Ted on
+`feature/tap-to-hear-server`; 109-dump batch re-transcription completed
+on the live server (1 failure: the synthetic smoke-test dump).
+
+Four REAL bugs found in live verification, all fixed + regression-
+tested (`4aa1df8`, `b8de0f5`): Ethernet ranked as metered (wifi-only
+refused downloads on wired desktops); download refusals invisible
+(SnackBar added); just_audio play() no-op after completion (seek now
+pauses first); and the big one — **server-authored sync changes were
+discarded by the newer-wins gate** because the recording device stamps
+its own completion updated_at newer than the server's row time.
+Found via the new Settings → Export database copy (VACUUM INTO,
+adb-pullable on release builds) after code reading failed twice.
+Sabotage-proven against committed state.
+
+STILL OWED: the ~40 dumps whose audio was never uploaded (audio_kept=0)
+can never get timings — the Listen affordance correctly doesn't offer
+re-transcription there. Windows/Linux desktop release installers with
+this arc ship in v1.12.0.
+
+
 ### 1.0 Name the active Whisper model — DONE (2026-09-25, unreleased)
 
 Shipped on `feature/notice-names-model`, merged as `ae01276`. The shade
