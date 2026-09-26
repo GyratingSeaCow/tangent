@@ -29,7 +29,18 @@ class ListenTranscriptView extends StatefulWidget {
     required this.serverPaired,
     required this.onRetranscribe,
     this.onDownloadAudio,
+    this.highlightedWords = const <int>{},
+    this.currentWord,
   });
+
+  /// Token indexes (word mode) that a transcript search hit; painted so
+  /// the hits are visible while listening. Empty when no search is active.
+  final Set<int> highlightedWords;
+
+  /// The token index of the search hit the match bar currently points at;
+  /// painted stronger than [highlightedWords] and scrolled into view when
+  /// it changes.
+  final int? currentWord;
 
   /// Null when the recording has never produced timings.
   final TranscriptTimings? timings;
@@ -96,6 +107,14 @@ class ListenTranscriptViewState extends State<ListenTranscriptView> {
       _rebuildAlignment();
       _onPosition();
     }
+    final int? current = widget.currentWord;
+    if (current != null && current != old.currentWord && _wordMode) {
+      // The user stepped the match bar: that is an explicit ask, so it
+      // overrides the manual-scroll grace.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _keepInView(current, force: true);
+      });
+    }
   }
 
   @override
@@ -135,9 +154,10 @@ class ListenTranscriptViewState extends State<ListenTranscriptView> {
     if (next != null) _keepInView(next);
   }
 
-  void _keepInView(int index) {
+  void _keepInView(int index, {bool force = false}) {
     final since = _userScrolledAt;
-    if (since != null &&
+    if (!force &&
+        since != null &&
         DateTime.now().difference(since) < _manualScrollGrace) {
       return;
     }
@@ -297,9 +317,15 @@ class ListenTranscriptViewState extends State<ListenTranscriptView> {
     final highlighted = index == _highlighted;
     final bucket = confidenceBucket(tok.confidence);
     final scheme = theme.colorScheme;
+    final bool currentMatch = index == widget.currentWord;
+    final bool matched = widget.highlightedWords.contains(index);
     Color? bg;
     if (highlighted) {
       bg = scheme.primaryContainer;
+    } else if (currentMatch) {
+      bg = scheme.tertiaryContainer;
+    } else if (matched) {
+      bg = scheme.tertiaryContainer.withValues(alpha: 0.5);
     } else if (tok.isTimed) {
       bg = switch (bucket) {
         ConfidenceBucket.low => scheme.errorContainer,
@@ -311,7 +337,7 @@ class ListenTranscriptViewState extends State<ListenTranscriptView> {
     final style = base.copyWith(
       backgroundColor: bg,
       color: tok.isTimed ? null : scheme.onSurfaceVariant,
-      fontWeight: highlighted ? FontWeight.w600 : null,
+      fontWeight: highlighted || currentMatch ? FontWeight.w600 : null,
     );
     return [
       WidgetSpan(

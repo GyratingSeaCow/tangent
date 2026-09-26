@@ -602,4 +602,8 @@ abstract interface class StorageDatabaseOperations {
   Future<void> finishLocalDeletion(String ticketId);
   Future<List<DeletionTicket>> pendingLocalDeletions();
   Stream<List<DumpRow>> watchSearchDumps(String query, {int limit = 100});
+  Stream<Map<String, DumpSearchMatch>> watchSearchDumpMatches(
+    String query, {
+    int limit = 100,
+  });
 }

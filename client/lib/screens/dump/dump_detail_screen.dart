@@ -16,6 +16,10 @@ import '../../models/sync_status.dart';
 import '../../models/transcription_status.dart';
 import '../../services/meeting_notes_processor.dart';
 import '../../services/recording_playback.dart';
+import '../../services/transcript_alignment.dart'
+    show TranscriptAlignment, alignTranscript;
+import '../../services/transcript_search.dart'
+    show alignedTokenAt, findTranscriptMatches, matchSeekSeconds;
 import '../../services/transcript_timings.dart';
 import '../../widgets/listen_transcript_view.dart';
 import '../../widgets/waveform_scrubber.dart';
@@ -83,11 +87,18 @@ class DumpDetailScreen extends ConsumerStatefulWidget {
   final String audioPath;
   final int durationSeconds;
 
+  /// The list's search query when this screen was opened from a search
+  /// result (search-depth spec §2). Non-blank: the transcript's hits are
+  /// highlighted and a match bar steps through them. Screen-local, never
+  /// persisted.
+  final String? initialSearchQuery;
+
   const DumpDetailScreen({
     super.key,
     required this.dumpId,
     required this.audioPath,
     required this.durationSeconds,
+    this.initialSearchQuery,
   });
 
   @override
@@ -97,6 +108,19 @@ class DumpDetailScreen extends ConsumerStatefulWidget {
 class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
   late final TextEditingController _titleController;
   late final TextEditingController _transcriptController;
+
+  /// Search hits in the transcript the editor currently holds, and which
+  /// one the match bar points at. Recomputed whenever that text changes.
+  List<TextRange> _matches = const <TextRange>[];
+  int _matchIndex = 0;
+  String? _matchedText;
+  final GlobalKey _matchBarKey = GlobalKey();
+
+  /// Alignment cached per (text, timings) pair: matches map to word
+  /// indexes through it, and build runs on every playhead tick.
+  TranscriptAlignment? _alignment;
+  String? _alignmentText;
+  TranscriptTimings? _alignmentTimings;
   RecordingPlaybackController? _playbackController;
   PlaybackLease? _playbackLease;
   late Future<void> _playbackInitialization;
@@ -165,7 +189,13 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
   void initState() {
     super.initState();
     _titleController = TextEditingController();
-    _transcriptController = TextEditingController();
+    _transcriptController = _MatchHighlightController(
+      matches: () => _matches,
+      current: () => _matchIndex,
+    );
+    // Opened from a search hit: a collapsed meeting transcript would hide
+    // the very thing the user came for.
+    if (_searchQuery != null) _transcriptExpanded = true;
     _playbackInitialization = _initializePlayback();
     unawaited(_discoverDeletion());
     final db = ref.read(localDbProvider);
@@ -435,6 +465,142 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
   void _onTranscriptChanged(String value) {
     final dirty = value != _editorBaseTranscript;
     setState(() => _transcriptDirty = dirty);
+  }
+
+  String? get _searchQuery {
+    final q = widget.initialSearchQuery?.trim();
+    return q == null || q.isEmpty ? null : q;
+  }
+
+  /// Keeps [_matches] in step with the editor text. Cheap enough to call
+  /// from build: it only rescans when the text actually changed.
+  void _recomputeMatches() {
+    final query = _searchQuery;
+    final text = _transcriptController.text;
+    if (query == null || text == _matchedText) return;
+    _matchedText = text;
+    _matches = findTranscriptMatches(text, query);
+    _matchIndex =
+        _matches.isEmpty ? 0 : _matchIndex.clamp(0, _matches.length - 1);
+  }
+
+  TranscriptAlignment? _alignmentFor(String text, TranscriptTimings? timings) {
+    if (timings == null || !timings.hasWords) return null;
+    if (text != _alignmentText || timings != _alignmentTimings) {
+      _alignmentText = text;
+      _alignmentTimings = timings;
+      _alignment = alignTranscript(text, timings);
+    }
+    return _alignment;
+  }
+
+  /// Start of the timed word under the current match, or null when there
+  /// are no word timings or the word was edited in (no moment to play).
+  double? _currentMatchSeekSeconds(TranscriptTimings? timings) {
+    if (_matches.isEmpty) return null;
+    final text = _transcriptController.text;
+    final alignment = _alignmentFor(text, timings);
+    if (alignment == null) return null;
+    return matchSeekSeconds(alignment, text, _matches[_matchIndex]);
+  }
+
+  /// Token index for each match, for Listen mode's highlight.
+  ({Set<int> all, int? current}) _matchWords(TranscriptTimings? timings) {
+    final text = _transcriptController.text;
+    final alignment = _alignmentFor(text, timings);
+    if (alignment == null || _matches.isEmpty) {
+      return (all: const <int>{}, current: null);
+    }
+    final all = <int>{};
+    int? current;
+    for (var i = 0; i < _matches.length; i++) {
+      final tok = alignedTokenAt(alignment, text, _matches[i].start);
+      if (tok == null) continue;
+      all.add(tok);
+      if (i == _matchIndex) current = tok;
+    }
+    return (all: all, current: current);
+  }
+
+  /// Wraps at both ends, same as the notebook editor's find bar.
+  void _stepMatch(int delta) {
+    final n = _matches.length;
+    if (n == 0) return;
+    setState(() => _matchIndex = (_matchIndex + delta + n) % n);
+    _revealMatch();
+  }
+
+  /// Edit mode: park the caret on the hit so the field's own scrolling
+  /// follows it. Either mode: bring the transcript section into view so a
+  /// meeting page scrolled to its notes lands on the transcript. The Listen
+  /// view scrolls its own word into view when `currentWord` changes.
+  void _revealMatch() {
+    if (_matches.isEmpty) return;
+    final m = _matches[_matchIndex];
+    if (m.start <= _transcriptController.text.length) {
+      _transcriptController.selection =
+          TextSelection.collapsed(offset: m.start);
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final ctx = _matchBarKey.currentContext;
+      if (ctx != null && mounted) {
+        unawaited(
+          Scrollable.ensureVisible(
+            ctx,
+            duration: const Duration(milliseconds: 200),
+          ),
+        );
+      }
+    });
+  }
+
+  Widget _matchBar(TranscriptTimings? timings) {
+    final n = _matches.length;
+    final seek = _currentMatchSeekSeconds(timings);
+    final theme = Theme.of(context);
+    return Padding(
+      key: const ValueKey('transcript-match-bar'),
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        key: _matchBarKey,
+        children: [
+          const Icon(Icons.search, size: 18),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              '${_matchIndex + 1} of $n',
+              key: const ValueKey('transcript-match-label'),
+              style: theme.textTheme.labelLarge,
+            ),
+          ),
+          IconButton(
+            key: const ValueKey('transcript-match-prev'),
+            icon: const Icon(Icons.keyboard_arrow_up),
+            tooltip: 'Previous match',
+            visualDensity: VisualDensity.compact,
+            onPressed: () => _stepMatch(-1),
+          ),
+          IconButton(
+            key: const ValueKey('transcript-match-next'),
+            icon: const Icon(Icons.keyboard_arrow_down),
+            tooltip: 'Next match',
+            visualDensity: VisualDensity.compact,
+            onPressed: () => _stepMatch(1),
+          ),
+          // Only when the hit has a moment to play: word timings exist AND
+          // the matched word survived alignment. Otherwise the button would
+          // be a lie.
+          if (seek != null)
+            IconButton(
+              key: const ValueKey('transcript-match-play'),
+              icon: const Icon(Icons.play_arrow),
+              tooltip: 'Play from match',
+              visualDensity: VisualDensity.compact,
+              onPressed: () => unawaited(_seekAndPlay(seekTargetFor(seek))),
+            ),
+        ],
+      ),
+    );
   }
 
   bool _manualSidecarPending = false;
@@ -846,6 +1012,7 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
     }
 
     _syncTranscriptEditor(row);
+    _recomputeMatches();
     final sync = SyncStatus.fromWire(row.syncStatus);
     final mode = DumpMode.fromWire(row.mode);
     final isNote = mode == DumpMode.textNote;
@@ -968,6 +1135,9 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
           const SizedBox(height: 16),
         ],
         if (displayTranscript != null && displayTranscript.isNotEmpty) ...[
+          // Search-depth spec §2: the match bar sits above the transcript
+          // header in either mode, only while there is something to step.
+          if (_matches.isNotEmpty) _matchBar(timings),
           if (mode == DumpMode.meeting) ...[
             // Option B: the transcript lives behind a collapsible header so
             // meeting dumps lead with notes/actions instead of a text wall.
@@ -1053,6 +1223,8 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
                     transcript: _transcriptController.text,
                     position: _playhead,
                     onSeek: _seekAndPlay,
+                    highlightedWords: _matchWords(timings).all,
+                    currentWord: _matchWords(timings).current,
                     audioLocal: _playbackController != null &&
                         _playbackController!.state.error == null,
                     serverPaired: true,
@@ -1597,5 +1769,61 @@ class _MetaChip extends StatelessWidget {
       backgroundColor: color?.withValues(alpha: 0.15),
       side: BorderSide(color: color ?? Theme.of(context).colorScheme.outline),
     );
+  }
+}
+
+/// Paints transcript search hits inside the editor: every match gets a
+/// tint, the one the match bar points at a stronger one. The ranges are
+/// read through closures so the controller never holds stale state; they
+/// are clamped to the live text because an edit can shorten it before the
+/// next rescan.
+class _MatchHighlightController extends TextEditingController {
+  _MatchHighlightController({required this.matches, required this.current});
+
+  final List<TextRange> Function() matches;
+  final int Function() current;
+
+  @override
+  TextSpan buildTextSpan({
+    required BuildContext context,
+    TextStyle? style,
+    required bool withComposing,
+  }) {
+    final ranges = matches();
+    if (ranges.isEmpty) {
+      return super.buildTextSpan(
+        context: context,
+        style: style,
+        withComposing: withComposing,
+      );
+    }
+    final scheme = Theme.of(context).colorScheme;
+    final cur = current();
+    final children = <InlineSpan>[];
+    var cursor = 0;
+    for (var i = 0; i < ranges.length; i++) {
+      final r = ranges[i];
+      if (r.start >= text.length || r.start < cursor) break;
+      final end = r.end.clamp(r.start, text.length);
+      if (r.start > cursor) {
+        children.add(TextSpan(text: text.substring(cursor, r.start)));
+      }
+      children.add(
+        TextSpan(
+          text: text.substring(r.start, end),
+          style: TextStyle(
+            backgroundColor: i == cur
+                ? scheme.tertiaryContainer
+                : scheme.tertiaryContainer.withValues(alpha: 0.5),
+            fontWeight: i == cur ? FontWeight.w600 : null,
+          ),
+        ),
+      );
+      cursor = end;
+    }
+    if (cursor < text.length) {
+      children.add(TextSpan(text: text.substring(cursor)));
+    }
+    return TextSpan(style: style, children: children);
   }
 }
