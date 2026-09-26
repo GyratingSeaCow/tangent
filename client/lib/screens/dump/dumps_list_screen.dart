@@ -14,12 +14,12 @@ import '../../models/sync_status.dart' show SyncStatus, SyncStatusX;
 import '../../models/transcription_status.dart';
 import 'dump_detail_screen.dart';
 import 'dumps_providers.dart';
+import 'summarize_flow.dart';
 import '../../widgets/signal_bars.dart';
 import '../../widgets/sync_button.dart';
 import '../home/home_providers.dart' show documentSyncEngineProvider;
 import '../../services/bulk_dump_actions.dart';
 import '../../services/server_transcription_service.dart';
-import '../../services/summaries_client.dart';
 import '../../services/synced_audio_download.dart';
 import '../home/home_providers.dart' show serverTranscriptionServiceProvider;
 import '../settings/ai_summaries_section.dart'
@@ -644,36 +644,16 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
 
   /// Asks the server to (re)generate one recording's AI summary.
   ///
-  /// A 202 means enqueued: the summary lands on the dump via normal sync,
-  /// so there is deliberately NO client-side polling here. The two typed
-  /// 409s route differently — a missing capability sends the user to the
-  /// Settings wizard (the fix lives there), while a transcript-less dump
-  /// is explained on the spot.
+  /// Arc B: routed through the shared template picker, so the list's ⋮ action
+  /// and the detail screen's button behave identically (pick → POST →
+  /// snackbar). A 202 means enqueued: the summary lands on the dump via
+  /// normal sync, so there is deliberately NO client-side polling here.
   Future<void> _regenerateSummary(DumpRow dump) async {
-    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
-    try {
-      final SummariesClient client =
-          await ref.read(summariesClientProvider.future);
-      await client.summarizeDump(dump.id);
-      messenger.showSnackBar(
-        const SnackBar(content: Text('Summary queued')),
-      );
-    } on SummarizeConflictException catch (e) {
-      messenger.showSnackBar(
-        SnackBar(
-          content: Text(switch (e.reason) {
-            SummarizeConflictReason.notInstalled =>
-              'Install AI summaries in Settings first',
-            SummarizeConflictReason.noTranscript =>
-              'This recording has no transcript yet',
-          },),
-        ),
-      );
-    } catch (e) {
-      messenger.showSnackBar(
-        SnackBar(content: Text('Could not queue summary: $e')),
-      );
-    }
+    await runSummarizeFlow(
+      context,
+      client: ref.read(summariesClientProvider.future),
+      dump: dump,
+    );
   }
 
   /// Downloads audio for every selected recording that needs it.

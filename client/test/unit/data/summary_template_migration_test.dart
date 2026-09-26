@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-/// The v17 -> v18 upgrade: `transcript_timings` on dumps (tap-to-hear).
+/// The v18 -> v19 upgrade: `summary_template` on dumps (summary templates).
 ///
 /// Same hazard class as every migration test here: a repeat addColumn on
 /// an existing install throws "duplicate column name" and the app can no
@@ -12,8 +12,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sqlite3/sqlite3.dart' as sqlite3;
 import 'package:tangent/data/local_db.dart';
 
-/// The v17 dumps shape: the summary columns present, timings absent.
-const String _dumpsV17 = '''
+/// The v18 dumps shape: summary + timings columns present, template absent.
+const String _dumpsV18 = '''
   CREATE TABLE dumps (
     id TEXT NOT NULL,
     created_at INTEGER NOT NULL,
@@ -44,14 +44,15 @@ const String _dumpsV17 = '''
     summary TEXT,
     summary_model TEXT,
     summarized_at INTEGER,
+    transcript_timings TEXT,
     PRIMARY KEY (id)
   );
 ''';
 
-sqlite3.Database _v17Database() {
+sqlite3.Database _v18Database() {
   final sqlite3.Database raw = sqlite3.sqlite3.openInMemory();
-  raw.execute(_dumpsV17);
-  raw.execute('PRAGMA user_version = 17;');
+  raw.execute(_dumpsV18);
+  raw.execute('PRAGMA user_version = 18;');
   return raw;
 }
 
@@ -63,14 +64,16 @@ Set<String> _columns(sqlite3.Database sql, String table) => <String>{
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('a v17 recording survives the upgrade and gains a NULL timings column',
-      () async {
-    final sqlite3.Database raw = _v17Database();
+  test(
+      'a v18 recording survives the upgrade and gains a NULL summary_template '
+      'column', () async {
+    final sqlite3.Database raw = _v18Database();
     raw.execute(
       'INSERT INTO dumps (id, created_at, updated_at, mode, '
       'duration_seconds, title, transcript, audio_path, audio_size_bytes, '
-      "sync_status, summary) VALUES ('old-dump', 100, 200, 'brain_dump', 60, "
-      "'Idea', 'we talked', '/audio/idea.opus', 4096, 'synced', '# S');",
+      'sync_status, sync_dirty, summary, transcript_timings) VALUES '
+      "('old-dump', 100, 200, 'brain_dump', 60, 'Idea', 'we talked', "
+      "'/audio/idea.opus', 4096, 'synced', 1, '# S', '{\"segments\":[]}');",
     );
 
     final LocalDb db = LocalDb.forTesting(NativeDatabase.opened(raw));
@@ -78,33 +81,47 @@ void main() {
     await db.listDumps();
 
     expect(raw.userVersion, 19);
-    expect(_columns(raw, 'dumps'), contains('transcript_timings'));
+    expect(_columns(raw, 'dumps'), contains('summary_template'));
     final DumpRow row = (await db.getDump('old-dump'))!;
     expect(row.transcript, 'we talked', reason: 'existing data survives');
     expect(row.summary, '# S', reason: 'v17 columns untouched');
-    expect(row.transcriptTimings, isNull,
-        reason: 'no timings were ever produced for this row',);
+    expect(
+      row.transcriptTimings,
+      '{"segments":[]}',
+      reason: 'v18 column untouched',
+    );
+    expect(
+      row.syncDirty,
+      isTrue,
+      reason: 'the migration must not touch sync bookkeeping',
+    );
+    expect(
+      row.summaryTemplate,
+      isNull,
+      reason: 'no template was ever chosen for this row',
+    );
   });
 
-  test('the upgrade is safe when the timings column somehow already exists',
-      () async {
-    final sqlite3.Database raw = _v17Database();
-    raw.execute('ALTER TABLE dumps ADD COLUMN transcript_timings TEXT;');
+  test(
+      'the upgrade is safe when the summary_template column somehow already '
+      'exists', () async {
+    final sqlite3.Database raw = _v18Database();
+    raw.execute('ALTER TABLE dumps ADD COLUMN summary_template TEXT;');
 
     final LocalDb db = LocalDb.forTesting(NativeDatabase.opened(raw));
     addTearDown(db.close);
     await db.listDumps();
 
     expect(raw.userVersion, 19);
-    expect(_columns(raw, 'dumps'), contains('transcript_timings'));
+    expect(_columns(raw, 'dumps'), contains('summary_template'));
   });
 
-  test('applyRemoteDump: absent key keeps timings, present null erases them',
+  test('applyRemoteDump: absent key keeps the template, present null erases it',
       () async {
     final LocalDb db = LocalDb.forTesting(NativeDatabase.memory());
     addTearDown(db.close);
-    final DateTime t = DateTime.utc(2026, 9, 25);
-    Future<void> apply({Object? timings = LocalDb.absentSummaryField}) =>
+    final DateTime t = DateTime.utc(2026, 9, 26);
+    Future<void> apply({Object? template = LocalDb.absentSummaryField}) =>
         db.applyRemoteDump(
           id: 'd1',
           mode: 'brain_dump',
@@ -116,20 +133,45 @@ void main() {
           createdAt: t,
           updatedAt: t,
           seq: 1,
-          transcriptTimings: timings,
+          summaryTemplate: template,
         );
 
-    await apply(
-        timings:
-            '{"segments":[{"start":0,"end":1,"text":"hello","words":[]}]}',);
-    expect((await db.getDump('d1'))!.transcriptTimings, contains('hello'));
+    await apply(template: 'lecture');
+    expect((await db.getDump('d1'))!.summaryTemplate, 'lecture');
 
     await apply(); // older server: key absent
-    expect((await db.getDump('d1'))!.transcriptTimings, contains('hello'),
-        reason: 'absence is not an eraser',);
+    expect(
+      (await db.getDump('d1'))!.summaryTemplate,
+      'lecture',
+      reason: 'absence is not an eraser',
+    );
 
-    await apply(timings: null); // server says: none
-    expect((await db.getDump('d1'))!.transcriptTimings, isNull,
-        reason: 'an explicit null is authoritative',);
+    await apply(template: null); // server says: none
+    expect(
+      (await db.getDump('d1'))!.summaryTemplate,
+      isNull,
+      reason: 'an explicit null is authoritative',
+    );
+  });
+
+  test('applyRemoteDump: a fresh remote-only row stores the template',
+      () async {
+    final LocalDb db = LocalDb.forTesting(NativeDatabase.memory());
+    addTearDown(db.close);
+    final DateTime t = DateTime.utc(2026, 9, 26);
+    await db.applyRemoteDump(
+      id: 'd-new',
+      mode: 'meeting',
+      title: 'T',
+      transcript: 'hello',
+      meetingNotes: null,
+      durationSeconds: 3,
+      audioOnServer: true,
+      createdAt: t,
+      updatedAt: t,
+      seq: 1,
+      summaryTemplate: 'actions_only',
+    );
+    expect((await db.getDump('d-new'))!.summaryTemplate, 'actions_only');
   });
 }

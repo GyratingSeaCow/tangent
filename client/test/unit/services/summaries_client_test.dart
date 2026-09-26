@@ -141,8 +141,7 @@ void main() {
     });
 
     test('getInstallProgress parses phase, percent and detail', () async {
-      when(() => dio.get<dynamic>('/v1/summaries/install/progress'))
-          .thenAnswer(
+      when(() => dio.get<dynamic>('/v1/summaries/install/progress')).thenAnswer(
         (_) async =>
             respond('/v1/summaries/install/progress', 200, <String, dynamic>{
           'phase': 'weights',
@@ -151,8 +150,7 @@ void main() {
         }),
       );
 
-      final SummaryInstallProgress progress =
-          await client.getInstallProgress();
+      final SummaryInstallProgress progress = await client.getInstallProgress();
 
       expect(progress.phase, 'weights');
       expect(progress.percent, 60);
@@ -248,10 +246,259 @@ void main() {
       );
     });
 
+    test('summarizeDump with a template posts {"template": id}', () async {
+      when(
+        () => dio.post<dynamic>(
+          '/v1/dumps/d1/summarize',
+          data: any(named: 'data'),
+        ),
+      ).thenAnswer(
+        (_) async => respond('/v1/dumps/d1/summarize', 202, <String, dynamic>{
+          'dump_id': 'd1',
+          'status': 'queued',
+        }),
+      );
+
+      await client.summarizeDump('d1', template: 'lecture');
+
+      final captured = verify(
+        () => dio.post<dynamic>(
+          '/v1/dumps/d1/summarize',
+          data: captureAny(named: 'data'),
+        ),
+      ).captured;
+      expect(captured.single, <String, dynamic>{'template': 'lecture'});
+    });
+
+    test('summarizeDump without a template sends NO body', () async {
+      // The server treats a missing body as "use the effective template";
+      // sending {"template": null} would be a different (rejected) shape.
+      when(() => dio.post<dynamic>('/v1/dumps/d1/summarize')).thenAnswer(
+        (_) async => respond('/v1/dumps/d1/summarize', 202, <String, dynamic>{
+          'dump_id': 'd1',
+        }),
+      );
+
+      await client.summarizeDump('d1');
+
+      verify(() => dio.post<dynamic>('/v1/dumps/d1/summarize')).called(1);
+      verifyNever(
+        () => dio.post<dynamic>(
+          '/v1/dumps/d1/summarize',
+          data: any(named: 'data'),
+        ),
+      );
+    });
+
+    test('summarizeDump types the 422 invalid/unavailable template', () async {
+      when(
+        () => dio.post<dynamic>(
+          '/v1/dumps/d1/summarize',
+          data: any(named: 'data'),
+        ),
+      ).thenAnswer(
+        (_) async => respond('/v1/dumps/d1/summarize', 422, <String, dynamic>{
+          'detail': 'Custom template is not configured',
+        }),
+      );
+
+      await expectLater(
+        client.summarizeDump('d1', template: 'custom'),
+        throwsA(
+          isA<SummaryTemplateException>()
+              .having((e) => e.statusCode, 'statusCode', 422)
+              .having((e) => e.message, 'message', contains('not configured')),
+        ),
+      );
+    });
+
+    test('listTemplates parses ids, display names and custom_configured',
+        () async {
+      when(() => dio.get<dynamic>('/v1/summaries/templates')).thenAnswer(
+        (_) async => respond('/v1/summaries/templates', 200, <String, dynamic>{
+          'templates': <Map<String, dynamic>>[
+            <String, dynamic>{'id': 'meeting', 'display_name': 'Meeting'},
+            <String, dynamic>{'id': 'brain_dump', 'display_name': 'Brain dump'},
+            <String, dynamic>{'id': 'lecture', 'display_name': 'Lecture'},
+            <String, dynamic>{
+              'id': 'actions_only',
+              'display_name': 'Actions only',
+            },
+            <String, dynamic>{'id': 'custom', 'display_name': 'Custom'},
+          ],
+          'custom_configured': false,
+        }),
+      );
+
+      final SummaryTemplates templates = await client.listTemplates();
+
+      expect(
+        templates.templates.map((t) => t.id).toList(),
+        <String>['meeting', 'brain_dump', 'lecture', 'actions_only', 'custom'],
+        reason: 'server order is preserved — the picker renders it verbatim',
+      );
+      expect(templates.templates[1].displayName, 'Brain dump');
+      expect(templates.customConfigured, isFalse);
+    });
+
+    test('listTemplates tolerates an older server with no templates route',
+        () async {
+      when(() => dio.get<dynamic>('/v1/summaries/templates')).thenAnswer(
+        (_) async => respond('/v1/summaries/templates', 404, <String, dynamic>{
+          'detail': 'Not Found',
+        }),
+      );
+
+      await expectLater(
+        client.listTemplates(),
+        throwsA(
+          isA<ApiException>().having((e) => e.statusCode, 'statusCode', 404),
+        ),
+      );
+    });
+
+    test('getSettings parses custom_prompt and custom_configured', () async {
+      when(() => dio.get<dynamic>('/v1/summaries/settings')).thenAnswer(
+        (_) async => respond('/v1/summaries/settings', 200, <String, dynamic>{
+          'installed': true,
+          'runtime': 'cuda',
+          'gpu_visible': true,
+          'disk_free_bytes': 1,
+          'install_running': false,
+          'enabled': true,
+          'custom_prompt': 'Summarize as a haiku.',
+          'custom_configured': true,
+        }),
+      );
+
+      final SummarySettings settings = await client.getSettings();
+
+      expect(settings.customPrompt, 'Summarize as a haiku.');
+      expect(settings.customConfigured, isTrue);
+    });
+
+    test('getSettings defaults custom fields when an older server omits them',
+        () async {
+      when(() => dio.get<dynamic>('/v1/summaries/settings')).thenAnswer(
+        (_) async => respond('/v1/summaries/settings', 200, <String, dynamic>{
+          'installed': true,
+          'runtime': 'cuda',
+          'gpu_visible': true,
+          'disk_free_bytes': 1,
+          'install_running': false,
+          'enabled': true,
+        }),
+      );
+
+      final SummarySettings settings = await client.getSettings();
+
+      expect(settings.customPrompt, isNull);
+      expect(settings.customConfigured, isFalse);
+    });
+
+    test('setCustomPrompt posts the text and returns the fresh state',
+        () async {
+      when(
+        () => dio.post<dynamic>(
+          '/v1/summaries/settings',
+          data: any(named: 'data'),
+        ),
+      ).thenAnswer(
+        (_) async => respond('/v1/summaries/settings', 200, <String, dynamic>{
+          'installed': true,
+          'runtime': 'cpu',
+          'gpu_visible': false,
+          'disk_free_bytes': 1,
+          'install_running': false,
+          'enabled': true,
+          'custom_prompt': 'Only decisions.',
+          'custom_configured': true,
+        }),
+      );
+
+      final SummarySettings settings =
+          await client.setCustomPrompt('Only decisions.');
+
+      expect(settings.customPrompt, 'Only decisions.');
+      expect(settings.customConfigured, isTrue);
+      final captured = verify(
+        () => dio.post<dynamic>(
+          '/v1/summaries/settings',
+          data: captureAny(named: 'data'),
+        ),
+      ).captured;
+      expect(
+        captured.single,
+        <String, dynamic>{'custom_prompt': 'Only decisions.'},
+        reason: 'the enabled toggle must NOT ride along with a prompt write',
+      );
+    });
+
+    test('setCustomPrompt with null or blank clears the slot (posts null)',
+        () async {
+      when(
+        () => dio.post<dynamic>(
+          '/v1/summaries/settings',
+          data: any(named: 'data'),
+        ),
+      ).thenAnswer(
+        (_) async => respond('/v1/summaries/settings', 200, <String, dynamic>{
+          'installed': true,
+          'runtime': 'cpu',
+          'gpu_visible': false,
+          'disk_free_bytes': 1,
+          'install_running': false,
+          'enabled': true,
+          'custom_prompt': null,
+          'custom_configured': false,
+        }),
+      );
+
+      await client.setCustomPrompt(null);
+      await client.setCustomPrompt('   \n');
+
+      final captured = verify(
+        () => dio.post<dynamic>(
+          '/v1/summaries/settings',
+          data: captureAny(named: 'data'),
+        ),
+      ).captured;
+      expect(captured, hasLength(2));
+      for (final Object? body in captured) {
+        expect(
+          body,
+          <String, dynamic>{'custom_prompt': null},
+          reason: 'empty means "clear", never an empty-string prompt',
+        );
+      }
+    });
+
+    test('setCustomPrompt surfaces a 422 (too long) as an ApiException',
+        () async {
+      when(
+        () => dio.post<dynamic>(
+          '/v1/summaries/settings',
+          data: any(named: 'data'),
+        ),
+      ).thenAnswer(
+        (_) async => respond('/v1/summaries/settings', 422, <String, dynamic>{
+          'detail': 'custom_prompt exceeds 12000 characters',
+        }),
+      );
+
+      await expectLater(
+        client.setCustomPrompt('x'),
+        throwsA(
+          isA<ApiException>()
+              .having((e) => e.statusCode, 'statusCode', 422)
+              .having((e) => e.message, 'message', contains('12000')),
+        ),
+      );
+    });
+
     test('summarizeDump surfaces a plain 404 as an ApiException', () async {
       when(() => dio.post<dynamic>('/v1/dumps/gone/summarize')).thenAnswer(
-        (_) async =>
-            respond('/v1/dumps/gone/summarize', 404, <String, dynamic>{
+        (_) async => respond('/v1/dumps/gone/summarize', 404, <String, dynamic>{
           'detail': "Dump 'gone' not found",
         }),
       );

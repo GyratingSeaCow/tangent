@@ -88,6 +88,14 @@ class Dumps extends Table {
   /// transcript. Backs "tap a word, hear that moment".
   TextColumn get transcriptTimings => text().nullable()();
 
+  /// The summary template id the server last summarized this dump with
+  /// ('meeting', 'brain_dump', 'lecture', 'actions_only', 'custom'), or null
+  /// when the server has only ever applied the mode default. Server-owned
+  /// and server→client only like the summary columns: the client chooses a
+  /// template by POSTing /v1/dumps/{id}/summarize and the server persists
+  /// it, so the client never writes or pushes this column itself.
+  TextColumn get summaryTemplate => text().nullable()();
+
   @override
   Set<Column> get primaryKey => {id};
 }
@@ -273,7 +281,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   LocalDb.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 18;
+  int get schemaVersion => 19;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -653,6 +661,21 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
               await m.addColumn(dumps, dumps.transcriptTimings);
             }
           }
+          if (from < 19) {
+            // Summary templates: one nullable, server-owned column on dumps.
+            // Null means "mode default", which is what every existing row
+            // truthfully has, so there is nothing to backfill. Same
+            // ask-the-database guard as v17/v18 — a repeat addColumn would
+            // throw "duplicate column name" and brick launch.
+            final Set<String> dumpCols = <String>{
+              for (final QueryRow row
+                  in await customSelect('PRAGMA table_info(dumps)').get())
+                row.data['name'] as String,
+            };
+            if (dumpCols.isNotEmpty && !dumpCols.contains('summary_template')) {
+              await m.addColumn(dumps, dumps.summaryTemplate);
+            }
+          }
         },
       );
 
@@ -848,11 +871,18 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     // Same sentinel rule: an older server that never sends the key must
     // not erase timings this device already holds.
     Object? transcriptTimings = absentSummaryField,
+    // Same sentinel rule: an older server that never sends the key must
+    // not erase the template choice this device already holds.
+    Object? summaryTemplate = absentSummaryField,
   }) async {
     final Value<String?> timingsValue =
         identical(transcriptTimings, absentSummaryField)
             ? const Value<String?>.absent()
             : Value<String?>(transcriptTimings as String?);
+    final Value<String?> templateValue =
+        identical(summaryTemplate, absentSummaryField)
+            ? const Value<String?>.absent()
+            : Value<String?>(summaryTemplate as String?);
     final Value<String?> summaryValue = identical(summary, absentSummaryField)
         ? const Value<String?>.absent()
         : Value<String?>(summary as String?);
@@ -905,6 +935,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
           summaryModel: summaryModelValue,
           summarizedAt: summarizedAtValue,
           transcriptTimings: timingsValue,
+          summaryTemplate: templateValue,
           syncedSeq: Value(seq),
         ),
         mode: InsertMode.insertOrReplace,
@@ -930,6 +961,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
         summaryModel: summaryModelValue,
         summarizedAt: summarizedAtValue,
         transcriptTimings: timingsValue,
+        summaryTemplate: templateValue,
         syncDirty: const Value<bool?>(false),
         syncedSeq: Value(seq),
       ),

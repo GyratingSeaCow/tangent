@@ -209,6 +209,12 @@ class $DumpsTable extends Dumps with TableInfo<$DumpsTable, DumpRow> {
   late final GeneratedColumn<String> transcriptTimings =
       GeneratedColumn<String>('transcript_timings', aliasedName, true,
           type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _summaryTemplateMeta =
+      const VerificationMeta('summaryTemplate');
+  @override
+  late final GeneratedColumn<String> summaryTemplate = GeneratedColumn<String>(
+      'summary_template', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
   @override
   List<GeneratedColumn> get $columns => [
         id,
@@ -240,7 +246,8 @@ class $DumpsTable extends Dumps with TableInfo<$DumpsTable, DumpRow> {
         summary,
         summaryModel,
         summarizedAt,
-        transcriptTimings
+        transcriptTimings,
+        summaryTemplate
       ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -430,6 +437,12 @@ class $DumpsTable extends Dumps with TableInfo<$DumpsTable, DumpRow> {
           transcriptTimings.isAcceptableOrUnknown(
               data['transcript_timings']!, _transcriptTimingsMeta));
     }
+    if (data.containsKey('summary_template')) {
+      context.handle(
+          _summaryTemplateMeta,
+          summaryTemplate.isAcceptableOrUnknown(
+              data['summary_template']!, _summaryTemplateMeta));
+    }
     return context;
   }
 
@@ -503,6 +516,8 @@ class $DumpsTable extends Dumps with TableInfo<$DumpsTable, DumpRow> {
           .read(DriftSqlType.int, data['${effectivePrefix}summarized_at']),
       transcriptTimings: attachedDatabase.typeMapping.read(
           DriftSqlType.string, data['${effectivePrefix}transcript_timings']),
+      summaryTemplate: attachedDatabase.typeMapping.read(
+          DriftSqlType.string, data['${effectivePrefix}summary_template']),
     );
   }
 
@@ -579,6 +594,14 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
   /// when a re-transcription starts so stale timings never outlive their
   /// transcript. Backs "tap a word, hear that moment".
   final String? transcriptTimings;
+
+  /// The summary template id the server last summarized this dump with
+  /// ('meeting', 'brain_dump', 'lecture', 'actions_only', 'custom'), or null
+  /// when the server has only ever applied the mode default. Server-owned
+  /// and server→client only like the summary columns: the client chooses a
+  /// template by POSTing /v1/dumps/{id}/summarize and the server persists
+  /// it, so the client never writes or pushes this column itself.
+  final String? summaryTemplate;
   const DumpRow(
       {required this.id,
       required this.createdAt,
@@ -609,7 +632,8 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
       this.summary,
       this.summaryModel,
       this.summarizedAt,
-      this.transcriptTimings});
+      this.transcriptTimings,
+      this.summaryTemplate});
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -683,6 +707,9 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
     if (!nullToAbsent || transcriptTimings != null) {
       map['transcript_timings'] = Variable<String>(transcriptTimings);
     }
+    if (!nullToAbsent || summaryTemplate != null) {
+      map['summary_template'] = Variable<String>(summaryTemplate);
+    }
     return map;
   }
 
@@ -754,6 +781,9 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
       transcriptTimings: transcriptTimings == null && nullToAbsent
           ? const Value.absent()
           : Value(transcriptTimings),
+      summaryTemplate: summaryTemplate == null && nullToAbsent
+          ? const Value.absent()
+          : Value(summaryTemplate),
     );
   }
 
@@ -800,6 +830,7 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
       summarizedAt: serializer.fromJson<int?>(json['summarizedAt']),
       transcriptTimings:
           serializer.fromJson<String?>(json['transcriptTimings']),
+      summaryTemplate: serializer.fromJson<String?>(json['summaryTemplate']),
     );
   }
   @override
@@ -840,6 +871,7 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
       'summaryModel': serializer.toJson<String?>(summaryModel),
       'summarizedAt': serializer.toJson<int?>(summarizedAt),
       'transcriptTimings': serializer.toJson<String?>(transcriptTimings),
+      'summaryTemplate': serializer.toJson<String?>(summaryTemplate),
     };
   }
 
@@ -873,7 +905,8 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
           Value<String?> summary = const Value.absent(),
           Value<String?> summaryModel = const Value.absent(),
           Value<int?> summarizedAt = const Value.absent(),
-          Value<String?> transcriptTimings = const Value.absent()}) =>
+          Value<String?> transcriptTimings = const Value.absent(),
+          Value<String?> summaryTemplate = const Value.absent()}) =>
       DumpRow(
         id: id ?? this.id,
         createdAt: createdAt ?? this.createdAt,
@@ -924,6 +957,9 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
         transcriptTimings: transcriptTimings.present
             ? transcriptTimings.value
             : this.transcriptTimings,
+        summaryTemplate: summaryTemplate.present
+            ? summaryTemplate.value
+            : this.summaryTemplate,
       );
   DumpRow copyWithCompanion(DumpsCompanion data) {
     return DumpRow(
@@ -994,6 +1030,9 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
       transcriptTimings: data.transcriptTimings.present
           ? data.transcriptTimings.value
           : this.transcriptTimings,
+      summaryTemplate: data.summaryTemplate.present
+          ? data.summaryTemplate.value
+          : this.summaryTemplate,
     );
   }
 
@@ -1029,7 +1068,8 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
           ..write('summary: $summary, ')
           ..write('summaryModel: $summaryModel, ')
           ..write('summarizedAt: $summarizedAt, ')
-          ..write('transcriptTimings: $transcriptTimings')
+          ..write('transcriptTimings: $transcriptTimings, ')
+          ..write('summaryTemplate: $summaryTemplate')
           ..write(')'))
         .toString();
   }
@@ -1065,7 +1105,8 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
         summary,
         summaryModel,
         summarizedAt,
-        transcriptTimings
+        transcriptTimings,
+        summaryTemplate
       ]);
   @override
   bool operator ==(Object other) =>
@@ -1100,7 +1141,8 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
           other.summary == this.summary &&
           other.summaryModel == this.summaryModel &&
           other.summarizedAt == this.summarizedAt &&
-          other.transcriptTimings == this.transcriptTimings);
+          other.transcriptTimings == this.transcriptTimings &&
+          other.summaryTemplate == this.summaryTemplate);
 }
 
 class DumpsCompanion extends UpdateCompanion<DumpRow> {
@@ -1134,6 +1176,7 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
   final Value<String?> summaryModel;
   final Value<int?> summarizedAt;
   final Value<String?> transcriptTimings;
+  final Value<String?> summaryTemplate;
   final Value<int> rowid;
   const DumpsCompanion({
     this.id = const Value.absent(),
@@ -1166,6 +1209,7 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
     this.summaryModel = const Value.absent(),
     this.summarizedAt = const Value.absent(),
     this.transcriptTimings = const Value.absent(),
+    this.summaryTemplate = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   DumpsCompanion.insert({
@@ -1199,6 +1243,7 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
     this.summaryModel = const Value.absent(),
     this.summarizedAt = const Value.absent(),
     this.transcriptTimings = const Value.absent(),
+    this.summaryTemplate = const Value.absent(),
     this.rowid = const Value.absent(),
   })  : id = Value(id),
         createdAt = Value(createdAt),
@@ -1240,6 +1285,7 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
     Expression<String>? summaryModel,
     Expression<int>? summarizedAt,
     Expression<String>? transcriptTimings,
+    Expression<String>? summaryTemplate,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -1280,6 +1326,7 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
       if (summaryModel != null) 'summary_model': summaryModel,
       if (summarizedAt != null) 'summarized_at': summarizedAt,
       if (transcriptTimings != null) 'transcript_timings': transcriptTimings,
+      if (summaryTemplate != null) 'summary_template': summaryTemplate,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -1315,6 +1362,7 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
       Value<String?>? summaryModel,
       Value<int?>? summarizedAt,
       Value<String?>? transcriptTimings,
+      Value<String?>? summaryTemplate,
       Value<int>? rowid}) {
     return DumpsCompanion(
       id: id ?? this.id,
@@ -1351,6 +1399,7 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
       summaryModel: summaryModel ?? this.summaryModel,
       summarizedAt: summarizedAt ?? this.summarizedAt,
       transcriptTimings: transcriptTimings ?? this.transcriptTimings,
+      summaryTemplate: summaryTemplate ?? this.summaryTemplate,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -1452,6 +1501,9 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
     if (transcriptTimings.present) {
       map['transcript_timings'] = Variable<String>(transcriptTimings.value);
     }
+    if (summaryTemplate.present) {
+      map['summary_template'] = Variable<String>(summaryTemplate.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -1491,6 +1543,7 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
           ..write('summaryModel: $summaryModel, ')
           ..write('summarizedAt: $summarizedAt, ')
           ..write('transcriptTimings: $transcriptTimings, ')
+          ..write('summaryTemplate: $summaryTemplate, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -6162,6 +6215,7 @@ typedef $$DumpsTableCreateCompanionBuilder = DumpsCompanion Function({
   Value<String?> summaryModel,
   Value<int?> summarizedAt,
   Value<String?> transcriptTimings,
+  Value<String?> summaryTemplate,
   Value<int> rowid,
 });
 typedef $$DumpsTableUpdateCompanionBuilder = DumpsCompanion Function({
@@ -6195,6 +6249,7 @@ typedef $$DumpsTableUpdateCompanionBuilder = DumpsCompanion Function({
   Value<String?> summaryModel,
   Value<int?> summarizedAt,
   Value<String?> transcriptTimings,
+  Value<String?> summaryTemplate,
   Value<int> rowid,
 });
 
@@ -6324,6 +6379,10 @@ class $$DumpsTableFilterComposer extends Composer<_$LocalDb, $DumpsTable> {
 
   ColumnFilters<String> get transcriptTimings => $composableBuilder(
       column: $table.transcriptTimings,
+      builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get summaryTemplate => $composableBuilder(
+      column: $table.summaryTemplate,
       builder: (column) => ColumnFilters(column));
 
   Expression<bool> syncQueueRefs(
@@ -6462,6 +6521,10 @@ class $$DumpsTableOrderingComposer extends Composer<_$LocalDb, $DumpsTable> {
   ColumnOrderings<String> get transcriptTimings => $composableBuilder(
       column: $table.transcriptTimings,
       builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get summaryTemplate => $composableBuilder(
+      column: $table.summaryTemplate,
+      builder: (column) => ColumnOrderings(column));
 }
 
 class $$DumpsTableAnnotationComposer extends Composer<_$LocalDb, $DumpsTable> {
@@ -6562,6 +6625,9 @@ class $$DumpsTableAnnotationComposer extends Composer<_$LocalDb, $DumpsTable> {
   GeneratedColumn<String> get transcriptTimings => $composableBuilder(
       column: $table.transcriptTimings, builder: (column) => column);
 
+  GeneratedColumn<String> get summaryTemplate => $composableBuilder(
+      column: $table.summaryTemplate, builder: (column) => column);
+
   Expression<T> syncQueueRefs<T extends Object>(
       Expression<T> Function($$SyncQueueTableAnnotationComposer a) f) {
     final $$SyncQueueTableAnnotationComposer composer = $composerBuilder(
@@ -6637,6 +6703,7 @@ class $$DumpsTableTableManager extends RootTableManager<
             Value<String?> summaryModel = const Value.absent(),
             Value<int?> summarizedAt = const Value.absent(),
             Value<String?> transcriptTimings = const Value.absent(),
+            Value<String?> summaryTemplate = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               DumpsCompanion(
@@ -6670,6 +6737,7 @@ class $$DumpsTableTableManager extends RootTableManager<
             summaryModel: summaryModel,
             summarizedAt: summarizedAt,
             transcriptTimings: transcriptTimings,
+            summaryTemplate: summaryTemplate,
             rowid: rowid,
           ),
           createCompanionCallback: ({
@@ -6703,6 +6771,7 @@ class $$DumpsTableTableManager extends RootTableManager<
             Value<String?> summaryModel = const Value.absent(),
             Value<int?> summarizedAt = const Value.absent(),
             Value<String?> transcriptTimings = const Value.absent(),
+            Value<String?> summaryTemplate = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               DumpsCompanion.insert(
@@ -6736,6 +6805,7 @@ class $$DumpsTableTableManager extends RootTableManager<
             summaryModel: summaryModel,
             summarizedAt: summarizedAt,
             transcriptTimings: transcriptTimings,
+            summaryTemplate: summaryTemplate,
             rowid: rowid,
           ),
           withReferenceMapper: (p0) => p0

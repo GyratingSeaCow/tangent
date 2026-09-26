@@ -152,6 +152,26 @@ class _AiSummariesSectionState extends ConsumerState<AiSummariesSection> {
 
   Timer? _pollTimer;
 
+  // ---- Arc B: custom template editor ----------------------------------------
+
+  /// The editor's text. Seeded by [_rehydrate] from the server's saved
+  /// custom prompt; only [_saveCustom] writes it back. No autosave — a
+  /// half-typed prompt must never reach the server.
+  final TextEditingController _customController = TextEditingController();
+
+  /// The last value the server confirmed (empty when none is saved).
+  String _savedCustomPrompt = '';
+
+  /// The field differs from [_savedCustomPrompt]; enables Save.
+  bool _customDirty = false;
+
+  /// A save/clear request is in flight.
+  bool _customBusy = false;
+
+  /// The capability is installed on the server — the only state in which
+  /// a custom template can be used, so the editor hides otherwise.
+  bool _installed = false;
+
   @override
   void initState() {
     super.initState();
@@ -166,6 +186,7 @@ class _AiSummariesSectionState extends ConsumerState<AiSummariesSection> {
     // The server install keeps running — only the WATCHING stops with the
     // widget. A leaked periodic timer would keep polling a dead section.
     _pollTimer?.cancel();
+    _customController.dispose();
     super.dispose();
   }
 
@@ -194,6 +215,7 @@ class _AiSummariesSectionState extends ConsumerState<AiSummariesSection> {
       return;
     }
     if (!mounted) return;
+    _adoptCustomPrompt(settings);
     if (settings.enabled != ref.read(summariesEnabledProvider)) {
       await _restToggle(settings.enabled);
     }
@@ -242,6 +264,7 @@ class _AiSummariesSectionState extends ConsumerState<AiSummariesSection> {
       return;
     }
     if (!mounted) return;
+    _adoptCustomPrompt(settings);
 
     if (settings.installed) {
       // The environment already exists (installed from another device, or
@@ -341,6 +364,7 @@ class _AiSummariesSectionState extends ConsumerState<AiSummariesSection> {
         setState(() {
           _progress = null;
           _installFailed = false;
+          _installed = true;
         });
         await _enableServerToggleAndRest(client);
         await _notify(
@@ -400,6 +424,7 @@ class _AiSummariesSectionState extends ConsumerState<AiSummariesSection> {
       return;
     }
     if (!mounted) return;
+    setState(() => _installed = false);
     // Best-effort: the auto-trigger already cannot run without the env, so
     // a failed toggle write here must not undo a successful uninstall.
     try {
@@ -409,6 +434,105 @@ class _AiSummariesSectionState extends ConsumerState<AiSummariesSection> {
     }
     if (!mounted) return;
     await _restToggle(false);
+  }
+
+  // ---- custom template ------------------------------------------------------
+
+  /// Adopts the server's saved custom prompt and installed flag from a
+  /// settings read. Seeds the editor only while it is clean: a read racing
+  /// an in-progress edit must not overwrite what the user is typing.
+  void _adoptCustomPrompt(SummarySettings settings) {
+    final String saved = settings.customPrompt ?? '';
+    setState(() {
+      _installed = settings.installed;
+      _savedCustomPrompt = saved;
+      if (!_customDirty) {
+        _customController.text = saved;
+      }
+    });
+  }
+
+  void _onCustomChanged(String value) {
+    final bool dirty = value != _savedCustomPrompt;
+    if (dirty != _customDirty) setState(() => _customDirty = dirty);
+  }
+
+  Future<void> _saveCustom() async {
+    if (_customBusy || !_customDirty) return;
+    final String text = _customController.text;
+    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+    setState(() => _customBusy = true);
+    try {
+      final SummariesClient client =
+          await ref.read(summariesClientProvider.future);
+      final SummarySettings settings = await client.setCustomPrompt(text);
+      if (!mounted) return;
+      setState(() {
+        _savedCustomPrompt = settings.customPrompt ?? text;
+        _customDirty = _customController.text != _savedCustomPrompt;
+      });
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Custom template saved')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text('Could not save custom template: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _customBusy = false);
+    }
+  }
+
+  Future<void> _clearCustom() async {
+    if (_customBusy) return;
+    final bool confirmed = await showDialog<bool>(
+          context: context,
+          builder: (BuildContext context) => AlertDialog(
+            title: const Text('Clear custom template?'),
+            content: const Text(
+              'The Custom option disappears from the template picker until '
+              'you write a new one. Summaries already written are kept.',
+            ),
+            actions: <Widget>[
+              TextButton(
+                key: const ValueKey<String>('custom-template-clear-cancel'),
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                key: const ValueKey<String>('custom-template-clear-confirm'),
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('Clear'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!mounted || !confirmed) return;
+    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+    setState(() => _customBusy = true);
+    try {
+      final SummariesClient client =
+          await ref.read(summariesClientProvider.future);
+      await client.setCustomPrompt(null);
+      if (!mounted) return;
+      setState(() {
+        _savedCustomPrompt = '';
+        _customController.clear();
+        _customDirty = false;
+      });
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Custom template cleared')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text('Could not clear custom template: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _customBusy = false);
+    }
   }
 
   // ---- shared ---------------------------------------------------------------
@@ -526,7 +650,66 @@ class _AiSummariesSectionState extends ConsumerState<AiSummariesSection> {
               style: TextStyle(color: Theme.of(context).colorScheme.error),
             ),
           ),
+        // Arc B: the custom template editor. Only meaningful once the
+        // capability is installed — the same server state that lets a
+        // template be used at all. Explicit Save/Clear, never autosave.
+        if (_installed) _buildCustomTemplate(context),
       ],
+    );
+  }
+
+  Widget _buildCustomTemplate(BuildContext context) {
+    final bool canClear = !_customBusy &&
+        (_customController.text.isNotEmpty || _savedCustomPrompt.isNotEmpty);
+    return Padding(
+      key: const ValueKey<String>('custom-template-block'),
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          const Text(
+            'Custom template',
+            style: TextStyle(fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            key: const ValueKey<String>('custom-template-editor'),
+            controller: _customController,
+            enabled: !_customBusy,
+            minLines: 4,
+            maxLines: 12,
+            keyboardType: TextInputType.multiline,
+            onChanged: _onCustomChanged,
+            decoration: const InputDecoration(
+              border: OutlineInputBorder(),
+              hintText: 'Describe how you want the summary written…',
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Used when you pick Custom as a summary template. Section '
+            'headings, the "None" rule and transcript-language matching are '
+            'always enforced.',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: <Widget>[
+              FilledButton(
+                key: const ValueKey<String>('custom-template-save'),
+                onPressed: _customDirty && !_customBusy ? _saveCustom : null,
+                child: const Text('Save'),
+              ),
+              const SizedBox(width: 8),
+              TextButton(
+                key: const ValueKey<String>('custom-template-clear'),
+                onPressed: canClear ? _clearCustom : null,
+                child: const Text('Clear'),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 }

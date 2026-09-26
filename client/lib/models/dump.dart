@@ -23,16 +23,24 @@ class Dump with _$Dump {
     @JsonKey(name: 'sync_status') required SyncStatus syncStatus,
     @JsonKey(name: 'sync_attempts') @Default(0) int syncAttempts,
     @JsonKey(name: 'last_sync_error') String? lastSyncError,
+
     /// Server-generated AI summary (markdown sections). Null until the
     /// server has summarized this recording; never written by the client.
     String? summary,
+
     /// The model stem that produced [summary]; null with it.
     @JsonKey(name: 'summary_model') String? summaryModel,
+
     /// When the server generated [summary]; null with it.
     @JsonKey(name: 'summarized_at') DateTime? summarizedAt,
+
     /// Word-level timings JSON (server-owned, see transcript_timings.dart).
     /// Null until a transcription with timings has completed.
     @JsonKey(name: 'transcript_timings') String? transcriptTimings,
+
+    /// The summary template id the server last used for this recording
+    /// (server-owned; null = mode default).
+    @JsonKey(name: 'summary_template') String? summaryTemplate,
   }) = _Dump;
 
   factory Dump.fromJson(Map<String, dynamic> json) => _$DumpFromJson(json);
