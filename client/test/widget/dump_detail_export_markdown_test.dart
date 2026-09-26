@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-/// Speaker naming (v1.15.0 spec §4.2 / §5) on the dump detail screen:
-/// the app-bar overflow (`detail-more`) offers "Name speakers" only when the
-/// transcript has speaker headings (since v1.16.0 the overflow also carries
-/// "Export Markdown", so the BUTTON stays while the ENTRY goes — see
-/// dump_detail_export_markdown_test.dart for the button's own gate); and the
-/// "Overwrite transcript?" dialog warns that names will be reset only when
-/// a user-given speaker name is actually present.
+/// Timestamped Markdown export (v1.16.0 spec §4) on the dump detail screen:
+/// the app-bar overflow (`detail-more`, added in v1.15.0 for "Name speakers")
+/// now also carries "Export Markdown" (`detail-export-markdown`). Both entries
+/// show when both apply, only the export shows on a plain transcript, and the
+/// button is still absent when there is nothing to export or name. Picking
+/// the export calls the one export provider with the current row.
 library;
 
 import 'package:drift/native.dart';
@@ -19,6 +18,7 @@ import 'package:tangent/screens/dump/dump_detail_screen.dart';
 import 'package:tangent/screens/home/home_providers.dart';
 import 'package:tangent/screens/home/home_screen.dart' show localDbProvider;
 import 'package:tangent/screens/settings/ai_summaries_section.dart';
+import 'package:tangent/services/markdown_export.dart';
 import 'package:tangent/services/recording_playback.dart';
 
 import '../support/bound_row_fixture.dart';
@@ -56,16 +56,7 @@ const String _rawSpeakers = '## Speaker 1\n'
     '## Speaker 2\n'
     'That is quite the arc.\n';
 
-/// After a rename: one user-given name, one raw label left.
-const String _namedSpeakers = '## Alice\n'
-    'Ended up getting fired and then hired again.\n'
-    '\n'
-    '## Speaker 2\n'
-    'That is quite the arc.\n';
-
 const String _plain = '[00:00] Alice: hello and welcome to planning';
-
-const String _warning = 'Speaker names you added will be reset.';
 
 void main() {
   void useTallViewport(WidgetTester tester) {
@@ -75,7 +66,7 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
   }
 
-  DumpRow meetingRow(AudioStorage storage, String id, String transcript) =>
+  DumpRow meetingRow(AudioStorage storage, String id, String? transcript) =>
       DumpRow(
         id: id,
         createdAt: DateTime.utc(2026, 9, 26),
@@ -95,10 +86,11 @@ void main() {
   Future<void> mountDetail(
     WidgetTester tester,
     String id,
-    String transcript,
-  ) async {
+    String? transcript, {
+    List<Override> extraOverrides = const <Override>[],
+  }) async {
     useTallViewport(tester);
-    final temp = createResolvedTempSync('tangent-speakers-detail-');
+    final temp = createResolvedTempSync('tangent-md-detail-');
     final db = LocalDb.forTesting(NativeDatabase.memory());
     final storage = AudioStorage.test(temp);
     final bound = await createBoundServiceFixture(db, registerDrain: false);
@@ -122,6 +114,7 @@ void main() {
           recordingPlaybackEngineFactoryProvider
               .overrideWithValue(_StubEngine.new),
           summariesEnabledProvider.overrideWith((ref) => false),
+          ...extraOverrides,
         ],
         child: MaterialApp(
           home: DumpDetailScreen(
@@ -145,77 +138,89 @@ void main() {
   }
 
   final Finder more = find.byKey(const ValueKey('detail-more'));
+  final Finder nameEntry = find.byKey(const ValueKey('detail-name-speakers'));
+  final Finder exportEntry =
+      find.byKey(const ValueKey('detail-export-markdown'));
 
-  testWidgets('diarized transcript: detail-more overflow opens the sheet',
+  testWidgets('diarized transcript: detail-more carries BOTH entries',
       (tester) async {
-    await mountDetail(tester, 'spk-1', _rawSpeakers);
+    await mountDetail(tester, 'md-1', _rawSpeakers);
 
     expect(more, findsOneWidget);
     await tester.tap(more);
     await tester.pumpAndSettle();
+    expect(nameEntry, findsOneWidget);
+    expect(exportEntry, findsOneWidget);
     expect(find.text('Name speakers'), findsOneWidget);
-
-    await tester.tap(find.text('Name speakers'));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('name-speakers-sheet')), findsOneWidget);
-    expect(find.byKey(const ValueKey('speaker-name-1')), findsOneWidget);
-
-    await tester.tap(find.byKey(const ValueKey('speakers-cancel')));
-    await tester.pumpAndSettle();
-    await unmount(tester);
-  });
-
-  testWidgets('no speaker headings: the Name speakers entry is absent',
-      (tester) async {
-    await mountDetail(tester, 'spk-2', _plain);
-
+    expect(find.text('Export Markdown'), findsOneWidget);
     expect(
-      find.byIcon(Icons.delete_outline),
-      findsOneWidget,
-      reason: 'the existing icon row is untouched',
+      tester.getTopLeft(exportEntry).dy,
+      greaterThan(tester.getTopLeft(nameEntry).dy),
+      reason: 'Name speakers stays first; the export is the second entry',
     );
-    // v1.16.0: the overflow still exists for Export Markdown (the plain
-    // transcript IS exportable), but the naming entry must not be offered —
-    // absent, not disabled.
-    expect(more, findsOneWidget);
-    await tester.tap(more);
-    await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('detail-name-speakers')), findsNothing);
-    expect(find.text('Name speakers'), findsNothing);
+
     await tester.tapAt(const Offset(5, 5));
     await tester.pumpAndSettle();
     await unmount(tester);
   });
 
-  testWidgets('re-transcribe warns about names only once a speaker is named',
+  testWidgets('plain transcript: the overflow shows only Export Markdown',
       (tester) async {
-    await mountDetail(tester, 'spk-3', _namedSpeakers);
+    await mountDetail(tester, 'md-2', _plain);
 
-    await tester.tap(find.byKey(const ValueKey('transcribe-spk-3')));
+    expect(
+      more,
+      findsOneWidget,
+      reason: 'the button now shows when EITHER entry applies',
+    );
+    await tester.tap(more);
     await tester.pumpAndSettle();
-    expect(find.text('Overwrite transcript?'), findsOneWidget);
-    expect(find.textContaining(_warning), findsOneWidget);
+    expect(exportEntry, findsOneWidget);
+    expect(nameEntry, findsNothing, reason: 'nothing to name');
 
-    await tester.tap(find.text('Cancel'));
+    await tester.tapAt(const Offset(5, 5));
     await tester.pumpAndSettle();
     await unmount(tester);
   });
 
-  testWidgets('re-transcribe with only raw Speaker N labels does not warn',
-      (tester) async {
-    await mountDetail(tester, 'spk-4', _rawSpeakers);
+  testWidgets('no transcript: the overflow button is absent', (tester) async {
+    await mountDetail(tester, 'md-3', null);
 
-    await tester.tap(find.byKey(const ValueKey('transcribe-spk-4')));
-    await tester.pumpAndSettle();
-    expect(find.text('Overwrite transcript?'), findsOneWidget);
-    expect(
-      find.textContaining(_warning),
-      findsNothing,
-      reason: 'nothing user-given to lose',
+    expect(more, findsNothing, reason: 'absent, not disabled');
+    expect(find.byIcon(Icons.delete_outline), findsOneWidget);
+    await unmount(tester);
+  });
+
+  testWidgets('picking Export Markdown calls the provider with the row',
+      (tester) async {
+    final List<DumpRow> exported = <DumpRow>[];
+    await mountDetail(
+      tester,
+      'md-4',
+      _plain,
+      extraOverrides: <Override>[
+        exportMarkdownProvider.overrideWithValue((DumpRow row) async {
+          exported.add(row);
+          return const MarkdownExportOutcome(
+            path: '/exports/md-4.md',
+            opened: false,
+          );
+        }),
+      ],
     );
 
-    await tester.tap(find.text('Cancel'));
+    await tester.tap(more);
     await tester.pumpAndSettle();
+    await tester.tap(exportEntry);
+    await tester.pumpAndSettle();
+
+    expect(exported.map((r) => r.id), ['md-4']);
+    expect(exported.single.transcript, _plain);
+    expect(
+      find.text('Exported to /exports/md-4.md (no Markdown handler)'),
+      findsOneWidget,
+      reason: 'a viewer-less desktop still learns where the file landed',
+    );
     await unmount(tester);
   });
 }
