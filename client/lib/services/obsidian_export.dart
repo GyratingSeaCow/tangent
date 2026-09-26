@@ -13,10 +13,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../data/local_db.dart';
 import '../data/notebook_repository.dart';
 import '../screens/home/home_screen.dart' show localDbProvider;
+import '../screens/settings/settings_screen.dart' show settingsStoreProvider;
 import '../data/storage/storage_contract.dart';
 import '../data/storage/storage_providers.dart';
 import '../models/dump_mode.dart';
 import '../models/notebook.dart';
+import 'transcript_markdown.dart';
+import 'transcript_timings.dart';
 
 /// One exported file that failed, and why.
 class FailedExport {
@@ -38,32 +41,10 @@ typedef ExportProgress = void Function(int done, int total, String name);
 
 // ── markdown rendering ────────────────────────────────────────────────
 
-/// Quote only when YAML would misread the value: ": " starts a mapping,
-/// " #" a comment, and leading indicators change the type. Bare colons
-/// (ISO timestamps) are safe and stay unquoted for Obsidian's parser.
-String _yamlEscape(String value) {
-  final needsQuoting = value.contains(': ') ||
-      value.contains(' #') ||
-      value.startsWith(RegExp(r'[\[\]{}#&*!|>' "'" r'"%@`\-? ]')) ||
-      value.endsWith(' ');
-  return needsQuoting ? '"${value.replaceAll('"', r'\"')}"' : value;
-}
-
-String _frontmatter(Map<String, String> fields) {
-  final buffer = StringBuffer('---\n');
-  fields.forEach((key, value) => buffer.writeln('$key: ${_yamlEscape(value)}'));
-  buffer.writeln('---');
-  return buffer.toString();
-}
-
-String _duration(int seconds) {
-  final h = seconds ~/ 3600;
-  final m = (seconds % 3600) ~/ 60;
-  final s = seconds % 60;
-  return '$h:${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
-}
-
 /// Markdown for one dump: frontmatter, title heading, transcript body.
+///
+/// Thin wrapper over [transcriptMarkdown] (timestamps off, no summary):
+/// the single renderer behind every markdown export since v1.16.0.
 String dumpMarkdown({
   required String id,
   required String title,
@@ -72,22 +53,28 @@ String dumpMarkdown({
   required int durationSeconds,
   required String? transcript,
 }) {
-  final type = switch (mode) {
-    DumpMode.brainDump => 'brain-dump',
-    DumpMode.meeting => 'meeting',
-    DumpMode.textNote => 'text-note',
-  };
-  final head = _frontmatter({
-    'tangent-id': id,
-    'created': createdAt.toUtc().toIso8601String(),
-    'type': type,
-    if (mode != DumpMode.textNote) 'duration': _duration(durationSeconds),
-    'source': 'tangent',
-  });
-  final body = (transcript == null || transcript.trim().isEmpty)
-      ? '*Not transcribed yet.*'
-      : transcript.trim();
-  return '$head\n# $title\n\n$body\n';
+  return transcriptMarkdown(
+    dump: DumpRow(
+      id: id,
+      createdAt: createdAt,
+      updatedAt: createdAt,
+      mode: mode.wireValue,
+      durationSeconds: durationSeconds,
+      title: title,
+      transcript: transcript,
+      audioPath: '',
+      audioSizeBytes: 0,
+      syncStatus: '',
+      syncAttempts: 0,
+      transcriptionStatus: '',
+      transcriptionAttempt: 0,
+    ),
+    timings: null,
+    options: const TranscriptMarkdownOptions(
+      timestamps: false,
+      includeSummary: false,
+    ),
+  );
 }
 
 /// Markdown for one notebook: blocks in reading order (y, then x).
@@ -96,7 +83,7 @@ String dumpMarkdown({
 /// in markdown, so their presence is declared — the reader must never
 /// believe an exported page is the whole page when it is not.
 String notebookMarkdown(Notebook notebook) {
-  final head = _frontmatter({
+  final head = yamlFrontmatter({
     'tangent-id': notebook.id,
     'created': notebook.createdAt.toUtc().toIso8601String(),
     'updated': notebook.updatedAt.toUtc().toIso8601String(),
@@ -183,6 +170,7 @@ class ObsidianExporter {
     required NotebookRepository notebooks,
     required StorageBackend backend,
     required StorageCatalog catalog,
+    this.options = const TranscriptMarkdownOptions(),
   })  : _db = db,
         _notebooks = notebooks,
         _backend = backend,
@@ -192,6 +180,10 @@ class ObsidianExporter {
   final NotebookRepository _notebooks;
   final StorageBackend _backend;
   final StorageCatalog _catalog;
+
+  /// Document shape for every dump (Settings toggles: timestamps off by
+  /// default so an existing vault keeps its shape; summary on).
+  final TranscriptMarkdownOptions options;
 
   static const String directoryName = 'Obsidian Export';
 
@@ -225,13 +217,10 @@ class ObsidianExporter {
         taken,
       );
       onProgress(++done, total, name);
-      final markdown = dumpMarkdown(
-        id: dump.id,
-        title: dump.title,
-        createdAt: dump.createdAt,
-        mode: DumpMode.fromWire(dump.mode),
-        durationSeconds: dump.durationSeconds,
-        transcript: dump.transcript,
+      final markdown = transcriptMarkdown(
+        dump: dump,
+        timings: TranscriptTimings.parse(dump.transcriptTimings),
+        options: options,
       );
       final outcome = await _backend
           .publishDocument(location, directoryName, name, markdown, dump.id)
@@ -280,11 +269,25 @@ class ObsidianExporter {
   }
 }
 
+/// Rebuilt whenever either Obsidian switch flips, so the next run uses
+/// what the user just chose.
 final obsidianExporterProvider = Provider<ObsidianExporter>((ref) {
   return ObsidianExporter(
     db: ref.watch(localDbProvider),
     notebooks: ref.watch(notebookRepositoryProvider),
     backend: ref.watch(storageBackendProvider),
     catalog: ref.watch(storageCatalogProvider),
+    options: ref.watch(obsidianMarkdownOptionsProvider),
+  );
+});
+
+/// The two Settings switches as renderer options. Seeded from the
+/// settings store; the section writes both places on every flip.
+final obsidianMarkdownOptionsProvider =
+    StateProvider<TranscriptMarkdownOptions>((ref) {
+  final settings = ref.watch(settingsStoreProvider);
+  return TranscriptMarkdownOptions(
+    timestamps: settings.obsidianExportTimestamps,
+    includeSummary: settings.obsidianExportSummary,
   );
 });

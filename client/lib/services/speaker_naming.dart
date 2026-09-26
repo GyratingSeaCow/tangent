@@ -40,6 +40,24 @@ List<String> detectSpeakers(String transcript) {
   return out;
 }
 
+/// Every speaker heading in [transcript] — raw `Speaker N` labels AND the
+/// names a user gave them — in document order, deduplicated. Skips
+/// `[unattributed]` and the known section headings, which are never
+/// speakers. The markdown exporter pairs these with the timings' labels
+/// by position (both are in first-appearance order).
+List<String> speakerHeadings(String transcript) {
+  final List<String> out = <String>[];
+  for (final String heading in _headings(transcript)) {
+    if (heading.isEmpty ||
+        _knownSectionHeadings.contains(heading) ||
+        out.contains(heading)) {
+      continue;
+    }
+    out.add(heading);
+  }
+  return out;
+}
+
 /// First non-empty line under each `## <label>` heading — the hint shown
 /// beside the field ("Ended up getting fired and…", ellipsised at 80 chars).
 ///
