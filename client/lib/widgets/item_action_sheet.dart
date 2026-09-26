@@ -28,6 +28,11 @@ enum ItemAction {
   /// Render the item to a PDF and hand it to the system share sheet.
   exportPdf,
 
+  /// Render a recording's transcript as timestamped Markdown (v1.16.0) and
+  /// hand it to the share sheet (mobile) or save + open it (desktop).
+  /// Offered only when the row has transcript text to export.
+  exportMarkdown,
+
   /// Fetch a synced recording's audio from the server onto this device.
   /// Offered only when the server holds audio this device does not.
   download,
@@ -60,6 +65,7 @@ const List<ItemAction> _canonicalOrder = <ItemAction>[
   ItemAction.duplicate,
   ItemAction.share,
   ItemAction.exportPdf,
+  ItemAction.exportMarkdown,
   ItemAction.select,
   ItemAction.delete,
 ];
@@ -102,6 +108,8 @@ class ItemActionSheet extends StatelessWidget {
         return 'Share';
       case ItemAction.exportPdf:
         return 'Export to PDF';
+      case ItemAction.exportMarkdown:
+        return 'Export Markdown';
       case ItemAction.download:
         return 'Download audio';
       case ItemAction.regenerateSummary:
@@ -129,6 +137,8 @@ class ItemActionSheet extends StatelessWidget {
         return Icons.ios_share;
       case ItemAction.exportPdf:
         return Icons.picture_as_pdf_outlined;
+      case ItemAction.exportMarkdown:
+        return Icons.description;
       case ItemAction.download:
         return Icons.download_for_offline_outlined;
       case ItemAction.regenerateSummary:

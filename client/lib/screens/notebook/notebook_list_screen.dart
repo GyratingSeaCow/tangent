@@ -19,6 +19,7 @@ import 'dart:io' show File, Platform;
 import '../../data/notebook_repository.dart';
 import '../../models/notebook.dart';
 import '../../services/desktop_pdf_share.dart';
+import '../../services/export_file_name.dart';
 import '../../services/ink_search.dart';
 import '../../services/notebook_pdf_exporter.dart';
 import '../../services/notebook_persistence.dart';
@@ -338,6 +339,8 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
       case ItemAction.regenerateSummary:
       // …nor diarized speakers to name.
       case ItemAction.nameSpeakers:
+      // …nor a transcript to export as Markdown.
+      case ItemAction.exportMarkdown:
         break;
     }
   }
@@ -361,9 +364,7 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
           strokes: full.ink.strokes,
         ),
       );
-      final String safeName = full.title.isEmpty
-          ? 'notebook'
-          : full.title.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+      final String safeName = safeExportStem(full.title, fallback: 'notebook');
       await _sharePdf(
         bytes: bytes,
         filename: '$safeName.pdf',
