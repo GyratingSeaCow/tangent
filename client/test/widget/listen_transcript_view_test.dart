@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:tangent/models/speaker_names.dart';
 import 'package:tangent/services/transcript_timings.dart';
 import 'package:tangent/widgets/listen_transcript_view.dart';
 
@@ -30,6 +31,7 @@ Future<void> _pump(
   VoidCallback? onRetranscribe,
   VoidCallback? onDownloadAudio,
   void Function(String label)? onSpeakerTap,
+  SpeakerNames names = const SpeakerNames.empty(),
 }) =>
     tester.pumpWidget(
       MaterialApp(
@@ -46,6 +48,7 @@ Future<void> _pump(
               onRetranscribe: onRetranscribe ?? () {},
               onDownloadAudio: onDownloadAudio,
               onSpeakerTap: onSpeakerTap,
+              names: names,
             ),
           ),
         ),
@@ -53,6 +56,32 @@ Future<void> _pump(
     );
 
 void main() {
+  testWidgets('a speaker header shows the mapped name; the tap still '
+      'reports the raw label (v1.17.0 §3)', (tester) async {
+    final labels = <String>[];
+    await _pump(
+      tester,
+      timings: _words(),
+      transcript: 'hello big world bye',
+      position: ValueNotifier(Duration.zero),
+      onSeek: (_) {},
+      onSpeakerTap: labels.add,
+      names: SpeakerNames(const {'Speaker 1': 'Jeff'}),
+    );
+    final header1 =
+        find.byKey(const ValueKey('listen-speaker-header-Speaker 1'));
+    expect(header1, findsOneWidget);
+    expect(
+      find.descendant(of: header1, matching: find.text('Jeff')),
+      findsOneWidget,
+    );
+    expect(find.text('Speaker 1'), findsNothing);
+    expect(find.text('Speaker 2'), findsOneWidget, reason: 'unmapped');
+    await tester.tap(header1);
+    await tester.pump();
+    expect(labels, ['Speaker 1']);
+  });
+
   testWidgets('tapping a speaker header reports that label (v1.15.0 §4.3)',
       (tester) async {
     final labels = <String>[];

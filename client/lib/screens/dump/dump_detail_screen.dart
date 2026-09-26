@@ -12,13 +12,14 @@ import '../../data/recording_metadata.dart';
 import '../../data/storage/storage_contract.dart';
 import '../../data/storage/storage_providers.dart';
 import '../../models/dump_mode.dart';
+import '../../models/speaker_names.dart';
 import '../../models/sync_status.dart';
 import '../../models/transcription_status.dart';
 import '../../services/markdown_export.dart';
 import '../../services/meeting_notes_processor.dart';
 import '../../services/recording_playback.dart';
-import '../../services/speaker_naming.dart'
-    show detectSpeakers, hasUserSpeakerNames;
+import '../../services/render_speaker_names.dart';
+import '../../services/speaker_naming.dart' show detectSpeakers;
 import '../../services/transcript_alignment.dart'
     show TranscriptAlignment, alignTranscript;
 import '../../services/transcript_search.dart'
@@ -184,6 +185,8 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
   }
 
   String? _editorBaseTranscript;
+  String? _editorBaseRendered;
+  SpeakerNames _editorBaseNames = const SpeakerNames.empty();
   int? _editorBaseAttempt;
   String? _editorBaseRequestId;
   String? _statusMessage;
@@ -447,27 +450,38 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
     );
   }
 
+  /// The editor shows the RENDERED transcript (speaker names looked up
+  /// through the row's map, spec §3); [_editorBaseTranscript] stays the
+  /// RAW stored text the save compares against, and [_editorBaseRendered]
+  /// is what "unchanged" means for the dirty flag.
   void _syncTranscriptEditor(DumpRow row) {
     final transcript = row.transcript;
     if (transcript == null || transcript.isEmpty) return;
+    final names = _namesFor(row);
+    final rendered = renderSpeakerNames(transcript, names);
     final revisionChanged = _editorBaseTranscript != transcript ||
         _editorBaseAttempt != row.transcriptionAttempt ||
-        _editorBaseRequestId != row.transcriptionRequestId;
+        _editorBaseRequestId != row.transcriptionRequestId ||
+        _editorBaseRendered != rendered;
     if (_editorBaseTranscript == null ||
         (!_savingTranscript && !_transcriptDirty && revisionChanged)) {
       _transcriptController.value = TextEditingValue(
-        text: transcript,
-        selection: TextSelection.collapsed(offset: transcript.length),
+        text: rendered,
+        selection: TextSelection.collapsed(offset: rendered.length),
       );
       _editorBaseTranscript = transcript;
+      _editorBaseRendered = rendered;
+      _editorBaseNames = names;
       _editorBaseAttempt = row.transcriptionAttempt;
       _editorBaseRequestId = row.transcriptionRequestId;
       _transcriptDirty = false;
     }
   }
 
+  SpeakerNames _namesFor(DumpRow row) => SpeakerNames.decode(row.speakerNames);
+
   void _onTranscriptChanged(String value) {
-    final dirty = value != _editorBaseTranscript;
+    final dirty = value != _editorBaseRendered;
     setState(() => _transcriptDirty = dirty);
   }
 
@@ -613,8 +627,13 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
     final expectedTranscript = _editorBaseTranscript;
     final expectedAttempt = _editorBaseAttempt;
     if (expectedTranscript == null || expectedAttempt == null) return;
-    final transcript = _transcriptController.text;
-    if (transcript.trim().isEmpty) return;
+    final rendered = _transcriptController.text;
+    if (rendered.trim().isEmpty) return;
+    // Spec §3: the editor showed names; the store keeps raw labels. Reverse
+    // the map the editor was rendered through before persisting, so
+    // `## Jeff` never reaches the row.
+    final names = _editorBaseNames;
+    final transcript = unrenderSpeakerNames(rendered, names);
     setState(() {
       _savingTranscript = true;
       _statusError = null;
@@ -639,9 +658,12 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
         if (mounted) {
           setState(() {
             _editorBaseTranscript = saved.transcript;
+            _editorBaseRendered =
+                renderSpeakerNames(saved.transcript ?? '', names);
             _editorBaseAttempt = saved.transcriptionAttempt;
             _editorBaseRequestId = saved.transcriptionRequestId;
-            _transcriptDirty = _transcriptController.text != saved.transcript;
+            _transcriptDirty =
+                _transcriptController.text != _editorBaseRendered;
             _manualSidecarPending = true;
           });
         }
@@ -656,9 +678,12 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
           setState(() {
             _manualSidecarPending = false;
             _editorBaseTranscript = saved.transcript;
+            _editorBaseRendered =
+                renderSpeakerNames(saved.transcript ?? '', names);
             _editorBaseAttempt = saved.transcriptionAttempt;
             _editorBaseRequestId = saved.transcriptionRequestId;
-            _transcriptDirty = _transcriptController.text != saved.transcript;
+            _transcriptDirty =
+                _transcriptController.text != _editorBaseRendered;
             _statusMessage = _transcriptDirty
                 ? 'Previous edit saved; newer changes are unsaved'
                 : 'Transcript saved';
@@ -724,17 +749,15 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
 
   void _requestTranscription(DumpRow row) {
     if (row.transcript?.trim().isNotEmpty ?? false) {
-      // Speaker naming rewrites the transcript text in place (S1=b), so a
-      // fresh transcription silently drops the names. Say so — but only when
-      // there is a user-given name to lose (spec §5).
-      final bool namesAtRisk = hasUserSpeakerNames(row.transcript!);
+      // Speaker names live in the per-recording map (N2=y), so a fresh
+      // transcription keeps them: its raw labels render through the map.
+      // No warning line.
       showDialog<void>(
         context: context,
         builder: (dialogContext) => AlertDialog(
           title: const Text('Overwrite transcript?'),
-          content: Text(
-            'The current transcript stays visible while replacement transcription runs. It is replaced only if the new transcription succeeds.'
-            '${namesAtRisk ? '\n\nSpeaker names you added will be reset.' : ''}',
+          content: const Text(
+            'The current transcript stays visible while replacement transcription runs. It is replaced only if the new transcription succeeds.',
           ),
           actions: [
             TextButton(
@@ -1302,8 +1325,9 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
                         ref.read(syncedAudioDownloaderProvider) == null
                             ? null
                             : () => unawaited(_downloadAudioForListen()),
-                    // Listen keeps the raw timings labels (S1=b); the tap
-                    // opens the sheet for the whole row, not just this label.
+                    // Headers show the mapped names (spec §3); the tap opens
+                    // the sheet for the whole row, not just this label.
+                    names: _namesFor(row),
                     onSpeakerTap: (_) =>
                         unawaited(showNameSpeakersSheet(context, ref, row)),
                   ),
