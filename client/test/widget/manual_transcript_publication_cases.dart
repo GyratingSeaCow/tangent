@@ -25,6 +25,7 @@ import 'package:tangent/screens/server/server_connection_screen.dart'
     show transcriptionClientProvider;
 import 'package:tangent/services/recording_playback.dart';
 import 'package:tangent/services/transcription_client.dart';
+import '../support/resolved_temp.dart';
 
 class PausedReturnDb extends LocalDb {
   PausedReturnDb() : super.forTesting(NativeDatabase.memory());
@@ -416,7 +417,7 @@ Future<void> scenario(
   tester.view.physicalSize = const Size(1080, 2600);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.resetPhysicalSize);
-  final temp = Directory.systemTemp.createTempSync('manual-publication-');
+  final temp = createResolvedTempSync('manual-publication-');
   final db = PausedReturnDb();
   final audio = FinalizationSeam(AudioStorage.test(temp), db);
   final backend = FinalizationBackend(audio);

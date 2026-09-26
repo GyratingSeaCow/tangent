@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import 'dart:async';
-import 'dart:io';
 
 import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
@@ -14,6 +13,7 @@ import 'package:tangent/screens/dump/dumps_providers.dart';
 import 'package:tangent/screens/home/home_providers.dart';
 import 'package:tangent/screens/home/home_screen.dart';
 import 'package:tangent/data/notebook_repository.dart' show foldersProvider;
+import '../support/resolved_temp.dart';
 
 void main() {
   testWidgets('list renders every durable status and two independent filters',
@@ -21,7 +21,7 @@ void main() {
     tester.view.physicalSize = const Size(1080, 3000);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
-    final temp = Directory.systemTemp.createTempSync('tangent-list-status-');
+    final temp = createResolvedTempSync('tangent-list-status-');
     final db = LocalDb.forTesting(NativeDatabase.memory());
     final storage = AudioStorage.test(temp);
     addTearDown(() async {
@@ -113,7 +113,7 @@ void main() {
     tester.view.physicalSize = const Size(1080, 1600);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
-    final temp = Directory.systemTemp.createTempSync('tangent-list-reactive-');
+    final temp = createResolvedTempSync('tangent-list-reactive-');
     final db = LocalDb.forTesting(NativeDatabase.memory());
     final storage = AudioStorage.test(temp);
     final rows = StreamController<List<DumpRow>>();

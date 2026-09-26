@@ -2,7 +2,6 @@
 
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
@@ -32,6 +31,7 @@ import 'package:tangent/services/recording_service.dart';
 import 'package:tangent/services/screen_awake.dart';
 import 'package:tangent/services/server_transcription_service.dart';
 import 'package:tangent/services/transcription_client.dart';
+import '../support/resolved_temp.dart';
 
 class _StubClient extends TranscriptionClient {
   _StubClient() : super(baseUrl: 'http://test');
@@ -97,7 +97,7 @@ void main() {
 
   testWidgets('TangentApp reconciles transcriptions on startup and resume',
       (tester) async {
-    final temp = Directory.systemTemp.createTempSync('tangent-lifecycle-');
+    final temp = createResolvedTempSync('tangent-lifecycle-');
     final db = LocalDb.forTesting(NativeDatabase.memory());
     final bound = await createBoundServiceFixture(db, registerDrain: false);
     // Open real SQLite outside the widget fake clock before its watch starts.
@@ -168,7 +168,7 @@ void main() {
   testWidgets('lifecycle reconciliation contains recovery query failures',
       (tester) async {
     final temp =
-        Directory.systemTemp.createTempSync('tangent-lifecycle-error-');
+        createResolvedTempSync('tangent-lifecycle-error-');
     final db = LocalDb.forTesting(NativeDatabase.memory());
     final bound = await createBoundServiceFixture(db, registerDrain: false);
     await db.close();
@@ -211,7 +211,7 @@ void main() {
   testWidgets(
       'startup imports rows and starts recovery without blocking library',
       (tester) async {
-    final temp = Directory.systemTemp.createTempSync('tangent-storage-ready-');
+    final temp = createResolvedTempSync('tangent-storage-ready-');
     final db = LocalDb.forTesting(NativeDatabase.memory());
     final storage = AudioStorage.test(temp);
     final backend = FilesystemStorageBackend();

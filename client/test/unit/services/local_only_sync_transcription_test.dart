@@ -30,6 +30,7 @@ import 'package:tangent/models/sync_change.dart';
 import 'package:tangent/services/transcription_client.dart';
 import 'package:tangent/models/pair_pending.dart';
 import '../../support/bound_row_fixture.dart';
+import '../../support/resolved_temp.dart';
 
 class _MockConnectivity extends Mock implements ConnectivityService {}
 
@@ -147,7 +148,7 @@ void main() {
   late _MockConnectivity conn;
 
   setUp(() async {
-    tmp = await Directory.systemTemp.createTemp('tangent_localonly_');
+    tmp = await createResolvedTemp('tangent_localonly_');
     await Directory('${tmp.path}/Tangent').create();
     db = LocalDb.forTesting(NativeDatabase.memory());
     backend = FilesystemStorageBackend();

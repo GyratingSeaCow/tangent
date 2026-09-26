@@ -7,6 +7,7 @@ import 'package:tangent/data/local_db.dart';
 import 'package:tangent/data/storage/storage_contract.dart';
 import 'package:tangent/data/storage/storage_codec.dart';
 import 'package:tangent/data/storage/filesystem_storage_backend.dart';
+import 'resolved_temp.dart';
 
 StorageLocation fileLocation(String id, String path) => (
       id: id,
@@ -35,8 +36,8 @@ T requireOk<T>(Outcome<T> result) => switch (result) {
 final class StorageFixture {
   StorageFixture._(this.root, this.db);
   factory StorageFixture.create() {
-    final root =
-        Directory.systemTemp.createTempSync('tangent-storage-fixture-');
+    // See resolved_temp.dart: CI temp dirs can sit behind a junction.
+    final root = createResolvedTempSync('tangent-storage-fixture-');
     for (final name in ['A', 'B', 'stage']) {
       Directory(p.join(root.path, name)).createSync();
     }

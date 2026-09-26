@@ -16,6 +16,7 @@ import 'package:path/path.dart' as p;
 import 'package:record/record.dart';
 import 'package:tangent/services/audio_gain.dart';
 import 'package:tangent/services/recording_service.dart';
+import '../../support/resolved_temp.dart';
 
 /// Recorder fake that can serve both the file path and the stream path.
 final class FakeStreamRecorder implements InputAwareAudioRecorder {
@@ -74,7 +75,7 @@ List<int> pcm(List<int> samples) {
 void main() {
   late Directory dir;
 
-  setUp(() => dir = Directory.systemTemp.createTempSync('tangent-gain-'));
+  setUp(() => dir = createResolvedTempSync('tangent-gain-'));
   tearDown(() => dir.deleteSync(recursive: true));
 
   DefaultRecordingService serviceWith(

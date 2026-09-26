@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tangent/data/local_db.dart';
+import '../../support/resolved_temp.dart';
 
 /// The background sync isolate writes through its OWN database connection.
 /// Drift stream watchers only observe writes made on their own connection,
@@ -17,7 +18,7 @@ void main() {
   late LocalDb b;
 
   setUp(() async {
-    dir = await Directory.systemTemp.createTemp('tangent-external-writes');
+    dir = await createResolvedTemp('tangent-external-writes');
     final File file = File('${dir.path}/db.sqlite');
     a = LocalDb.forTesting(NativeDatabase(file));
     b = LocalDb.forTesting(NativeDatabase(file));

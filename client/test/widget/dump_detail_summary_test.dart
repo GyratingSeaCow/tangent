@@ -6,7 +6,6 @@
 /// only presents it.
 library;
 
-import 'dart:io';
 
 import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
@@ -25,6 +24,7 @@ import '../support/bound_row_fixture.dart';
 import '../support/bound_service_fixture.dart';
 import '../support/bound_widget_lifetime.dart';
 import '../support/legacy_audio_storage_fixture.dart';
+import '../support/resolved_temp.dart';
 
 final class _StubEngine implements RecordingPlaybackEngine {
   @override
@@ -88,7 +88,7 @@ void main() {
       );
 
   Future<void> mountDetail(WidgetTester tester, DumpRow row) async {
-    final temp = Directory.systemTemp.createTempSync('tangent-summary-');
+    final temp = createResolvedTempSync('tangent-summary-');
     final db = LocalDb.forTesting(NativeDatabase.memory());
     final storage = AudioStorage.test(temp);
     final bound = await createBoundServiceFixture(db, registerDrain: false);
@@ -132,7 +132,7 @@ void main() {
       'a synced summary renders below the transcript under a subtle '
       'AI summary header', (tester) async {
     useHandsetViewport(tester);
-    final temp = Directory.systemTemp.createTempSync('tangent-summary-row-');
+    final temp = createResolvedTempSync('tangent-summary-row-');
     addTearDown(() => temp.deleteSync(recursive: true));
     final storage = AudioStorage.test(temp);
     final row = meetingRow(storage, 'sum-1', summary: _summaryMarkdown);
@@ -177,7 +177,7 @@ void main() {
     // plain string the user sees '## ' on screen; rendered as markdown the
     // heading text and the bullet text appear and the syntax does not.
     useHandsetViewport(tester);
-    final temp = Directory.systemTemp.createTempSync('tangent-summary-md-');
+    final temp = createResolvedTempSync('tangent-summary-md-');
     addTearDown(() => temp.deleteSync(recursive: true));
     final storage = AudioStorage.test(temp);
     final row = meetingRow(storage, 'sum-md', summary: '## Summary\n- point');
@@ -223,7 +223,7 @@ void main() {
       'absent-safe: a dump without a summary renders no AI summary header '
       'or body', (tester) async {
     useHandsetViewport(tester);
-    final temp = Directory.systemTemp.createTempSync('tangent-summary-null-');
+    final temp = createResolvedTempSync('tangent-summary-null-');
     addTearDown(() => temp.deleteSync(recursive: true));
     final storage = AudioStorage.test(temp);
     final row = meetingRow(storage, 'sum-2', summary: null);
@@ -248,7 +248,7 @@ void main() {
       'absent-safe: a dump whose summary is only whitespace renders no AI '
       'summary header or body', (tester) async {
     useHandsetViewport(tester);
-    final temp = Directory.systemTemp.createTempSync('tangent-summary-blank-');
+    final temp = createResolvedTempSync('tangent-summary-blank-');
     addTearDown(() => temp.deleteSync(recursive: true));
     final storage = AudioStorage.test(temp);
     final row = meetingRow(storage, 'sum-3', summary: '   \n');

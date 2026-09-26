@@ -10,6 +10,7 @@ import 'package:tangent/services/recording_persistence.dart';
 import 'package:tangent/services/recording_service.dart';
 import '../../support/scripted_storage_backend.dart';
 import '../../support/storage_fixture.dart';
+import '../../support/resolved_temp.dart';
 
 /// Reproduces the on-device failure "Invalid owned staging source": the
 /// installed build stages valid opus audio but save() rejects it when the
@@ -119,7 +120,7 @@ void main() {
 
   final links = () {
     try {
-      final probe = Directory.systemTemp.createTempSync('tangent-linkprobe-');
+      final probe = createResolvedTempSync('tangent-linkprobe-');
       try {
         Link(p.join(probe.path, 'l')).createSync(probe.path);
         return true;

@@ -24,6 +24,7 @@ import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqlite3/sqlite3.dart' as sqlite3;
 import 'package:tangent/data/local_db.dart';
+import '../../support/resolved_temp.dart';
 
 /// The v11 dumps shape.
 ///
@@ -327,7 +328,7 @@ void main() {
     // Drift registers native SQL functions on open and cannot re-register
     // them on the same raw handle, so a genuine reopen means a file-backed
     // database rather than a second wrapper over one in-memory handle.
-    final Directory dir = await Directory.systemTemp.createTemp('tangent-v12');
+    final Directory dir = await createResolvedTemp('tangent-v12');
     addTearDown(() => dir.delete(recursive: true));
     final File file = File('${dir.path}/tangent.sqlite');
 

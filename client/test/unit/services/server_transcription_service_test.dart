@@ -30,6 +30,7 @@ import 'package:tangent/models/sync_change.dart';
 import 'package:tangent/services/transcription_client.dart';
 import 'package:tangent/services/transcription_notifications.dart';
 import 'package:tangent/models/pair_pending.dart';
+import '../../support/resolved_temp.dart';
 
 /// How long a test waits before declaring an await deadlocked.
 ///
@@ -663,7 +664,7 @@ void main() {
   }
 
   setUp(() async {
-    temp = Directory.systemTemp.createTempSync('tangent-server-q-');
+    temp = createResolvedTempSync('tangent-server-q-');
     db = LocalDb.forTesting(NativeDatabase.memory());
     storage = AudioStorage.test(temp);
     await prepareStorage();

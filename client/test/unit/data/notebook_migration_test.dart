@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sqlite3/sqlite3.dart';
 import 'package:tangent/data/local_db.dart';
 import '../../support/storage_migration_fixture.dart';
+import '../../support/resolved_temp.dart';
 
 const _notebookColumns = [
   'id',
@@ -103,7 +104,7 @@ void main() {
 
   test('the v5 to v6 step creates notebooks and touches nothing else',
       () async {
-    final dir = Directory.systemTemp.createTempSync('notebook-migration-');
+    final dir = createResolvedTempSync('notebook-migration-');
     final file = File('${dir.path}/fixture.sqlite');
     final fixture = oldStorageDatabase(4, path: file.path);
     fixture.dispose();

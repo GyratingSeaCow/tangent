@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sqlite3/sqlite3.dart';
 import 'package:tangent/data/local_db.dart';
 import '../../support/storage_migration_fixture.dart';
+import '../../support/resolved_temp.dart';
 
 void verifyCatalogSchema(Database db) {
   const expected = {
@@ -236,7 +237,7 @@ void main() {
   test('file-backed v4 upgrade and v6 reopen preserve rows and catalog state',
       () async {
     final dir =
-        Directory.systemTemp.createTempSync('storage-migration-fixture-');
+        createResolvedTempSync('storage-migration-fixture-');
     final file = File('${dir.path}/fixture.sqlite');
     final sql = oldStorageDatabase(4, path: file.path);
     final before = sqlRows(sql, 'dumps');

@@ -7,6 +7,7 @@ import 'package:path/path.dart' as p;
 import 'package:tangent/data/storage/filesystem_capture_io.dart';
 import 'package:tangent/data/storage/storage_contract.dart';
 import 'package:tangent/data/storage/capture_publication_codec.dart';
+import '../../support/resolved_temp.dart';
 
 Future<void> _unblockFixtureFifo((String, SendPort) args) async {
   args.$2.send(null);
@@ -18,7 +19,7 @@ Future<void> _unblockFixtureFifo((String, SendPort) args) async {
 void main() {
   late Directory root;
   setUp(() {
-    root = Directory.systemTemp.createTempSync('tangent-capture-identity-');
+    root = createResolvedTempSync('tangent-capture-identity-');
   });
   tearDown(() {
     root.deleteSync(recursive: true);

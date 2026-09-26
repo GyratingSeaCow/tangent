@@ -28,6 +28,7 @@ import 'package:tangent/services/connectivity_service.dart';
 import 'package:tangent/services/synced_audio_download.dart';
 
 import '../../support/storage_fixture.dart';
+import '../../support/resolved_temp.dart';
 
 /// Real opus-ish bytes: a short binary blob containing values that are NOT
 /// valid UTF-8, so a text publication path would corrupt or reject them.
@@ -58,7 +59,7 @@ void main() {
   late FilesystemStorageBackend backend;
 
   setUp(() async {
-    root = await Directory.systemTemp.createTemp('tangent-dl');
+    root = await createResolvedTemp('tangent-dl');
     db = LocalDb.forTesting(NativeDatabase.memory());
     backend = FilesystemStorageBackend();
   });
