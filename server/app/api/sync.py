@@ -431,7 +431,8 @@ def sync_push(
                 if change.op != "delete" and change.payload is not None:
                     stored = db.execute(
                         "SELECT audio_kept, summary, summary_model, "
-                        "summarized_at FROM dumps WHERE id = ?",
+                        "summarized_at, transcript_timings, timings_version "
+                        "FROM dumps WHERE id = ?",
                         (change.entity_id,),
                     ).fetchone()
                     if stored is not None:
@@ -440,6 +441,10 @@ def sync_push(
                         publish_payload["summary"] = stored["summary"]
                         publish_payload["summary_model"] = stored["summary_model"]
                         publish_payload["summarized_at"] = stored["summarized_at"]
+                        publish_payload["transcript_timings"] = stored[
+                            "transcript_timings"
+                        ]
+                        publish_payload["timings_version"] = stored["timings_version"]
             elif change.entity_type == "notebook":
                 _apply_document(db, "notebooks", change, now)
                 # The OCR worker re-derives this notebook's index (a delete

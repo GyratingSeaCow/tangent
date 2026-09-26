@@ -36,6 +36,8 @@ CREATE TABLE IF NOT EXISTS dumps (
     summary TEXT,
     summary_model TEXT,
     summarized_at INTEGER,
+    transcript_timings TEXT,
+    timings_version INTEGER,
     audio_kept INTEGER NOT NULL DEFAULT 0,
     deleted_at INTEGER
 );
@@ -305,6 +307,8 @@ def _backfill_dump_change_feed(conn: sqlite3.Connection) -> None:
                 "summary": row["summary"],
                 "summary_model": row["summary_model"],
                 "summarized_at": row["summarized_at"],
+                "transcript_timings": row["transcript_timings"],
+                "timings_version": row["timings_version"],
                 "duration_seconds": row["duration_seconds"],
                 "audio_kept": bool(row["audio_kept"]),
                 "created_at": row["created_at"],
@@ -346,6 +350,62 @@ def _migrate_dumps_summary(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE dumps ADD COLUMN summary_model TEXT")
     if "summarized_at" not in cols:
         conn.execute("ALTER TABLE dumps ADD COLUMN summarized_at INTEGER")
+
+
+def _migrate_dumps_transcript_timings(conn: sqlite3.Connection) -> list[str]:
+    """Add dump-level transcript timings and backfill legacy job segments."""
+    import json as _json
+    import time as _time
+
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(dumps)")}
+    added_columns = False
+    if "transcript_timings" not in cols:
+        conn.execute("ALTER TABLE dumps ADD COLUMN transcript_timings TEXT")
+        added_columns = True
+    if "timings_version" not in cols:
+        conn.execute("ALTER TABLE dumps ADD COLUMN timings_version INTEGER")
+        added_columns = True
+    if not added_columns:
+        return []
+
+    rows = conn.execute(
+        "SELECT id FROM dumps WHERE transcript_timings IS NULL"
+    ).fetchall()
+    backfilled_ids: list[str] = []
+    for (dump_id,) in rows:
+        job = conn.execute(
+            """
+            SELECT result_segments FROM jobs
+            WHERE dump_id = ? AND status = 'completed'
+              AND result_segments IS NOT NULL AND result_segments != ''
+            ORDER BY completed_at DESC, rowid DESC LIMIT 1
+            """,
+            (dump_id,),
+        ).fetchone()
+        if job is None:
+            continue
+        try:
+            segments = _json.loads(job[0])
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(segments, list) or not segments:
+            continue
+        if not all(isinstance(segment, dict) for segment in segments):
+            continue
+        backfilled = {
+            "segments": [
+                {**segment, "words": segment.get("words", [])}
+                for segment in segments
+            ],
+            "peaks": [],
+        }
+        conn.execute(
+            "UPDATE dumps SET transcript_timings = ?, timings_version = 1, "
+            "updated_at = ? WHERE id = ? AND transcript_timings IS NULL",
+            (_json.dumps(backfilled), int(_time.time()), dump_id),
+        )
+        backfilled_ids.append(dump_id)
+    return backfilled_ids
 
 
 def _migrate_dumps_mode_check(conn: sqlite3.Connection) -> None:
@@ -598,12 +658,23 @@ def init_db(data_dir: str) -> None:
         _migrate_dumps_mode_check(conn)
         _migrate_dumps_meeting_notes(conn)
         _migrate_dumps_summary(conn)
+        timing_backfills = _migrate_dumps_transcript_timings(conn)
         _migrate_notebooks_folder_id(conn)
         _migrate_change_log_folder_entity(conn)
         _migrate_change_log_ink_index_entity(conn)
         _migrate_notebooks_ink(conn)
         _normalize_notebooks_ink(conn)
         _reconcile_audio_kept(conn, data_dir)
+        if timing_backfills:
+            from app.api.dumps import _publish_dump_change
+
+            prior_factory = conn.row_factory
+            conn.row_factory = sqlite3.Row
+            try:
+                for dump_id in timing_backfills:
+                    _publish_dump_change(conn, dump_id, None)
+            finally:
+                conn.row_factory = prior_factory
         _backfill_dump_change_feed(conn)
         conn.commit()
     finally:

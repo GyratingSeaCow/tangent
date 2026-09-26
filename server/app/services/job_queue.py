@@ -108,6 +108,19 @@ def run_job_inline(job_id: str, audio_path: str) -> None:
             "UPDATE jobs SET status = 'running', started_at = ? WHERE id = ?",
             (_now_ts(), job_id),
         )
+        db.execute(
+            "UPDATE dumps SET transcript_timings = NULL, timings_version = NULL, "
+            "updated_at = ? "
+            "WHERE id = (SELECT dump_id FROM jobs WHERE id = ?)",
+            (_now_ts(), job_id),
+        )
+        from app.api.dumps import _publish_dump_change
+
+        dump_id_row = db.execute(
+            "SELECT dump_id FROM jobs WHERE id = ?", (job_id,)
+        ).fetchone()
+        if dump_id_row is not None:
+            _publish_dump_change(db, dump_id_row["dump_id"], None)
         db.commit()
 
         # Look up the job's model choice
@@ -128,6 +141,9 @@ def run_job_inline(job_id: str, audio_path: str) -> None:
             # Segment timings describe the raw audio, so they are stored as
             # transcribed and are NOT rewritten by mode-specific formatting.
             segments_json = json.dumps(result.segments)
+            timings_json = json.dumps(
+                {"segments": result.segments, "peaks": result.peaks}
+            )
 
             # For 'meeting' mode, store the transcript in the same
             # speaker-digest format the client renders, so a synced
@@ -160,9 +176,10 @@ def run_job_inline(job_id: str, audio_path: str) -> None:
             )
             # Also update the dump's transcript if not already set or if server transcript is better
             db.execute(
-                "UPDATE dumps SET transcript = ?, updated_at = ? "
+                "UPDATE dumps SET transcript = ?, transcript_timings = ?, "
+                "timings_version = 1, updated_at = ? "
                 "WHERE id = (SELECT dump_id FROM jobs WHERE id = ?)",
-                (transcript, _now_ts(), job_id),
+                (transcript, timings_json, _now_ts(), job_id),
             )
             # Publish to the sync feed so other devices receive the finished
             # transcript. Attributed to the server: no device pushed this.
