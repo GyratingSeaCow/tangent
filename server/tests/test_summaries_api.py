@@ -16,7 +16,6 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from app.db import init_db
 from app.main import create_app
 from app.services import summarizer_env, summarizer_worker
 

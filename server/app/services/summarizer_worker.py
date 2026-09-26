@@ -27,8 +27,8 @@ from pathlib import Path
 
 from app.logging_config import get_logger
 from app.services import summarizer_env
-from app.summary_templates import assemble_prompt, default_template_id, get_custom_prompt
 from app.summarize_infer import MODEL_FILENAME
+from app.summary_templates import assemble_prompt, default_template_id, get_custom_prompt
 
 log = get_logger(__name__)
 

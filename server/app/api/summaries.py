@@ -5,6 +5,7 @@ management, and per-dump regenerate. Mirrors /v1/ocr/* in shape."""
 from __future__ import annotations
 
 import sqlite3
+import time
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -248,8 +249,8 @@ def summarize_dump(
                 detail=str(exc),
             ) from exc
         db.execute(
-            "UPDATE dumps SET summary_template = ? WHERE id = ?",
-            (selected, dump_id),
+            "UPDATE dumps SET summary_template = ?, updated_at = ? WHERE id = ?",
+            (selected, int(time.time()), dump_id),
         )
         from app.api.dumps import _publish_dump_change
 

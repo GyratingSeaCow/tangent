@@ -22,13 +22,13 @@ import pytest
 
 from app.db import init_db
 from app.services import summarizer_worker
+from app.summarize_infer import MODEL_FILENAME
 from app.summary_templates import (
     BRAIN_DUMP_PROMPT,
     CUSTOM_CONTRACT_SUFFIX,
     LECTURE_PROMPT,
     MEETING_PROMPT,
 )
-from app.summarize_infer import MODEL_FILENAME
 
 
 @pytest.fixture(autouse=True)
