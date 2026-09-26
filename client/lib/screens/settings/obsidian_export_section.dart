@@ -10,7 +10,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../services/obsidian_export.dart';
+import '../../services/transcript_markdown.dart';
 import '../../theme/tangent_tokens.dart';
+import 'settings_screen.dart' show settingsStoreProvider;
 
 class ObsidianExportSection extends ConsumerStatefulWidget {
   const ObsidianExportSection({super.key});
@@ -62,11 +64,48 @@ class _ObsidianExportSectionState extends ConsumerState<ObsidianExportSection> {
     }
   }
 
+  Future<void> _setTimestamps(bool value) async {
+    ref.read(obsidianMarkdownOptionsProvider.notifier).update(
+          (o) => TranscriptMarkdownOptions(
+            timestamps: value,
+            includeSummary: o.includeSummary,
+          ),
+        );
+    await ref.read(settingsStoreProvider).setObsidianExportTimestamps(value);
+  }
+
+  Future<void> _setSummary(bool value) async {
+    ref.read(obsidianMarkdownOptionsProvider.notifier).update(
+          (o) => TranscriptMarkdownOptions(
+            timestamps: o.timestamps,
+            includeSummary: value,
+          ),
+        );
+    await ref.read(settingsStoreProvider).setObsidianExportSummary(value);
+  }
+
   @override
   Widget build(BuildContext context) {
+    final options = ref.watch(obsidianMarkdownOptionsProvider);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        SwitchListTile(
+          key: const ValueKey<String>('obsidian-timestamps'),
+          title: const Text('Include timestamps'),
+          subtitle: const Text(
+            'One line per transcript segment, [mm:ss] Name: text',
+          ),
+          value: options.timestamps,
+          onChanged: _running ? null : _setTimestamps,
+        ),
+        SwitchListTile(
+          key: const ValueKey<String>('obsidian-summary'),
+          title: const Text('Include summary'),
+          subtitle: const Text('A Summary section when a recording has one'),
+          value: options.includeSummary,
+          onChanged: _running ? null : _setSummary,
+        ),
         ListTile(
           title: const Text('Export to Obsidian…'),
           subtitle: _running && _progress != null ? Text(_progress!) : null,
