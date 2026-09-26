@@ -8,6 +8,23 @@ re-derive it.
 
 ## 1. Open items
 
+### 1.15 Speaker name map — DONE (2026-09-26, v1.17.0)
+
+Shipped per `docs/design/2026-09-26-speaker-name-map.md` (N1=a look-up
+map, N2=y re-transcribe keeps names, N3=y one rename → every surface).
+Server + client (DB v20). Live E2E over the wire: push map → stored,
+transcript text untouched, invalid map 422, regenerated summary says
+'Jeff' where it said 'Speaker 1'. Live-DB back-fill probe on a copy of
+the Windows app DB (116 dumps): exactly the seeded 1.15.0-style dump
+converted, dirty for push, no collateral rows.
+
+Candidates left open (not built):
+- Meeting-notes digest (`meeting_notes`) still shows raw labels.
+- Renaming `[unattributed]`; a global name book; voice matching
+  (pyannote embeddings) so 'Jeff' is recognised on the next recording.
+- Ambiguous back-fill pairings are refused silently — surface a one-time
+  notice listing the recordings left as-is.
+
 ### 1.14 Timestamped Markdown export — DONE (2026-09-26, v1.16.0)
 
 Shipped per `docs/design/2026-09-26-timestamped-markdown-export.md`
