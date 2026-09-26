@@ -11,6 +11,9 @@
 /// applying a peer's metadata must not touch the local audio path.
 library;
 
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -174,6 +177,44 @@ void main() {
   }
 
   group('incoming recordings', () {
+    test('timings published for a recording THIS device made land on its row',
+        () async {
+      // Bench-verified: a recording made on the Fold, transcribed, synced
+      // (remote_only = 0, synced_seq set) never showed Listen mode even
+      // though the server's change feed carried transcript_timings and the
+      // device advanced past that seq. The payload below is byte-for-byte
+      // what /v1/sync/pull returned for seq 697 on 2026-09-25.
+      final Map<String, dynamic> wire = jsonDecode(
+        File('test/fixtures/wire_change_697.json').readAsStringSync(),
+      ) as Map<String, dynamic>;
+      final String id = wire['entity_id'] as String;
+      await seedLocal(id, title: 'Recording 2026-09-13 20-33-40');
+      // The device's own job poller stamped updated_at when the transcript
+      // landed — one second AFTER the server's row time in the payload
+      // (1790391041 vs 1790391040 on the Fold). Two clocks, two writers;
+      // the server-owned timings must still land.
+      await (db.update(db.dumps)..where((d) => d.id.equals(id))).write(
+        DumpsCompanion(
+          updatedAt: Value(
+            DateTime.fromMillisecondsSinceEpoch(1790391041 * 1000, isUtc: true),
+          ),
+        ),
+      );
+      await db.markDumpSynced(
+        id,
+        seq: 684,
+        pushedUpdatedAt: DateTime.utc(2026, 9, 18, 12),
+      );
+
+      await build(_ScriptedClient(incoming: [RemoteChange.fromJson(wire)]))
+          .syncNow();
+
+      final DumpRow row = (await db.getDumpRow(id))!;
+      expect(row.syncedSeq, 697);
+      expect(row.transcriptTimings, isNotNull);
+      expect(row.transcriptTimings, contains('"peaks"'));
+      expect(row.audioPath, isNotEmpty, reason: 'own audio survives');
+    });
     test('a recording from another device arrives in the list', () async {
       final client = _ScriptedClient(
         incoming: <RemoteChange>[dumpChange(id: 'dump-remote-1')],

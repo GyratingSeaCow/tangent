@@ -289,7 +289,17 @@ class DocumentSyncEngine extends ChangeNotifier {
     }
 
     final int remoteUpdatedAt = (payload['updated_at'] as num?)?.toInt() ?? 0;
+    // A change the SERVER authored (job completion, summary, timings
+    // backfill) carries fields no device can produce locally. It must land
+    // regardless of timestamps: the device that requested a transcription
+    // stamps its own updated_at when the transcript arrives, typically a
+    // second AFTER the server's row time, and the newer-wins shortcut below
+    // then discarded the server's timings on every Fold-made recording.
+    // Device-authored edits (a rename on the tablet) still compete on
+    // updated_at so a stale peer copy cannot roll back a local edit.
+    final bool serverAuthored = change.deviceId == serverDeviceId;
     if (local != null &&
+        !serverAuthored &&
         remoteUpdatedAt > 0 &&
         local.updatedAt.millisecondsSinceEpoch ~/ 1000 > remoteUpdatedAt) {
       // Our copy is newer than what the peer sent; nothing to learn from it.

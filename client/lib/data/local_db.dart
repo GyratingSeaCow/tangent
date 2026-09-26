@@ -950,6 +950,24 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     await (delete(dumps)..where((d) => d.id.equals(id))).go();
   }
 
+  /// Writes a consistent, self-contained copy of this database to [target].
+  ///
+  /// Diagnostics for release builds: a phone's data dir is unreadable
+  /// without `run-as` (debug only) or root, so the app writes its own copy
+  /// somewhere `adb pull` can reach. `VACUUM INTO` snapshots the live
+  /// connection including anything still in the WAL, which a plain file
+  /// copy of `tangent.sqlite` would miss. Metadata only — audio bytes never
+  /// live in this database. An existing file at [target] is replaced;
+  /// SQLite refuses to vacuum into a non-empty file.
+  Future<File> writeDiagnosticSnapshot(File target) async {
+    if (target.existsSync()) target.deleteSync();
+    target.parent.createSync(recursive: true);
+    // Single quotes inside the path would end the SQL literal early.
+    final escaped = target.path.replaceAll("'", "''");
+    await customStatement("VACUUM INTO '$escaped'");
+    return target;
+  }
+
   /// Records that this device has downloaded a remote recording's audio.
   Future<void> attachDownloadedAudio(
     String id, {
@@ -1384,7 +1402,8 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
       transaction(() async {
         await (update(storageLocations)..where((l) => l.id.equals(locationId)))
             .write(
-                const StorageLocationsCompanion(legacyRestore: Value(false)),);
+          const StorageLocationsCompanion(legacyRestore: Value(false)),
+        );
       });
 
   /// Resolve only persisted original ownership, never a current default.

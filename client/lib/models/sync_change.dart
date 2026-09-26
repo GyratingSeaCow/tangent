@@ -27,6 +27,12 @@ enum SyncOp {
 
 /// One change as it arrives from the server.
 @immutable
+
+/// The `device_id` the server writes on changes it authors itself —
+/// transcription results, summaries, timings backfills. Mirrors
+/// `SERVER_DEVICE_ID` in `server/app/api/dumps.py`.
+const String serverDeviceId = 'server';
+
 class RemoteChange {
   const RemoteChange({
     required this.seq,
