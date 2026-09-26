@@ -7,6 +7,7 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:drift/drift.dart' show Value;
 import 'package:tangent/data/local_db.dart';
 import 'package:tangent/screens/dump/dumps_list_screen.dart';
 import 'package:tangent/screens/dump/dumps_providers.dart';
@@ -82,6 +83,23 @@ void main() {
       find.byKey(const ValueKey('search-snippet-fixture-a')),
       findsNothing,
     );
+  });
+
+  test('a transcript snippet renders speaker labels through the row\'s map '
+      '(v1.17.0 §3)', () {
+    final DumpRow row = viewRow('fixture-a').copyWith(
+      speakerNames: const Value<String?>('{"Speaker 1":"Jeff"}'),
+    );
+    const match = DumpSearchMatch(
+      snippet: '…Speaker 1: the <b>budget</b> is tight\nSpeaker 2: ok',
+      matchCount: 1,
+      titleMatched: false,
+    );
+    expect(searchSnippetRuns(row, match, 'budget'), <SnippetRun>[
+      (text: '…Jeff: the ', bold: false),
+      (text: 'budget', bold: true),
+      (text: ' is tight\nSpeaker 2: ok', bold: false),
+    ]);
   });
 
   test('a title hit bolds the matched phrase in the title', () {

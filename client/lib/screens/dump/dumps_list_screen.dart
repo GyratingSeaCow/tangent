@@ -22,6 +22,8 @@ import '../home/home_providers.dart' show documentSyncEngineProvider;
 import '../../services/bulk_dump_actions.dart';
 import '../../services/markdown_export.dart';
 import '../../services/server_transcription_service.dart';
+import '../../models/speaker_names.dart';
+import '../../services/render_speaker_names.dart';
 import '../../services/speaker_naming.dart' show detectSpeakers;
 import '../../services/synced_audio_download.dart';
 import '../../services/transcript_search.dart'
@@ -1352,14 +1354,22 @@ class _DumpListState extends State<_DumpList> {
 
 /// The runs a search-result row shows under its title. A title hit shows
 /// the title with the matched phrase bold; otherwise the DB's transcript
-/// snippet (already `<b>`-marked) is split into runs. Top-level so tests
-/// and other lists can share it.
+/// snippet (already `<b>`-marked) is rendered through the row's speaker
+/// name map (spec §3 — the FTS index stays on the raw text) and split
+/// into runs. Top-level so tests and other lists can share it.
 List<SnippetRun> searchSnippetRuns(
   DumpRow dump,
   DumpSearchMatch match,
   String query,
 ) {
-  if (!match.titleMatched) return parseSnippet(match.snippet);
+  if (!match.titleMatched) {
+    return parseSnippet(
+      renderSnippetSpeakerNames(
+        match.snippet,
+        SpeakerNames.decode(dump.speakerNames),
+      ),
+    );
+  }
   final String title = dump.title;
   final List<SnippetRun> runs = <SnippetRun>[];
   int cursor = 0;
@@ -1374,6 +1384,19 @@ List<SnippetRun> searchSnippetRuns(
     runs.add((text: title.substring(cursor), bold: false));
   }
   return runs;
+}
+
+/// [renderSpeakerNames] for an FTS5 snippet: the leading `…` marks a window
+/// cut mid-text, so the label rule (line start) is applied to what follows
+/// it; every later line renders as usual.
+String renderSnippetSpeakerNames(String snippet, SpeakerNames names) {
+  if (names.isEmpty) return snippet;
+  const String ellipsis = '…';
+  if (snippet.startsWith(ellipsis)) {
+    return ellipsis +
+        renderSpeakerNames(snippet.substring(ellipsis.length), names);
+  }
+  return renderSpeakerNames(snippet, names);
 }
 
 /// Shared by the list rows and the long-press sheet, so the wording a user
