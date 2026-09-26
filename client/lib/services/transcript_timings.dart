@@ -62,12 +62,17 @@ final class TimedSegment {
 
 /// A recording's complete timing data.
 final class TranscriptTimings {
-  TranscriptTimings._(this.segments)
+  TranscriptTimings._(this.segments, this.peaks)
       : allWords = List.unmodifiable(
           [for (final s in segments) ...s.words],
         );
 
   final List<TimedSegment> segments;
+
+  /// Server-computed RMS buckets (0–1, spec §3.6) for the waveform strip.
+  /// Empty on backfilled legacy rows: the strip draws flat.
+  final List<double> peaks;
+  bool get hasPeaks => peaks.isNotEmpty;
 
   /// Every word in order, flattened — the unit the karaoke highlight and
   /// tap-to-seek work on.
@@ -106,7 +111,17 @@ final class TranscriptTimings {
       if (seg != null) segments.add(seg);
     }
     if (segments.isEmpty) return null;
-    return TranscriptTimings._(List.unmodifiable(segments));
+    final peaks = <double>[];
+    final rawPeaks = decoded is Map ? decoded['peaks'] : null;
+    if (rawPeaks is List) {
+      for (final p in rawPeaks) {
+        if (p is num) peaks.add(p.toDouble().clamp(0.0, 1.0));
+      }
+    }
+    return TranscriptTimings._(
+      List.unmodifiable(segments),
+      List.unmodifiable(peaks),
+    );
   }
 
   static TimedSegment? _segment(Object? entry) {
@@ -159,19 +174,28 @@ final class TranscriptTimings {
 
   String toJson() => jsonEncode({
         'segments': [for (final s in segments) s.toJson()],
+        'peaks': peaks,
       });
 
   /// Index into [allWords] for playback [position] (seconds), or null
   /// when the position falls in a gap, before the first word, or after
   /// the last. Start inclusive, end exclusive. Binary search: the
   /// karaoke highlight calls this on every position tick.
-  int? currentWordIndex(double position) => _find(allWords.length, position,
-      (i) => allWords[i].start, (i) => allWords[i].end,);
+  int? currentWordIndex(double position) => _find(
+        allWords.length,
+        position,
+        (i) => allWords[i].start,
+        (i) => allWords[i].end,
+      );
 
   /// Same as [currentWordIndex] but over segments — the fallback for
   /// segment-only recordings.
-  int? currentSegmentIndex(double position) => _find(segments.length, position,
-      (i) => segments[i].start, (i) => segments[i].end,);
+  int? currentSegmentIndex(double position) => _find(
+        segments.length,
+        position,
+        (i) => segments[i].start,
+        (i) => segments[i].end,
+      );
 
   static int? _find(
     int n,

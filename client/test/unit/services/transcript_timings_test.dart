@@ -45,8 +45,11 @@ void main() {
       expect(TranscriptTimings.parse('not json'), isNull);
       expect(TranscriptTimings.parse('42'), isNull);
       expect(TranscriptTimings.parse('{"segments": "nope"}'), isNull);
-      expect(TranscriptTimings.parse('{"segments": []}'), isNull,
-          reason: 'no segments = no timings',);
+      expect(
+        TranscriptTimings.parse('{"segments": []}'),
+        isNull,
+        reason: 'no segments = no timings',
+      );
     });
 
     test('drops malformed entries but keeps the good ones', () {
@@ -62,10 +65,31 @@ void main() {
         ]}
       ]}''');
       expect(t!.segments, hasLength(1));
-      expect(t.segments.single.words.map((w) => w.text), ['ok'],
-          reason: 'empty word, missing word, and end<start are dropped',);
-      expect(t.segments.single.words.single.confidence, 1.0,
-          reason: 'missing p defaults to confident',);
+      expect(
+        t.segments.single.words.map((w) => w.text),
+        ['ok'],
+        reason: 'empty word, missing word, and end<start are dropped',
+      );
+      expect(
+        t.segments.single.words.single.confidence,
+        1.0,
+        reason: 'missing p defaults to confident',
+      );
+    });
+
+    test('peaks ride in the envelope, clamped, absent on bare lists', () {
+      final t = TranscriptTimings.parse(
+        '{"segments":[{"start":0,"end":1,"text":"a","words":[]}],'
+        '"peaks":[0.0, 0.5, 1.0, 1.7, -0.2, "x"]}',
+      )!;
+      expect(t.hasPeaks, isTrue);
+      expect(t.peaks, [0.0, 0.5, 1.0, 1.0, 0.0],
+          reason: 'clamped, junk dropped',);
+      final bare = TranscriptTimings.parse(
+        '[{"start":0,"end":1,"text":"a","words":[]}]',
+      )!;
+      expect(bare.hasPeaks, isFalse);
+      expect(TranscriptTimings.parse(bare.toJson())!.peaks, isEmpty);
     });
 
     test('round-trips through toJson', () {
@@ -143,7 +167,9 @@ void main() {
     test('timings + local audio → Listen', () {
       expect(defaultListenMode(timings: withWords, audioLocal: true), isTrue);
       expect(
-          defaultListenMode(timings: segmentsOnly, audioLocal: true), isTrue,);
+        defaultListenMode(timings: segmentsOnly, audioLocal: true),
+        isTrue,
+      );
     });
     test('timings without local audio → still Listen (download affordance)',
         () {

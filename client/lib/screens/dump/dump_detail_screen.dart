@@ -18,6 +18,7 @@ import '../../services/meeting_notes_processor.dart';
 import '../../services/recording_playback.dart';
 import '../../services/transcript_timings.dart';
 import '../../widgets/listen_transcript_view.dart';
+import '../../widgets/waveform_scrubber.dart';
 import 'dumps_providers.dart';
 import '../../services/transcription_notifications.dart'
     show describedWhisperModel;
@@ -996,6 +997,27 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
             // Bounded height so the page still scrolls as one list and
             // the action row keeps its inset.
             if (mode == DumpMode.meeting) _listenToggle(listen),
+            // Waveform scrubber (spec §3.6): peaks are server-computed and
+            // ride with the timings, so it draws even before the audio is
+            // local; tapping it then routes to the download affordance.
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: WaveformScrubber(
+                key: ValueKey('waveform-${widget.dumpId}'),
+                peaks: timings.peaks,
+                position: _playhead,
+                duration: _playbackController != null &&
+                        _playbackController!.state.duration > Duration.zero
+                    ? _playbackController!.state.duration
+                    : Duration(seconds: row.durationSeconds),
+                onSeek: (t) => unawaited(_seekAndPlay(t)),
+                enabled: _playbackController != null &&
+                    _playbackController!.state.error == null,
+                onDisabledTap: ref.read(syncedAudioDownloaderProvider) == null
+                    ? null
+                    : () => unawaited(_downloadAudioForListen()),
+              ),
+            ),
             SizedBox(
               height: 360,
               child: Card(

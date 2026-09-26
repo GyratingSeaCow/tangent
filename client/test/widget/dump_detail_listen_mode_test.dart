@@ -161,6 +161,23 @@ void main() {
     await tester.pump(const Duration(milliseconds: 1));
   });
 
+  testWidgets('the waveform scrubber is mounted in Listen and seeks',
+      (tester) async {
+    final (_, _, player) = await _mount(tester, timings: _timings);
+    final strip = find.byKey(const ValueKey('waveform-fixture-listen'));
+    expect(strip, findsOneWidget);
+    final box = tester.getRect(strip);
+    // Row duration is 3 s; tap at the midpoint → 1.5 s, no lead-in.
+    await tester.tapAt(Offset(box.left + box.width / 2, box.center.dy));
+    await tester.pumpAndSettle();
+    expect(player.seeks, [const Duration(milliseconds: 1500)]);
+    expect(player.plays, 1);
+    // Unmount inside the test body so Drift stream-close timers flush before
+    // the framework's pending-timer invariant (dump_detail pattern).
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(milliseconds: 1));
+  });
+
   testWidgets('Edit brings the editor back; Listen returns', (tester) async {
     await _mount(tester, timings: _timings);
     await tester.tap(find.text('Edit'));
