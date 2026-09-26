@@ -161,6 +161,18 @@ final filteredDumpsProvider = Provider<AsyncValue<List<DumpRow>>>((ref) {
 /// Reactive search across title + transcript, constrained by both filters.
 final searchQueryProvider = StateProvider<String>((_) => '');
 
+/// Per-row snippet + match count for the active search (search-depth spec
+/// §2). Keyed by dump id; empty while no search is active. Kept separate
+/// from [searchResultsProvider] so the row list is unaffected by it.
+final searchMatchesProvider =
+    StreamProvider<Map<String, DumpSearchMatch>>((ref) {
+  final query = ref.watch(searchQueryProvider);
+  if (query.trim().isEmpty) {
+    return Stream.value(const <String, DumpSearchMatch>{});
+  }
+  return ref.watch(localDbProvider).watchSearchDumpMatches(query.trim());
+});
+
 final searchResultsProvider = StreamProvider<List<DumpRow>>((ref) {
   final query = ref.watch(searchQueryProvider);
   final modeFilter = ref.watch(dumpModeFilterProvider);

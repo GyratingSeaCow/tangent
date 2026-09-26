@@ -21,6 +21,8 @@ import '../../services/bulk_dump_actions.dart';
 import '../../services/server_transcription_service.dart';
 import '../../services/summaries_client.dart';
 import '../../services/synced_audio_download.dart';
+import '../../services/transcript_search.dart'
+    show DumpSearchMatch, SnippetRun, findTranscriptMatches, parseSnippet;
 import '../home/home_providers.dart' show serverTranscriptionServiceProvider;
 import '../settings/ai_summaries_section.dart'
     show summariesClientProvider, summariesEnabledProvider;
@@ -435,6 +437,13 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
                               empty: showingSearch
                                   ? 'No matches'
                                   : 'No dumps yet — record one!',
+                              searchQuery: showingSearch ? query.trim() : '',
+                              searchMatches: showingSearch
+                                  ? ref
+                                          .watch(searchMatchesProvider)
+                                          .valueOrNull ??
+                                      const <String, DumpSearchMatch>{}
+                                  : const <String, DumpSearchMatch>{},
                               onOpen: widget.onOpenDump,
                               selection: selection,
                               eligibility: eligibility,
@@ -611,12 +620,14 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
         if (widget.onOpenDump != null) {
           widget.onOpenDump!(context, dump);
         } else {
+          final String openQuery = ref.read(searchQueryProvider).trim();
           await Navigator.of(context).push<void>(
             MaterialPageRoute<void>(
               builder: (_) => DumpDetailScreen(
                 dumpId: dump.id,
                 audioPath: dump.audioPath,
                 durationSeconds: dump.durationSeconds,
+                initialSearchQuery: openQuery.isEmpty ? null : openQuery,
               ),
             ),
           );
@@ -980,7 +991,17 @@ class _DumpList extends StatefulWidget {
     this.onLongPressItem,
     this.folders = const <FolderSummary>[],
     this.onHeaderLongPress,
+    this.searchQuery = '',
+    this.searchMatches = const <String, DumpSearchMatch>{},
   });
+
+  /// The active search, or '' when browsing. Non-empty means rows carry a
+  /// snippet line and opening one hands the query to the detail screen so
+  /// it can land on the first hit.
+  final String searchQuery;
+
+  /// Per-row snippet + match count for [searchQuery]; empty when browsing.
+  final Map<String, DumpSearchMatch> searchMatches;
 
   /// Folders presented as section headers, mirroring the notebooks list.
   final List<FolderSummary> folders;
@@ -1120,6 +1141,9 @@ class _DumpListState extends State<_DumpList> {
               dumpId: dump.id,
               status: transcription,
             );
+            final DumpSearchMatch? match = widget.searchQuery.isEmpty
+                ? null
+                : widget.searchMatches[dump.id];
             final subtitle = Row(
               children: [
                 _SyncBadge(status: sync),
@@ -1162,6 +1186,55 @@ class _DumpListState extends State<_DumpList> {
                 ),
               ],
             );
+            // Search-depth spec §2: one snippet line under the title (bold
+            // runs are the hits) plus an 'N matches' chip only when there
+            // is more than one, so a single hit does not shout.
+            final Widget subtitleBody = match == null
+                ? subtitle
+                : Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text.rich(
+                              TextSpan(
+                                children: [
+                                  for (final SnippetRun run
+                                      in searchSnippetRuns(
+                                    dump,
+                                    match,
+                                    widget.searchQuery,
+                                  ))
+                                    TextSpan(
+                                      text: run.text,
+                                      style: run.bold
+                                          ? const TextStyle(
+                                              fontWeight: FontWeight.bold,
+                                            )
+                                          : null,
+                                    ),
+                                ],
+                              ),
+                              key: ValueKey('search-snippet-${dump.id}'),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          if (match.matchCount > 1) ...[
+                            const SizedBox(width: 8),
+                            Text(
+                              '${match.matchCount} matches',
+                              key: ValueKey('search-match-count-${dump.id}'),
+                              style: Theme.of(context).textTheme.labelSmall,
+                            ),
+                          ],
+                        ],
+                      ),
+                      const SizedBox(height: 2),
+                      subtitle,
+                    ],
+                  );
             // Desktop: right-click is this app's long-press. GestureDetector
             // wrapper because ListTile exposes no onSecondaryTap of its own.
             return GestureDetector(
@@ -1200,9 +1273,13 @@ class _DumpListState extends State<_DumpList> {
                 subtitle: compact
                     ? Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [subtitle, const SizedBox(height: 4), pill],
+                        children: [
+                          subtitleBody,
+                          const SizedBox(height: 4),
+                          pill,
+                        ],
                       )
-                    : subtitle,
+                    : subtitleBody,
                 // The ⋮ button carries per-item actions, so long-press can stay
                 // multi-select. Hidden during selection: a menu that mutates one
                 // row while several are selected is ambiguous, and the toolbar
@@ -1242,6 +1319,9 @@ class _DumpListState extends State<_DumpList> {
                                 dumpId: dump.id,
                                 audioPath: dump.audioPath,
                                 durationSeconds: dump.durationSeconds,
+                                initialSearchQuery: widget.searchQuery.isEmpty
+                                    ? null
+                                    : widget.searchQuery,
                               ),
                             ),
                           ),
@@ -1252,6 +1332,32 @@ class _DumpListState extends State<_DumpList> {
       },
     );
   }
+}
+
+/// The runs a search-result row shows under its title. A title hit shows
+/// the title with the matched phrase bold; otherwise the DB's transcript
+/// snippet (already `<b>`-marked) is split into runs. Top-level so tests
+/// and other lists can share it.
+List<SnippetRun> searchSnippetRuns(
+  DumpRow dump,
+  DumpSearchMatch match,
+  String query,
+) {
+  if (!match.titleMatched) return parseSnippet(match.snippet);
+  final String title = dump.title;
+  final List<SnippetRun> runs = <SnippetRun>[];
+  int cursor = 0;
+  for (final TextRange r in findTranscriptMatches(title, query)) {
+    if (r.start > cursor) {
+      runs.add((text: title.substring(cursor, r.start), bold: false));
+    }
+    runs.add((text: title.substring(r.start, r.end), bold: true));
+    cursor = r.end;
+  }
+  if (cursor < title.length) {
+    runs.add((text: title.substring(cursor), bold: false));
+  }
+  return runs;
 }
 
 /// Shared by the list rows and the long-press sheet, so the wording a user
