@@ -109,10 +109,18 @@ def run_job_inline(job_id: str, audio_path: str) -> None:
             (_now_ts(), job_id),
         )
         db.execute(
-            "UPDATE dumps SET transcript_timings = NULL, timings_version = NULL "
+            "UPDATE dumps SET transcript_timings = NULL, timings_version = NULL, "
+            "updated_at = ? "
             "WHERE id = (SELECT dump_id FROM jobs WHERE id = ?)",
-            (job_id,),
+            (_now_ts(), job_id),
         )
+        from app.api.dumps import _publish_dump_change
+
+        dump_id_row = db.execute(
+            "SELECT dump_id FROM jobs WHERE id = ?", (job_id,)
+        ).fetchone()
+        if dump_id_row is not None:
+            _publish_dump_change(db, dump_id_row["dump_id"], None)
         db.commit()
 
         # Look up the job's model choice

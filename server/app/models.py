@@ -6,7 +6,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 DumpMode = Literal["brain_dump", "meeting", "text_note"]
 JobStatus = Literal["queued", "running", "completed", "failed"]
@@ -75,6 +75,8 @@ class TranscriptSegment(BaseModel):
     start/end are elapsed seconds from the start of the audio (not wall-clock).
     speaker is null unless speaker diarization actually ran.
     """
+
+    model_config = ConfigDict(extra="allow")
 
     start: float
     end: float
