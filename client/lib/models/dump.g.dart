@@ -26,6 +26,7 @@ _$DumpImpl _$$DumpImplFromJson(Map<String, dynamic> json) => _$DumpImpl(
           : DateTime.parse(json['summarized_at'] as String),
       transcriptTimings: json['transcript_timings'] as String?,
       summaryTemplate: json['summary_template'] as String?,
+      speakerNames: json['speaker_names'] as String?,
     );
 
 Map<String, dynamic> _$$DumpImplToJson(_$DumpImpl instance) =>
@@ -47,6 +48,7 @@ Map<String, dynamic> _$$DumpImplToJson(_$DumpImpl instance) =>
       'summarized_at': instance.summarizedAt?.toIso8601String(),
       'transcript_timings': instance.transcriptTimings,
       'summary_template': instance.summaryTemplate,
+      'speaker_names': instance.speakerNames,
     };
 
 const _$DumpModeEnumMap = {

@@ -60,6 +60,11 @@ mixin _$Dump {
   @JsonKey(name: 'summary_template')
   String? get summaryTemplate => throw _privateConstructorUsedError;
 
+  /// Per-recording speaker name map as JSON text (`{"Speaker 1":"Jeff"}`),
+  /// device-authored; null = no names (see models/speaker_names.dart).
+  @JsonKey(name: 'speaker_names')
+  String? get speakerNames => throw _privateConstructorUsedError;
+
   /// Serializes this Dump to a JSON map.
   Map<String, dynamic> toJson() => throw _privateConstructorUsedError;
 
@@ -91,7 +96,8 @@ abstract class $DumpCopyWith<$Res> {
       @JsonKey(name: 'summary_model') String? summaryModel,
       @JsonKey(name: 'summarized_at') DateTime? summarizedAt,
       @JsonKey(name: 'transcript_timings') String? transcriptTimings,
-      @JsonKey(name: 'summary_template') String? summaryTemplate});
+      @JsonKey(name: 'summary_template') String? summaryTemplate,
+      @JsonKey(name: 'speaker_names') String? speakerNames});
 }
 
 /// @nodoc
@@ -126,6 +132,7 @@ class _$DumpCopyWithImpl<$Res, $Val extends Dump>
     Object? summarizedAt = freezed,
     Object? transcriptTimings = freezed,
     Object? summaryTemplate = freezed,
+    Object? speakerNames = freezed,
   }) {
     return _then(_value.copyWith(
       id: null == id
@@ -196,6 +203,10 @@ class _$DumpCopyWithImpl<$Res, $Val extends Dump>
           ? _value.summaryTemplate
           : summaryTemplate // ignore: cast_nullable_to_non_nullable
               as String?,
+      speakerNames: freezed == speakerNames
+          ? _value.speakerNames
+          : speakerNames // ignore: cast_nullable_to_non_nullable
+              as String?,
     ) as $Val);
   }
 }
@@ -224,7 +235,8 @@ abstract class _$$DumpImplCopyWith<$Res> implements $DumpCopyWith<$Res> {
       @JsonKey(name: 'summary_model') String? summaryModel,
       @JsonKey(name: 'summarized_at') DateTime? summarizedAt,
       @JsonKey(name: 'transcript_timings') String? transcriptTimings,
-      @JsonKey(name: 'summary_template') String? summaryTemplate});
+      @JsonKey(name: 'summary_template') String? summaryTemplate,
+      @JsonKey(name: 'speaker_names') String? speakerNames});
 }
 
 /// @nodoc
@@ -256,6 +268,7 @@ class __$$DumpImplCopyWithImpl<$Res>
     Object? summarizedAt = freezed,
     Object? transcriptTimings = freezed,
     Object? summaryTemplate = freezed,
+    Object? speakerNames = freezed,
   }) {
     return _then(_$DumpImpl(
       id: null == id
@@ -326,6 +339,10 @@ class __$$DumpImplCopyWithImpl<$Res>
           ? _value.summaryTemplate
           : summaryTemplate // ignore: cast_nullable_to_non_nullable
               as String?,
+      speakerNames: freezed == speakerNames
+          ? _value.speakerNames
+          : speakerNames // ignore: cast_nullable_to_non_nullable
+              as String?,
     ));
   }
 }
@@ -351,7 +368,8 @@ class _$DumpImpl implements _Dump {
       @JsonKey(name: 'summary_model') this.summaryModel,
       @JsonKey(name: 'summarized_at') this.summarizedAt,
       @JsonKey(name: 'transcript_timings') this.transcriptTimings,
-      @JsonKey(name: 'summary_template') this.summaryTemplate});
+      @JsonKey(name: 'summary_template') this.summaryTemplate,
+      @JsonKey(name: 'speaker_names') this.speakerNames});
 
   factory _$DumpImpl.fromJson(Map<String, dynamic> json) =>
       _$$DumpImplFromJson(json);
@@ -413,9 +431,15 @@ class _$DumpImpl implements _Dump {
   @JsonKey(name: 'summary_template')
   final String? summaryTemplate;
 
+  /// Per-recording speaker name map as JSON text (`{"Speaker 1":"Jeff"}`),
+  /// device-authored; null = no names (see models/speaker_names.dart).
+  @override
+  @JsonKey(name: 'speaker_names')
+  final String? speakerNames;
+
   @override
   String toString() {
-    return 'Dump(id: $id, createdAt: $createdAt, updatedAt: $updatedAt, mode: $mode, durationSeconds: $durationSeconds, title: $title, transcript: $transcript, audioPath: $audioPath, audioSizeBytes: $audioSizeBytes, syncStatus: $syncStatus, syncAttempts: $syncAttempts, lastSyncError: $lastSyncError, summary: $summary, summaryModel: $summaryModel, summarizedAt: $summarizedAt, transcriptTimings: $transcriptTimings, summaryTemplate: $summaryTemplate)';
+    return 'Dump(id: $id, createdAt: $createdAt, updatedAt: $updatedAt, mode: $mode, durationSeconds: $durationSeconds, title: $title, transcript: $transcript, audioPath: $audioPath, audioSizeBytes: $audioSizeBytes, syncStatus: $syncStatus, syncAttempts: $syncAttempts, lastSyncError: $lastSyncError, summary: $summary, summaryModel: $summaryModel, summarizedAt: $summarizedAt, transcriptTimings: $transcriptTimings, summaryTemplate: $summaryTemplate, speakerNames: $speakerNames)';
   }
 
   @override
@@ -452,7 +476,9 @@ class _$DumpImpl implements _Dump {
             (identical(other.transcriptTimings, transcriptTimings) ||
                 other.transcriptTimings == transcriptTimings) &&
             (identical(other.summaryTemplate, summaryTemplate) ||
-                other.summaryTemplate == summaryTemplate));
+                other.summaryTemplate == summaryTemplate) &&
+            (identical(other.speakerNames, speakerNames) ||
+                other.speakerNames == speakerNames));
   }
 
   @JsonKey(includeFromJson: false, includeToJson: false)
@@ -475,7 +501,8 @@ class _$DumpImpl implements _Dump {
       summaryModel,
       summarizedAt,
       transcriptTimings,
-      summaryTemplate);
+      summaryTemplate,
+      speakerNames);
 
   /// Create a copy of Dump
   /// with the given fields replaced by the non-null parameter values.
@@ -495,24 +522,24 @@ class _$DumpImpl implements _Dump {
 
 abstract class _Dump implements Dump {
   const factory _Dump(
-          {required final String id,
-          required final DateTime createdAt,
-          required final DateTime updatedAt,
-          required final DumpMode mode,
-          required final int durationSeconds,
-          required final String title,
-          final String? transcript,
-          @JsonKey(name: 'audio_path') required final String audioPath,
-          @JsonKey(name: 'audio_size_bytes') required final int audioSizeBytes,
-          @JsonKey(name: 'sync_status') required final SyncStatus syncStatus,
-          @JsonKey(name: 'sync_attempts') final int syncAttempts,
-          @JsonKey(name: 'last_sync_error') final String? lastSyncError,
-          final String? summary,
-          @JsonKey(name: 'summary_model') final String? summaryModel,
-          @JsonKey(name: 'summarized_at') final DateTime? summarizedAt,
-          @JsonKey(name: 'transcript_timings') final String? transcriptTimings,
-          @JsonKey(name: 'summary_template') final String? summaryTemplate}) =
-      _$DumpImpl;
+      {required final String id,
+      required final DateTime createdAt,
+      required final DateTime updatedAt,
+      required final DumpMode mode,
+      required final int durationSeconds,
+      required final String title,
+      final String? transcript,
+      @JsonKey(name: 'audio_path') required final String audioPath,
+      @JsonKey(name: 'audio_size_bytes') required final int audioSizeBytes,
+      @JsonKey(name: 'sync_status') required final SyncStatus syncStatus,
+      @JsonKey(name: 'sync_attempts') final int syncAttempts,
+      @JsonKey(name: 'last_sync_error') final String? lastSyncError,
+      final String? summary,
+      @JsonKey(name: 'summary_model') final String? summaryModel,
+      @JsonKey(name: 'summarized_at') final DateTime? summarizedAt,
+      @JsonKey(name: 'transcript_timings') final String? transcriptTimings,
+      @JsonKey(name: 'summary_template') final String? summaryTemplate,
+      @JsonKey(name: 'speaker_names') final String? speakerNames}) = _$DumpImpl;
 
   factory _Dump.fromJson(Map<String, dynamic> json) = _$DumpImpl.fromJson;
 
@@ -572,6 +599,12 @@ abstract class _Dump implements Dump {
   @override
   @JsonKey(name: 'summary_template')
   String? get summaryTemplate;
+
+  /// Per-recording speaker name map as JSON text (`{"Speaker 1":"Jeff"}`),
+  /// device-authored; null = no names (see models/speaker_names.dart).
+  @override
+  @JsonKey(name: 'speaker_names')
+  String? get speakerNames;
 
   /// Create a copy of Dump
   /// with the given fields replaced by the non-null parameter values.

@@ -41,6 +41,10 @@ class Dump with _$Dump {
     /// The summary template id the server last used for this recording
     /// (server-owned; null = mode default).
     @JsonKey(name: 'summary_template') String? summaryTemplate,
+
+    /// Per-recording speaker name map as JSON text (`{"Speaker 1":"Jeff"}`),
+    /// device-authored; null = no names (see models/speaker_names.dart).
+    @JsonKey(name: 'speaker_names') String? speakerNames,
   }) = _Dump;
 
   factory Dump.fromJson(Map<String, dynamic> json) => _$DumpFromJson(json);
