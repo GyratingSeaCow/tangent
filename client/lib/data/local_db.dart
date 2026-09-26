@@ -1922,6 +1922,25 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     });
   }
 
+  /// Transcripts that carry at least one `## ` heading, newest first —
+  /// the source for the Name-speakers sheet's tap-to-fill chips
+  /// (speaker-naming spec §3). Read-only; `suggestedSpeakerNames` does the
+  /// filtering in Dart. (The spec's `deleted_at IS NULL` clause is moot:
+  /// `dumps` has no soft-delete column — deleted dumps are removed.)
+  @override
+  Future<List<String>> recentTranscriptsForSpeakerSuggestions({
+    int limit = 50,
+  }) async {
+    final rows = await customSelect(
+      'SELECT transcript FROM dumps '
+      'WHERE transcript LIKE ? '
+      'ORDER BY updated_at DESC LIMIT ?',
+      variables: [Variable.withString('%## %'), Variable.withInt(limit)],
+      readsFrom: {dumps},
+    ).get();
+    return [for (final row in rows) row.read<String>('transcript')];
+  }
+
   /// Search across title and transcript using FTS5.
   Future<List<DumpRow>> searchDumps(String query, {int limit = 50}) {
     final escaped = query.replaceAll('"', '""');
