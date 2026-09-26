@@ -1028,8 +1028,7 @@ void main() {
     final first = service.transcribeDump('r1');
     final second = service.transcribeDump('r2');
     await writerStarted.future.timeout(kDeadlockGuard);
-    await Future.wait([first, second])
-        .timeout(kDeadlockGuard);
+    await Future.wait([first, second]).timeout(kDeadlockGuard);
 
     var firstRow = (await db.getDump('r1'))!;
     final secondRow = (await db.getDump('r2'))!;
@@ -1042,8 +1041,7 @@ void main() {
     expect(fake.enqueueCalls, 2);
 
     releaseWriter.complete();
-    final repairDeadline =
-        DateTime.now().add(const Duration(milliseconds: 200));
+    final repairDeadline = DateTime.now().add(const Duration(seconds: 15));
     while (true) {
       firstRow = (await db.getDump('r1'))!;
       if (firstRow.transcriptionError == null) break;
@@ -1545,8 +1543,7 @@ void main() {
       const JobEvent('error', {'error': 'local observer disconnected'}),
     );
     await operation.timeout(kDeadlockGuard);
-    await recoveryStreamStarted.future
-        .timeout(kDeadlockGuard);
+    await recoveryStreamStarted.future.timeout(kDeadlockGuard);
 
     final deadline = DateTime.now().add(const Duration(seconds: 2));
     late DumpRow recovered;
@@ -2819,7 +2816,7 @@ void main() {
 
     await service.reconcilePending();
 
-    final deadline = DateTime.now().add(const Duration(milliseconds: 200));
+    final deadline = DateTime.now().add(const Duration(seconds: 15));
     late DumpRow recovered;
     while (true) {
       recovered = (await db.getDump('r1'))!;
@@ -2884,7 +2881,7 @@ void main() {
 
     await service.reconcilePending();
 
-    final deadline = DateTime.now().add(const Duration(milliseconds: 300));
+    final deadline = DateTime.now().add(const Duration(seconds: 15));
     late DumpRow recovered;
     while (true) {
       recovered = (await db.getDump('r1'))!;
@@ -2981,7 +2978,11 @@ void main() {
     addTearDown(service.dispose);
 
     await service.reconcilePending();
-    final firstDeadline = DateTime.now().add(const Duration(milliseconds: 200));
+    // Generous on purpose: the loop exits the moment recovery lands, so
+    // healthy runs never wait this long — but a loaded CI runner can take
+    // well over 200 ms to schedule the recovery future, and that flaked
+    // the v1.12.0 release APK job. Same rule as the server's _wait_for.
+    final firstDeadline = DateTime.now().add(const Duration(seconds: 15));
     while (true) {
       final recovered = (await db.getDump('r1'))!;
       if (recovered.transcript == 'first recovered transcript' &&
@@ -2995,8 +2996,7 @@ void main() {
     }
 
     await service.transcribeDump('r1');
-    final secondDeadline =
-        DateTime.now().add(const Duration(milliseconds: 200));
+    final secondDeadline = DateTime.now().add(const Duration(seconds: 15));
     while (true) {
       final recovered = (await db.getDump('r1'))!;
       if (recovered.transcript == 'second recovered transcript' &&
@@ -3057,7 +3057,7 @@ void main() {
     );
 
     await service.reconcilePending();
-    final armedDeadline = DateTime.now().add(const Duration(milliseconds: 200));
+    final armedDeadline = DateTime.now().add(const Duration(seconds: 15));
     while (streamCalls < 2) {
       if (DateTime.now().isAfter(armedDeadline)) {
         fail('delayed retry was not armed');
@@ -3396,8 +3396,7 @@ void main() {
     addTearDown(service.dispose);
 
     await service.reconcilePending().timeout(kDeadlockGuard);
-    final replayDeadline =
-        DateTime.now().add(const Duration(milliseconds: 200));
+    final replayDeadline = DateTime.now().add(const Duration(seconds: 15));
     while (fake.enqueueCalls < 2) {
       if (DateTime.now().isAfter(replayDeadline)) {
         fail('timed-out enqueue did not replay its durable request ID');
@@ -3673,8 +3672,7 @@ void main() {
     expect(secondRow.transcriptionError, isNull);
 
     releaseWriter.complete();
-    final repairDeadline =
-        DateTime.now().add(const Duration(milliseconds: 200));
+    final repairDeadline = DateTime.now().add(const Duration(seconds: 15));
     while (true) {
       final firstRow = (await db.getDump('r1'))!;
       if (firstRow.transcriptionError == null) break;
@@ -4329,7 +4327,7 @@ void main() {
 
     await service.transcribeDump('r1');
 
-    final deadline = DateTime.now().add(const Duration(milliseconds: 200));
+    final deadline = DateTime.now().add(const Duration(seconds: 15));
     late DumpRow saved;
     while (true) {
       saved = (await db.getDump('r1'))!;
@@ -4839,8 +4837,7 @@ void main() {
     });
   }
 
-  test(
-      'the notification shade follows real transcription activity end to end',
+  test('the notification shade follows real transcription activity end to end',
       () async {
     // The SEAM test. The notifier and its port are each unit-tested, and both
     // can be perfectly correct while nothing subscribes them to the service —
@@ -5846,5 +5843,4 @@ void main() {
       'Recovered two.',
     );
   });
-
 }
