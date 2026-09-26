@@ -8,6 +8,21 @@ re-derive it.
 
 ## 1. Open items
 
+### 1.12 Custom vocabulary (hotwords) — DONE (2026-09-26, v1.14.0)
+
+Shipped per `docs/design/2026-09-26-custom-vocabulary.md` (decisions a/y/a).
+Live proof on the 1.14.0 container with a TTS clip: BEFORE `CacheOS` ×2 +
+`FasterWhisper`; AFTER (list = Hermes, CachyOS, Tangent, faster-whisper)
+all four spelled exactly. Log carried `hotword_terms=4`, never the terms.
+
+Candidates left open (not built):
+- Per-folder / per-mode lists (V1=b/c).
+- Auto-suggest terms from the user's own transcript edits (diff old vs new).
+- Server-side tokenizer token count is only exact once the model is loaded;
+  cold server reports the `len//4` heuristic.
+- Pronunciation hints (`hotwords` only boosts spelling, not recognition of
+  unusual phonetics).
+
 ### 1.11 Transcript search depth + summary templates — DONE (2026-09-26, v1.13.0)
 
 Spec: `docs/design/2026-09-26-search-and-summary-templates.md`. Shipped
