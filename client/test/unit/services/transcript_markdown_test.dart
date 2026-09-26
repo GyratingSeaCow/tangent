@@ -334,7 +334,10 @@ void main() {
   });
 
   group('dumpMarkdown wrapper', () {
-    test('is pinned byte-for-byte (timestamps off, no summary)', () {
+    // This golden is the v1.15.0 `dumpMarkdown` output verbatim: with both
+    // options off the vault file shape MUST NOT change (no title key, no
+    // speakers key, no `## Transcript` heading).
+    test('is pinned byte-for-byte to the v1.15.0 shape (timestamps off, no summary)', () {
       final md = dumpMarkdown(
         id: 'dump-1',
         title: 'Groceries idea',
@@ -348,7 +351,6 @@ void main() {
         md,
         '---\n'
         'tangent-id: dump-1\n'
-        'title: Groceries idea\n'
         'created: 2026-09-23T14:30:00.000Z\n'
         'type: brain-dump\n'
         'duration: 0:01:35\n'
@@ -356,8 +358,6 @@ void main() {
         '---\n'
         '\n'
         '# Groceries idea\n'
-        '\n'
-        '## Transcript\n'
         '\n'
         'Buy oat milk and batteries.\n',
       );

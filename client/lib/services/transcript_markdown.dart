@@ -165,18 +165,25 @@ String transcriptMarkdown({
   final withSummary = options.includeSummary && summary != null;
 
   final stamped = !isTextNote && options.timestamps && timings != null;
+  // Legacy vault shape: with BOTH options off the document is byte-identical
+  // to the pre-1.16.0 `dumpMarkdown` output (no title key, no speakers key,
+  // no `## Transcript` heading), so an existing Obsidian vault does not
+  // change shape until the user opts in.
+  final legacy = !options.timestamps && !options.includeSummary;
   final names = stamped
       ? resolveSpeakerNames(transcript: transcript, timings: timings)
       : const <String, String>{};
-  final speakers = stamped
-      ? names.values.toList()
-      : hasText
-          ? speakerHeadings(transcript)
-          : const <String>[];
+  final speakers = legacy
+      ? const <String>[]
+      : stamped
+          ? names.values.toList()
+          : hasText
+              ? speakerHeadings(transcript)
+              : const <String>[];
 
   final head = yamlFrontmatter({
     'tangent-id': dump.id,
-    'title': dump.title,
+    if (!legacy) 'title': dump.title,
     'created': dump.createdAt.toUtc().toIso8601String(),
     'type': type,
     if (!isTextNote) 'duration': formatDurationField(dump.durationSeconds),
@@ -208,7 +215,7 @@ String transcriptMarkdown({
 
   final sections = StringBuffer()..write('$head\n# ${dump.title}\n\n');
   if (withSummary) sections.write('## Summary\n\n$summary\n\n');
-  if (!isTextNote) sections.write('## Transcript\n\n');
+  if (!isTextNote && !legacy) sections.write('## Transcript\n\n');
   sections.write('$body\n');
   return sections.toString();
 }
