@@ -223,7 +223,22 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
     try {
       final binding =
           await ref.read(localDbProvider).boundRecording(widget.dumpId);
-      if (binding == null) throw StateError('Recording storage is unresolved');
+      if (binding == null) {
+        // No local binding. The common, non-broken reason is that this
+        // recording was made on another device and only its metadata has
+        // synced here — say that, and point at the download, instead of
+        // the internal 'storage is unresolved' wording.
+        if (existing != null && dumpNeedsAudioDownload(existing)) {
+          if (mounted && !_closing) {
+            setState(
+              () => _playbackError =
+                  'Audio is on the server. Download it to play.',
+            );
+          }
+          return;
+        }
+        throw StateError('Recording storage is unresolved');
+      }
       final opened = await access.openPlayback(binding.key, raw);
       final lease = switch (opened) {
         Ok<PlaybackLease>(:final value) => value,
@@ -1261,8 +1276,13 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
       case Fail<String>(:final problem):
         setState(() {
           _statusMessage = null;
-          _statusError = 'Audio download failed: $problem';
+          _statusError = 'Audio download failed: ${problem.message}';
         });
+        // The status area sits far below the Listen card on a tall
+        // screen; a refused download must be visible where it was asked.
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Audio download failed: ${problem.message}')),
+        );
     }
   }
 

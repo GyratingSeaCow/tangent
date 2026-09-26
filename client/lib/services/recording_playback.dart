@@ -142,6 +142,16 @@ final class RecordingPlaybackController extends ChangeNotifier {
             ? end
             : requested;
     try {
+      // After the stream completes, just_audio leaves its `playing` flag
+      // raised, and play() is a no-op while it is set. A seek alone
+      // followed by play() (a word tap after the clip ended) therefore did
+      // nothing. Pause first to drop the flag; then the seek lands and the
+      // caller's play() is real. Pausing an already-paused engine is
+      // harmless, but skip it when not completed so ordinary scrubbing
+      // while paused stays a single seek.
+      if (_state.completed && end > Duration.zero) {
+        await _engine.pause();
+      }
       if (!_disposed) {
         _replace(
           position: clamped,

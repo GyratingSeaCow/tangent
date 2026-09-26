@@ -30,6 +30,29 @@ void main() {
       expect(statusFromResults(const []), ConnectivityStatus.unknown);
     });
 
+    test('ethernet is unmetered: it satisfies the wifi-only preference', () {
+      // A wired desktop reported [ethernet] (or [ethernet, vpn] with
+      // Tailscale up) and was mapped to `mobile`, so the default wifi-only
+      // setting refused every audio download with 'connect to Wi-Fi' — a
+      // condition a wired PC can never meet. The preference exists to
+      // protect cellular data; a cable is the opposite of metered.
+      expect(
+        statusFromResults([ConnectivityResult.ethernet]),
+        ConnectivityStatus.wifi,
+      );
+      expect(
+        statusFromResults(
+          [ConnectivityResult.ethernet, ConnectivityResult.vpn],
+        ),
+        ConnectivityStatus.wifi,
+      );
+      expect(
+        statusFromResults([ConnectivityResult.vpn, ConnectivityResult.mobile]),
+        ConnectivityStatus.mobile,
+        reason: 'a phone on cellular + VPN is still metered',
+      );
+    });
+
     test('a VPN entry must not mask the real transport underneath', () {
       // The Fold's exact production state: Tailscale up on cellular reports
       // [vpn, mobile]. Only result.first was inspected, so vpn -> unknown ->

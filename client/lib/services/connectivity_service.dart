@@ -22,11 +22,15 @@ extension ConnectivityStatusX on ConnectivityStatus {
 /// wifi-only preference stays conservative about spending cellular data.
 ConnectivityStatus statusFromResults(List<ConnectivityResult> results) {
   if (results.isEmpty) return ConnectivityStatus.unknown;
-  if (results.contains(ConnectivityResult.wifi)) {
+  // Ethernet ranks with wifi, not mobile: the wifi-only preference guards
+  // cellular data, and a wired desktop (the Windows/Linux builds) is the
+  // least metered link there is. Mapping it to `mobile` made the default
+  // setting refuse every audio download on a cabled PC.
+  if (results.contains(ConnectivityResult.wifi) ||
+      results.contains(ConnectivityResult.ethernet)) {
     return ConnectivityStatus.wifi;
   }
-  if (results.contains(ConnectivityResult.mobile) ||
-      results.contains(ConnectivityResult.ethernet)) {
+  if (results.contains(ConnectivityResult.mobile)) {
     return ConnectivityStatus.mobile;
   }
   if (results.contains(ConnectivityResult.vpn)) {
