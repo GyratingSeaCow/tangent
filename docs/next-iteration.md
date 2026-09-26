@@ -8,6 +8,18 @@ re-derive it.
 
 ## 1. Open items
 
+### 1.13 Speaker naming — DONE (2026-09-26, v1.15.0)
+
+Shipped per `docs/design/2026-09-26-speaker-naming.md` (S1=b rewrite-in-
+place, S2=a sheet + Listen header tap, S3=y suggestion chips). Client-only.
+
+Candidates left open (not built):
+- Name map on the dump (S1=c) so Listen mode shows names and re-transcribe
+  re-applies them — the first thing users will ask for after using this.
+- Rename `Speaker N:` prefixes inside `transcript_timings` too (would let
+  the export's name resolution stop relying on heading order).
+- Voice matching across recordings (pyannote embeddings).
+
 ### 1.12 Custom vocabulary (hotwords) — DONE (2026-09-26, v1.14.0)
 
 Shipped per `docs/design/2026-09-26-custom-vocabulary.md` (decisions a/y/a).
