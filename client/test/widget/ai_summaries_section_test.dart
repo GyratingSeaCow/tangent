@@ -33,6 +33,9 @@ class _FakeSummariesClient extends SummariesClient {
         super(baseUrl: 'http://unused.invalid');
 
   final SummarySettings _settings;
+
+  /// Every [setCustomPrompt] argument, in order (null = clear).
+  final List<String?> customPromptCalls = <String?>[];
   int installCalls = 0;
   int uninstallCalls = 0;
   int progressCalls = 0;
@@ -80,6 +83,23 @@ class _FakeSummariesClient extends SummariesClient {
   @override
   Future<void> uninstall() async {
     uninstallCalls += 1;
+  }
+
+  @override
+  Future<SummarySettings> setCustomPrompt(String? prompt) async {
+    customPromptCalls.add(prompt);
+    final String? saved =
+        (prompt == null || prompt.trim().isEmpty) ? null : prompt;
+    return SummarySettings(
+      installed: _settings.installed,
+      runtime: _settings.runtime,
+      gpuVisible: _settings.gpuVisible,
+      diskFreeBytes: _settings.diskFreeBytes,
+      installRunning: _settings.installRunning,
+      enabled: _settings.enabled,
+      customPrompt: saved,
+      customConfigured: saved != null,
+    );
   }
 }
 
@@ -148,6 +168,7 @@ Future<_Harness> _mount(
   Object? settingsError,
   List<SummaryInstallProgress>? script,
   TranscriptionNotificationPort? port,
+  String? customPrompt,
 }) async {
   final SettingsStore store = SettingsStore(aiSummariesEnabled: enabled);
   final _FakeSummariesClient client = _FakeSummariesClient(
@@ -160,6 +181,8 @@ Future<_Harness> _mount(
       // The server's gate normally agrees with this device's mirror; the
       // reconcile tests pull them apart on purpose.
       enabled: serverEnabled ?? enabled,
+      customPrompt: customPrompt,
+      customConfigured: customPrompt != null && customPrompt.trim().isNotEmpty,
     ),
   );
   client.settingsError = settingsError;
@@ -222,10 +245,108 @@ Future<void> _confirmInstall(WidgetTester tester) async {
   await tester.pump();
 }
 
+Finder get _editor =>
+    find.byKey(const ValueKey<String>('custom-template-editor'));
+Finder get _save => find.byKey(const ValueKey<String>('custom-template-save'));
+Finder get _clear =>
+    find.byKey(const ValueKey<String>('custom-template-clear'));
+
+bool _enabled(WidgetTester tester, Finder button) =>
+    tester.widget<ButtonStyleButton>(button).enabled;
+
 void main() {
   testWidgets('toggle seeds from the persisted setting', (tester) async {
     await _mount(tester, enabled: true, installed: true);
     expect(_toggleValue(tester), isTrue);
+  });
+
+  // ---- Arc B: custom template editor -----------------------------------------
+
+  testWidgets(
+      'custom template editor is hidden until the capability is installed',
+      (tester) async {
+    await _mount(tester, installed: false);
+    await tester.pumpAndSettle();
+    expect(_editor, findsNothing);
+    expect(_save, findsNothing);
+  });
+
+  testWidgets(
+      'rehydrate seeds the editor with the saved custom prompt; Save stays '
+      'disabled until an edit, then posts the text once', (tester) async {
+    final _Harness h = await _mount(
+      tester,
+      installed: true,
+      enabled: true,
+      customPrompt: 'Focus on decisions.',
+    );
+    await tester.pumpAndSettle();
+
+    expect(_editor, findsOneWidget);
+    expect(
+      tester.widget<TextField>(_editor).controller!.text,
+      'Focus on decisions.',
+      reason: 'the editor must show what the server has saved',
+    );
+    expect(find.textContaining('Section headings'), findsOneWidget);
+    expect(_enabled(tester, _save), isFalse, reason: 'clean field: no save');
+    expect(_enabled(tester, _clear), isTrue, reason: 'there is text to clear');
+
+    await tester.enterText(_editor, 'Focus on decisions and risks.');
+    await tester.pump();
+    expect(_enabled(tester, _save), isTrue, reason: 'dirty field enables Save');
+    // No autosave: nothing was posted just by typing.
+    expect(h.client.customPromptCalls, isEmpty);
+
+    await tester.tap(_save);
+    await tester.pumpAndSettle();
+    expect(h.client.customPromptCalls, <String?>['Focus on decisions and risks.']);
+    expect(
+      find.descendant(
+        of: find.byType(SnackBar),
+        matching: find.text('Custom template saved'),
+      ),
+      findsOneWidget,
+    );
+    expect(_enabled(tester, _save), isFalse, reason: 'saved: clean again');
+    expect(
+      tester.widget<TextField>(_editor).controller!.text,
+      'Focus on decisions and risks.',
+      reason: 'saving must not wipe the field',
+    );
+  });
+
+  testWidgets('Clear is disabled with nothing to clear; confirming Clear '
+      'posts null and empties the field', (tester) async {
+    final _Harness h = await _mount(
+      tester,
+      installed: true,
+      enabled: true,
+      customPrompt: 'Keep it short.',
+    );
+    await tester.pumpAndSettle();
+    expect(_enabled(tester, _clear), isTrue);
+
+    await tester.tap(_clear);
+    await tester.pumpAndSettle();
+    // Cancel first: nothing posted, text intact.
+    await tester.tap(
+      find.byKey(const ValueKey<String>('custom-template-clear-cancel')),
+    );
+    await tester.pumpAndSettle();
+    expect(h.client.customPromptCalls, isEmpty);
+    expect(tester.widget<TextField>(_editor).controller!.text, 'Keep it short.');
+
+    await tester.tap(_clear);
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const ValueKey<String>('custom-template-clear-confirm')),
+    );
+    await tester.pumpAndSettle();
+    expect(h.client.customPromptCalls, <String?>[null]);
+    expect(tester.widget<TextField>(_editor).controller!.text, isEmpty);
+    expect(_enabled(tester, _clear), isFalse, reason: 'nothing left to clear');
+    expect(_enabled(tester, _save), isFalse);
   });
 
   // ---- reconcile with the server on open ------------------------------------
