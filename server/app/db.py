@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS dumps (
     summary TEXT,
     summary_model TEXT,
     summarized_at INTEGER,
+    summary_template TEXT,
     transcript_timings TEXT,
     timings_version INTEGER,
     audio_kept INTEGER NOT NULL DEFAULT 0,
@@ -307,6 +308,7 @@ def _backfill_dump_change_feed(conn: sqlite3.Connection) -> None:
                 "summary": row["summary"],
                 "summary_model": row["summary_model"],
                 "summarized_at": row["summarized_at"],
+                "summary_template": row["summary_template"],
                 "transcript_timings": row["transcript_timings"],
                 "timings_version": row["timings_version"],
                 "duration_seconds": row["duration_seconds"],
@@ -350,6 +352,24 @@ def _migrate_dumps_summary(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE dumps ADD COLUMN summary_model TEXT")
     if "summarized_at" not in cols:
         conn.execute("ALTER TABLE dumps ADD COLUMN summarized_at INTEGER")
+
+
+def _migrate_dumps_summary_template(conn: sqlite3.Connection) -> list[str]:
+    """Add the nullable template wire field and republish legacy live dumps.
+
+    Older change-log payloads cannot distinguish an absent field from an
+    explicit null. Publishing once when the column is first added gives every
+    client the null sentinel; asking ``PRAGMA table_info`` keeps this
+    idempotent without a separate schema-version ledger.
+    """
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(dumps)")}
+    if "summary_template" in cols:
+        return []
+    conn.execute("ALTER TABLE dumps ADD COLUMN summary_template TEXT")
+    return [
+        row[0]
+        for row in conn.execute("SELECT id FROM dumps WHERE deleted_at IS NULL")
+    ]
 
 
 def _migrate_dumps_transcript_timings(conn: sqlite3.Connection) -> list[str]:
@@ -658,6 +678,7 @@ def init_db(data_dir: str) -> None:
         _migrate_dumps_mode_check(conn)
         _migrate_dumps_meeting_notes(conn)
         _migrate_dumps_summary(conn)
+        template_backfills = _migrate_dumps_summary_template(conn)
         timing_backfills = _migrate_dumps_transcript_timings(conn)
         _migrate_notebooks_folder_id(conn)
         _migrate_change_log_folder_entity(conn)
@@ -665,13 +686,14 @@ def init_db(data_dir: str) -> None:
         _migrate_notebooks_ink(conn)
         _normalize_notebooks_ink(conn)
         _reconcile_audio_kept(conn, data_dir)
-        if timing_backfills:
+        dump_backfills = set(template_backfills) | set(timing_backfills)
+        if dump_backfills:
             from app.api.dumps import _publish_dump_change
 
             prior_factory = conn.row_factory
             conn.row_factory = sqlite3.Row
             try:
-                for dump_id in timing_backfills:
+                for dump_id in sorted(dump_backfills):
                     _publish_dump_change(conn, dump_id, None)
             finally:
                 conn.row_factory = prior_factory

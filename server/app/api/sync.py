@@ -431,7 +431,8 @@ def sync_push(
                 if change.op != "delete" and change.payload is not None:
                     stored = db.execute(
                         "SELECT audio_kept, summary, summary_model, "
-                        "summarized_at, transcript_timings, timings_version "
+                        "summarized_at, summary_template, transcript_timings, "
+                        "timings_version "
                         "FROM dumps WHERE id = ?",
                         (change.entity_id,),
                     ).fetchone()
@@ -441,6 +442,9 @@ def sync_push(
                         publish_payload["summary"] = stored["summary"]
                         publish_payload["summary_model"] = stored["summary_model"]
                         publish_payload["summarized_at"] = stored["summarized_at"]
+                        publish_payload["summary_template"] = stored[
+                            "summary_template"
+                        ]
                         publish_payload["transcript_timings"] = stored[
                             "transcript_timings"
                         ]
