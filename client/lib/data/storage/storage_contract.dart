@@ -606,4 +606,5 @@ abstract interface class StorageDatabaseOperations {
     String query, {
     int limit = 100,
   });
+  Future<List<String>> recentTranscriptsForSpeakerSuggestions({int limit = 50});
 }

@@ -16,6 +16,8 @@ import '../../models/sync_status.dart';
 import '../../models/transcription_status.dart';
 import '../../services/meeting_notes_processor.dart';
 import '../../services/recording_playback.dart';
+import '../../services/speaker_naming.dart'
+    show detectSpeakers, hasUserSpeakerNames;
 import '../../services/transcript_alignment.dart'
     show TranscriptAlignment, alignTranscript;
 import '../../services/transcript_search.dart'
@@ -24,6 +26,7 @@ import '../../services/transcript_timings.dart';
 import '../../widgets/listen_transcript_view.dart';
 import '../../widgets/waveform_scrubber.dart';
 import 'dumps_providers.dart';
+import 'name_speakers_sheet.dart';
 import 'summarize_flow.dart';
 import '../../services/transcription_notifications.dart'
     show describedWhisperModel;
@@ -720,12 +723,17 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
 
   void _requestTranscription(DumpRow row) {
     if (row.transcript?.trim().isNotEmpty ?? false) {
+      // Speaker naming rewrites the transcript text in place (S1=b), so a
+      // fresh transcription silently drops the names. Say so — but only when
+      // there is a user-given name to lose (spec §5).
+      final bool namesAtRisk = hasUserSpeakerNames(row.transcript!);
       showDialog<void>(
         context: context,
         builder: (dialogContext) => AlertDialog(
           title: const Text('Overwrite transcript?'),
-          content: const Text(
-            'The current transcript stays visible while replacement transcription runs. It is replaced only if the new transcription succeeds.',
+          content: Text(
+            'The current transcript stays visible while replacement transcription runs. It is replaced only if the new transcription succeeds.'
+            '${namesAtRisk ? '\n\nSpeaker names you added will be reset.' : ''}',
           ),
           actions: [
             TextButton(
@@ -979,9 +987,15 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
   Widget build(BuildContext context) {
     final rowAsync = ref.watch(dumpByIdProvider(widget.dumpId));
 
+    final DumpRow? currentRow = rowAsync.valueOrNull;
+    // Speaker naming (v1.15.0 §4.2): the overflow exists only to hold this
+    // one entry, so the whole button is absent when there is nothing to name.
+    final bool nameable = currentRow != null &&
+        detectSpeakers(currentRow.transcript ?? '').isNotEmpty;
+
     return Scaffold(
       appBar: AppBar(
-        title: Text(_modeTitle(rowAsync.valueOrNull)),
+        title: Text(_modeTitle(currentRow)),
         actions: [
           IconButton(
             icon: const Icon(Icons.delete_outline),
@@ -990,6 +1004,27 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
                 ? null
                 : _delete,
           ),
+          if (nameable)
+            PopupMenuButton<String>(
+              key: const ValueKey('detail-more'),
+              tooltip: 'More actions',
+              onSelected: (String value) {
+                if (value == 'name-speakers') {
+                  unawaited(showNameSpeakersSheet(context, ref, currentRow));
+                }
+              },
+              itemBuilder: (BuildContext context) => const [
+                PopupMenuItem<String>(
+                  key: ValueKey('detail-name-speakers'),
+                  value: 'name-speakers',
+                  child: ListTile(
+                    leading: Icon(Icons.record_voice_over),
+                    title: Text('Name speakers'),
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                ),
+              ],
+            ),
         ],
       ),
       body: rowAsync.when(
@@ -1233,6 +1268,10 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
                         ref.read(syncedAudioDownloaderProvider) == null
                             ? null
                             : () => unawaited(_downloadAudioForListen()),
+                    // Listen keeps the raw timings labels (S1=b); the tap
+                    // opens the sheet for the whole row, not just this label.
+                    onSpeakerTap: (_) =>
+                        unawaited(showNameSpeakersSheet(context, ref, row)),
                   ),
                 ),
               ),
