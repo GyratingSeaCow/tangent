@@ -267,7 +267,9 @@ void main() {
       tester,
       () async => (await db.getDump('spk-5'))!.transcript!.contains('hired back'),
     );
-    await tester.pumpAndSettle();
+    // One frame, not pumpAndSettle: the sidecar publication may still be
+    // spinning under suite load, and the row is already what we assert on.
+    await tester.pump();
 
     final DumpRow saved = (await db.getDump('spk-5'))!;
     expect(saved.transcript, contains('## Speaker 1\n'));
