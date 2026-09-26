@@ -222,9 +222,14 @@ String transcriptMarkdown({
 
 /// The summary text worth exporting, or null: blank and the literal
 /// `None` (the v1.13.0 actions-only all-None case) both mean "no summary".
+/// Real summaries from the server start with their own `## Summary` line
+/// (every one in the production DB does), which would double the heading
+/// this renderer adds — so a leading `## Summary` heading is stripped.
+final RegExp _leadingSummaryHeading = RegExp(r'^##\s*Summary\s*\n+');
+
 String? _usableSummary(String? summary) {
   if (summary == null) return null;
-  final text = summary.trim();
+  final text = summary.trim().replaceFirst(_leadingSummaryHeading, '').trim();
   if (text.isEmpty || text == 'None') return null;
   return text;
 }

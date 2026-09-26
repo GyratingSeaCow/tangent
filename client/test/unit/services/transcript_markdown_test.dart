@@ -266,6 +266,16 @@ void main() {
       expect(md, isNot(contains('summary-template')));
     });
 
+    test('a summary that carries its own ## Summary heading is not doubled', () {
+      final md = transcriptMarkdown(
+        dump: row(summary: '## Summary  \nDecided X.\n\n## Action items\n- Y'),
+        timings: null,
+        options: const TranscriptMarkdownOptions(includeSummary: true),
+      );
+      expect('## Summary'.allMatches(md).length, 1);
+      expect(md, contains('## Summary\n\nDecided X.\n\n## Action items\n- Y\n'));
+    });
+
     test('absent when the literal None (actions-only all-None case)', () {
       final md = transcriptMarkdown(
         dump: row(summary: 'None'),
