@@ -77,7 +77,8 @@ void main() {
     addTearDown(db.close);
     await db.listDumps();
 
-    expect(raw.userVersion, 17);
+    // The upgrade runs to the CURRENT schema, past 17 (v18 added timings).
+    expect(raw.userVersion, 18);
     expect(
       _columns(raw, 'dumps'),
       containsAll(<String>['summary', 'summary_model', 'summarized_at']),
@@ -104,7 +105,8 @@ void main() {
     addTearDown(db.close);
     await db.listDumps();
 
-    expect(raw.userVersion, 17);
+    // The upgrade runs to the CURRENT schema, past 17 (v18 added timings).
+    expect(raw.userVersion, 18);
     expect(
       _columns(raw, 'dumps'),
       containsAll(<String>['summary', 'summary_model', 'summarized_at']),

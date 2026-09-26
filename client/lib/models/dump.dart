@@ -30,6 +30,9 @@ class Dump with _$Dump {
     @JsonKey(name: 'summary_model') String? summaryModel,
     /// When the server generated [summary]; null with it.
     @JsonKey(name: 'summarized_at') DateTime? summarizedAt,
+    /// Word-level timings JSON (server-owned, see transcript_timings.dart).
+    /// Null until a transcription with timings has completed.
+    @JsonKey(name: 'transcript_timings') String? transcriptTimings,
   }) = _Dump;
 
   factory Dump.fromJson(Map<String, dynamic> json) => _$DumpFromJson(json);

@@ -127,13 +127,19 @@ confidence and shows nothing.
 
 ### 3.6 Waveform scrubbing
 
-A waveform strip above the transcript in Listen mode, computed client
-side from the local audio (decode → RMS per bucket, ~600 buckets, cached
-on disk next to the audio as `<id>.peaks.json`). Drag/tap → seek; the
+A waveform strip above the transcript in Listen mode. Peaks are computed
+**server side** at transcription time — the server already decodes every
+recording to float32 for Whisper (`faster_whisper.decode_audio`), so RMS
+per bucket (600 buckets, normalised 0–1, rounded to 3 dp ≈ 4 KB) is
+one more pass over data it holds anyway. They ride inside the
+`transcript_timings` envelope as `"peaks": [..]` next to `segments`, so
+sync, backfill and clear-on-retranscribe semantics come for free and a
+phone never has to decode Opus in Dart (there is no pure-Dart Opus
+decoder; just_audio/media_kit never expose PCM). Legacy backfilled rows
+have `peaks: []` → flat strip until re-transcribed. Drag/tap → seek; the
 playhead and the current-word highlight stay in lockstep. When audio is
-not local the strip shows a flat placeholder with the download
-affordance. WAV and Opus both decode through the existing playback
-engine's decoder (media_kit on desktop, platform decoders on Android).
+not local the strip still draws (peaks are synced) but tapping it shows
+the download affordance instead of seeking.
 
 ## 4. Errors and edges
 

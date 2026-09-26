@@ -16,6 +16,10 @@ import '../../models/sync_status.dart';
 import '../../models/transcription_status.dart';
 import '../../services/meeting_notes_processor.dart';
 import '../../services/recording_playback.dart';
+import '../../services/transcript_timings.dart';
+import '../../widgets/listen_transcript_view.dart';
+import '../../widgets/waveform_scrubber.dart';
+import 'dumps_providers.dart';
 import '../../services/transcription_notifications.dart'
     show describedWhisperModel;
 import 'local_deletion_presentation.dart';
@@ -109,6 +113,30 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
   /// Option B: meeting transcripts start collapsed behind a summary header.
   bool _transcriptExpanded = false;
 
+  /// Tap-to-hear (spec §3): Edit | Listen. Null until the row is first
+  /// seen, then defaults from `defaultListenMode` and sticks to the user's
+  /// last choice for this screen. Only ever true when timings exist.
+  bool? _listenMode;
+
+  /// The playhead the Listen view follows. Fed from the playback
+  /// controller's state on every change (not a stream: the view wants a
+  /// ValueListenable it can subscribe to synchronously).
+  final ValueNotifier<Duration> _playhead = ValueNotifier(Duration.zero);
+
+  /// Parsed once per distinct timings payload; parsing is cheap but the
+  /// build runs on every playhead tick.
+  String? _timingsRaw;
+  TranscriptTimings? _timings;
+
+  TranscriptTimings? _timingsFor(DumpRow row) {
+    final raw = row.transcriptTimings;
+    if (raw != _timingsRaw) {
+      _timingsRaw = raw;
+      _timings = TranscriptTimings.parse(raw);
+    }
+    return _timings;
+  }
+
   /// Header summary for the collapsed transcript: duration + word count,
   /// with `[MM:SS]`-style paragraph markers excluded from the count.
   String _transcriptSummary(DumpRow row, String transcript) {
@@ -123,6 +151,7 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
     final duration = '$minutes:${seconds.toString().padLeft(2, '0')}';
     return '$duration · $words words';
   }
+
   String? _editorBaseTranscript;
   int? _editorBaseAttempt;
   String? _editorBaseRequestId;
@@ -160,10 +189,13 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
     }
     _titleController.dispose();
     _transcriptController.dispose();
+    _playhead.dispose();
     super.dispose();
   }
 
   void _onPlaybackChanged() {
+    final p = _playbackController?.state.position;
+    if (p != null && p != _playhead.value) _playhead.value = p;
     if (mounted) setState(() {});
   }
 
@@ -218,47 +250,84 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
   }
 
   Future<void> _retryPlayback() async {
-    if (_deleteBusy || _playbackOpening || !_canRetryPlayback || !mounted) return;
-    setState(() { _playbackOpening=true; _canRetryPlayback=false; });
-    final service=ref.read(localDeletionServiceProvider);
-    _playbackInitialization=() async {
+    if (_deleteBusy || _playbackOpening || !_canRetryPlayback || !mounted) {
+      return;
+    }
+    setState(() {
+      _playbackOpening = true;
+      _canRetryPlayback = false;
+    });
+    final service = ref.read(localDeletionServiceProvider);
+    _playbackInitialization = () async {
       try {
-        final preview=switch(await service.preview({widget.dumpId})) {
-          Ok<DeletionPreview>(:final value)=>value,
-          Fail<DeletionPreview>(:final problem)=>throw StorageFault(problem),
+        final preview = switch (await service.preview({widget.dumpId})) {
+          Ok<DeletionPreview>(:final value) => value,
+          Fail<DeletionPreview>(:final problem) => throw StorageFault(problem),
         };
-        if(!mounted) return;
-        final target=preview.targets.single;
-        if(target.binding==null || !{Eligibility.eligible,Eligibility.busy,Eligibility.nonterminal,Eligibility.syncing,Eligibility.publicationPending}.contains(target.eligibility)) {
-          setState(()=>_playbackError='Playback unavailable: ${target.eligibility.name}. Resolve local storage or retry pending local deletion.');
+        if (!mounted) return;
+        final target = preview.targets.single;
+        if (target.binding == null ||
+            !{
+              Eligibility.eligible,
+              Eligibility.busy,
+              Eligibility.nonterminal,
+              Eligibility.syncing,
+              Eligibility.publicationPending,
+            }.contains(target.eligibility)) {
+          setState(
+            () => _playbackError =
+                'Playback unavailable: ${target.eligibility.name}. Resolve local storage or retry pending local deletion.',
+          );
           return;
         }
         // The previous engine/lease has actually closed. Only this explicit
         // user action may start a fresh binding lookup + engine on this route.
-        _closing=false;_playbackError=null;
+        _closing = false;
+        _playbackError = null;
         await _initializePlayback();
-      } catch(e) {if(mounted)setState(()=>_playbackError='Playback unavailable: $e');}
-      finally {if(mounted)setState(()=>_playbackOpening=false);}
+      } catch (e) {
+        if (mounted) {
+          setState(() => _playbackError = 'Playback unavailable: $e');
+        }
+      } finally {
+        if (mounted) setState(() => _playbackOpening = false);
+      }
     }();
     await _playbackInitialization;
   }
 
   Future<void> _playbackAfterFailedDelete(LocalDeletionService service) async {
     try {
-      final preview=switch(await service.preview({widget.dumpId})) {
-        Ok<DeletionPreview>(:final value)=>value,
-        Fail<DeletionPreview>(:final problem)=>throw StorageFault(problem),
+      final preview = switch (await service.preview({widget.dumpId})) {
+        Ok<DeletionPreview>(:final value) => value,
+        Fail<DeletionPreview>(:final problem) => throw StorageFault(problem),
       };
-      if(!mounted) return;
-      final target=preview.targets.single;
-      final playable=target.binding!=null && {Eligibility.eligible,Eligibility.busy,Eligibility.nonterminal,Eligibility.syncing,Eligibility.publicationPending}.contains(target.eligibility);
+      if (!mounted) return;
+      final target = preview.targets.single;
+      final playable = target.binding != null &&
+          {
+            Eligibility.eligible,
+            Eligibility.busy,
+            Eligibility.nonterminal,
+            Eligibility.syncing,
+            Eligibility.publicationPending,
+          }.contains(target.eligibility);
       setState(() {
-        _canRetryPlayback=playable;
-        _playbackError=playable ? 'Playback stopped after local deletion was blocked.'
-          : target.eligibility==Eligibility.retryOnly ? 'Playback unavailable while local deletion is pending. Retry failed local deletion.'
-          : 'Playback unavailable: ${target.eligibility.name}. Resolve local storage first.';
+        _canRetryPlayback = playable;
+        _playbackError = playable
+            ? 'Playback stopped after local deletion was blocked.'
+            : target.eligibility == Eligibility.retryOnly
+                ? 'Playback unavailable while local deletion is pending. Retry failed local deletion.'
+                : 'Playback unavailable: ${target.eligibility.name}. Resolve local storage first.';
       });
-    } catch(e) {if(mounted)setState((){_canRetryPlayback=false;_playbackError='Playback unavailable: $e';});}
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _canRetryPlayback = false;
+          _playbackError = 'Playback unavailable: $e';
+        });
+      }
+    }
   }
 
   Future<void> _closePlayback() async {
@@ -293,7 +362,10 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
   }
 
   Future<void> _writeLatestMetadata(
-      LocalDb db, RecordingKey key, RecordingAccess access,) {
+    LocalDb db,
+    RecordingKey key,
+    RecordingAccess access,
+  ) {
     return access.runSerializedMetadataWrite<void>(
       key,
       (writer) async {
@@ -551,18 +623,22 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
     }
   }
 
-  Future<DeleteTarget> _previewDeletionTarget(LocalDeletionService service) async {
+  Future<DeleteTarget> _previewDeletionTarget(
+    LocalDeletionService service,
+  ) async {
     final preview = switch (await service.preview({widget.dumpId})) {
       Ok<DeletionPreview>(:final value) => value,
       Fail<DeletionPreview>(:final problem) => throw StorageFault(problem),
     };
-    if (preview.targets.length != 1 || preview.targets.single.id != widget.dumpId) {
+    if (preview.targets.length != 1 ||
+        preview.targets.single.id != widget.dumpId) {
       throw StateError('Recording deletion identity is unavailable');
     }
     final target = preview.targets.single;
     if (target.eligibility == Eligibility.retryOnly &&
         (target.binding?.key.dumpId != widget.dumpId ||
-         target.retryTicketId == null || target.retryTicketId!.isEmpty)) {
+            target.retryTicketId == null ||
+            target.retryTicketId!.isEmpty)) {
       throw StateError('Pending deletion identity is unavailable');
     }
     return target;
@@ -576,21 +652,26 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
       final target = await _previewDeletionTarget(service);
       if (!mounted || generation != _deletionPreviewGeneration) return;
       setState(() {
-        if (target.eligibility == Eligibility.retryOnly) _deletionRecovery.discover(target);
+        if (target.eligibility == Eligibility.retryOnly) {
+          _deletionRecovery.discover(target);
+        }
         _deletionPreviewError = null;
       });
     } catch (e) {
       if (mounted && generation == _deletionPreviewGeneration) {
-        setState(() => _deletionPreviewError = 'Could not check pending local deletion. Check again before deleting: $e');
+        setState(
+          () => _deletionPreviewError =
+              'Could not check pending local deletion. Check again before deleting: $e',
+        );
       }
     }
   }
 
   Future<void> _delete() async {
-    if(_deleteBusy || !mounted) return;
-    setState(()=>_deleteBusy=true);
+    if (_deleteBusy || !mounted) return;
+    setState(() => _deleteBusy = true);
     ++_deletionPreviewGeneration;
-    final service=ref.read(localDeletionServiceProvider);
+    final service = ref.read(localDeletionServiceProvider);
     try {
       // Revalidate before choosing the confirmation, including callbacks captured
       // before entry discovery completed. Never turn ordinary consent into retry.
@@ -599,14 +680,16 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
       setState(() {
         _deletionPreviewError = null;
         if (before.eligibility == Eligibility.retryOnly) {
-          if (!_deletionRecovery.discover(before)) throw StateError('Pending deletion identity changed');
+          if (!_deletionRecovery.discover(before)) {
+            throw StateError('Pending deletion identity changed');
+          }
         }
       });
       if (_deletionRecovery.hasPending) {
         await _confirmDeletionRetry(service);
         return;
       }
-      if(!await confirmLocalDeletion(context,1) || !mounted) return;
+      if (!await confirmLocalDeletion(context, 1) || !mounted) return;
       await _closePlayback();
       // Already-confirmed work retains its owner through actual close/settlement,
       // even if the route leaves. A new pending ticket requires separate consent.
@@ -614,13 +697,18 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
       if (target.eligibility == Eligibility.retryOnly) {
         if (mounted) {
           setState(() {
-          _deletionRecovery.discover(target);
-          _deletionPreviewError = 'A local deletion is pending. Choose Retry deletion to confirm it separately.';
-        });
+            _deletionRecovery.discover(target);
+            _deletionPreviewError =
+                'A local deletion is pending. Choose Retry deletion to confirm it separately.';
+          });
         }
         return;
       }
-      if (target.binding != before.binding) throw StateError('Recording identity changed. Check again before deleting.');
+      if (target.binding != before.binding) {
+        throw StateError(
+          'Recording identity changed. Check again before deleting.',
+        );
+      }
       final result = switch (await service.deleteConfirmed(
         (
           operationId: const Uuid().v4(),
@@ -631,7 +719,7 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
         Fail<BulkDeletionResult>(:final problem) => throw StorageFault(problem),
       };
       final item = result.items.single;
-      if(mounted) setState(()=>_deletionRecovery.record(result));
+      if (mounted) setState(() => _deletionRecovery.record(result));
       if (item.state != DeleteState.deleted) {
         throw StorageFault(
           item.problem ??
@@ -643,7 +731,12 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
       }
       if (mounted) Navigator.of(context).pop();
     } catch (e) {
-      if (mounted) setState(() => _deletionPreviewError = 'Local deletion could not continue. Check again or retry the pending deletion: $e');
+      if (mounted) {
+        setState(
+          () => _deletionPreviewError =
+              'Local deletion could not continue. Check again or retry the pending deletion: $e',
+        );
+      }
       if (mounted && _closing) {
         await _playbackAfterFailedDelete(service);
       }
@@ -652,32 +745,48 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
           SnackBar(content: Text('Delete failed: $e')),
         );
       }
-    } finally {if(mounted)setState(()=>_deleteBusy=false);}
+    } finally {
+      if (mounted) setState(() => _deleteBusy = false);
+    }
   }
 
   Future<void> _retryLocalDeletion() async {
-    if(_deleteBusy || !mounted) return;
-    final ids=_deletionRecovery.ticketIds;
-    if(ids.isEmpty)return;
-    setState(()=>_deleteBusy=true);
+    if (_deleteBusy || !mounted) return;
+    final ids = _deletionRecovery.ticketIds;
+    if (ids.isEmpty) return;
+    setState(() => _deleteBusy = true);
     ++_deletionPreviewGeneration;
-    final service=ref.read(localDeletionServiceProvider);
+    final service = ref.read(localDeletionServiceProvider);
     try {
       await _confirmDeletionRetry(service);
-    } catch(e) {if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('Delete failed: $e')));}
-    finally {if(mounted)setState(()=>_deleteBusy=false);}
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Delete failed: $e')));
+      }
+    } finally {
+      if (mounted) setState(() => _deleteBusy = false);
+    }
   }
 
   Future<void> _confirmDeletionRetry(LocalDeletionService service) async {
     final ids = _deletionRecovery.ticketIds;
-    if (ids.isEmpty || !await confirmLocalDeletion(context,ids.length,retry:true) || !mounted) return;
+    if (ids.isEmpty ||
+        !await confirmLocalDeletion(context, ids.length, retry: true) ||
+        !mounted) {
+      return;
+    }
     await _closePlayback();
-    final result = switch(await service.retryConfirmed((operationId: const Uuid().v4(), ticketIds: ids))) {
+    final result = switch (await service
+        .retryConfirmed((operationId: const Uuid().v4(), ticketIds: ids))) {
       Ok<BulkDeletionResult>(:final value) => value,
       Fail<BulkDeletionResult>(:final problem) => throw StorageFault(problem),
     };
     if (mounted) {
-      setState(() { _deletionRecovery.record(result); _deletionPreviewError = null; });
+      setState(() {
+        _deletionRecovery.record(result);
+        _deletionPreviewError = null;
+      });
       if (!_deletionRecovery.hasPending) Navigator.of(context).pop();
     }
   }
@@ -693,7 +802,9 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
           IconButton(
             icon: const Icon(Icons.delete_outline),
             tooltip: _deletionRecovery.hasPending ? 'Retry deletion' : 'Delete',
-            onPressed: _deleteBusy || (_playbackOpening && _canRetryPlayback) ? null : _delete,
+            onPressed: _deleteBusy || (_playbackOpening && _canRetryPlayback)
+                ? null
+                : _delete,
           ),
         ],
       ),
@@ -723,6 +834,11 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
     final transcription = TranscriptionStatus.fromWire(row.transcriptionStatus);
     final operationActive = transcription.isInProgress;
     final displayTranscript = row.transcript;
+    // Tap-to-hear: timings are server-owned; Listen is offered only when
+    // they exist and defaults on the first time we see them (spec §3.3).
+    final timings = _timingsFor(row);
+    final listen = timings != null &&
+        (_listenMode ??= defaultListenMode(timings: timings, audioLocal: true));
 
     return ListView(
       // The action row is the LAST child, so the scroll view must reserve the
@@ -753,10 +869,25 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
         const SizedBox(height: 16),
         if (_deletionPreviewError != null) ...[
           Text(_deletionPreviewError!),
-          TextButton(onPressed: _deleteBusy ? null : _discoverDeletion, child: const Text('Check pending deletion again')),
+          TextButton(
+            onPressed: _deleteBusy ? null : _discoverDeletion,
+            child: const Text('Check pending deletion again'),
+          ),
         ],
-        if(_deletionResult!=null || _deletionRecovery.hasPending) LocalDeletionResults(result:_deletionResult,pending:_deletionRecovery.pending,discovered:_deletionRecovery.discovered,onRetry:_retryLocalDeletion,busy:_deleteBusy),
-        if(_canRetryPlayback || _playbackOpening && _closing) TextButton(key:const ValueKey('retry-playback'),onPressed:_playbackOpening || _deleteBusy ? null : _retryPlayback,child:const Text('Retry playback')),
+        if (_deletionResult != null || _deletionRecovery.hasPending)
+          LocalDeletionResults(
+            result: _deletionResult,
+            pending: _deletionRecovery.pending,
+            discovered: _deletionRecovery.discovered,
+            onRetry: _retryLocalDeletion,
+            busy: _deleteBusy,
+          ),
+        if (_canRetryPlayback || _playbackOpening && _closing)
+          TextButton(
+            key: const ValueKey('retry-playback'),
+            onPressed: _playbackOpening || _deleteBusy ? null : _retryPlayback,
+            child: const Text('Retry playback'),
+          ),
         if (!isNote) ...[
           _RecordingPlaybackPanel(
             state: _playbackController?.state ??
@@ -848,51 +979,110 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
             ),
             const SizedBox(height: 8),
           ] else ...[
-            Text(
-              isNote ? 'Note' : 'Transcript',
-              style: Theme.of(context).textTheme.titleMedium,
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    isNote ? 'Note' : 'Transcript',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                ),
+                if (!isNote && timings != null) _listenToggle(listen),
+              ],
             ),
             const SizedBox(height: 8),
           ],
-          if (mode != DumpMode.meeting || _transcriptExpanded) ...[
+          if ((mode != DumpMode.meeting || _transcriptExpanded) && listen) ...[
+            // Listen mode (spec §3): read-only, tap a word to hear it.
+            // Bounded height so the page still scrolls as one list and
+            // the action row keeps its inset.
+            if (mode == DumpMode.meeting) _listenToggle(listen),
+            // Waveform scrubber (spec §3.6): peaks are server-computed and
+            // ride with the timings, so it draws even before the audio is
+            // local; tapping it then routes to the download affordance.
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: WaveformScrubber(
+                key: ValueKey('waveform-${widget.dumpId}'),
+                peaks: timings.peaks,
+                position: _playhead,
+                duration: _playbackController != null &&
+                        _playbackController!.state.duration > Duration.zero
+                    ? _playbackController!.state.duration
+                    : Duration(seconds: row.durationSeconds),
+                onSeek: (t) => unawaited(_seekAndPlay(t)),
+                enabled: _playbackController != null &&
+                    _playbackController!.state.error == null,
+                onDisabledTap: ref.read(syncedAudioDownloaderProvider) == null
+                    ? null
+                    : () => unawaited(_downloadAudioForListen()),
+              ),
+            ),
+            SizedBox(
+              height: 360,
+              child: Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: ListenTranscriptView(
+                    key: ValueKey('listen-view-${widget.dumpId}'),
+                    timings: timings,
+                    transcript: _transcriptController.text,
+                    position: _playhead,
+                    onSeek: _seekAndPlay,
+                    audioLocal: _playbackController != null &&
+                        _playbackController!.state.error == null,
+                    serverPaired: true,
+                    onRetranscribe: () => _requestTranscription(row),
+                    onDownloadAudio:
+                        ref.read(syncedAudioDownloaderProvider) == null
+                            ? null
+                            : () => unawaited(_downloadAudioForListen()),
+                  ),
+                ),
+              ),
+            ),
+          ] else if (mode != DumpMode.meeting || _transcriptExpanded) ...[
+            if (mode == DumpMode.meeting && timings != null)
+              _listenToggle(listen),
             TextField(
-            key: ValueKey('transcript-editor-${widget.dumpId}'),
-            controller: _transcriptController,
-            keyboardType: TextInputType.multiline,
-            minLines: 6,
-            maxLines: null,
-            onChanged: _onTranscriptChanged,
-            decoration: InputDecoration(
-              alignLabelWithHint: true,
-              border: const OutlineInputBorder(),
-              errorText: _transcriptController.text.isNotEmpty &&
-                      _transcriptController.text.trim().isEmpty
-                  ? 'Transcript cannot be blank'
-                  : null,
+              key: ValueKey('transcript-editor-${widget.dumpId}'),
+              controller: _transcriptController,
+              keyboardType: TextInputType.multiline,
+              minLines: 6,
+              maxLines: null,
+              onChanged: _onTranscriptChanged,
+              decoration: InputDecoration(
+                alignLabelWithHint: true,
+                border: const OutlineInputBorder(),
+                errorText: _transcriptController.text.isNotEmpty &&
+                        _transcriptController.text.trim().isEmpty
+                    ? 'Transcript cannot be blank'
+                    : null,
+              ),
             ),
-          ),
-          const SizedBox(height: 8),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: FilledButton.icon(
-              key: ValueKey('save-transcript-${widget.dumpId}'),
-              icon: _savingTranscript
-                  ? const SizedBox.square(
-                      dimension: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.save),
-              label: const Text('Save transcript'),
-              onPressed: (transcription == TranscriptionStatus.completed ||
-                          transcription == TranscriptionStatus.failed ||
-                          transcription == TranscriptionStatus.notApplicable) &&
-                      (_transcriptDirty || _manualSidecarPending) &&
-                      _transcriptController.text.trim().isNotEmpty &&
-                      !_savingTranscript
-                  ? _saveTranscript
-                  : null,
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: FilledButton.icon(
+                key: ValueKey('save-transcript-${widget.dumpId}'),
+                icon: _savingTranscript
+                    ? const SizedBox.square(
+                        dimension: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.save),
+                label: const Text('Save transcript'),
+                onPressed: (transcription == TranscriptionStatus.completed ||
+                            transcription == TranscriptionStatus.failed ||
+                            transcription ==
+                                TranscriptionStatus.notApplicable) &&
+                        (_transcriptDirty || _manualSidecarPending) &&
+                        _transcriptController.text.trim().isNotEmpty &&
+                        !_savingTranscript
+                    ? _saveTranscript
+                    : null,
+              ),
             ),
-          ),
           ],
         ] else ...[
           Card(
@@ -1015,6 +1205,65 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
         ),
       ],
     );
+  }
+
+  Widget _listenToggle(bool listen) {
+    return SegmentedButton<bool>(
+      key: ValueKey('listen-toggle-${widget.dumpId}'),
+      showSelectedIcon: false,
+      style: const ButtonStyle(
+        visualDensity: VisualDensity.compact,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+      segments: const [
+        ButtonSegment(
+          value: false,
+          label: Text('Edit'),
+          icon: Icon(Icons.edit_outlined),
+        ),
+        ButtonSegment(
+          value: true,
+          label: Text('Listen'),
+          icon: Icon(Icons.hearing),
+        ),
+      ],
+      selected: {listen},
+      onSelectionChanged: (s) => setState(() => _listenMode = s.first),
+    );
+  }
+
+  /// A tap in Listen mode: seek, then make sure audio is actually
+  /// playing — a tap on a word means "play this", not "move the cursor".
+  Future<void> _seekAndPlay(Duration target) async {
+    final c = _playbackController;
+    if (c == null) return;
+    await c.seek(target);
+    if (!c.state.playing) await c.togglePlayback();
+  }
+
+  /// Listen mode on a recording whose audio lives only on the server:
+  /// fetch it through the same path the list screen uses, then open
+  /// playback so the words become tappable.
+  Future<void> _downloadAudioForListen() async {
+    final downloader = ref.read(syncedAudioDownloaderProvider);
+    if (downloader == null || !mounted) return;
+    setState(() => _statusMessage = 'Downloading audio…');
+    final outcome = await downloader.download(widget.dumpId);
+    if (!mounted) return;
+    switch (outcome) {
+      case Ok<String>():
+        setState(() {
+          _statusMessage = null;
+          _playbackError = null;
+          _playbackOpening = true;
+        });
+        _playbackInitialization = _initializePlayback();
+      case Fail<String>(:final problem):
+        setState(() {
+          _statusMessage = null;
+          _statusError = 'Audio download failed: $problem';
+        });
+    }
   }
 
   Color? _syncColor(SyncStatus s) => syncStatusColor(s);
@@ -1219,7 +1468,10 @@ class _ServerTranscriptionProgressPanelState
                     ?.copyWith(color: onPanel),
               ),
               const SizedBox(height: 8),
-              Text(_detailText(status, elapsed), style: TextStyle(color: onPanel)),
+              Text(
+                _detailText(status, elapsed),
+                style: TextStyle(color: onPanel),
+              ),
               if (status.isInProgress) ...[
                 const SizedBox(height: 12),
                 const LinearProgressIndicator(),
