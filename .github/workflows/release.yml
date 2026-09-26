@@ -237,7 +237,12 @@ jobs:
 
   windows-installer:
     name: Build + attach Windows installer
-    runs-on: windows-latest
+    # windows-latest became windows-2025-vs2026 (VS 2026 only) in June
+    # 2026. Flutter 3.27.1's tool only knows the VS 2019/2022 generators,
+    # so it fails with 'Visual Studio 16 2019 could not find any instance'.
+    # windows-2022 is GitHub's documented image for VS 2022. Revisit when
+    # Flutter is upgraded past the version that learned VS 2026.
+    runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
 
