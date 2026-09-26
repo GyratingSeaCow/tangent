@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// Name-speakers sheet (docs/design/2026-09-26-speaker-naming.md §3, §6).
+// Name-speakers sheet (docs/design/2026-09-26-speaker-name-map.md §4).
 //
-// Real LocalDb through StorageFixture: Save goes through the same edit
-// lease + updateDumpTranscript + sidecar publication path the detail
-// editor uses, so a stale revision is a real StateError, not a stub.
+// Real LocalDb through StorageFixture: Save writes the per-recording map
+// via `updateSpeakerNames`; the transcript text is asserted byte-equal
+// before and after, because names live ONLY in the map (N1=a).
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tangent/data/local_db.dart';
 import 'package:tangent/data/storage/storage_providers.dart';
+import 'package:tangent/models/speaker_names.dart';
 import 'package:tangent/screens/dump/name_speakers_sheet.dart';
 import 'package:tangent/screens/home/home_screen.dart' show localDbProvider;
 
@@ -77,6 +78,26 @@ Future<DumpRow> seedDiarized(
 
 Future<DumpRow> current(WidgetTester tester, Harness h, String id) async =>
     (await tester.runAsync(() => h.db.getDump(id)))!;
+
+/// Seeds a diarized dump that already carries [names] in its map. Each
+/// call lands a strictly later `updated_at` (the column has one-second
+/// resolution), so "newest map first" is a real ordering under test.
+Future<DumpRow> seedNamed(
+  WidgetTester tester,
+  Harness h,
+  String id,
+  String transcript,
+  Map<String, String> names,
+) async {
+  await seedDiarized(tester, h, id, transcript);
+  return (await tester.runAsync(
+    () => h.db.updateSpeakerNames(
+      id,
+      SpeakerNames(names),
+      now: DateTime.utc(2031).add(Duration(seconds: ++_seedOrder)),
+    ),
+  ))!;
+}
 
 /// Mounts a screen with an 'open' button that shows the sheet for [row].
 Future<void> mount(WidgetTester tester, Harness h, DumpRow row) async {
@@ -154,12 +175,33 @@ void main() {
     expect(saveEnabled(tester), isFalse);
   });
 
-  testWidgets('chips come from other transcripts newest first and fill the '
-      'focused field, else the first empty one', (tester) async {
+  testWidgets('chips come from other recordings\' name maps newest first, '
+      'skip this recording\'s own names, and fill the focused field, else '
+      'the first empty one', (tester) async {
     final Harness h = await createHarness(tester);
-    await seedDiarized(tester, h, 'fixture-older', '## Alice\n\nhi\n\n## Speaker 2\n\nyo');
-    await seedDiarized(tester, h, 'fixture-newer', '## Bob\n\nhey\n\n## Meeting Summary\n\nx');
-    final DumpRow row = await seedDiarized(tester, h, 'fixture-two', twoSpeakers);
+    await seedNamed(
+      tester,
+      h,
+      'fixture-older',
+      twoSpeakers,
+      <String, String>{'Speaker 1': 'Alice', 'Speaker 2': 'Carol'},
+    );
+    await seedNamed(
+      tester,
+      h,
+      'fixture-newer',
+      twoSpeakers,
+      <String, String>{'Speaker 1': 'Bob'},
+    );
+    // A heading in the TEXT is no longer a suggestion source.
+    await seedDiarized(tester, h, 'fixture-text', '## Zed\n\nhi');
+    final DumpRow row = await seedNamed(
+      tester,
+      h,
+      'fixture-two',
+      twoSpeakers,
+      <String, String>{'Speaker 2': 'Carol'},
+    );
     await mount(tester, h, row);
 
     final Finder chips = find.descendant(
@@ -170,21 +212,22 @@ void main() {
     expect(
       tester.widgetList<ActionChip>(chips).map((c) => (c.label as Text).data),
       <String>['Bob', 'Alice'],
+      reason: 'newest map first; Carol is this recording\'s own; Zed is text',
     );
 
-    // Nothing focused: first empty field.
+    // Nothing focused: first empty field (field 2 is prefilled with Carol).
     await tester.tap(find.byKey(const ValueKey<String>('speaker-suggestion-Bob')));
     await tester.pumpAndSettle();
     expect(tester.widget<TextField>(field(1)).controller!.text, 'Bob');
-    expect(tester.widget<TextField>(field(2)).controller!.text, isEmpty);
+    expect(tester.widget<TextField>(field(2)).controller!.text, 'Carol');
 
-    // Focused field wins even though field 2 is the first empty one.
-    await tester.tap(field(1));
+    // Focused field wins.
+    await tester.tap(field(2));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey<String>('speaker-suggestion-Alice')));
     await tester.pumpAndSettle();
-    expect(tester.widget<TextField>(field(1)).controller!.text, 'Alice');
-    expect(tester.widget<TextField>(field(2)).controller!.text, isEmpty);
+    expect(tester.widget<TextField>(field(1)).controller!.text, 'Bob');
+    expect(tester.widget<TextField>(field(2)).controller!.text, 'Alice');
     expect(saveEnabled(tester), isTrue);
   });
 
@@ -226,12 +269,13 @@ void main() {
     expect(saveEnabled(tester), isTrue);
   });
 
-  testWidgets('Save rewrites the transcript through the real LocalDb and '
-      'pops true', (tester) async {
+  testWidgets('Save writes the map through the real LocalDb, leaves the '
+      'transcript byte-equal, marks dirty and pops true', (tester) async {
     final Harness h = await createHarness(tester);
     final DumpRow row = await seedDiarized(tester, h, 'fixture-two', twoSpeakers);
-    await mount(tester, h, row);
+    final String before = row.transcript!;
 
+    await mount(tester, h, row);
     await tester.enterText(field(1), 'Alice');
     await tester.pumpAndSettle();
     await tester.tap(saveButton);
@@ -242,45 +286,71 @@ void main() {
     expect(find.byKey(const ValueKey<String>('name-speakers-sheet')), findsNothing);
     expect(find.text('Speakers named'), findsOneWidget);
     final DumpRow after = await current(tester, h, row.id);
-    expect(after.transcript, startsWith('## Alice\n'));
-    expect(after.transcript, contains('## Speaker 2\n'));
-    // Prose untouched.
-    expect(after.transcript, contains('I told Speaker 1 to wait.'));
-    expect(after.transcript, isNot(contains('I told Alice to wait.')));
+    expect(after.transcript, before, reason: 'names live in the map only');
+    expect(after.transcript!.codeUnits, before.codeUnits);
+    expect(
+      SpeakerNames.decode(after.speakerNames).entries,
+      <String, String>{'Speaker 1': 'Alice'},
+    );
     expect(after.syncDirty, isTrue);
   });
 
-  testWidgets('a stale transcript shows the conflict snackbar and keeps the '
-      'sheet open', (tester) async {
+  testWidgets('fields prefill from the map; a blank field is unchanged and '
+      'Clear removes the name', (tester) async {
+    final Harness h = await createHarness(tester);
+    final DumpRow row = await seedNamed(
+      tester,
+      h,
+      'fixture-two',
+      twoSpeakers,
+      <String, String>{'Speaker 1': 'Alice', 'Speaker 2': 'Bob'},
+    );
+    await mount(tester, h, row);
+
+    expect(tester.widget<TextField>(field(1)).controller!.text, 'Alice');
+    expect(tester.widget<TextField>(field(2)).controller!.text, 'Bob');
+    expect(saveEnabled(tester), isFalse, reason: 'nothing changed yet');
+    final Finder clear1 = find.byKey(const ValueKey<String>('speaker-clear-1'));
+    expect(clear1, findsOneWidget);
+    expect(find.byKey(const ValueKey<String>('speaker-clear-2')), findsOneWidget);
+
+    // Blanking a field by hand is "unchanged", not a removal.
+    await tester.enterText(field(2), '');
+    await tester.pumpAndSettle();
+    expect(saveEnabled(tester), isFalse);
+
+    // Clear drops Speaker 1 and the button goes away.
+    await tester.tap(clear1);
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextField>(field(1)).controller!.text, isEmpty);
+    expect(clear1, findsNothing);
+    expect(saveEnabled(tester), isTrue);
+
+    await tester.tap(saveButton);
+    await pumpBoundUntil(tester, () => h.results.isNotEmpty);
+    await tester.pumpAndSettle();
+    expect(h.results, <bool>[true]);
+    final DumpRow after = await current(tester, h, row.id);
+    expect(after.transcript, twoSpeakers);
+    expect(
+      SpeakerNames.decode(after.speakerNames).entries,
+      <String, String>{'Speaker 2': 'Bob'},
+      reason: 'Speaker 1 cleared; blank Speaker 2 field left Bob alone',
+    );
+  });
+
+  testWidgets('no names to clear: no Clear buttons; Cancel pops false',
+      (tester) async {
     final Harness h = await createHarness(tester);
     final DumpRow row = await seedDiarized(tester, h, 'fixture-two', twoSpeakers);
     await mount(tester, h, row);
 
-    await tester.enterText(field(1), 'Alice');
-    await tester.pumpAndSettle();
-    // Someone else edits underneath the open sheet.
-    await tester.runAsync(
-      () => setTranscript(h.db, row.id, '$twoSpeakers\n\nlate addition'),
-    );
-
-    await tester.tap(saveButton);
-    await pumpBoundUntil(
-      tester,
-      () => find.text(staleTranscriptMessage).evaluate().isNotEmpty,
-    );
-    await tester.pump();
-
-    expect(h.results, isEmpty);
-    expect(find.byKey(const ValueKey<String>('name-speakers-sheet')), findsOneWidget);
-    expect(tester.widget<TextField>(field(1)).controller!.text, 'Alice');
-    expect(saveEnabled(tester), isTrue);
-    final DumpRow after = await current(tester, h, row.id);
-    expect(after.transcript, '$twoSpeakers\n\nlate addition');
-
-    // Cancel pops false.
+    expect(find.byKey(const ValueKey<String>('speaker-clear-1')), findsNothing);
+    expect(find.byKey(const ValueKey<String>('speaker-clear-2')), findsNothing);
     await tester.tap(find.byKey(const ValueKey<String>('speakers-cancel')));
     await tester.pumpAndSettle();
     expect(h.results, <bool>[false]);
+    expect((await current(tester, h, row.id)).speakerNames, isNull);
   });
 
   testWidgets('no speakers: nothing is shown and the call resolves false',

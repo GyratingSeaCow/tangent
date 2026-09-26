@@ -2076,23 +2076,34 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     });
   }
 
-  /// Transcripts that carry at least one `## ` heading, newest first —
-  /// the source for the Name-speakers sheet's tap-to-fill chips
-  /// (speaker-naming spec §3). Read-only; `suggestedSpeakerNames` does the
-  /// filtering in Dart. (The spec's `deleted_at IS NULL` clause is moot:
-  /// `dumps` has no soft-delete column — deleted dumps are removed.)
+  /// The source for the Name-speakers sheet's tap-to-fill chips (speaker
+  /// name map spec §4): the names in `speaker_names` across recordings,
+  /// newest `updated_at` first, flattened in map order, de-duplicated,
+  /// minus [exclude] (the open recording's own current names), at most
+  /// [limit]. Read-only.
   @override
-  Future<List<String>> recentTranscriptsForSpeakerSuggestions({
-    int limit = 50,
+  Future<List<String>> recentSpeakerNamesForSuggestions({
+    int limit = 8,
+    Iterable<String> exclude = const <String>[],
   }) async {
     final rows = await customSelect(
-      'SELECT transcript FROM dumps '
-      'WHERE transcript LIKE ? '
-      'ORDER BY updated_at DESC LIMIT ?',
-      variables: [Variable.withString('%## %'), Variable.withInt(limit)],
+      'SELECT speaker_names FROM dumps '
+      'WHERE speaker_names IS NOT NULL '
+      'ORDER BY updated_at DESC LIMIT 50',
       readsFrom: {dumps},
     ).get();
-    return [for (final row in rows) row.read<String>('transcript')];
+    final Set<String> skip = exclude.toSet();
+    final List<String> out = <String>[];
+    for (final row in rows) {
+      final SpeakerNames names =
+          SpeakerNames.decode(row.read<String?>('speaker_names'));
+      for (final String name in names.names) {
+        if (skip.contains(name) || out.contains(name)) continue;
+        out.add(name);
+        if (out.length >= limit) return out;
+      }
+    }
+    return out;
   }
 
   /// Search across title and transcript using FTS5.

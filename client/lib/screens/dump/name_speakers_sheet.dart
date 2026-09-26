@@ -1,35 +1,26 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// Name-speakers sheet (docs/design/2026-09-26-speaker-naming.md §3).
+// Name-speakers sheet (docs/design/2026-09-26-speaker-name-map.md §4).
 //
-// One text field per `## Speaker N` heading in the dump's transcript; Save
-// rewrites the transcript text in place (decision S1=b) through the same
-// guarded manual-edit path the detail editor uses. No autosave, no name map.
+// One text field per `## Speaker N` heading in the dump's transcript,
+// prefilled with the CURRENT mapped name. Save writes the per-recording
+// name MAP (`LocalDb.updateSpeakerNames`) — the transcript text keeps its
+// raw labels (decision N1=a) and every surface renders names by look-up.
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/local_db.dart';
-import '../../data/manual_transcript_publication.dart';
-import '../../data/storage/storage_contract.dart';
-import '../../data/storage/storage_providers.dart';
+import '../../models/speaker_names.dart';
 import '../../services/speaker_naming.dart';
 import '../home/home_screen.dart' show localDbProvider;
-
-/// Shown when the transcript moved underneath the sheet (spec §3).
-const String staleTranscriptMessage =
-    'Transcript changed underneath you — reopen and try again';
 
 /// Success snackbar text (spec §3).
 const String speakersNamedMessage = 'Speakers named';
 
-/// Opens the Name-speakers sheet for [row]. Resolves `true` when a rename
+/// Opens the Name-speakers sheet for [row]. Resolves `true` when the map
 /// was saved, `false` on cancel — and immediately `false`, without showing
 /// anything, when the transcript has no speakers (the entry points are
 /// absent in that case; this is the belt to their braces).
-///
-/// Save acquires an edit lease, calls `updateDumpTranscript` against the
-/// row's current transcript / attempt / requestId, then publishes the
-/// manual-edit sidecar exactly as the detail editor's Save does.
 Future<bool> showNameSpeakersSheet(
   BuildContext context,
   WidgetRef ref,
@@ -38,13 +29,10 @@ Future<bool> showNameSpeakersSheet(
   final String transcript = row.transcript ?? '';
   if (detectSpeakers(transcript).isEmpty) return false;
   final LocalDb db = ref.read(localDbProvider);
-  final RecordingMutationCoordinator mutations =
-      ref.read(recordingMutationsProvider);
-  // Captured before any await: publication can outlive the route.
-  final RecordingAccess access = ref.read(recordingAccessProvider);
+  final SpeakerNames current = SpeakerNames.decode(row.speakerNames);
   final ScaffoldMessengerState? messenger = ScaffoldMessenger.maybeOf(context);
-  final List<String> suggestions = suggestedSpeakerNames(
-    await db.recentTranscriptsForSpeakerSuggestions(limit: 50),
+  final List<String> suggestions = await db.recentSpeakerNamesForSuggestions(
+    exclude: current.names,
   );
   if (!context.mounted) return false;
   final bool? saved = await showModalBottomSheet<bool>(
@@ -56,14 +44,11 @@ Future<bool> showNameSpeakersSheet(
       ),
       child: NameSpeakersSheet(
         transcript: transcript,
+        names: current,
         suggestions: suggestions,
-        onSave: (String rewritten) => saveRenamedTranscript(
-          row: row,
-          transcript: rewritten,
-          db: db,
-          mutations: mutations,
-          access: access,
-        ),
+        onSave: (SpeakerNames names) async {
+          await db.updateSpeakerNames(row.id, names);
+        },
       ),
     ),
   );
@@ -74,61 +59,28 @@ Future<bool> showNameSpeakersSheet(
   return false;
 }
 
-/// Persists a rewritten transcript for [row] under an edit lease. Throws
-/// [StateError] when the row's transcript revision no longer matches the
-/// one the sheet was opened with (stale), mirroring the detail editor.
-Future<void> saveRenamedTranscript({
-  required DumpRow row,
-  required String transcript,
-  required LocalDb db,
-  required RecordingMutationCoordinator mutations,
-  required RecordingAccess access,
-}) async {
-  final Outcome<UseLease> outcome = await mutations.acquire(row.id, UseKind.edit);
-  final UseLease lease = switch (outcome) {
-    Ok<UseLease>(:final UseLease value) => value,
-    Fail<UseLease>(:final StorageProblem problem) => throw StorageFault(problem),
-  };
-  try {
-    final DumpRow saved = await db.updateDumpTranscript(
-      row.id,
-      storageKey: lease.key,
-      expectedTranscript: row.transcript ?? '',
-      expectedTranscriptionAttempt: row.transcriptionAttempt,
-      expectedTranscriptionRequestId: row.transcriptionRequestId,
-      transcript: transcript,
-      now: DateTime.now().toUtc(),
-    );
-    final bool published = await publishManualTranscriptSidecar(
-      db: db,
-      access: access,
-      storageKey: lease.key,
-      revision: saved,
-    );
-    if (!published) throw StateError('Manual edit was superseded');
-  } finally {
-    await lease.close();
-  }
-}
-
-/// The sheet body. Pure presentation over [transcript]; persistence is the
-/// injected [onSave], which throws [StateError] on a stale revision.
+/// The sheet body. Pure presentation over [transcript] and the current
+/// [names]; persistence is the injected [onSave].
 class NameSpeakersSheet extends StatefulWidget {
   const NameSpeakersSheet({
     super.key,
     required this.transcript,
     required this.onSave,
+    this.names = const SpeakerNames.empty(),
     this.suggestions = const <String>[],
   });
 
   final String transcript;
 
+  /// The recording's current map; each field prefills from it.
+  final SpeakerNames names;
+
   /// Names used on other recordings, newest first — tap-to-fill chips.
   final List<String> suggestions;
 
-  /// Persists the rewritten transcript. Throws [StateError] when the
-  /// transcript changed underneath the sheet.
-  final Future<void> Function(String transcript) onSave;
+  /// Persists the new map: the current one with every non-blank field
+  /// applied as a rename and every cleared field removed.
+  final Future<void> Function(SpeakerNames names) onSave;
 
   @override
   State<NameSpeakersSheet> createState() => _NameSpeakersSheetState();
@@ -139,11 +91,19 @@ class _NameSpeakersSheetState extends State<NameSpeakersSheet> {
   late final Map<String, String> _hints = firstLineBySpeaker(widget.transcript);
   late final Map<String, TextEditingController> _controllers =
       <String, TextEditingController>{
-    for (final String s in _speakers) s: TextEditingController(),
+    for (final String s in _speakers)
+      s: TextEditingController(
+        text: widget.names.hasName(s) ? widget.names.nameFor(s) : '',
+      ),
   };
   late final Map<String, FocusNode> _focus = <String, FocusNode>{
     for (final String s in _speakers) s: FocusNode(debugLabel: s),
   };
+
+  /// Labels whose current name the user asked to drop (Clear). A blank
+  /// field on its own means "unchanged" (v1.15.0 semantics); only Clear
+  /// removes a key from the map.
+  final Set<String> _cleared = <String>{};
   bool _saving = false;
 
   @override
@@ -179,10 +139,24 @@ class _NameSpeakersSheetState extends State<NameSpeakersSheet> {
   Set<String> get _colliding =>
       collidingSpeakerNames(widget.transcript, _typed);
 
-  bool get _anyFilled =>
-      _typed.values.any((String v) => normalizeSpeakerName(v).isNotEmpty);
+  /// The map Save would write: current names, cleared keys dropped, then
+  /// every non-blank field applied as a rename.
+  SpeakerNames get _result {
+    SpeakerNames next = widget.names;
+    for (final String s in _cleared) {
+      next = next.without(s);
+    }
+    for (final MapEntry<String, String> e in _typed.entries) {
+      if (normalizeSpeakerName(e.value).isNotEmpty) {
+        next = next.withRename(e.key, e.value);
+      }
+    }
+    return next;
+  }
 
-  bool get _canSave => _anyFilled && _colliding.isEmpty && !_saving;
+  bool get _changed => _result != widget.names;
+
+  bool get _canSave => _changed && _colliding.isEmpty && !_saving;
 
   /// Chip tap: the focused field, else the first empty one (spec §3).
   void _fill(String name) {
@@ -201,20 +175,22 @@ class _NameSpeakersSheetState extends State<NameSpeakersSheet> {
     _controllers[target]!.text = name;
   }
 
+  void _clear(String label) {
+    _controllers[label]!.clear();
+    setState(() => _cleared.add(label));
+  }
+
   Future<void> _save() async {
     if (!_canSave) return;
     setState(() => _saving = true);
-    final String rewritten = applySpeakerNames(widget.transcript, _typed);
     try {
-      await widget.onSave(rewritten);
+      await widget.onSave(_result);
       if (!mounted) return;
       Navigator.of(context).pop(true);
-    } on StateError {
+    } catch (_) {
       if (!mounted) return;
       setState(() => _saving = false);
-      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-        const SnackBar(content: Text(staleTranscriptMessage)),
-      );
+      rethrow;
     }
   }
 
@@ -238,8 +214,8 @@ class _NameSpeakersSheetState extends State<NameSpeakersSheet> {
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
             child: Text(
-              'Names replace the speaker headings in the transcript. '
-              'Listen mode keeps the original speaker labels.',
+              'Names show in place of the speaker labels on this recording. '
+              'The transcript itself is not changed.',
               style: theme.textTheme.bodySmall,
             ),
           ),
@@ -309,6 +285,21 @@ class _NameSpeakersSheetState extends State<NameSpeakersSheet> {
                             ),
                           ),
                         ),
+                        // Only a field that currently carries a mapped name
+                        // can be cleared; a blank field alone means
+                        // "leave it as it is".
+                        if (widget.names.hasName(label) &&
+                            !_cleared.contains(label))
+                          Padding(
+                            padding: const EdgeInsets.only(top: 4),
+                            child: TextButton(
+                              key: ValueKey<String>(
+                                'speaker-clear-${_n(label)}',
+                              ),
+                              onPressed: _saving ? null : () => _clear(label),
+                              child: const Text('Clear'),
+                            ),
+                          ),
                       ],
                     ),
                   ),

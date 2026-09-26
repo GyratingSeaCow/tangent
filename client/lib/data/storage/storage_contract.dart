@@ -606,5 +606,8 @@ abstract interface class StorageDatabaseOperations {
     String query, {
     int limit = 100,
   });
-  Future<List<String>> recentTranscriptsForSpeakerSuggestions({int limit = 50});
+  Future<List<String>> recentSpeakerNamesForSuggestions({
+    int limit = 8,
+    Iterable<String> exclude = const <String>[],
+  });
 }
