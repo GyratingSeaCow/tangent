@@ -5,6 +5,45 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.13.0] - 2026-09-26
+
+Feature release: **find it in the transcript, and shape the summary.**
+
+### Added
+
+- **Transcript search depth.** Search results now show where the hit is:
+  a snippet with the matched words in bold and an "N matches" chip when a
+  recording matches more than once (title hits bold the title instead).
+  Opening a result lands on the first match with a match bar
+  ("2 of 7", previous / next wrapping at both ends); every occurrence is
+  highlighted in both Edit and Listen mode.
+- **Play from a match.** When the recording has word timings, the match
+  bar's play button seeks 0.3 s before the matched word and plays — the
+  same lead-in as tapping a word in Listen mode. Without timings the bar
+  is scroll-only and the play button is absent.
+- **Summary templates.** AI summaries now follow a template: Meeting (the
+  prior behaviour, unchanged), Brain dump, Lecture, Actions only, and one
+  Custom prompt slot. Meetings default to Meeting; brain dumps and typed
+  notes default to Brain dump. The server owns the presets
+  (`GET /v1/summaries/templates`) so the client never hardcodes the list.
+- **Summarize again.** Recording detail gains a Summarize / Summarize
+  again button (and the list's ⋮ Regenerate summary now goes the same
+  way) that opens a template picker with the current template marked. The
+  old summary stays on screen until the new one arrives via sync.
+- **Custom template editor** in Settings → AI summaries: a multiline
+  prompt with an explicit Save and a Clear. The server appends the
+  headings / "None" / same-language contract to every custom prompt so a
+  careless prompt cannot break the output shape.
+
+### Changed
+
+- `POST /v1/dumps/{id}/summarize` accepts an optional `template` id
+  (422 for an unknown id or an unconfigured Custom slot); dumps carry a
+  server-owned `summary_template` field through sync (client DB v19,
+  absent-vs-null sentinel like the summary columns).
+- `GET/POST /v1/summaries/settings` carry `custom_prompt` and
+  `custom_configured`.
+
 ## [1.12.0] - 2026-09-26
 
 Feature release: **tap a word, hear that moment.**

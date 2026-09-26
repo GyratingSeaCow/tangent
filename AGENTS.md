@@ -50,13 +50,22 @@ ADH2/
 
 ## Status
 
-Shipping — **v1.12.0** (see CHANGELOG.md). Client and server are both
-implemented and tested (1879
-Flutter tests, 487 server tests, 100 Kotlin tests). The client runs
+Shipping — **v1.13.0** (see CHANGELOG.md). Client and server are both
+implemented and tested (1939
+Flutter tests, 511 server tests, 100 Kotlin tests). The client runs
 natively on Linux AND Windows (tray icon, global record hotkey,
 close-to-tray, single instance, right-click = long-press; AppImage and
 Inno Setup installer under `packaging/`) — verified on CachyOS/KDE
 Plasma Wayland and Windows 11; see the README's Desktop sections.
+
+v1.13.0 adds **transcript search depth** (snippets + match counts on
+search results, open-at-match with a prev/next match bar, highlights in
+Edit and Listen mode, play from a match when word timings exist) and
+**summary templates** (server-owned presets Meeting / Brain dump /
+Lecture / Actions only + one Custom slot with a Settings editor;
+"Summarize again" picker on detail and list; per-dump `summary_template`
+synced with the absent-vs-null sentinel, client DB v19). See
+`docs/design/2026-09-26-search-and-summary-templates.md`.
 
 v1.12.0 adds **tap-to-hear**: transcripts get an Edit | Listen toggle;
 Listen renders tappable words with karaoke highlighting, confidence
