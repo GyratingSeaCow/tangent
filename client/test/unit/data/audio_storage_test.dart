@@ -5,6 +5,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import '../../support/legacy_audio_storage_fixture.dart';
+import '../../support/resolved_temp.dart';
 
 void main() {
   group('AudioStorage', () {
@@ -12,7 +13,7 @@ void main() {
     late AudioStorage storage;
 
     setUp(() async {
-      tmp = await Directory.systemTemp.createTemp('tangent_audio_');
+      tmp = await createResolvedTemp('tangent_audio_');
       storage = AudioStorage.test(tmp);
     });
 

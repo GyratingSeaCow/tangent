@@ -13,6 +13,7 @@ import 'package:tangent/services/recording_persistence.dart';
 import 'package:tangent/services/recording_service.dart';
 import '../../support/scripted_storage_backend.dart';
 import '../../support/storage_fixture.dart';
+import '../../support/resolved_temp.dart';
 
 /// Task 3: mode-aware content extension. A text_note reservation stages and
 /// publishes `<id>.md` in the audio component slot; every audio mode still
@@ -152,7 +153,7 @@ void main() {
   test(
       'NEGATIVE: a .md staging file offered to an audio-mode reservation '
       'faults and creates nothing', () async {
-    final root = Directory.systemTemp.createTempSync('tangent-ext-negative-');
+    final root = createResolvedTempSync('tangent-ext-negative-');
     addTearDown(() => root.deleteSync(recursive: true));
     final destination = Directory(p.join(root.path, 'destination'))
       ..createSync();

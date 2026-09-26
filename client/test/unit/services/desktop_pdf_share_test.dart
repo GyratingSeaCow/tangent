@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:tangent/services/desktop_pdf_share.dart';
+import '../../support/resolved_temp.dart';
 
 /// share_plus's shareXFiles is UnimplementedError on Linux: there is no
 /// system share sheet to open. The desktop equivalent of "share" is: put
@@ -15,7 +16,7 @@ void main() {
   late Directory dir;
 
   setUp(() async {
-    dir = await Directory.systemTemp.createTemp('tangent-pdf-share-');
+    dir = await createResolvedTemp('tangent-pdf-share-');
   });
   tearDown(() async {
     await dir.delete(recursive: true);

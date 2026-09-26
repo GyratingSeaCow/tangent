@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tangent/services/single_instance.dart';
+import '../../support/resolved_temp.dart';
 
 /// Desktop hotkey plumbing: one Tangent instance owns a Unix socket; later
 /// invocations (`tangent --record` from a KDE global shortcut) deliver a
@@ -12,7 +13,7 @@ void main() {
   late String sock;
 
   setUp(() async {
-    dir = await Directory.systemTemp.createTemp('tangent-sock-test-');
+    dir = await createResolvedTemp('tangent-sock-test-');
     sock = '${dir.path}/tangent.sock';
   });
 

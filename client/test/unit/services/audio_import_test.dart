@@ -6,6 +6,7 @@ import 'package:tangent/data/storage/storage_contract.dart';
 import 'package:tangent/services/audio_import.dart';
 
 import '../../support/scripted_storage_backend.dart';
+import '../../support/resolved_temp.dart';
 
 /// Jeff: "There also needs to be an Import Audio button which will allow you
 /// to import audio into the tangent folder by copying it to the tangent
@@ -21,7 +22,7 @@ void main() {
   late Directory tmp;
 
   setUp(() async {
-    tmp = await Directory.systemTemp.createTemp('audio-import-test');
+    tmp = await createResolvedTemp('audio-import-test');
   });
 
   tearDown(() async {

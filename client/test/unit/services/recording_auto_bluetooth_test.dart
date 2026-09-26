@@ -8,6 +8,7 @@ import 'package:path/path.dart' as p;
 import 'package:record/record.dart';
 import 'package:tangent/services/communication_routing.dart';
 import 'package:tangent/services/recording_service.dart';
+import '../../support/resolved_temp.dart';
 
 /// Automatic Bluetooth capture — "It needs to default to the system defaults
 /// like it does when you enter into calls" (Jeff, 2026-09-23, after the
@@ -102,7 +103,7 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   late Directory dir;
-  setUp(() => dir = Directory.systemTemp.createTempSync('tangent-autobt-'));
+  setUp(() => dir = createResolvedTempSync('tangent-autobt-'));
   tearDown(() {
     if (dir.existsSync()) dir.deleteSync(recursive: true);
   });

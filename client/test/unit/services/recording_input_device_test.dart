@@ -9,6 +9,7 @@ import 'package:path/path.dart' as p;
 import 'package:record/record.dart';
 import 'package:tangent/services/communication_routing.dart';
 import 'package:tangent/services/recording_service.dart';
+import '../../support/resolved_temp.dart';
 
 /// Jeff records meetings through Bluetooth earbuds. Two behaviours matter and
 /// they pull against each other:
@@ -108,7 +109,7 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   late Directory dir;
-  setUp(() => dir = Directory.systemTemp.createTempSync('tangent-input-'));
+  setUp(() => dir = createResolvedTempSync('tangent-input-'));
   tearDown(() {
     if (dir.existsSync()) dir.deleteSync(recursive: true);
   });

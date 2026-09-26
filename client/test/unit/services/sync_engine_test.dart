@@ -16,6 +16,7 @@ import 'package:tangent/models/sync_status.dart';
 import 'package:tangent/services/connectivity_service.dart';
 import 'package:tangent/services/sync_engine.dart';
 import 'package:tangent/services/transcription_client.dart';
+import '../../support/resolved_temp.dart';
 
 class _MockClient extends Mock implements TranscriptionClient {}
 
@@ -36,7 +37,7 @@ void main() {
     late FilesystemStorageBackend backend;
 
     setUp(() async {
-      tmp = await Directory.systemTemp.createTemp('tangent_sync_');
+      tmp = await createResolvedTemp('tangent_sync_');
       db = LocalDb.forTesting(NativeDatabase.memory());
       await Directory('${tmp.path}/Tangent').create();
       backend = FilesystemStorageBackend();

@@ -22,6 +22,7 @@ import '../support/bound_service_fixture.dart';
 import '../support/bound_widget_lifetime.dart';
 import '../support/legacy_audio_storage_fixture.dart';
 import '../support/scripted_storage_backend.dart';
+import '../support/resolved_temp.dart';
 
 /// Task 9: note-aware detail presentation. A `text_note` row hides the
 /// playback card, every Transcribe control, and the duration chip while
@@ -311,7 +312,7 @@ void main() {
       'regression: recording detail still shows playback, Transcribe, and '
       'the duration chip', (tester) async {
     useHandsetViewport(tester);
-    final temp = Directory.systemTemp.createTempSync('tangent-note-detail-');
+    final temp = createResolvedTempSync('tangent-note-detail-');
     final db = LocalDb.forTesting(NativeDatabase.memory());
     final storage = AudioStorage.test(temp);
     final bound = await createBoundServiceFixture(db, registerDrain: false);

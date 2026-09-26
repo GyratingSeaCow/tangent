@@ -37,6 +37,7 @@ import '../support/bound_row_fixture.dart';
 import '../support/bound_service_fixture.dart';
 import '../support/bound_widget_lifetime.dart';
 import '../support/legacy_audio_storage_fixture.dart';
+import '../support/resolved_temp.dart';
 
 /// Never called: this test drives the panel from durable rows, so the client
 /// only has to EXIST. Throwing keeps an unexpected call visible.
@@ -151,7 +152,7 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
 
     final Directory temp =
-        Directory.systemTemp.createTempSync('tangent-running-model-');
+        createResolvedTempSync('tangent-running-model-');
     final LocalDb db = LocalDb.forTesting(NativeDatabase.memory());
     final AudioStorage storage = AudioStorage.test(temp);
     final bound = await createBoundServiceFixture(db, registerDrain: false);

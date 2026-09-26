@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import 'dart:async';
-import 'dart:io';
 
 import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
@@ -26,6 +25,7 @@ import 'package:tangent/services/server_transcription_service.dart';
 import 'package:tangent/models/sync_change.dart';
 import 'package:tangent/services/transcription_client.dart';
 import 'package:tangent/models/pair_pending.dart';
+import '../support/resolved_temp.dart';
 
 class _NoopTranscriptionClient implements TranscriptionClient {
   @override
@@ -108,7 +108,7 @@ class _NoopTranscriptionClient implements TranscriptionClient {
 void main() {
   testWidgets('Dump detail plays, pauses, and seeks through its recording',
       (tester) async {
-    final temp = Directory.systemTemp.createTempSync('tangent-playback-');
+    final temp = createResolvedTempSync('tangent-playback-');
     final db = LocalDb.forTesting(NativeDatabase.memory());
     final storage = AudioStorage.test(temp);
     final bound = await createBoundServiceFixture(db,

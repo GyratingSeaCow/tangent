@@ -11,6 +11,7 @@ import '../../support/storage_fixture.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tangent/data/storage/capture_publication_codec.dart';
 import 'package:tangent/data/storage/storage_contract.dart';
+import '../../support/resolved_temp.dart';
 
 const _sourceDigest =
     '039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81';
@@ -473,7 +474,7 @@ void main() {
     late String digest;
     var serial = 0;
     setUp(() {
-      root = Directory.systemTemp.createTempSync('tangent-prepared-fixture-');
+      root = createResolvedTempSync('tangent-prepared-fixture-');
       final destination = Directory(p.join(root.path, 'destination'))
         ..createSync();
       final id = 'fixture-prepare-${serial++}';

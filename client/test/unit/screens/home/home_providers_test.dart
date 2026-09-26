@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import 'dart:async';
-import 'dart:io';
 
 import 'package:drift/native.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -15,6 +14,7 @@ import 'package:tangent/screens/home/home_screen.dart' show localDbProvider;
 import 'package:tangent/screens/server/server_connection_screen.dart'
     show transcriptionClientProvider;
 import 'package:tangent/services/transcription_client.dart';
+import '../../../support/resolved_temp.dart';
 
 class _ProviderRecoveryClient extends TranscriptionClient {
   _ProviderRecoveryClient({
@@ -51,7 +51,7 @@ void main() {
   test('client replacement recreates the service and reconciles automatically',
       () async {
     final temp =
-        Directory.systemTemp.createTempSync('tangent-provider-recovery-');
+        createResolvedTempSync('tangent-provider-recovery-');
     final db = LocalDb.forTesting(NativeDatabase.memory());
     final storage = AudioStorage.test(temp);
     final firstStreamCanceled = Completer<void>();

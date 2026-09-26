@@ -10,6 +10,7 @@ import 'package:tangent/services/recording_service.dart';
 import '../../support/scripted_storage_backend.dart';
 import '../../support/storage_fixture.dart';
 import 'recording_staging_validation_test.dart' show SymlinkedStagingHarness;
+import '../../support/resolved_temp.dart';
 
 /// Reproduces the on-device F2 failure "Staging cleanup source is not owned":
 /// after the F1 fix, save() publishes and commits the capture correctly, but
@@ -27,7 +28,7 @@ import 'recording_staging_validation_test.dart' show SymlinkedStagingHarness;
 void main() {
   final links = () {
     try {
-      final probe = Directory.systemTemp.createTempSync('tangent-linkprobe-');
+      final probe = createResolvedTempSync('tangent-linkprobe-');
       try {
         Link(p.join(probe.path, 'l')).createSync(probe.path);
         return true;

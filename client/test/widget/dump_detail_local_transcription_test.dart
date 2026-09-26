@@ -29,6 +29,7 @@ import 'package:tangent/services/server_transcription_service.dart';
 import 'package:tangent/models/sync_change.dart';
 import 'package:tangent/services/transcription_client.dart';
 import 'package:tangent/models/pair_pending.dart';
+import '../support/resolved_temp.dart';
 
 import 'manual_transcript_publication_cases.dart'
     show manualTranscriptPublicationTests;
@@ -250,7 +251,7 @@ void main() {
   manualTranscriptPublicationTests();
   testWidgets('Transcribe uploads to the server and persists the transcript',
       (tester) async {
-    final temp = Directory.systemTemp.createTempSync('tangent-detail-');
+    final temp = createResolvedTempSync('tangent-detail-');
     final db = LocalDb.forTesting(NativeDatabase.memory());
     final storage = AudioStorage.test(temp);
     final bound = await createBoundServiceFixture(db, registerDrain: false);
@@ -348,7 +349,7 @@ void main() {
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
     final temp =
-        Directory.systemTemp.createTempSync('tangent-detail-reactive-');
+        createResolvedTempSync('tangent-detail-reactive-');
     final db = LocalDb.forTesting(NativeDatabase.memory());
     final storage = AudioStorage.test(temp);
     final bound = await createBoundServiceFixture(db, registerDrain: false);
@@ -462,7 +463,7 @@ void main() {
     tester.view.physicalSize = const Size(1080, 2400);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
-    final temp = Directory.systemTemp.createTempSync('tangent-overwrite-ok-');
+    final temp = createResolvedTempSync('tangent-overwrite-ok-');
     final db = LocalDb.forTesting(NativeDatabase.memory());
     final storage = AudioStorage.test(temp);
     final bound = await createBoundServiceFixture(db, registerDrain: false);
@@ -580,7 +581,7 @@ void main() {
     tester.view.physicalSize = const Size(1080, 2400);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
-    final temp = Directory.systemTemp.createTempSync('tangent-overwrite-fail-');
+    final temp = createResolvedTempSync('tangent-overwrite-fail-');
     final db = LocalDb.forTesting(NativeDatabase.memory());
     final storage = AudioStorage.test(temp);
     final bound = await createBoundServiceFixture(db, registerDrain: false);
@@ -648,7 +649,7 @@ void main() {
     tester.view.physicalSize = const Size(1080, 2600);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
-    final temp = Directory.systemTemp.createTempSync('tangent-edit-save-');
+    final temp = createResolvedTempSync('tangent-edit-save-');
     final db = LocalDb.forTesting(NativeDatabase.memory());
     final storage = AudioStorage.test(temp);
     final bound = await createBoundServiceFixture(db, registerDrain: false);
@@ -757,7 +758,7 @@ void main() {
     tester.view.physicalSize = const Size(1080, 2600);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
-    final temp = Directory.systemTemp.createTempSync('fifo-ui-');
+    final temp = createResolvedTempSync('fifo-ui-');
     final db = LocalDb.forTesting(NativeDatabase.memory());
     final storage = AudioStorage.test(temp);
     final bound = await createBoundServiceFixture(db, registerDrain: false);
@@ -834,7 +835,7 @@ void main() {
     tester.view.physicalSize = const Size(1080, 2600);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
-    final temp = Directory.systemTemp.createTempSync('failed-edit-');
+    final temp = createResolvedTempSync('failed-edit-');
     final db = LocalDb.forTesting(NativeDatabase.memory());
     final storage = AudioStorage.test(temp);
     final bound = await createBoundServiceFixture(db, registerDrain: false);
@@ -919,7 +920,7 @@ void main() {
     tester.view.physicalSize = const Size(1080, 2600);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
-    final temp = Directory.systemTemp.createTempSync('typing-save-');
+    final temp = createResolvedTempSync('typing-save-');
     final db = LocalDb.forTesting(NativeDatabase.memory());
     final storage = AudioStorage.test(temp);
     final bound = await createBoundServiceFixture(db, registerDrain: false);
@@ -1030,7 +1031,7 @@ void main() {
       tester.view.physicalSize = const Size(1080, 2600);
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.resetPhysicalSize);
-      final temp = Directory.systemTemp.createTempSync('manual-sidecar-');
+      final temp = createResolvedTempSync('manual-sidecar-');
       final db = LocalDb.forTesting(NativeDatabase.memory());
       final storage = AudioStorage.test(temp);
       final bound = await createBoundServiceFixture(db, registerDrain: false);
@@ -1187,7 +1188,7 @@ void main() {
           tester.view.physicalSize = const Size(1080, 2600);
           tester.view.devicePixelRatio = 1;
           addTearDown(tester.view.resetPhysicalSize);
-          final temp = Directory.systemTemp.createTempSync('unmounted-repair-');
+          final temp = createResolvedTempSync('unmounted-repair-');
           final db = _PausedTranscriptReturnDb()..pauseReturn = pauseReturn;
           final storage = AudioStorage.test(temp);
           final bound =
@@ -1377,7 +1378,7 @@ void main() {
     tester.view.physicalSize = const Size(1080, 2600);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
-    final temp = Directory.systemTemp.createTempSync('tangent-edit-stale-');
+    final temp = createResolvedTempSync('tangent-edit-stale-');
     final db = LocalDb.forTesting(NativeDatabase.memory());
     final storage = AudioStorage.test(temp);
     final bound = await createBoundServiceFixture(db, registerDrain: false);
@@ -1489,7 +1490,7 @@ void main() {
     tester.view.physicalSize = const Size(1080, 2400);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
-    final temp = Directory.systemTemp.createTempSync('tangent-detail-meeting-');
+    final temp = createResolvedTempSync('tangent-detail-meeting-');
     final db = LocalDb.forTesting(NativeDatabase.memory());
     final storage = AudioStorage.test(temp);
     final bound = await createBoundServiceFixture(db, registerDrain: false);
@@ -1660,7 +1661,7 @@ void main() {
     tester.view.physicalSize = const Size(1080, 2400);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
-    final temp = Directory.systemTemp.createTempSync('tangent-collapse-');
+    final temp = createResolvedTempSync('tangent-collapse-');
     final db = LocalDb.forTesting(NativeDatabase.memory());
     final storage = AudioStorage.test(temp);
     final bound = await createBoundServiceFixture(db, registerDrain: false);
@@ -1753,7 +1754,7 @@ void main() {
     tester.view.physicalSize = const Size(1080, 2400);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
-    final temp = Directory.systemTemp.createTempSync('tangent-inline-');
+    final temp = createResolvedTempSync('tangent-inline-');
     final db = LocalDb.forTesting(NativeDatabase.memory());
     final storage = AudioStorage.test(temp);
     final bound = await createBoundServiceFixture(db, registerDrain: false);
@@ -1805,7 +1806,7 @@ void main() {
     tester.view.physicalSize = const Size(1080, 2400);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
-    final temp = Directory.systemTemp.createTempSync('tangent-notes-aba-race-');
+    final temp = createResolvedTempSync('tangent-notes-aba-race-');
     final db = _PausingMeetingNotesDb();
     final storage = AudioStorage.test(temp);
     final bound = await createBoundServiceFixture(db, registerDrain: false);
