@@ -73,7 +73,7 @@ def _infer_script() -> Path:
     return Path(__file__).resolve().parent.parent / "summarize_infer.py"
 
 
-class _ChildFailure(Exception):
+class _ChildFailure(Exception):  # noqa: N818 - transport failure, not an API error
     """The persistent child failed at the TRANSPORT level: died, hung past
     the deadline, or spoke a non-JSON line. Distinct from a child-reported
     ``{"error": ...}`` result, which is a healthy child rejecting one
