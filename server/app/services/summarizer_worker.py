@@ -27,6 +27,7 @@ from pathlib import Path
 
 from app.logging_config import get_logger
 from app.services import summarizer_env
+from app.summary_templates import assemble_prompt, default_template_id, get_custom_prompt
 from app.summarize_infer import MODEL_FILENAME
 
 log = get_logger(__name__)
@@ -134,13 +135,25 @@ class _InferChild:
         tail = "".join(self._stderr_tail).strip()[-500:]
         return f"summarize_infer exited {rc}: {tail}"
 
-    def request(self, dump_id: str, transcript: str, timeout: float) -> str:
+    def request(
+        self,
+        dump_id: str,
+        transcript: str,
+        system_prompt: str,
+        timeout: float,
+    ) -> str:
         """One transcript in, one summary out.
 
         Raises _ChildFailure on transport death/hang/garbage; RuntimeError
         on a child-reported per-request error (child stays up).
         """
-        line_out = json.dumps({"id": dump_id, "transcript": transcript})
+        line_out = json.dumps(
+            {
+                "id": dump_id,
+                "transcript": transcript,
+                "system_prompt": system_prompt,
+            }
+        )
         try:
             self.proc.stdin.write(line_out + "\n")  # type: ignore[union-attr]
             self.proc.stdin.flush()  # type: ignore[union-attr]
@@ -237,7 +250,7 @@ def shutdown_infer_child() -> None:
         child.close()
 
 
-def run_inference(dump_id: str, transcript: str) -> str:
+def run_inference(dump_id: str, transcript: str, system_prompt: str) -> str:
     """Summarize one transcript via the persistent child, restarting it ONCE
     on transport failure (crash/timeout/garbage) before surfacing the error.
     Raises RuntimeError on failure."""
@@ -246,7 +259,7 @@ def run_inference(dump_id: str, transcript: str) -> str:
     with _infer_serial:
         child = _ensure_child()
         try:
-            return child.request(dump_id, transcript, INFER_TIMEOUT_S)
+            return child.request(dump_id, transcript, system_prompt, INFER_TIMEOUT_S)
         except _ChildFailure as exc:
             deliberate = child.closed
             _discard_child(child)
@@ -256,13 +269,15 @@ def run_inference(dump_id: str, transcript: str) -> str:
             log.warning("summarizer_worker.infer_restarted", error=str(exc))
             retry = _ensure_child()
             try:
-                return retry.request(dump_id, transcript, INFER_TIMEOUT_S)
+                return retry.request(
+                    dump_id, transcript, system_prompt, INFER_TIMEOUT_S
+                )
             except _ChildFailure as exc2:
                 _discard_child(retry)
                 raise RuntimeError(str(exc2)) from exc2
 
 
-Infer = Callable[[str, str], str]
+Infer = Callable[[str, str, str], str]
 
 
 # --- summarizing one dump -----------------------------------------------------
@@ -288,7 +303,9 @@ def summarize_dump(
         now = int(_time.time())
 
     row = db.execute(
-        "SELECT transcript, deleted_at FROM dumps WHERE id = ?", (dump_id,)
+        "SELECT transcript, mode, summary_template, deleted_at "
+        "FROM dumps WHERE id = ?",
+        (dump_id,),
     ).fetchone()
     if row is None or row["deleted_at"] is not None:
         log.info("summarizer_worker.dump_gone", dump_id=dump_id)
@@ -298,8 +315,13 @@ def summarize_dump(
         log.warning("summarizer_worker.no_transcript", dump_id=dump_id)
         return False
 
+    template_id = row["summary_template"] or default_template_id(row["mode"])
     try:
-        summary = infer(dump_id, transcript)
+        system_prompt = assemble_prompt(
+            template_id,
+            custom_prompt=get_custom_prompt(db),
+        )
+        summary = infer(dump_id, transcript, system_prompt)
     except Exception as exc:
         log.warning(
             "summarizer_worker.summarize_failed",
