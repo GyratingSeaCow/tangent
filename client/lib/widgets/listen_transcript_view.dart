@@ -15,6 +15,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 
+import '../models/speaker_names.dart';
 import '../services/transcript_alignment.dart';
 import '../services/transcript_timings.dart';
 
@@ -30,6 +31,7 @@ class ListenTranscriptView extends StatefulWidget {
     required this.onRetranscribe,
     this.onDownloadAudio,
     this.onSpeakerTap,
+    this.names = const SpeakerNames.empty(),
     this.highlightedWords = const <int>{},
     this.currentWord,
   });
@@ -69,6 +71,10 @@ class ListenTranscriptView extends StatefulWidget {
   /// speaker header. The detail screen opens the Name-speakers sheet; null
   /// leaves the header as plain text.
   final void Function(String label)? onSpeakerTap;
+
+  /// The recording's speaker name map (spec §3): each header shows
+  /// `names.nameFor(label)`; [onSpeakerTap] still receives the raw label.
+  final SpeakerNames names;
 
   @override
   State<ListenTranscriptView> createState() => ListenTranscriptViewState();
@@ -353,8 +359,9 @@ class ListenTranscriptViewState extends State<ListenTranscriptView> {
   }
 
   /// A speaker label above its turns. Tappable (spec §4.3) so the header
-  /// itself is the Listen-mode way into the Name-speakers sheet; the label
-  /// stays the raw timings one after a rename (S1=b).
+  /// itself is the Listen-mode way into the Name-speakers sheet; the key
+  /// and the tap carry the raw timings label, the text shows the mapped
+  /// name (spec §3).
   Widget _speakerHeader(ThemeData theme, String label) {
     final onTap = widget.onSpeakerTap;
     return Padding(
@@ -364,7 +371,7 @@ class ListenTranscriptViewState extends State<ListenTranscriptView> {
         onTap: onTap == null ? null : () => onTap(label),
         borderRadius: BorderRadius.circular(4),
         child: Text(
-          label,
+          widget.names.nameFor(label),
           style: theme.textTheme.labelLarge
               ?.copyWith(color: theme.colorScheme.primary),
         ),

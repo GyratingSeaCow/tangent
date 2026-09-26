@@ -8,8 +8,10 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 
+import '../models/speaker_names.dart';
 import '../models/sync_status.dart';
 import '../models/transcription_status.dart';
+import '../services/speaker_names_backfill.dart';
 import 'storage/storage_tables.dart';
 import 'storage/storage_contract.dart';
 import 'storage/storage_codec.dart';
@@ -99,8 +101,29 @@ class Dumps extends Table {
   /// it, so the client never writes or pushes this column itself.
   TextColumn get summaryTemplate => text().nullable()();
 
+  /// Per-recording speaker name map (v1.17.0, spec §1): the JSON object
+  /// `{"Speaker 1":"Jeff"}` as text, or null when no speaker is named.
+  /// Device-authored — it rides the push payload next to [title] and
+  /// competes on [updatedAt] like every other user edit. The transcript
+  /// text keeps its raw `## Speaker N` labels; surfaces render through
+  /// the map (`renderSpeakerNames`).
+  TextColumn get speakerNames => text().nullable()();
+
   @override
   Set<Column> get primaryKey => {id};
+}
+
+/// Small key/value store for client-local bookkeeping that belongs with
+/// the data it describes (the speaker-name back-fill record, spec §2) —
+/// NOT user preferences, which live in SharedPreferences via SettingsStore.
+@DataClassName('LocalSettingRow')
+class LocalSettings extends Table {
+  @override
+  String get tableName => 'settings';
+  TextColumn get key => text()();
+  TextColumn get value => text()();
+  @override
+  Set<Column> get primaryKey => {key};
 }
 
 @DataClassName('SyncQueueRow')
@@ -276,6 +299,7 @@ class InkIndexEntries extends Table {
     SyncTombstones,
     SyncStates,
     InkIndexEntries,
+    LocalSettings,
   ],
 )
 class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
@@ -284,7 +308,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   LocalDb.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 19;
+  int get schemaVersion => 20;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -679,8 +703,101 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
               await m.addColumn(dumps, dumps.summaryTemplate);
             }
           }
+          if (from < 20) {
+            // Speaker name map (v1.17.0): one nullable, device-authored
+            // column on dumps plus the client-local settings table, then
+            // the one-time back-fill of the v1.15.0 rewrite-in-place.
+            // Same ask-the-database guards as v17-v19.
+            final Set<String> dumpCols = <String>{
+              for (final QueryRow row
+                  in await customSelect('PRAGMA table_info(dumps)').get())
+                row.data['name'] as String,
+            };
+            if (dumpCols.isNotEmpty && !dumpCols.contains('speaker_names')) {
+              await m.addColumn(dumps, dumps.speakerNames);
+            }
+            final List<QueryRow> settingsTable = await customSelect(
+              "SELECT name FROM sqlite_master WHERE type='table' "
+              "AND name='settings'",
+            ).get();
+            if (settingsTable.isEmpty) {
+              await m.createTable(localSettings);
+            }
+            if (dumpCols.contains('transcript')) {
+              await _backfillSpeakerNames();
+            }
+          }
         },
       );
+
+  /// Key of the settings row recording what [_backfillSpeakerNames] did.
+  static const String speakerNamesBackfillKey = 'speaker_names_backfill';
+
+  /// One-time conversion of the v1.15.0 rewrite-in-place (spec §2).
+  ///
+  /// For every dump whose transcript carries a user speaker heading
+  /// (`hasUserSpeakerNames`), pairs the non-section headings with
+  /// `Speaker 1..k` in document order, writes the map to `speaker_names`,
+  /// restores the raw labels in the text, bumps `updated_at` and marks the
+  /// row dirty so the server and peers converge on the same shape.
+  /// Idempotent: a second run finds no user headings and writes nothing.
+  /// Nothing is deleted; the `speaker_names_backfill` settings row records
+  /// `{dumpId: {names, rewrittenHeadings}}` for a one-shot undo.
+  Future<void> _backfillSpeakerNames() async {
+    final List<QueryRow> rows = await customSelect(
+      'SELECT id, transcript FROM dumps '
+      "WHERE transcript IS NOT NULL AND transcript LIKE '%## %'",
+    ).get();
+    final Map<String, dynamic> record = <String, dynamic>{};
+    final int now = DateTime.now().toUtc().millisecondsSinceEpoch ~/ 1000;
+    for (final QueryRow row in rows) {
+      final String id = row.data['id'] as String;
+      final String transcript = row.data['transcript'] as String;
+      final SpeakerNamesBackfillPlan? plan =
+          planSpeakerNamesBackfill(transcript);
+      if (plan == null) continue;
+      await customUpdate(
+        'UPDATE dumps SET transcript = ?, speaker_names = ?, '
+        'updated_at = ?, sync_dirty = 1 WHERE id = ?',
+        variables: <Variable<Object>>[
+          Variable<String>(plan.transcript),
+          Variable<String>(plan.names.encode()!),
+          Variable<int>(now),
+          Variable<String>(id),
+        ],
+        updates: {dumps},
+      );
+      record[id] = plan.toJson();
+    }
+    if (record.isEmpty) return;
+    final List<QueryRow> prior = await customSelect(
+      'SELECT value FROM settings WHERE key = ?',
+      variables: <Variable<Object>>[
+        Variable<String>(speakerNamesBackfillKey),
+      ],
+    ).get();
+    if (prior.isNotEmpty) {
+      final Object? old = jsonDecode(prior.single.data['value'] as String);
+      if (old is Map<String, dynamic>) {
+        record.addEntries(
+          old.entries.where((e) => !record.containsKey(e.key)),
+        );
+      }
+    }
+    await customStatement(
+      'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)',
+      <Object>[speakerNamesBackfillKey, jsonEncode(record)],
+    );
+  }
+
+  /// The back-fill record, or null when no dump was ever converted.
+  Future<Map<String, dynamic>?> speakerNamesBackfillRecord() async {
+    final LocalSettingRow? row = await (select(localSettings)
+          ..where((s) => s.key.equals(speakerNamesBackfillKey)))
+        .getSingleOrNull();
+    if (row == null) return null;
+    return jsonDecode(row.value) as Map<String, dynamic>;
+  }
 
   // ---- multi-device sync -------------------------------------------------
 
@@ -877,7 +994,14 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     // Same sentinel rule: an older server that never sends the key must
     // not erase the template choice this device already holds.
     Object? summaryTemplate = absentSummaryField,
+    // Device-authored, but the same wire rule: an older server never sends
+    // the key (leave the map alone); a present null is "no names".
+    Object? speakerNames = absentSpeakerNamesField,
   }) async {
+    final Value<String?> speakerNamesValue =
+        identical(speakerNames, absentSpeakerNamesField)
+            ? const Value<String?>.absent()
+            : Value<String?>(speakerNames as String?);
     final Value<String?> timingsValue =
         identical(transcriptTimings, absentSummaryField)
             ? const Value<String?>.absent()
@@ -939,6 +1063,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
           summarizedAt: summarizedAtValue,
           transcriptTimings: timingsValue,
           summaryTemplate: templateValue,
+          speakerNames: speakerNamesValue,
           syncedSeq: Value(seq),
         ),
         mode: InsertMode.insertOrReplace,
@@ -965,6 +1090,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
         summarizedAt: summarizedAtValue,
         transcriptTimings: timingsValue,
         summaryTemplate: templateValue,
+        speakerNames: speakerNamesValue,
         syncDirty: const Value<bool?>(false),
         syncedSeq: Value(seq),
       ),
@@ -974,6 +1100,34 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   /// Sentinel distinguishing "payload had no summary keys" (older server —
   /// keep the stored values) from "server sent null" for [applyRemoteDump].
   static const Object absentSummaryField = Object();
+
+  /// Sentinel distinguishing "payload had no `speaker_names` key" (older
+  /// server — keep the stored map) from "present null" (cleared) for
+  /// [applyRemoteDump].
+  static const Object absentSpeakerNamesField = Object();
+
+  /// Writes the speaker name map for one recording (spec §4): [names] null
+  /// or empty clears the column. Bumps `updated_at` and marks the row dirty
+  /// so the rename reaches the server and every other device. Never
+  /// touches the transcript text.
+  Future<DumpRow> updateSpeakerNames(
+    String id,
+    SpeakerNames? names, {
+    DateTime? now,
+  }) {
+    return transaction(() async {
+      final int count =
+          await (update(dumps)..where((d) => d.id.equals(id))).write(
+        DumpsCompanion(
+          speakerNames: Value<String?>(names?.encode()),
+          updatedAt: Value((now ?? DateTime.now()).toUtc()),
+        ),
+      );
+      if (count != 1) throw StateError('Dump not found: $id');
+      await markDumpDirty(id);
+      return (await getDump(id))!;
+    });
+  }
 
   /// Soft-deletes a recording because a peer deleted it.
   ///
@@ -1922,23 +2076,34 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     });
   }
 
-  /// Transcripts that carry at least one `## ` heading, newest first —
-  /// the source for the Name-speakers sheet's tap-to-fill chips
-  /// (speaker-naming spec §3). Read-only; `suggestedSpeakerNames` does the
-  /// filtering in Dart. (The spec's `deleted_at IS NULL` clause is moot:
-  /// `dumps` has no soft-delete column — deleted dumps are removed.)
+  /// The source for the Name-speakers sheet's tap-to-fill chips (speaker
+  /// name map spec §4): the names in `speaker_names` across recordings,
+  /// newest `updated_at` first, flattened in map order, de-duplicated,
+  /// minus [exclude] (the open recording's own current names), at most
+  /// [limit]. Read-only.
   @override
-  Future<List<String>> recentTranscriptsForSpeakerSuggestions({
-    int limit = 50,
+  Future<List<String>> recentSpeakerNamesForSuggestions({
+    int limit = 8,
+    Iterable<String> exclude = const <String>[],
   }) async {
     final rows = await customSelect(
-      'SELECT transcript FROM dumps '
-      'WHERE transcript LIKE ? '
-      'ORDER BY updated_at DESC LIMIT ?',
-      variables: [Variable.withString('%## %'), Variable.withInt(limit)],
+      'SELECT speaker_names FROM dumps '
+      'WHERE speaker_names IS NOT NULL '
+      'ORDER BY updated_at DESC LIMIT 50',
       readsFrom: {dumps},
     ).get();
-    return [for (final row in rows) row.read<String>('transcript')];
+    final Set<String> skip = exclude.toSet();
+    final List<String> out = <String>[];
+    for (final row in rows) {
+      final SpeakerNames names =
+          SpeakerNames.decode(row.read<String?>('speaker_names'));
+      for (final String name in names.names) {
+        if (skip.contains(name) || out.contains(name)) continue;
+        out.add(name);
+        if (out.length >= limit) return out;
+      }
+    }
+    return out;
   }
 
   /// Search across title and transcript using FTS5.

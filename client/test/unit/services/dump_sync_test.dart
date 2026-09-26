@@ -18,6 +18,7 @@ import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tangent/data/local_db.dart';
+import 'package:tangent/models/speaker_names.dart';
 import 'package:tangent/models/sync_change.dart';
 import 'package:tangent/services/connectivity_service.dart';
 import 'package:tangent/services/document_sync_engine.dart';
@@ -107,6 +108,7 @@ RemoteChange dumpChange({
   Object? summarizedAt = _absent,
   Object? transcriptTimings = _absent,
   Object? summaryTemplate = _absent,
+  Object? speakerNames = _absent,
 }) {
   final int now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
   return RemoteChange(
@@ -135,6 +137,8 @@ RemoteChange dumpChange({
               'transcript_timings': transcriptTimings,
             if (!identical(summaryTemplate, _absent))
               'summary_template': summaryTemplate,
+            if (!identical(speakerNames, _absent))
+              'speaker_names': speakerNames,
           },
   );
 }
@@ -618,6 +622,101 @@ void main() {
       expect(payload.containsKey('summarized_at'), isFalse);
       expect(payload.containsKey('transcript_timings'), isFalse);
       expect(payload.containsKey('summary_template'), isFalse);
+    });
+  });
+
+  group('speaker names (device-authored, both directions)', () {
+    test('the map arrives as JSON text and a structured object alike',
+        () async {
+      final client = _ScriptedClient(
+        incoming: <RemoteChange>[
+          dumpChange(id: 'dump-sn-1', speakerNames: '{"Speaker 1":"Jeff"}'),
+          dumpChange(
+            id: 'dump-sn-2',
+            seq: 2,
+            speakerNames: <String, dynamic>{'Speaker 2': 'Sarah'},
+          ),
+        ],
+      );
+      await build(client).syncNow();
+      expect(
+        (await db.getDumpRow('dump-sn-1'))!.speakerNames,
+        '{"Speaker 1":"Jeff"}',
+      );
+      expect(
+        (await db.getDumpRow('dump-sn-2'))!.speakerNames,
+        '{"Speaker 2":"Sarah"}',
+      );
+    });
+
+    test('a payload with NO speaker_names key keeps the stored map', () async {
+      await build(
+        _ScriptedClient(
+          incoming: <RemoteChange>[
+            dumpChange(id: 'dump-sn-3', speakerNames: '{"Speaker 1":"Jeff"}'),
+          ],
+        ),
+      ).syncNow();
+      await build(
+        _ScriptedClient(
+          incoming: <RemoteChange>[
+            dumpChange(id: 'dump-sn-3', seq: 2, title: 'Renamed elsewhere'),
+          ],
+        ),
+      ).syncNow();
+      final DumpRow row = (await db.getDumpRow('dump-sn-3'))!;
+      expect(row.title, 'Renamed elsewhere');
+      expect(
+        row.speakerNames,
+        '{"Speaker 1":"Jeff"}',
+        reason: 'absence is not an eraser',
+      );
+    });
+
+    test('an EXPLICIT null speaker_names clears the stored map', () async {
+      await build(
+        _ScriptedClient(
+          incoming: <RemoteChange>[
+            dumpChange(id: 'dump-sn-4', speakerNames: '{"Speaker 1":"Jeff"}'),
+          ],
+        ),
+      ).syncNow();
+      await build(
+        _ScriptedClient(
+          incoming: <RemoteChange>[
+            dumpChange(id: 'dump-sn-4', seq: 2, speakerNames: null),
+          ],
+        ),
+      ).syncNow();
+      expect((await db.getDumpRow('dump-sn-4'))!.speakerNames, isNull);
+    });
+
+    test('the push payload carries speaker_names next to title', () async {
+      await seedLocal('dump-sn-5', title: 'Named');
+      await db.updateSpeakerNames(
+        'dump-sn-5',
+        SpeakerNames(<String, String>{'Speaker 1': 'Jeff'}),
+      );
+      final client = _ScriptedClient();
+      await build(client).syncNow();
+      final Map<String, dynamic>? sent =
+          client.pushed.where((c) => c['entity_id'] == 'dump-sn-5').firstOrNull;
+      expect(sent, isNotNull, reason: 'updateSpeakerNames marks dirty');
+      final payload = sent!['payload'] as Map<String, dynamic>;
+      expect(payload['title'], 'Named');
+      expect(payload['speaker_names'], '{"Speaker 1":"Jeff"}');
+    });
+
+    test('a cleared map is pushed as a present null', () async {
+      await seedLocal('dump-sn-6');
+      await db.updateSpeakerNames('dump-sn-6', null);
+      final client = _ScriptedClient();
+      await build(client).syncNow();
+      final payload = client.pushed
+              .firstWhere((c) => c['entity_id'] == 'dump-sn-6')['payload']
+          as Map<String, dynamic>;
+      expect(payload.containsKey('speaker_names'), isTrue);
+      expect(payload['speaker_names'], isNull);
     });
   });
 

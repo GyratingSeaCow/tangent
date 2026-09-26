@@ -2282,4 +2282,5 @@ Dump dumpFromRow(DumpRow row) => Dump(
               row.summarizedAt! * 1000,
               isUtc: true,
             ),
+      speakerNames: row.speakerNames,
     );

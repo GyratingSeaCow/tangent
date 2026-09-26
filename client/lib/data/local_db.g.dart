@@ -215,6 +215,12 @@ class $DumpsTable extends Dumps with TableInfo<$DumpsTable, DumpRow> {
   late final GeneratedColumn<String> summaryTemplate = GeneratedColumn<String>(
       'summary_template', aliasedName, true,
       type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _speakerNamesMeta =
+      const VerificationMeta('speakerNames');
+  @override
+  late final GeneratedColumn<String> speakerNames = GeneratedColumn<String>(
+      'speaker_names', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
   @override
   List<GeneratedColumn> get $columns => [
         id,
@@ -247,7 +253,8 @@ class $DumpsTable extends Dumps with TableInfo<$DumpsTable, DumpRow> {
         summaryModel,
         summarizedAt,
         transcriptTimings,
-        summaryTemplate
+        summaryTemplate,
+        speakerNames
       ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -443,6 +450,12 @@ class $DumpsTable extends Dumps with TableInfo<$DumpsTable, DumpRow> {
           summaryTemplate.isAcceptableOrUnknown(
               data['summary_template']!, _summaryTemplateMeta));
     }
+    if (data.containsKey('speaker_names')) {
+      context.handle(
+          _speakerNamesMeta,
+          speakerNames.isAcceptableOrUnknown(
+              data['speaker_names']!, _speakerNamesMeta));
+    }
     return context;
   }
 
@@ -518,6 +531,8 @@ class $DumpsTable extends Dumps with TableInfo<$DumpsTable, DumpRow> {
           DriftSqlType.string, data['${effectivePrefix}transcript_timings']),
       summaryTemplate: attachedDatabase.typeMapping.read(
           DriftSqlType.string, data['${effectivePrefix}summary_template']),
+      speakerNames: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}speaker_names']),
     );
   }
 
@@ -602,6 +617,14 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
   /// template by POSTing /v1/dumps/{id}/summarize and the server persists
   /// it, so the client never writes or pushes this column itself.
   final String? summaryTemplate;
+
+  /// Per-recording speaker name map (v1.17.0, spec §1): the JSON object
+  /// `{"Speaker 1":"Jeff"}` as text, or null when no speaker is named.
+  /// Device-authored — it rides the push payload next to [title] and
+  /// competes on [updatedAt] like every other user edit. The transcript
+  /// text keeps its raw `## Speaker N` labels; surfaces render through
+  /// the map (`renderSpeakerNames`).
+  final String? speakerNames;
   const DumpRow(
       {required this.id,
       required this.createdAt,
@@ -633,7 +656,8 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
       this.summaryModel,
       this.summarizedAt,
       this.transcriptTimings,
-      this.summaryTemplate});
+      this.summaryTemplate,
+      this.speakerNames});
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -710,6 +734,9 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
     if (!nullToAbsent || summaryTemplate != null) {
       map['summary_template'] = Variable<String>(summaryTemplate);
     }
+    if (!nullToAbsent || speakerNames != null) {
+      map['speaker_names'] = Variable<String>(speakerNames);
+    }
     return map;
   }
 
@@ -784,6 +811,9 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
       summaryTemplate: summaryTemplate == null && nullToAbsent
           ? const Value.absent()
           : Value(summaryTemplate),
+      speakerNames: speakerNames == null && nullToAbsent
+          ? const Value.absent()
+          : Value(speakerNames),
     );
   }
 
@@ -831,6 +861,7 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
       transcriptTimings:
           serializer.fromJson<String?>(json['transcriptTimings']),
       summaryTemplate: serializer.fromJson<String?>(json['summaryTemplate']),
+      speakerNames: serializer.fromJson<String?>(json['speakerNames']),
     );
   }
   @override
@@ -872,6 +903,7 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
       'summarizedAt': serializer.toJson<int?>(summarizedAt),
       'transcriptTimings': serializer.toJson<String?>(transcriptTimings),
       'summaryTemplate': serializer.toJson<String?>(summaryTemplate),
+      'speakerNames': serializer.toJson<String?>(speakerNames),
     };
   }
 
@@ -906,7 +938,8 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
           Value<String?> summaryModel = const Value.absent(),
           Value<int?> summarizedAt = const Value.absent(),
           Value<String?> transcriptTimings = const Value.absent(),
-          Value<String?> summaryTemplate = const Value.absent()}) =>
+          Value<String?> summaryTemplate = const Value.absent(),
+          Value<String?> speakerNames = const Value.absent()}) =>
       DumpRow(
         id: id ?? this.id,
         createdAt: createdAt ?? this.createdAt,
@@ -960,6 +993,8 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
         summaryTemplate: summaryTemplate.present
             ? summaryTemplate.value
             : this.summaryTemplate,
+        speakerNames:
+            speakerNames.present ? speakerNames.value : this.speakerNames,
       );
   DumpRow copyWithCompanion(DumpsCompanion data) {
     return DumpRow(
@@ -1033,6 +1068,9 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
       summaryTemplate: data.summaryTemplate.present
           ? data.summaryTemplate.value
           : this.summaryTemplate,
+      speakerNames: data.speakerNames.present
+          ? data.speakerNames.value
+          : this.speakerNames,
     );
   }
 
@@ -1069,7 +1107,8 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
           ..write('summaryModel: $summaryModel, ')
           ..write('summarizedAt: $summarizedAt, ')
           ..write('transcriptTimings: $transcriptTimings, ')
-          ..write('summaryTemplate: $summaryTemplate')
+          ..write('summaryTemplate: $summaryTemplate, ')
+          ..write('speakerNames: $speakerNames')
           ..write(')'))
         .toString();
   }
@@ -1106,7 +1145,8 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
         summaryModel,
         summarizedAt,
         transcriptTimings,
-        summaryTemplate
+        summaryTemplate,
+        speakerNames
       ]);
   @override
   bool operator ==(Object other) =>
@@ -1142,7 +1182,8 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
           other.summaryModel == this.summaryModel &&
           other.summarizedAt == this.summarizedAt &&
           other.transcriptTimings == this.transcriptTimings &&
-          other.summaryTemplate == this.summaryTemplate);
+          other.summaryTemplate == this.summaryTemplate &&
+          other.speakerNames == this.speakerNames);
 }
 
 class DumpsCompanion extends UpdateCompanion<DumpRow> {
@@ -1177,6 +1218,7 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
   final Value<int?> summarizedAt;
   final Value<String?> transcriptTimings;
   final Value<String?> summaryTemplate;
+  final Value<String?> speakerNames;
   final Value<int> rowid;
   const DumpsCompanion({
     this.id = const Value.absent(),
@@ -1210,6 +1252,7 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
     this.summarizedAt = const Value.absent(),
     this.transcriptTimings = const Value.absent(),
     this.summaryTemplate = const Value.absent(),
+    this.speakerNames = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   DumpsCompanion.insert({
@@ -1244,6 +1287,7 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
     this.summarizedAt = const Value.absent(),
     this.transcriptTimings = const Value.absent(),
     this.summaryTemplate = const Value.absent(),
+    this.speakerNames = const Value.absent(),
     this.rowid = const Value.absent(),
   })  : id = Value(id),
         createdAt = Value(createdAt),
@@ -1286,6 +1330,7 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
     Expression<int>? summarizedAt,
     Expression<String>? transcriptTimings,
     Expression<String>? summaryTemplate,
+    Expression<String>? speakerNames,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -1327,6 +1372,7 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
       if (summarizedAt != null) 'summarized_at': summarizedAt,
       if (transcriptTimings != null) 'transcript_timings': transcriptTimings,
       if (summaryTemplate != null) 'summary_template': summaryTemplate,
+      if (speakerNames != null) 'speaker_names': speakerNames,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -1363,6 +1409,7 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
       Value<int?>? summarizedAt,
       Value<String?>? transcriptTimings,
       Value<String?>? summaryTemplate,
+      Value<String?>? speakerNames,
       Value<int>? rowid}) {
     return DumpsCompanion(
       id: id ?? this.id,
@@ -1400,6 +1447,7 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
       summarizedAt: summarizedAt ?? this.summarizedAt,
       transcriptTimings: transcriptTimings ?? this.transcriptTimings,
       summaryTemplate: summaryTemplate ?? this.summaryTemplate,
+      speakerNames: speakerNames ?? this.speakerNames,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -1504,6 +1552,9 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
     if (summaryTemplate.present) {
       map['summary_template'] = Variable<String>(summaryTemplate.value);
     }
+    if (speakerNames.present) {
+      map['speaker_names'] = Variable<String>(speakerNames.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -1544,6 +1595,7 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
           ..write('summarizedAt: $summarizedAt, ')
           ..write('transcriptTimings: $transcriptTimings, ')
           ..write('summaryTemplate: $summaryTemplate, ')
+          ..write('speakerNames: $speakerNames, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -6128,6 +6180,196 @@ class InkIndexEntriesCompanion extends UpdateCompanion<InkIndexEntry> {
   }
 }
 
+class $LocalSettingsTable extends LocalSettings
+    with TableInfo<$LocalSettingsTable, LocalSettingRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $LocalSettingsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _keyMeta = const VerificationMeta('key');
+  @override
+  late final GeneratedColumn<String> key = GeneratedColumn<String>(
+      'key', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _valueMeta = const VerificationMeta('value');
+  @override
+  late final GeneratedColumn<String> value = GeneratedColumn<String>(
+      'value', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  @override
+  List<GeneratedColumn> get $columns => [key, value];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'settings';
+  @override
+  VerificationContext validateIntegrity(Insertable<LocalSettingRow> instance,
+      {bool isInserting = false}) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('key')) {
+      context.handle(
+          _keyMeta, key.isAcceptableOrUnknown(data['key']!, _keyMeta));
+    } else if (isInserting) {
+      context.missing(_keyMeta);
+    }
+    if (data.containsKey('value')) {
+      context.handle(
+          _valueMeta, value.isAcceptableOrUnknown(data['value']!, _valueMeta));
+    } else if (isInserting) {
+      context.missing(_valueMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {key};
+  @override
+  LocalSettingRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return LocalSettingRow(
+      key: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}key'])!,
+      value: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}value'])!,
+    );
+  }
+
+  @override
+  $LocalSettingsTable createAlias(String alias) {
+    return $LocalSettingsTable(attachedDatabase, alias);
+  }
+}
+
+class LocalSettingRow extends DataClass implements Insertable<LocalSettingRow> {
+  final String key;
+  final String value;
+  const LocalSettingRow({required this.key, required this.value});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['key'] = Variable<String>(key);
+    map['value'] = Variable<String>(value);
+    return map;
+  }
+
+  LocalSettingsCompanion toCompanion(bool nullToAbsent) {
+    return LocalSettingsCompanion(
+      key: Value(key),
+      value: Value(value),
+    );
+  }
+
+  factory LocalSettingRow.fromJson(Map<String, dynamic> json,
+      {ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return LocalSettingRow(
+      key: serializer.fromJson<String>(json['key']),
+      value: serializer.fromJson<String>(json['value']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'key': serializer.toJson<String>(key),
+      'value': serializer.toJson<String>(value),
+    };
+  }
+
+  LocalSettingRow copyWith({String? key, String? value}) => LocalSettingRow(
+        key: key ?? this.key,
+        value: value ?? this.value,
+      );
+  LocalSettingRow copyWithCompanion(LocalSettingsCompanion data) {
+    return LocalSettingRow(
+      key: data.key.present ? data.key.value : this.key,
+      value: data.value.present ? data.value.value : this.value,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('LocalSettingRow(')
+          ..write('key: $key, ')
+          ..write('value: $value')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(key, value);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is LocalSettingRow &&
+          other.key == this.key &&
+          other.value == this.value);
+}
+
+class LocalSettingsCompanion extends UpdateCompanion<LocalSettingRow> {
+  final Value<String> key;
+  final Value<String> value;
+  final Value<int> rowid;
+  const LocalSettingsCompanion({
+    this.key = const Value.absent(),
+    this.value = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  LocalSettingsCompanion.insert({
+    required String key,
+    required String value,
+    this.rowid = const Value.absent(),
+  })  : key = Value(key),
+        value = Value(value);
+  static Insertable<LocalSettingRow> custom({
+    Expression<String>? key,
+    Expression<String>? value,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (key != null) 'key': key,
+      if (value != null) 'value': value,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  LocalSettingsCompanion copyWith(
+      {Value<String>? key, Value<String>? value, Value<int>? rowid}) {
+    return LocalSettingsCompanion(
+      key: key ?? this.key,
+      value: value ?? this.value,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (key.present) {
+      map['key'] = Variable<String>(key.value);
+    }
+    if (value.present) {
+      map['value'] = Variable<String>(value.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('LocalSettingsCompanion(')
+          ..write('key: $key, ')
+          ..write('value: $value, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$LocalDb extends GeneratedDatabase {
   _$LocalDb(QueryExecutor e) : super(e);
   $LocalDbManager get managers => $LocalDbManager(this);
@@ -6151,6 +6393,7 @@ abstract class _$LocalDb extends GeneratedDatabase {
   late final $SyncStatesTable syncStates = $SyncStatesTable(this);
   late final $InkIndexEntriesTable inkIndexEntries =
       $InkIndexEntriesTable(this);
+  late final $LocalSettingsTable localSettings = $LocalSettingsTable(this);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -6168,7 +6411,8 @@ abstract class _$LocalDb extends GeneratedDatabase {
         notebooks,
         syncTombstones,
         syncStates,
-        inkIndexEntries
+        inkIndexEntries,
+        localSettings
       ];
   @override
   StreamQueryUpdateRules get streamUpdateRules => const StreamQueryUpdateRules(
@@ -6216,6 +6460,7 @@ typedef $$DumpsTableCreateCompanionBuilder = DumpsCompanion Function({
   Value<int?> summarizedAt,
   Value<String?> transcriptTimings,
   Value<String?> summaryTemplate,
+  Value<String?> speakerNames,
   Value<int> rowid,
 });
 typedef $$DumpsTableUpdateCompanionBuilder = DumpsCompanion Function({
@@ -6250,6 +6495,7 @@ typedef $$DumpsTableUpdateCompanionBuilder = DumpsCompanion Function({
   Value<int?> summarizedAt,
   Value<String?> transcriptTimings,
   Value<String?> summaryTemplate,
+  Value<String?> speakerNames,
   Value<int> rowid,
 });
 
@@ -6384,6 +6630,9 @@ class $$DumpsTableFilterComposer extends Composer<_$LocalDb, $DumpsTable> {
   ColumnFilters<String> get summaryTemplate => $composableBuilder(
       column: $table.summaryTemplate,
       builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get speakerNames => $composableBuilder(
+      column: $table.speakerNames, builder: (column) => ColumnFilters(column));
 
   Expression<bool> syncQueueRefs(
       Expression<bool> Function($$SyncQueueTableFilterComposer f) f) {
@@ -6525,6 +6774,10 @@ class $$DumpsTableOrderingComposer extends Composer<_$LocalDb, $DumpsTable> {
   ColumnOrderings<String> get summaryTemplate => $composableBuilder(
       column: $table.summaryTemplate,
       builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get speakerNames => $composableBuilder(
+      column: $table.speakerNames,
+      builder: (column) => ColumnOrderings(column));
 }
 
 class $$DumpsTableAnnotationComposer extends Composer<_$LocalDb, $DumpsTable> {
@@ -6628,6 +6881,9 @@ class $$DumpsTableAnnotationComposer extends Composer<_$LocalDb, $DumpsTable> {
   GeneratedColumn<String> get summaryTemplate => $composableBuilder(
       column: $table.summaryTemplate, builder: (column) => column);
 
+  GeneratedColumn<String> get speakerNames => $composableBuilder(
+      column: $table.speakerNames, builder: (column) => column);
+
   Expression<T> syncQueueRefs<T extends Object>(
       Expression<T> Function($$SyncQueueTableAnnotationComposer a) f) {
     final $$SyncQueueTableAnnotationComposer composer = $composerBuilder(
@@ -6704,6 +6960,7 @@ class $$DumpsTableTableManager extends RootTableManager<
             Value<int?> summarizedAt = const Value.absent(),
             Value<String?> transcriptTimings = const Value.absent(),
             Value<String?> summaryTemplate = const Value.absent(),
+            Value<String?> speakerNames = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               DumpsCompanion(
@@ -6738,6 +6995,7 @@ class $$DumpsTableTableManager extends RootTableManager<
             summarizedAt: summarizedAt,
             transcriptTimings: transcriptTimings,
             summaryTemplate: summaryTemplate,
+            speakerNames: speakerNames,
             rowid: rowid,
           ),
           createCompanionCallback: ({
@@ -6772,6 +7030,7 @@ class $$DumpsTableTableManager extends RootTableManager<
             Value<int?> summarizedAt = const Value.absent(),
             Value<String?> transcriptTimings = const Value.absent(),
             Value<String?> summaryTemplate = const Value.absent(),
+            Value<String?> speakerNames = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               DumpsCompanion.insert(
@@ -6806,6 +7065,7 @@ class $$DumpsTableTableManager extends RootTableManager<
             summarizedAt: summarizedAt,
             transcriptTimings: transcriptTimings,
             summaryTemplate: summaryTemplate,
+            speakerNames: speakerNames,
             rowid: rowid,
           ),
           withReferenceMapper: (p0) => p0
@@ -9286,6 +9546,134 @@ typedef $$InkIndexEntriesTableProcessedTableManager = ProcessedTableManager<
     ),
     InkIndexEntry,
     PrefetchHooks Function()>;
+typedef $$LocalSettingsTableCreateCompanionBuilder = LocalSettingsCompanion
+    Function({
+  required String key,
+  required String value,
+  Value<int> rowid,
+});
+typedef $$LocalSettingsTableUpdateCompanionBuilder = LocalSettingsCompanion
+    Function({
+  Value<String> key,
+  Value<String> value,
+  Value<int> rowid,
+});
+
+class $$LocalSettingsTableFilterComposer
+    extends Composer<_$LocalDb, $LocalSettingsTable> {
+  $$LocalSettingsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get key => $composableBuilder(
+      column: $table.key, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get value => $composableBuilder(
+      column: $table.value, builder: (column) => ColumnFilters(column));
+}
+
+class $$LocalSettingsTableOrderingComposer
+    extends Composer<_$LocalDb, $LocalSettingsTable> {
+  $$LocalSettingsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get key => $composableBuilder(
+      column: $table.key, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get value => $composableBuilder(
+      column: $table.value, builder: (column) => ColumnOrderings(column));
+}
+
+class $$LocalSettingsTableAnnotationComposer
+    extends Composer<_$LocalDb, $LocalSettingsTable> {
+  $$LocalSettingsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get key =>
+      $composableBuilder(column: $table.key, builder: (column) => column);
+
+  GeneratedColumn<String> get value =>
+      $composableBuilder(column: $table.value, builder: (column) => column);
+}
+
+class $$LocalSettingsTableTableManager extends RootTableManager<
+    _$LocalDb,
+    $LocalSettingsTable,
+    LocalSettingRow,
+    $$LocalSettingsTableFilterComposer,
+    $$LocalSettingsTableOrderingComposer,
+    $$LocalSettingsTableAnnotationComposer,
+    $$LocalSettingsTableCreateCompanionBuilder,
+    $$LocalSettingsTableUpdateCompanionBuilder,
+    (
+      LocalSettingRow,
+      BaseReferences<_$LocalDb, $LocalSettingsTable, LocalSettingRow>
+    ),
+    LocalSettingRow,
+    PrefetchHooks Function()> {
+  $$LocalSettingsTableTableManager(_$LocalDb db, $LocalSettingsTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$LocalSettingsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$LocalSettingsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$LocalSettingsTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback: ({
+            Value<String> key = const Value.absent(),
+            Value<String> value = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              LocalSettingsCompanion(
+            key: key,
+            value: value,
+            rowid: rowid,
+          ),
+          createCompanionCallback: ({
+            required String key,
+            required String value,
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              LocalSettingsCompanion.insert(
+            key: key,
+            value: value,
+            rowid: rowid,
+          ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ));
+}
+
+typedef $$LocalSettingsTableProcessedTableManager = ProcessedTableManager<
+    _$LocalDb,
+    $LocalSettingsTable,
+    LocalSettingRow,
+    $$LocalSettingsTableFilterComposer,
+    $$LocalSettingsTableOrderingComposer,
+    $$LocalSettingsTableAnnotationComposer,
+    $$LocalSettingsTableCreateCompanionBuilder,
+    $$LocalSettingsTableUpdateCompanionBuilder,
+    (
+      LocalSettingRow,
+      BaseReferences<_$LocalDb, $LocalSettingsTable, LocalSettingRow>
+    ),
+    LocalSettingRow,
+    PrefetchHooks Function()>;
 
 class $LocalDbManager {
   final _$LocalDb _db;
@@ -9316,4 +9704,6 @@ class $LocalDbManager {
       $$SyncStatesTableTableManager(_db, _db.syncStates);
   $$InkIndexEntriesTableTableManager get inkIndexEntries =>
       $$InkIndexEntriesTableTableManager(_db, _db.inkIndexEntries);
+  $$LocalSettingsTableTableManager get localSettings =>
+      $$LocalSettingsTableTableManager(_db, _db.localSettings);
 }
