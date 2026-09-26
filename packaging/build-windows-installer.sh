@@ -37,7 +37,13 @@ fi
 # ISCC is a native tool: give it Windows-style paths, not MSYS ones.
 winpath() { echo "$1" | sed 's|^/\([a-z]\)/|\1:/|; s|/|\\|g'; }
 
-"$iscc" /Qp "/DAppVersion=$version" "/DBundleDir=$(winpath "$bundle")" \
+# Git-for-Windows bash rewrites arguments that look like POSIX paths before
+# a native exe sees them, so "/Qp" and "/DAppVersion=..." arrive as
+# "C:/Program Files/Git/Qp" and ISCC complains "You may not specify more
+# than one script filename". CI's bash.EXE has that conversion on; some
+# local shells have it off. Disable it for this one call either way.
+MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL="*" \
+  "$iscc" /Qp "/DAppVersion=$version" "/DBundleDir=$(winpath "$bundle")" \
   "/O$(winpath "$out")" "$(winpath "$iss")"
 
 installer="$out/tangent-setup-x64.exe"
