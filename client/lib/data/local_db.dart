@@ -81,6 +81,13 @@ class Dumps extends Table {
   /// Unix seconds when the server generated [summary]; null with it.
   IntColumn get summarizedAt => integer().nullable()();
 
+  /// Word-level transcript timings (JSON, see transcript_timings.dart),
+  /// server-owned and server→client only like the summary columns. Null
+  /// until a transcription with timings completes; the server nulls it
+  /// when a re-transcription starts so stale timings never outlive their
+  /// transcript. Backs "tap a word, hear that moment".
+  TextColumn get transcriptTimings => text().nullable()();
+
   @override
   Set<Column> get primaryKey => {id};
 }
@@ -266,7 +273,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   LocalDb.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 17;
+  int get schemaVersion => 18;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -632,6 +639,20 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
               }
             }
           }
+          if (from < 18) {
+            // Tap-to-hear: one nullable, server-owned column on dumps. Same
+            // ask-the-database guard as v17 — a repeat addColumn would
+            // throw "duplicate column name" and brick launch.
+            final Set<String> dumpCols = <String>{
+              for (final QueryRow row
+                  in await customSelect('PRAGMA table_info(dumps)').get())
+                row.data['name'] as String,
+            };
+            if (dumpCols.isNotEmpty &&
+                !dumpCols.contains('transcript_timings')) {
+              await m.addColumn(dumps, dumps.transcriptTimings);
+            }
+          }
         },
       );
 
@@ -643,9 +664,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   /// id is testable and so identity generation lives with the rest of the sync
   /// policy instead of in the data layer.
   Future<SyncStateRow> syncState({required String newDeviceId}) async {
-    final SyncStateRow? existing =
-        await (select(syncStates)..where((t) => t.id.equals(1)))
-            .getSingleOrNull();
+    final SyncStateRow? existing = await (select(syncStates)
+          ..where((t) => t.id.equals(1)))
+        .getSingleOrNull();
     if (existing != null) return existing;
     await into(syncStates).insert(
       SyncStatesCompanion.insert(deviceId: newDeviceId),
@@ -675,8 +696,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   /// harmless.
   Future<void> refreshExternalWrites() async {
     notifyUpdates({
-      for (final TableInfo<Table, dynamic> table in <TableInfo<Table,
-          dynamic>>[
+      for (final TableInfo<Table, dynamic> table in <TableInfo<Table, dynamic>>[
         notebooks,
         dumps,
         folders,
@@ -825,7 +845,14 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     Object? summary = absentSummaryField,
     Object? summaryModel = absentSummaryField,
     Object? summarizedAt = absentSummaryField,
+    // Same sentinel rule: an older server that never sends the key must
+    // not erase timings this device already holds.
+    Object? transcriptTimings = absentSummaryField,
   }) async {
+    final Value<String?> timingsValue =
+        identical(transcriptTimings, absentSummaryField)
+            ? const Value<String?>.absent()
+            : Value<String?>(transcriptTimings as String?);
     final Value<String?> summaryValue = identical(summary, absentSummaryField)
         ? const Value<String?>.absent()
         : Value<String?>(summary as String?);
@@ -877,6 +904,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
           summary: summaryValue,
           summaryModel: summaryModelValue,
           summarizedAt: summarizedAtValue,
+          transcriptTimings: timingsValue,
           syncedSeq: Value(seq),
         ),
         mode: InsertMode.insertOrReplace,
@@ -901,6 +929,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
         summary: summaryValue,
         summaryModel: summaryModelValue,
         summarizedAt: summarizedAtValue,
+        transcriptTimings: timingsValue,
         syncDirty: const Value<bool?>(false),
         syncedSeq: Value(seq),
       ),
@@ -979,7 +1008,8 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   }) async {
     await (delete(syncTombstones)
           ..where(
-            (t) => t.entityType.equals(entityType) & t.entityId.equals(entityId),
+            (t) =>
+                t.entityType.equals(entityType) & t.entityId.equals(entityId),
           ))
         .go();
   }
@@ -1249,9 +1279,8 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   /// many were purged. Called at startup; the Settings screen states the
   /// 7-day window so the emptying is a promise, not a surprise.
   Future<int> purgeExpiredTrash({DateTime? now}) async {
-    final int cutoff = (now ?? DateTime.now())
-        .subtract(trashRetention)
-        .millisecondsSinceEpoch;
+    final int cutoff =
+        (now ?? DateTime.now()).subtract(trashRetention).millisecondsSinceEpoch;
     return (delete(notebooks)
           ..where(
             (t) =>
@@ -1354,7 +1383,8 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   Future<void> completeLegacyRestore(String locationId) =>
       transaction(() async {
         await (update(storageLocations)..where((l) => l.id.equals(locationId)))
-            .write(const StorageLocationsCompanion(legacyRestore: Value(false)));
+            .write(
+                const StorageLocationsCompanion(legacyRestore: Value(false)),);
       });
 
   /// Resolve only persisted original ownership, never a current default.

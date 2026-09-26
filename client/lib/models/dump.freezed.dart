@@ -50,6 +50,11 @@ mixin _$Dump {
   @JsonKey(name: 'summarized_at')
   DateTime? get summarizedAt => throw _privateConstructorUsedError;
 
+  /// Word-level timings JSON (server-owned, see transcript_timings.dart).
+  /// Null until a transcription with timings has completed.
+  @JsonKey(name: 'transcript_timings')
+  String? get transcriptTimings => throw _privateConstructorUsedError;
+
   /// Serializes this Dump to a JSON map.
   Map<String, dynamic> toJson() => throw _privateConstructorUsedError;
 
@@ -79,7 +84,8 @@ abstract class $DumpCopyWith<$Res> {
       @JsonKey(name: 'last_sync_error') String? lastSyncError,
       String? summary,
       @JsonKey(name: 'summary_model') String? summaryModel,
-      @JsonKey(name: 'summarized_at') DateTime? summarizedAt});
+      @JsonKey(name: 'summarized_at') DateTime? summarizedAt,
+      @JsonKey(name: 'transcript_timings') String? transcriptTimings});
 }
 
 /// @nodoc
@@ -112,6 +118,7 @@ class _$DumpCopyWithImpl<$Res, $Val extends Dump>
     Object? summary = freezed,
     Object? summaryModel = freezed,
     Object? summarizedAt = freezed,
+    Object? transcriptTimings = freezed,
   }) {
     return _then(_value.copyWith(
       id: null == id
@@ -174,6 +181,10 @@ class _$DumpCopyWithImpl<$Res, $Val extends Dump>
           ? _value.summarizedAt
           : summarizedAt // ignore: cast_nullable_to_non_nullable
               as DateTime?,
+      transcriptTimings: freezed == transcriptTimings
+          ? _value.transcriptTimings
+          : transcriptTimings // ignore: cast_nullable_to_non_nullable
+              as String?,
     ) as $Val);
   }
 }
@@ -200,7 +211,8 @@ abstract class _$$DumpImplCopyWith<$Res> implements $DumpCopyWith<$Res> {
       @JsonKey(name: 'last_sync_error') String? lastSyncError,
       String? summary,
       @JsonKey(name: 'summary_model') String? summaryModel,
-      @JsonKey(name: 'summarized_at') DateTime? summarizedAt});
+      @JsonKey(name: 'summarized_at') DateTime? summarizedAt,
+      @JsonKey(name: 'transcript_timings') String? transcriptTimings});
 }
 
 /// @nodoc
@@ -230,6 +242,7 @@ class __$$DumpImplCopyWithImpl<$Res>
     Object? summary = freezed,
     Object? summaryModel = freezed,
     Object? summarizedAt = freezed,
+    Object? transcriptTimings = freezed,
   }) {
     return _then(_$DumpImpl(
       id: null == id
@@ -292,6 +305,10 @@ class __$$DumpImplCopyWithImpl<$Res>
           ? _value.summarizedAt
           : summarizedAt // ignore: cast_nullable_to_non_nullable
               as DateTime?,
+      transcriptTimings: freezed == transcriptTimings
+          ? _value.transcriptTimings
+          : transcriptTimings // ignore: cast_nullable_to_non_nullable
+              as String?,
     ));
   }
 }
@@ -315,7 +332,8 @@ class _$DumpImpl implements _Dump {
       @JsonKey(name: 'last_sync_error') this.lastSyncError,
       this.summary,
       @JsonKey(name: 'summary_model') this.summaryModel,
-      @JsonKey(name: 'summarized_at') this.summarizedAt});
+      @JsonKey(name: 'summarized_at') this.summarizedAt,
+      @JsonKey(name: 'transcript_timings') this.transcriptTimings});
 
   factory _$DumpImpl.fromJson(Map<String, dynamic> json) =>
       _$$DumpImplFromJson(json);
@@ -365,9 +383,15 @@ class _$DumpImpl implements _Dump {
   @JsonKey(name: 'summarized_at')
   final DateTime? summarizedAt;
 
+  /// Word-level timings JSON (server-owned, see transcript_timings.dart).
+  /// Null until a transcription with timings has completed.
+  @override
+  @JsonKey(name: 'transcript_timings')
+  final String? transcriptTimings;
+
   @override
   String toString() {
-    return 'Dump(id: $id, createdAt: $createdAt, updatedAt: $updatedAt, mode: $mode, durationSeconds: $durationSeconds, title: $title, transcript: $transcript, audioPath: $audioPath, audioSizeBytes: $audioSizeBytes, syncStatus: $syncStatus, syncAttempts: $syncAttempts, lastSyncError: $lastSyncError, summary: $summary, summaryModel: $summaryModel, summarizedAt: $summarizedAt)';
+    return 'Dump(id: $id, createdAt: $createdAt, updatedAt: $updatedAt, mode: $mode, durationSeconds: $durationSeconds, title: $title, transcript: $transcript, audioPath: $audioPath, audioSizeBytes: $audioSizeBytes, syncStatus: $syncStatus, syncAttempts: $syncAttempts, lastSyncError: $lastSyncError, summary: $summary, summaryModel: $summaryModel, summarizedAt: $summarizedAt, transcriptTimings: $transcriptTimings)';
   }
 
   @override
@@ -400,7 +424,9 @@ class _$DumpImpl implements _Dump {
             (identical(other.summaryModel, summaryModel) ||
                 other.summaryModel == summaryModel) &&
             (identical(other.summarizedAt, summarizedAt) ||
-                other.summarizedAt == summarizedAt));
+                other.summarizedAt == summarizedAt) &&
+            (identical(other.transcriptTimings, transcriptTimings) ||
+                other.transcriptTimings == transcriptTimings));
   }
 
   @JsonKey(includeFromJson: false, includeToJson: false)
@@ -421,7 +447,8 @@ class _$DumpImpl implements _Dump {
       lastSyncError,
       summary,
       summaryModel,
-      summarizedAt);
+      summarizedAt,
+      transcriptTimings);
 
   /// Create a copy of Dump
   /// with the given fields replaced by the non-null parameter values.
@@ -441,22 +468,23 @@ class _$DumpImpl implements _Dump {
 
 abstract class _Dump implements Dump {
   const factory _Dump(
-          {required final String id,
-          required final DateTime createdAt,
-          required final DateTime updatedAt,
-          required final DumpMode mode,
-          required final int durationSeconds,
-          required final String title,
-          final String? transcript,
-          @JsonKey(name: 'audio_path') required final String audioPath,
-          @JsonKey(name: 'audio_size_bytes') required final int audioSizeBytes,
-          @JsonKey(name: 'sync_status') required final SyncStatus syncStatus,
-          @JsonKey(name: 'sync_attempts') final int syncAttempts,
-          @JsonKey(name: 'last_sync_error') final String? lastSyncError,
-          final String? summary,
-          @JsonKey(name: 'summary_model') final String? summaryModel,
-          @JsonKey(name: 'summarized_at') final DateTime? summarizedAt}) =
-      _$DumpImpl;
+      {required final String id,
+      required final DateTime createdAt,
+      required final DateTime updatedAt,
+      required final DumpMode mode,
+      required final int durationSeconds,
+      required final String title,
+      final String? transcript,
+      @JsonKey(name: 'audio_path') required final String audioPath,
+      @JsonKey(name: 'audio_size_bytes') required final int audioSizeBytes,
+      @JsonKey(name: 'sync_status') required final SyncStatus syncStatus,
+      @JsonKey(name: 'sync_attempts') final int syncAttempts,
+      @JsonKey(name: 'last_sync_error') final String? lastSyncError,
+      final String? summary,
+      @JsonKey(name: 'summary_model') final String? summaryModel,
+      @JsonKey(name: 'summarized_at') final DateTime? summarizedAt,
+      @JsonKey(name: 'transcript_timings')
+      final String? transcriptTimings}) = _$DumpImpl;
 
   factory _Dump.fromJson(Map<String, dynamic> json) = _$DumpImpl.fromJson;
 
@@ -504,6 +532,12 @@ abstract class _Dump implements Dump {
   @override
   @JsonKey(name: 'summarized_at')
   DateTime? get summarizedAt;
+
+  /// Word-level timings JSON (server-owned, see transcript_timings.dart).
+  /// Null until a transcription with timings has completed.
+  @override
+  @JsonKey(name: 'transcript_timings')
+  String? get transcriptTimings;
 
   /// Create a copy of Dump
   /// with the given fields replaced by the non-null parameter values.

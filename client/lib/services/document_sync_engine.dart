@@ -319,8 +319,23 @@ class DocumentSyncEngine extends ChangeNotifier {
       summarizedAt: payload.containsKey('summarized_at')
           ? (payload['summarized_at'] as num?)?.toInt()
           : LocalDb.absentSummaryField,
+      // Word timings: same absent-vs-null contract as the summary fields.
+      // The server sends either a JSON string or a structured value;
+      // store the canonical JSON text either way.
+      transcriptTimings: payload.containsKey('transcript_timings')
+          ? _timingsText(payload['transcript_timings'])
+          : LocalDb.absentSummaryField,
       seq: change.seq,
     );
+  }
+
+  /// Canonical JSON text for a timings payload value: the server sends the
+  /// stored column verbatim (a JSON string), but a structured value is
+  /// accepted too. Null stays null (authoritative "no timings").
+  String? _timingsText(Object? raw) {
+    if (raw == null) return null;
+    if (raw is String) return raw.trim().isEmpty ? null : raw;
+    return jsonEncode(raw);
   }
 
   /// Server timestamps are whole seconds; Drift stores DateTime.
