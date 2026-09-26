@@ -13,6 +13,9 @@ import '../models/transcription_status.dart';
 import 'storage/storage_tables.dart';
 import 'storage/storage_contract.dart';
 import 'storage/storage_codec.dart';
+import '../services/transcript_search.dart'
+    show DumpSearchMatch, countTranscriptMatches;
+export '../services/transcript_search.dart' show DumpSearchMatch;
 
 part 'local_db.g.dart';
 
@@ -1839,6 +1842,52 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
       ],
       readsFrom: {dumps},
     ).map((row) => dumps.map(row.data)).watch();
+  }
+
+  /// Match evidence for the same candidates [watchSearchDumps] ranks
+  /// (spec §2 A1): the FTS5 snippet with `<b>` markers, the per-row
+  /// occurrence count on the TRANSCRIPT (counted in Dart — FTS5 has no
+  /// per-row occurrence function), and whether the title matched. Keyed
+  /// by dump id so presentation can join it to whichever row list it
+  /// already holds. Empty for a blank query.
+  @override
+  Stream<Map<String, DumpSearchMatch>> watchSearchDumpMatches(
+    String query, {
+    int limit = 100,
+  }) {
+    final trimmed = query.trim();
+    if (trimmed.isEmpty) return Stream.value(const {});
+    final escaped = trimmed.replaceAll('"', '""');
+    return customSelect(
+      'SELECT d.id AS id, d.transcript AS transcript, '
+      "snippet(dumps_fts, 0, '<b>', '</b>', '…', 12) AS title_snippet, "
+      "snippet(dumps_fts, 1, '<b>', '</b>', '…', 12) AS body_snippet "
+      'FROM dumps d '
+      'JOIN dumps_fts f ON d.rowid = f.rowid '
+      'WHERE dumps_fts MATCH ? '
+      'ORDER BY rank LIMIT ?',
+      variables: [
+        Variable.withString('"$escaped"'),
+        Variable.withInt(limit),
+      ],
+      readsFrom: {dumps},
+    ).watch().map((rows) {
+      final out = <String, DumpSearchMatch>{};
+      for (final row in rows) {
+        final titleSnippet = row.read<String>('title_snippet');
+        final bodySnippet = row.read<String>('body_snippet');
+        final titleMatched = titleSnippet.contains('<b>');
+        out[row.read<String>('id')] = DumpSearchMatch(
+          snippet: titleMatched ? titleSnippet : bodySnippet,
+          matchCount: countTranscriptMatches(
+            row.readNullable<String>('transcript') ?? '',
+            trimmed,
+          ),
+          titleMatched: titleMatched,
+        );
+      }
+      return out;
+    });
   }
 
   /// Search across title and transcript using FTS5.
