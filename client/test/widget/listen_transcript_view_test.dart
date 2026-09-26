@@ -29,6 +29,7 @@ Future<void> _pump(
   bool serverPaired = true,
   VoidCallback? onRetranscribe,
   VoidCallback? onDownloadAudio,
+  void Function(String label)? onSpeakerTap,
 }) =>
     tester.pumpWidget(
       MaterialApp(
@@ -44,6 +45,7 @@ Future<void> _pump(
               serverPaired: serverPaired,
               onRetranscribe: onRetranscribe ?? () {},
               onDownloadAudio: onDownloadAudio,
+              onSpeakerTap: onSpeakerTap,
             ),
           ),
         ),
@@ -51,6 +53,47 @@ Future<void> _pump(
     );
 
 void main() {
+  testWidgets('tapping a speaker header reports that label (v1.15.0 §4.3)',
+      (tester) async {
+    final labels = <String>[];
+    final seeks = <Duration>[];
+    await _pump(
+      tester,
+      timings: _words(),
+      transcript: 'hello big world bye',
+      position: ValueNotifier(Duration.zero),
+      onSeek: seeks.add,
+      onSpeakerTap: labels.add,
+    );
+    final header2 =
+        find.byKey(const ValueKey('listen-speaker-header-Speaker 2'));
+    expect(header2, findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('listen-speaker-header-Speaker 1')),
+      findsOneWidget,
+    );
+    await tester.tap(header2);
+    await tester.pump();
+    expect(labels, ['Speaker 2']);
+    expect(seeks, isEmpty, reason: 'a header tap is not a word tap');
+  });
+
+  testWidgets('speaker headers still render without an onSpeakerTap',
+      (tester) async {
+    await _pump(
+      tester,
+      timings: _words(),
+      transcript: 'hello big world bye',
+      position: ValueNotifier(Duration.zero),
+      onSeek: (_) {},
+    );
+    final header =
+        find.byKey(const ValueKey('listen-speaker-header-Speaker 1'));
+    expect(header, findsOneWidget);
+    expect(tester.widget<InkWell>(header).onTap, isNull);
+    expect(find.text('Speaker 1'), findsOneWidget);
+  });
+
   testWidgets('tapping a word seeks 0.3 s before it', (tester) async {
     final seeks = <Duration>[];
     await _pump(

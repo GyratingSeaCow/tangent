@@ -29,6 +29,7 @@ class ListenTranscriptView extends StatefulWidget {
     required this.serverPaired,
     required this.onRetranscribe,
     this.onDownloadAudio,
+    this.onSpeakerTap,
     this.highlightedWords = const <int>{},
     this.currentWord,
   });
@@ -63,6 +64,11 @@ class ListenTranscriptView extends StatefulWidget {
   final bool serverPaired;
   final VoidCallback onRetranscribe;
   final VoidCallback? onDownloadAudio;
+
+  /// Called with the raw timings label (`Speaker 1`) when the user taps a
+  /// speaker header. The detail screen opens the Name-speakers sheet; null
+  /// leaves the header as plain text.
+  final void Function(String label)? onSpeakerTap;
 
   @override
   State<ListenTranscriptView> createState() => ListenTranscriptViewState();
@@ -285,15 +291,7 @@ class ListenTranscriptViewState extends State<ListenTranscriptView> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         for (final g in groups) ...[
-          if (g.speaker != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 8, bottom: 2),
-              child: Text(
-                g.speaker!,
-                style: theme.textTheme.labelLarge
-                    ?.copyWith(color: theme.colorScheme.primary),
-              ),
-            ),
+          if (g.speaker != null) _speakerHeader(theme, g.speaker!),
           Text.rich(
             TextSpan(
               children: [
@@ -354,6 +352,26 @@ class ListenTranscriptViewState extends State<ListenTranscriptView> {
     ];
   }
 
+  /// A speaker label above its turns. Tappable (spec §4.3) so the header
+  /// itself is the Listen-mode way into the Name-speakers sheet; the label
+  /// stays the raw timings one after a rename (S1=b).
+  Widget _speakerHeader(ThemeData theme, String label) {
+    final onTap = widget.onSpeakerTap;
+    return Padding(
+      padding: const EdgeInsets.only(top: 8, bottom: 2),
+      child: InkWell(
+        key: ValueKey('listen-speaker-header-$label'),
+        onTap: onTap == null ? null : () => onTap(label),
+        borderRadius: BorderRadius.circular(4),
+        child: Text(
+          label,
+          style: theme.textTheme.labelLarge
+              ?.copyWith(color: theme.colorScheme.primary),
+        ),
+      ),
+    );
+  }
+
   /// Sentence-level fallback for segment-only timings.
   Widget _sentenceFlow(BuildContext context, TranscriptTimings timings) {
     final theme = Theme.of(context);
@@ -365,14 +383,7 @@ class ListenTranscriptViewState extends State<ListenTranscriptView> {
         for (var i = 0; i < timings.segments.length; i++) ...[
           if (timings.segments[i].speaker != null &&
               timings.segments[i].speaker != lastSpeaker)
-            Padding(
-              padding: const EdgeInsets.only(top: 8, bottom: 2),
-              child: Text(
-                lastSpeaker = timings.segments[i].speaker!,
-                style:
-                    theme.textTheme.labelLarge?.copyWith(color: scheme.primary),
-              ),
-            ),
+            _speakerHeader(theme, lastSpeaker = timings.segments[i].speaker!),
           GestureDetector(
             key: ValueKey('listen-segment-$i'),
             behavior: HitTestBehavior.opaque,
