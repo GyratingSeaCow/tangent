@@ -35,6 +35,8 @@ class SettingsStore {
   static const _aiSummariesKey = 'ai_summaries_enabled';
   static const _autoBluetoothKey = 'auto_bluetooth_audio';
   static const _whisperModelKey = 'whisper_model';
+  static const _obsidianTimestampsKey = 'obsidian_export_timestamps';
+  static const _obsidianSummaryKey = 'obsidian_export_summary';
 
   final SharedPreferences? _preferences;
 
@@ -104,6 +106,15 @@ class SettingsStore {
   /// around this remembered name.
   String whisperModel;
 
+  /// Obsidian export: one `[mm:ss] Name: text` line per transcript
+  /// segment. OFF by default so an existing vault keeps its shape on the
+  /// next run (v1.16.0 spec §3).
+  bool obsidianExportTimestamps;
+
+  /// Obsidian export: a `## Summary` section when the dump has one. On by
+  /// default (spec decision E3).
+  bool obsidianExportSummary;
+
   SettingsStore({
     this.wifiOnlySync = true,
     this.autoSync = true,
@@ -117,6 +128,8 @@ class SettingsStore {
     this.handwritingSearchEnabled = false,
     this.aiSummariesEnabled = false,
     this.whisperModel = defaultWhisperModel,
+    this.obsidianExportTimestamps = false,
+    this.obsidianExportSummary = true,
     SharedPreferences? preferences,
   }) : _preferences = preferences;
 
@@ -145,6 +158,9 @@ class SettingsStore {
       aiSummariesEnabled: preferences.getBool(_aiSummariesKey) ?? false,
       whisperModel:
           preferences.getString(_whisperModelKey) ?? defaultWhisperModel,
+      obsidianExportTimestamps:
+          preferences.getBool(_obsidianTimestampsKey) ?? false,
+      obsidianExportSummary: preferences.getBool(_obsidianSummaryKey) ?? true,
     );
   }
 
@@ -199,6 +215,16 @@ class SettingsStore {
   Future<void> setWhisperModel(String value) async {
     whisperModel = value;
     await _preferences?.setString(_whisperModelKey, value);
+  }
+
+  Future<void> setObsidianExportTimestamps(bool value) async {
+    obsidianExportTimestamps = value;
+    await _preferences?.setBool(_obsidianTimestampsKey, value);
+  }
+
+  Future<void> setObsidianExportSummary(bool value) async {
+    obsidianExportSummary = value;
+    await _preferences?.setBool(_obsidianSummaryKey, value);
   }
 
   /// Records the user's explicit microphone choice. Passing a null [id] clears

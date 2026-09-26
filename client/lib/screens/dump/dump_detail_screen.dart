@@ -14,6 +14,7 @@ import '../../data/storage/storage_providers.dart';
 import '../../models/dump_mode.dart';
 import '../../models/sync_status.dart';
 import '../../models/transcription_status.dart';
+import '../../services/markdown_export.dart';
 import '../../services/meeting_notes_processor.dart';
 import '../../services/recording_playback.dart';
 import '../../services/speaker_naming.dart'
@@ -988,10 +989,12 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
     final rowAsync = ref.watch(dumpByIdProvider(widget.dumpId));
 
     final DumpRow? currentRow = rowAsync.valueOrNull;
-    // Speaker naming (v1.15.0 §4.2): the overflow exists only to hold this
-    // one entry, so the whole button is absent when there is nothing to name.
+    // Speaker naming (v1.15.0 §4.2) and Markdown export (v1.16.0 §4) share
+    // the overflow; each entry appears only when it applies, and the whole
+    // button is absent when neither does.
     final bool nameable = currentRow != null &&
         detectSpeakers(currentRow.transcript ?? '').isNotEmpty;
+    final bool exportable = currentRow != null && canExportMarkdown(currentRow);
 
     return Scaffold(
       appBar: AppBar(
@@ -1004,25 +1007,38 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
                 ? null
                 : _delete,
           ),
-          if (nameable)
+          if (nameable || exportable)
             PopupMenuButton<String>(
               key: const ValueKey('detail-more'),
               tooltip: 'More actions',
               onSelected: (String value) {
                 if (value == 'name-speakers') {
                   unawaited(showNameSpeakersSheet(context, ref, currentRow));
+                } else if (value == 'export-markdown') {
+                  unawaited(_exportMarkdown(currentRow));
                 }
               },
-              itemBuilder: (BuildContext context) => const [
-                PopupMenuItem<String>(
-                  key: ValueKey('detail-name-speakers'),
-                  value: 'name-speakers',
-                  child: ListTile(
-                    leading: Icon(Icons.record_voice_over),
-                    title: Text('Name speakers'),
-                    contentPadding: EdgeInsets.zero,
+              itemBuilder: (BuildContext context) => [
+                if (nameable)
+                  const PopupMenuItem<String>(
+                    key: ValueKey('detail-name-speakers'),
+                    value: 'name-speakers',
+                    child: ListTile(
+                      leading: Icon(Icons.record_voice_over),
+                      title: Text('Name speakers'),
+                      contentPadding: EdgeInsets.zero,
+                    ),
                   ),
-                ),
+                if (exportable)
+                  const PopupMenuItem<String>(
+                    key: ValueKey('detail-export-markdown'),
+                    value: 'export-markdown',
+                    child: ListTile(
+                      leading: Icon(Icons.description),
+                      title: Text('Export Markdown'),
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                  ),
               ],
             ),
         ],
@@ -1033,6 +1049,24 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
         error: (e, _) => Center(child: Text('Error: $e')),
       ),
     );
+  }
+
+  /// Same one-call export the list's ⋮ uses; the outcome (desktop path, or
+  /// a failure) lands in a snackbar so the action never silently no-ops.
+  Future<void> _exportMarkdown(DumpRow row) async {
+    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+    try {
+      final MarkdownExportOutcome outcome =
+          await ref.read(exportMarkdownProvider)(row);
+      final String? message = outcome.message;
+      if (!mounted || message == null) return;
+      messenger.showSnackBar(SnackBar(content: Text(message)));
+    } catch (error) {
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text('Could not export Markdown: $error')),
+      );
+    }
   }
 
   String _modeTitle(DumpRow? row) {

@@ -27,6 +27,19 @@ void main() {
       expect(reloaded.handwritingSearchEnabled, isTrue);
     });
 
+    test('obsidian timestamps default OFF, summary ON, both survive a reload',
+        () async {
+      final first = await SettingsStore.load();
+      expect(first.obsidianExportTimestamps, isFalse);
+      expect(first.obsidianExportSummary, isTrue);
+      await first.setObsidianExportTimestamps(true);
+      await first.setObsidianExportSummary(false);
+
+      final reloaded = await SettingsStore.load();
+      expect(reloaded.obsidianExportTimestamps, isTrue);
+      expect(reloaded.obsidianExportSummary, isFalse);
+    });
+
     test('default trigger mode is tap', () {
       expect(SettingsStore().triggerMode, TriggerMode.tap);
     });
