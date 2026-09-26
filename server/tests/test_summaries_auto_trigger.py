@@ -35,7 +35,9 @@ class _FakeService:
             text="Hello world.", segments=list(SEGMENTS)
         )
 
-    def transcribe(self, audio_path: str) -> TranscriptionResult:
+    def transcribe(
+        self, audio_path: str, *, hotwords: str | None = None
+    ) -> TranscriptionResult:
         return self.result
 
 

@@ -25,6 +25,7 @@ import threading
 from collections.abc import Callable
 from pathlib import Path
 
+from app import vocabulary
 from app.logging_config import get_logger
 from app.services import summarizer_env
 from app.summarize_infer import MODEL_FILENAME
@@ -321,6 +322,7 @@ def summarize_dump(
             template_id,
             custom_prompt=get_custom_prompt(db),
         )
+        system_prompt += vocabulary.summary_suffix(vocabulary.load_terms(db))
         summary = infer(dump_id, transcript, system_prompt)
     except Exception as exc:
         log.warning(

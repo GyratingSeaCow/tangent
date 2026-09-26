@@ -60,7 +60,9 @@ class _FakeService:
         self.result = result
         self.calls: list[str] = []
 
-    def transcribe(self, audio_path: str) -> TranscriptionResult:
+    def transcribe(
+        self, audio_path: str, *, hotwords: str | None = None
+    ) -> TranscriptionResult:
         self.calls.append(audio_path)
         return self.result
 
@@ -161,7 +163,7 @@ def test_run_job_inline_leaves_segments_null_on_failure(
     audio_path = _seed(temp_data_dir)
 
     class _Boom:
-        def transcribe(self, _audio_path):
+        def transcribe(self, _audio_path, *, hotwords=None):
             raise RuntimeError("whisper died")
 
     monkeypatch.setattr(

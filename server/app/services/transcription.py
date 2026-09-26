@@ -183,7 +183,9 @@ class TranscriptionService:
         self._model_name = target
         log.info("transcription.model_loaded", model=target, device=device)
 
-    def transcribe(self, audio_path: str) -> TranscriptionResult:
+    def transcribe(
+        self, audio_path: str, *, hotwords: str | None = None
+    ) -> TranscriptionResult:
         """Transcribe an audio file.
 
         Returns a TranscriptionResult holding the joined transcript (empty
@@ -194,7 +196,12 @@ class TranscriptionService:
         if self._model is None:
             self.load_model()
 
-        log.info("transcription.start", audio=audio_path, model=self._model_name)
+        log.info(
+            "transcription.start",
+            audio=audio_path,
+            model=self._model_name,
+            hotword_terms=0 if hotwords is None else len(hotwords.split(", ")),
+        )
         audio_samples = _decode_audio_samples(audio_path)
         peaks = compute_waveform_peaks(audio_samples)
         segments: Any
@@ -205,6 +212,7 @@ class TranscriptionService:
             vad_filter=True,
             word_timestamps=True,
             language=None,  # auto-detect
+            hotwords=hotwords,
         )
         log.info("transcription.detected_language", language=info.language)
 

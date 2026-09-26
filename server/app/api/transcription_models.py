@@ -14,6 +14,7 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
+from app import vocabulary
 from app.auth import require_auth
 from app.db import get_db
 from app.logging_config import get_logger
@@ -69,6 +70,60 @@ class ProgressResponse(BaseModel):
 class DeleteResponse(BaseModel):
     #: False when there were no weights to remove — delete is idempotent.
     deleted: bool
+
+
+class VocabularyUpdate(BaseModel):
+    text: str
+
+
+class VocabularyResponse(BaseModel):
+    terms: list[str]
+    text: str
+    token_estimate: int
+    over_budget: bool
+
+
+def _vocabulary_response(terms: list[str]) -> VocabularyResponse:
+    text = vocabulary.canonical_text(terms)
+    tokenizer = None
+    # Never load a model merely to serve Settings. Reuse its tokenizer only
+    # when transcription has already loaded it in this process.
+    from app.services import transcription
+
+    if transcription._service is not None and transcription._service._model is not None:
+        tokenizer = getattr(transcription._service._model, "hf_tokenizer", None)
+    estimate = vocabulary.token_estimate(text, tokenizer)
+    return VocabularyResponse(
+        terms=terms,
+        text=text,
+        token_estimate=estimate,
+        over_budget=estimate > vocabulary.HOTWORD_TOKEN_BUDGET,
+    )
+
+
+@router.get("/v1/transcription/vocabulary", response_model=VocabularyResponse)
+def get_vocabulary(
+    db: Annotated[sqlite3.Connection, Depends(get_db)],
+    _user: Annotated[str, Depends(require_auth)],
+) -> VocabularyResponse:
+    """Return the canonical global boost-word list and its token-budget status."""
+    return _vocabulary_response(vocabulary.load_terms(db))
+
+
+@router.put("/v1/transcription/vocabulary", response_model=VocabularyResponse)
+def put_vocabulary(
+    payload: VocabularyUpdate,
+    db: Annotated[sqlite3.Connection, Depends(get_db)],
+    _user: Annotated[str, Depends(require_auth)],
+) -> VocabularyResponse:
+    """Canonicalize and save the global vocabulary; blank text clears it."""
+    try:
+        terms = vocabulary.set_vocabulary(db, payload.text)
+    except vocabulary.VocabularyValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
+        ) from exc
+    return _vocabulary_response(terms)
 
 
 def _models_response(db: sqlite3.Connection) -> ModelsResponse:
