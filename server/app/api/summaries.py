@@ -5,15 +5,22 @@ management, and per-dump regenerate. Mirrors /v1/ocr/* in shape."""
 from __future__ import annotations
 
 import sqlite3
+import time
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.auth import require_auth
 from app.db import get_db
 from app.logging_config import get_logger
 from app.services import summarizer_env, summarizer_worker
+from app.summary_templates import (
+    TEMPLATE_DEFINITIONS,
+    assemble_prompt,
+    get_custom_prompt,
+    set_custom_prompt,
+)
 
 router = APIRouter()
 
@@ -30,10 +37,32 @@ class SummarySettingsResponse(BaseModel):
     install_running: bool
     #: The server-side auto-summarize toggle (auto-trigger gate).
     enabled: bool
+    custom_prompt: str | None
+    custom_configured: bool
 
 
 class SummarySettingsUpdate(BaseModel):
-    enabled: bool
+    enabled: bool | None = None
+    custom_prompt: str | None = Field(default=None, max_length=12_000)
+
+
+class SummaryTemplateEntry(BaseModel):
+    id: str
+    display_name: str
+
+
+class SummaryTemplatesResponse(BaseModel):
+    templates: list[SummaryTemplateEntry]
+    custom_configured: bool
+
+
+SummaryTemplateId = Literal[
+    "meeting", "brain_dump", "lecture", "actions_only", "custom"
+]
+
+
+class SummarizeRequest(BaseModel):
+    template: SummaryTemplateId | None = None
 
 
 class InstallAccepted(BaseModel):
@@ -56,9 +85,12 @@ class SummarizeAccepted(BaseModel):
 
 
 def _settings_response(db: sqlite3.Connection) -> SummarySettingsResponse:
+    custom_prompt = get_custom_prompt(db)
     return SummarySettingsResponse(
         **summarizer_env.capability(),
         enabled=summarizer_worker.summaries_enabled(db),
+        custom_prompt=custom_prompt,
+        custom_configured=custom_prompt is not None,
     )
 
 
@@ -84,9 +116,32 @@ def update_summary_settings(
     server's settings table — a device toggling it changes behavior for
     every device.
     """
-    summarizer_worker.set_summaries_enabled(db, payload.enabled)
-    log.info("summaries.toggle_set", enabled=payload.enabled)
+    if "enabled" in payload.model_fields_set and payload.enabled is not None:
+        summarizer_worker.set_summaries_enabled(db, payload.enabled)
+        log.info("summaries.toggle_set", enabled=payload.enabled)
+    if "custom_prompt" in payload.model_fields_set:
+        set_custom_prompt(db, payload.custom_prompt)
+        log.info("summaries.custom_prompt_set", configured=bool(get_custom_prompt(db)))
     return _settings_response(db)
+
+
+@router.get("/v1/summaries/templates", response_model=SummaryTemplatesResponse)
+def get_summary_templates(
+    db: Annotated[sqlite3.Connection, Depends(get_db)],
+    _user: Annotated[str, Depends(require_auth)],
+) -> SummaryTemplatesResponse:
+    """List stable summary-template IDs and display names for client pickers.
+
+    The custom row is always described; ``custom_configured`` tells clients
+    whether that slot is currently selectable.
+    """
+    return SummaryTemplatesResponse(
+        templates=[
+            SummaryTemplateEntry(id=item.id, display_name=item.display_name)
+            for item in TEMPLATE_DEFINITIONS
+        ],
+        custom_configured=get_custom_prompt(db) is not None,
+    )
 
 
 @router.post(
@@ -154,6 +209,7 @@ def summarize_dump(
     dump_id: str,
     db: Annotated[sqlite3.Connection, Depends(get_db)],
     _user: Annotated[str, Depends(require_auth)],
+    payload: SummarizeRequest | None = None,
 ) -> SummarizeAccepted:
     """(Re)generate the summary for one dump: idempotent replace.
 
@@ -164,7 +220,8 @@ def summarize_dump(
     (summarized_at changes) to observe completion.
     """
     row = db.execute(
-        "SELECT transcript FROM dumps WHERE id = ? AND deleted_at IS NULL",
+        "SELECT transcript, mode, summary_template FROM dumps "
+        "WHERE id = ? AND deleted_at IS NULL",
         (dump_id,),
     ).fetchone()
     if row is None:
@@ -182,7 +239,26 @@ def summarize_dump(
             status_code=status.HTTP_409_CONFLICT,
             detail="Summarizer environment is not installed",
         )
+    selected = payload.template if payload is not None else None
+    if selected is not None:
+        try:
+            assemble_prompt(selected, custom_prompt=get_custom_prompt(db))
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=str(exc),
+            ) from exc
+        db.execute(
+            "UPDATE dumps SET summary_template = ?, updated_at = ? WHERE id = ?",
+            (selected, int(time.time()), dump_id),
+        )
+        from app.api.dumps import _publish_dump_change
+
+        _publish_dump_change(db, dump_id, None)
+        # The worker reads on another connection. Persist both the selection
+        # and its sync event before making the queue entry visible.
+        db.commit()
     summarizer_worker.enqueue(dump_id)
     summarizer_worker.start_worker_if_installed()
-    log.info("summaries.regenerate_requested", dump_id=dump_id)
+    log.info("summaries.regenerate_requested", dump_id=dump_id, template=selected)
     return SummarizeAccepted(dump_id=dump_id)

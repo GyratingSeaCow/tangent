@@ -65,9 +65,10 @@ def _insert_summarized_dump(conn: sqlite3.Connection, dump_id: str = "dump-sum")
     conn.execute(
         "INSERT INTO dumps (id, client_id, created_at, updated_at, mode, "
         "duration_seconds, title, transcript, summary, summary_model, "
-        "summarized_at, audio_kept) "
+        "summarized_at, summary_template, audio_kept) "
         "VALUES (?, 'single-user', 1, 1, 'meeting', 60, 'Standup', "
-        "'Sam: hello', '## Summary\nShort.', 'qwen-stem', 1700000000, 0)",
+        "'Sam: hello', '## Summary\nShort.', 'qwen-stem', 1700000000, "
+        "'lecture', 0)",
         (dump_id,),
     )
     conn.commit()
@@ -75,7 +76,8 @@ def _insert_summarized_dump(conn: sqlite3.Connection, dump_id: str = "dump-sum")
 
 def _summary_row(conn: sqlite3.Connection, dump_id: str = "dump-sum") -> sqlite3.Row:
     return conn.execute(
-        "SELECT summary, summary_model, summarized_at FROM dumps WHERE id = ?",
+        "SELECT summary, summary_model, summarized_at, summary_template "
+        "FROM dumps WHERE id = ?",
         (dump_id,),
     ).fetchone()
 

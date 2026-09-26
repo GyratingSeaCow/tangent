@@ -11,7 +11,8 @@ server's packages, only to its own site-packages and this file's path.
 
 Modes:
   --serve              Load the model ONCE, then read one JSON object per
-                       line from stdin ({"id": ..., "transcript": ...}) and
+                       line from stdin ({"id": ..., "transcript": ...,
+                       "system_prompt": ...}) and
                        write exactly one JSON result line per input
                        ({"id": ..., "summary": ...} or {"id": ..., "error":
                        ...}), flushed immediately. EOF on stdin exits
@@ -33,6 +34,11 @@ import re
 import sys
 from pathlib import Path
 
+try:  # Package import in server/tests; sibling import when executed as a script.
+    from .summary_templates import MEETING_PROMPT
+except ImportError:  # pragma: no cover - exercised by the real child process
+    from summary_templates import MEETING_PROMPT
+
 # Bartowski mirror filename (the official Qwen repo is 401-gated).
 MODEL_FILENAME = "Qwen_Qwen3-4B-Instruct-2507-Q4_K_M.gguf"
 
@@ -41,56 +47,9 @@ TEMPERATURE = 0.2
 MAX_TOKENS = 1024
 CTX_TOKENS = 8192
 
-# The binding output template + rules + ONE worked example (Qwen 4B leans on
-# examples: the bench that made it win used an explicit format example, and
-# removing it cost language-lock). Single source of truth for the prompt.
-SYSTEM_PROMPT = """\
-You are a meeting-summarization assistant. Given a raw meeting transcript,
-produce a structured summary in Markdown using EXACTLY this template:
-
-## Summary
-<2-5 sentence overview of the meeting>
-
-## Key decisions
-- <one bullet per decision explicitly made>
-
-## Action items
-- <who>: <what> (attribute only to names or speakers present in the transcript)
-
-## Open questions
-- <one bullet per question raised but not resolved>
-
-Rules:
-- Extract exhaustively: capture every decision, action item, and open
-  question that appears in the transcript.
-- Only include items explicitly discussed in the transcript.
-- Never invent names, numbers, or dates.
-- If a section has no items, write exactly "None" under its heading.
-- Write the output in the same language as the transcript.
-
-Example:
-
-Transcript:
-Ana: We need to pick a database for the analytics service.
-Ben: Postgres has worked for us before, and the team knows it. Let's use it.
-Ana: Agreed. Can you have the schema drafted by Friday?
-Ben: Yes, I'll have it ready.
-
-Output:
-## Summary
-Ana and Ben discussed the database choice for the analytics service and
-settled on Postgres because the team already knows it. Ben committed to
-drafting the schema by Friday.
-
-## Key decisions
-- Use Postgres for the analytics service.
-
-## Action items
-- Ben: draft the database schema by Friday.
-
-## Open questions
-None
-"""
+# Backward-compatible alias for existing imports. The preset module is now the
+# single source of truth, and its drift-guard test pins the full former value.
+SYSTEM_PROMPT = MEETING_PROMPT
 
 # A placeholder line the model emits for an empty section ("None", "- None",
 # "None identified.", ...). Sections containing ONLY these are stripped.
@@ -173,11 +132,11 @@ def _load_llm(model_path: Path):
     )
 
 
-def _summarize_loaded(llm, transcript: str) -> str:
+def _summarize_loaded(llm, transcript: str, system_prompt: str) -> str:
     """One transcript through an already-loaded model, post-processed."""
     resp = llm.create_chat_completion(
         messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": transcript},
         ],
         temperature=TEMPERATURE,
@@ -214,7 +173,13 @@ def serve(model_path: Path) -> int:
             transcript = req.get("transcript")
             if not isinstance(transcript, str) or not transcript.strip():
                 raise ValueError("request has no non-empty 'transcript'")
-            out = {"id": req_id, "summary": _summarize_loaded(llm, transcript)}
+            system_prompt = req.get("system_prompt")
+            if not isinstance(system_prompt, str) or not system_prompt.strip():
+                raise ValueError("request has no non-empty 'system_prompt'")
+            out = {
+                "id": req_id,
+                "summary": _summarize_loaded(llm, transcript, system_prompt),
+            }
         except Exception as exc:  # noqa: BLE001 — one bad line must not kill the server
             out = {"id": req_id, "error": f"{type(exc).__name__}: {exc}"}
         print(json.dumps(out), flush=True)
@@ -243,7 +208,7 @@ def main(argv: list[str] | None = None) -> int:
         return serve(model_path)
 
     llm = _load_llm(model_path)
-    summary = _summarize_loaded(llm, SELFTEST_TRANSCRIPT)
+    summary = _summarize_loaded(llm, SELFTEST_TRANSCRIPT, MEETING_PROMPT)
     if not summary:
         print("selftest failed: model returned an empty summary", file=sys.stderr)
         return 1

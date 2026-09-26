@@ -187,9 +187,13 @@ def _run_serve(monkeypatch, capsys, stdin_text: str, llm: FakeLlm):
 def test_serve_answers_one_json_line_per_request(monkeypatch, capsys):
     llm = FakeLlm()
     requests = (
-        json.dumps({"id": "d-1", "transcript": "Ana: hello"})
+        json.dumps(
+            {"id": "d-1", "transcript": "Ana: hello", "system_prompt": "PROMPT ONE"}
+        )
         + "\n"
-        + json.dumps({"id": "d-2", "transcript": "Ben: bye"})
+        + json.dumps(
+            {"id": "d-2", "transcript": "Ben: bye", "system_prompt": "PROMPT TWO"}
+        )
         + "\n"
     )
     out = _run_serve(monkeypatch, capsys, requests, llm)
@@ -197,9 +201,12 @@ def test_serve_answers_one_json_line_per_request(monkeypatch, capsys):
         {"id": "d-1", "summary": "## Summary\nFine."},
         {"id": "d-2", "summary": "## Summary\nFine."},
     ]
-    # The system prompt + sampling params reach the model on every call.
+    # The per-request prompt + unchanged sampling params reach the model.
+    assert [call["messages"][0] for call in llm.calls] == [
+        {"role": "system", "content": "PROMPT ONE"},
+        {"role": "system", "content": "PROMPT TWO"},
+    ]
     for call in llm.calls:
-        assert call["messages"][0] == {"role": "system", "content": summarize_infer.SYSTEM_PROMPT}
         assert call["temperature"] == summarize_infer.TEMPERATURE
         assert call["max_tokens"] == summarize_infer.MAX_TOKENS
     assert [c["messages"][1]["content"] for c in llm.calls] == ["Ana: hello", "Ben: bye"]
@@ -209,22 +216,31 @@ def test_serve_reports_per_request_errors_and_keeps_serving(monkeypatch, capsys)
     llm = FakeLlm()
     lines = (
         "this is not json\n"
-        + json.dumps({"id": "d-3"})  # missing transcript
+        + json.dumps({"id": "d-3", "transcript": "Cara: hi"})  # missing prompt
         + "\n"
-        + json.dumps({"id": "d-4", "transcript": "Cara: hi"})
+        + json.dumps(
+            {"id": "d-4", "transcript": "Cara: hi", "system_prompt": "PROMPT"}
+        )
         + "\n"
     )
     out = _run_serve(monkeypatch, capsys, lines, llm)
     assert len(out) == 3, "one bad line must not kill the server"
     assert "error" in out[0] and out[0]["id"] == ""
-    assert out[1] == {"id": "d-3", "error": out[1]["error"]} and "transcript" in out[1]["error"]
+    assert out[1] == {"id": "d-3", "error": out[1]["error"]}
+    assert "system_prompt" in out[1]["error"]
     assert out[2] == {"id": "d-4", "summary": "## Summary\nFine."}
 
 
 def test_serve_model_failure_is_an_error_line_not_a_crash(monkeypatch, capsys):
     llm = FakeLlm(content=RuntimeError("kv cache exploded"))
     out = _run_serve(
-        monkeypatch, capsys, json.dumps({"id": "d-5", "transcript": "Dee: hm"}) + "\n", llm
+        monkeypatch,
+        capsys,
+        json.dumps(
+            {"id": "d-5", "transcript": "Dee: hm", "system_prompt": "PROMPT"}
+        )
+        + "\n",
+        llm,
     )
     assert out == [{"id": "d-5", "error": "RuntimeError: kv cache exploded"}]
 

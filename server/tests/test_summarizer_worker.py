@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Tests for the AI-summaries worker (Task 2).
 
-Inference is always injected (``infer=lambda dump_id, transcript: "..."``) —
+Inference is always injected
+(``infer=lambda dump_id, transcript, system_prompt: "..."``) —
 no test loads llama-cpp or a real model. ``run_inference``'s subprocess
 plumbing is exercised against a stub script run by the test interpreter,
 exactly like the ocr_worker tests.
@@ -22,6 +23,12 @@ import pytest
 from app.db import init_db
 from app.services import summarizer_worker
 from app.summarize_infer import MODEL_FILENAME
+from app.summary_templates import (
+    BRAIN_DUMP_PROMPT,
+    CUSTOM_CONTRACT_SUFFIX,
+    LECTURE_PROMPT,
+    MEETING_PROMPT,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -48,13 +55,15 @@ def _insert_dump(
     dump_id: str,
     transcript: str | None = "Sam: let's ship it.\nLee: agreed.",
     mode: str = "meeting",
+    template: str | None = None,
     deleted: bool = False,
 ) -> None:
     db.execute(
         "INSERT INTO dumps (id, client_id, created_at, updated_at, mode, "
-        "duration_seconds, title, transcript, audio_kept, deleted_at) "
-        "VALUES (?, 'single-user', 1, 1, ?, 60, 'T', ?, 0, ?)",
-        (dump_id, mode, transcript, 1 if deleted else None),
+        "duration_seconds, title, transcript, summary_template, audio_kept, "
+        "deleted_at) "
+        "VALUES (?, 'single-user', 1, 1, ?, 60, 'T', ?, ?, 0, ?)",
+        (dump_id, mode, transcript, template, 1 if deleted else None),
     )
     db.commit()
 
@@ -101,7 +110,7 @@ class TestSummarizeDump:
         _insert_dump(db, "d-1")
 
         ok = summarizer_worker.summarize_dump(
-            db, "d-1", infer=lambda i, t: SUMMARY_MD, now=1234
+            db, "d-1", infer=lambda i, t, p: SUMMARY_MD, now=1234
         )
 
         assert ok is True
@@ -122,7 +131,7 @@ class TestSummarizeDump:
         """The write is committed, not just staged on this connection."""
         _insert_dump(db, "d-commit")
         summarizer_worker.summarize_dump(
-            db, "d-commit", infer=lambda i, t: SUMMARY_MD, now=1
+            db, "d-commit", infer=lambda i, t, p: SUMMARY_MD, now=1
         )
         other = sqlite3.connect(temp_data_dir / "tangent.db")
         other.row_factory = sqlite3.Row
@@ -137,10 +146,10 @@ class TestSummarizeDump:
     def test_regenerate_replaces_the_previous_summary(self, db):
         _insert_dump(db, "d-re")
         summarizer_worker.summarize_dump(
-            db, "d-re", infer=lambda i, t: "old", now=1
+            db, "d-re", infer=lambda i, t, p: "old", now=1
         )
         summarizer_worker.summarize_dump(
-            db, "d-re", infer=lambda i, t: "new", now=2
+            db, "d-re", infer=lambda i, t, p: "new", now=2
         )
         row = _dump_row(db, "d-re")
         assert row["summary"] == "new", "idempotent replace"
@@ -153,7 +162,7 @@ class TestSummarizeDump:
         monkeypatch.setattr(summarizer_worker, "log", fake_log)
         _insert_dump(db, "d-fail")
 
-        def exploding(i, t):
+        def exploding(i, t, p):
             raise RuntimeError("model exploded")
 
         ok = summarizer_worker.summarize_dump(db, "d-fail", infer=exploding)
@@ -168,14 +177,14 @@ class TestSummarizeDump:
 
     def test_missing_dump_is_a_noop(self, db):
         ok = summarizer_worker.summarize_dump(
-            db, "d-ghost", infer=lambda i, t: SUMMARY_MD
+            db, "d-ghost", infer=lambda i, t, p: SUMMARY_MD
         )
         assert ok is False
 
     def test_deleted_dump_is_not_summarized(self, db):
         _insert_dump(db, "d-dead", deleted=True)
         ok = summarizer_worker.summarize_dump(
-            db, "d-dead", infer=lambda i, t: SUMMARY_MD
+            db, "d-dead", infer=lambda i, t, p: SUMMARY_MD
         )
         assert ok is False
         assert _dump_row(db, "d-dead")["summary"] is None
@@ -186,7 +195,7 @@ class TestSummarizeDump:
         _insert_dump(db, "d-mute", transcript="   ")
         calls: list = []
         ok = summarizer_worker.summarize_dump(
-            db, "d-mute", infer=lambda i, t: calls.append(t) or "x"
+            db, "d-mute", infer=lambda i, t, p: calls.append(t) or "x"
         )
         assert ok is False
         assert calls == [], "no transcript, no inference"
@@ -196,7 +205,7 @@ class TestSummarizeDump:
 
     def test_empty_summary_is_a_failure_not_a_write(self, db):
         _insert_dump(db, "d-empty")
-        ok = summarizer_worker.summarize_dump(db, "d-empty", infer=lambda i, t: "")
+        ok = summarizer_worker.summarize_dump(db, "d-empty", infer=lambda i, t, p: "")
         assert ok is False
         assert _dump_row(db, "d-empty")["summary"] is None
 
@@ -214,7 +223,7 @@ class TestSummarizeDump:
             "app.api.dumps._publish_dump_change", exploding_publish
         )
         ok = summarizer_worker.summarize_dump(
-            db, "d-atomic", infer=lambda i, t: SUMMARY_MD
+            db, "d-atomic", infer=lambda i, t, p: SUMMARY_MD
         )
 
         assert ok is False
@@ -229,6 +238,57 @@ class TestSummarizeDump:
         assert row["summary"] is None, (
             "summary column write must commit WITH the change_log entry or not at all"
         )
+
+    @pytest.mark.parametrize(
+        ("mode", "expected"),
+        [
+            ("meeting", MEETING_PROMPT),
+            ("brain_dump", BRAIN_DUMP_PROMPT),
+            ("text_note", BRAIN_DUMP_PROMPT),
+        ],
+    )
+    def test_mode_default_prompt_reaches_inference(self, db, mode, expected):
+        _insert_dump(db, f"d-{mode}", mode=mode)
+        seen: list[str] = []
+
+        ok = summarizer_worker.summarize_dump(
+            db,
+            f"d-{mode}",
+            infer=lambda i, t, prompt: seen.append(prompt) or SUMMARY_MD,
+        )
+
+        assert ok is True
+        assert seen == [expected]
+
+    def test_stored_template_overrides_the_mode_default(self, db):
+        _insert_dump(db, "d-lecture", mode="meeting", template="lecture")
+        seen: list[str] = []
+
+        summarizer_worker.summarize_dump(
+            db,
+            "d-lecture",
+            infer=lambda i, t, prompt: seen.append(prompt) or SUMMARY_MD,
+        )
+
+        assert seen == [LECTURE_PROMPT]
+
+    def test_custom_template_reads_setting_and_appends_contract(self, db):
+        authored = "Use exactly:\n## Wins\n## Risks"
+        db.execute(
+            "INSERT INTO app_settings (key, value) "
+            "VALUES ('summary_custom_prompt', ?)",
+            (authored,),
+        )
+        _insert_dump(db, "d-custom", template="custom")
+        seen: list[str] = []
+
+        summarizer_worker.summarize_dump(
+            db,
+            "d-custom",
+            infer=lambda i, t, prompt: seen.append(prompt) or SUMMARY_MD,
+        )
+
+        assert seen == [authored + CUSTOM_CONTRACT_SUFFIX]
 
 
 # ---------------------------------------------------------------------------
@@ -255,6 +315,7 @@ _SERVE_FOREVER = (
     "for line in sys.stdin:\n"
     "    req = json.loads(line)\n"
     "    assert req['transcript'], 'transcript must reach the child'\n"
+    "    assert req['system_prompt'], 'prompt must reach the child'\n"
     "    print(json.dumps({'id': req['id'], 'summary': '  stub summary  '}), flush=True)\n"
 )
 
@@ -263,6 +324,7 @@ _SERVE_ONE_THEN_CRASH = (
     "served = 0\n"
     "for line in sys.stdin:\n"
     "    req = json.loads(line)\n"
+    "    assert req['system_prompt'] == 'PROMPT'\n"
     "    print(json.dumps({'id': req['id'], 'summary': 'crashy summary'}), flush=True)\n"
     "    served += 1\n"
     "    if spawn_n == 1 and served == 1:\n"
@@ -304,7 +366,7 @@ def _spawns(spawn_log: Path) -> int:
 
 def test_run_inference_raises_when_env_not_installed(temp_data_dir):
     with pytest.raises(RuntimeError, match="not installed"):
-        summarizer_worker.run_inference("d-1", "Sam: hi")
+        summarizer_worker.run_inference("d-1", "Sam: hi", "PROMPT")
 
 
 def test_run_inference_speaks_the_serve_protocol(monkeypatch, tmp_path):
@@ -312,7 +374,7 @@ def test_run_inference_speaks_the_serve_protocol(monkeypatch, tmp_path):
     # object per line, and the summary comes back stripped.
     _install_serve_stub(monkeypatch, tmp_path, _SERVE_FOREVER)
 
-    out = summarizer_worker.run_inference("d-1", "Sam: hello")
+    out = summarizer_worker.run_inference("d-1", "Sam: hello", "PROMPT")
     assert out == "stub summary"
 
 
@@ -321,8 +383,8 @@ def test_model_loads_once_two_requests_share_one_child(monkeypatch, tmp_path):
     # load). A regression to subprocess-per-request shows up as spawn count 2.
     spawn_log = _install_serve_stub(monkeypatch, tmp_path, _SERVE_FOREVER)
 
-    assert summarizer_worker.run_inference("d-1", "Sam: a") == "stub summary"
-    assert summarizer_worker.run_inference("d-2", "Lee: b") == "stub summary"
+    assert summarizer_worker.run_inference("d-1", "Sam: a", "FIRST") == "stub summary"
+    assert summarizer_worker.run_inference("d-2", "Lee: b", "SECOND") == "stub summary"
     assert _spawns(spawn_log) == 1, "two requests must reuse one serve child"
 
 
@@ -335,8 +397,8 @@ def test_child_crash_restarts_once_and_second_request_succeeds(
 
     # First request answered, then the child dies; second request must pay
     # exactly one restart and still succeed.
-    assert summarizer_worker.run_inference("d-1", "t") == "crashy summary"
-    assert summarizer_worker.run_inference("d-2", "t") == "crashy summary"
+    assert summarizer_worker.run_inference("d-1", "t", "PROMPT") == "crashy summary"
+    assert summarizer_worker.run_inference("d-2", "t", "PROMPT") == "crashy summary"
 
     assert _spawns(spawn_log) == 2, "exactly one restart"
     restarts = [
@@ -398,7 +460,7 @@ def test_run_inference_surfaces_child_death_after_one_restart(
     spawn_log = _install_serve_stub(monkeypatch, tmp_path, "sys.exit(3)\n")
 
     with pytest.raises(RuntimeError, match="exited 3"):
-        summarizer_worker.run_inference("d-1", "t")
+        summarizer_worker.run_inference("d-1", "t", "PROMPT")
     assert _spawns(spawn_log) == 2, "one restart attempt, then give up"
 
 
@@ -433,7 +495,7 @@ def test_serve_child_spawns_with_the_env_helpers_ld_library_path(
 
     monkeypatch.setattr(summarizer_worker.subprocess, "Popen", recording_popen)
 
-    assert summarizer_worker.run_inference("d-1", "Sam: hi") == "stub summary"
+    assert summarizer_worker.run_inference("d-1", "Sam: hi", "PROMPT") == "stub summary"
     assert _spawns(spawn_log) == 1
     assert recorded["env"] is not None, "child must not inherit the bare server env"
     assert str(lib) in recorded["env"]["LD_LIBRARY_PATH"].split(os.pathsep), (
@@ -446,7 +508,7 @@ def test_stop_worker_kills_the_persistent_child(monkeypatch, tmp_path):
     # wipe and must leave no live child behind (no orphan holding the venv).
     _install_serve_stub(monkeypatch, tmp_path, _SERVE_FOREVER)
 
-    summarizer_worker.run_inference("d-1", "t")
+    summarizer_worker.run_inference("d-1", "t", "PROMPT")
     child = summarizer_worker._infer_child
     assert child is not None and child.proc.poll() is None, "child is live"
 
