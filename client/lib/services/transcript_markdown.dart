@@ -12,6 +12,8 @@
 
 import '../data/local_db.dart';
 import '../models/dump_mode.dart';
+import '../models/speaker_names.dart';
+import 'render_speaker_names.dart';
 import 'speaker_naming.dart';
 import 'transcript_timings.dart';
 
@@ -104,24 +106,28 @@ bool needsHourStamps(TranscriptTimings timings) =>
 
 // ── speaker names ─────────────────────────────────────────────────────
 
-/// Timings only know `Speaker N`; the user's names live in the transcript
-/// TEXT as `## <name>` headings (v1.15.0, no name map). The meeting
-/// formatter numbers speakers by first appearance and writes their
-/// sections in that order, so heading k ⇔ the k-th distinct label.
+/// Timings only know `Speaker N`; the user's names live in the
+/// per-recording map (v1.17.0, spec §3). When [names] has entries every
+/// label resolves through it (unmapped labels map to themselves). Only a
+/// dump with NO map falls back to the v1.15.0 rule: pair `## <name>`
+/// headings in the TEXT with the timings' labels by first appearance
+/// (heading k ⇔ the k-th distinct label).
 ///
-/// Returns `label → name`. When the heading count differs from the
-/// timings' distinct-label count (the user edited headings) every label
-/// maps to itself — never guess. `[unattributed]` and section headings
-/// are never paired.
+/// Returns `label → name`. In the fallback, when the heading count differs
+/// from the timings' distinct-label count (the user edited headings) every
+/// label maps to itself — never guess. `[unattributed]` and section
+/// headings are never paired.
 Map<String, String> resolveSpeakerNames({
   required String? transcript,
   required TranscriptTimings timings,
+  SpeakerNames names = const SpeakerNames.empty(),
 }) {
   final labels = <String>[];
   for (final segment in timings.segments) {
     final speaker = segment.speaker;
     if (speaker != null && !labels.contains(speaker)) labels.add(speaker);
   }
+  if (names.isNotEmpty) return {for (final l in labels) l: names.nameFor(l)};
   final identity = {for (final l in labels) l: l};
   if (labels.isEmpty || transcript == null) return identity;
   final headings = speakerHeadings(transcript);
@@ -170,16 +176,21 @@ String transcriptMarkdown({
   // no `## Transcript` heading), so an existing Obsidian vault does not
   // change shape until the user opts in.
   final legacy = !options.timestamps && !options.includeSummary;
+  final map = SpeakerNames.decode(dump.speakerNames);
   final names = stamped
-      ? resolveSpeakerNames(transcript: transcript, timings: timings)
+      ? resolveSpeakerNames(transcript: transcript, timings: timings, names: map)
       : const <String, String>{};
+  // `speakers:` comes from the map when the recording has one; the
+  // heading scan is only the no-map fallback.
   final speakers = legacy
       ? const <String>[]
       : stamped
           ? names.values.toList()
-          : hasText
-              ? speakerHeadings(transcript)
-              : const <String>[];
+          : map.isNotEmpty
+              ? map.names.toList()
+              : hasText
+                  ? speakerHeadings(transcript)
+                  : const <String>[];
 
   final head = yamlFrontmatter({
     'tangent-id': dump.id,
@@ -210,7 +221,9 @@ String transcriptMarkdown({
     }
     body = lines.isEmpty ? '*Not transcribed yet.*' : lines.join('\n');
   } else {
-    body = hasText ? transcript.trim() : '*Not transcribed yet.*';
+    body = hasText
+        ? renderSpeakerNames(transcript, map).trim()
+        : '*Not transcribed yet.*';
   }
 
   final sections = StringBuffer()..write('$head\n# ${dump.title}\n\n');

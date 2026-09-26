@@ -25,6 +25,7 @@ DumpRow row({
   String? transcript = 'Buy oat milk and batteries.',
   String? summary,
   String? summaryTemplate,
+  String? speakerNames,
 }) =>
     DumpRow(
       id: id,
@@ -42,6 +43,7 @@ DumpRow row({
       transcriptionAttempt: 0,
       summary: summary,
       summaryTemplate: summaryTemplate,
+      speakerNames: speakerNames,
     );
 
 TranscriptTimings timings(List<(double, String?, String)> segments) {
@@ -224,6 +226,59 @@ void main() {
       expect(md, contains('[00:04] Speaker 2: Morning to you'));
       expect(md, isNot(contains('Jeff:')));
       expect(md, contains('speakers:\n  - Speaker 1\n  - Speaker 2\n'));
+    });
+
+    test('the map wins over headings: raw headings + map export names '
+        '(v1.17.0 §3)', () {
+      final md = transcriptMarkdown(
+        dump: row(
+          transcript: '## Speaker 1\n\nMorning\nReady?\n\n## Speaker 2\n\n'
+              'Morning to you',
+          speakerNames: '{"Speaker 1":"Jeff","Speaker 2":"Dana"}',
+        ),
+        timings: two,
+        options: stamped,
+      );
+
+      expect(md, contains('[00:00] Jeff: Morning'));
+      expect(md, contains('[00:04] Dana: Morning to you'));
+      expect(md, contains('[00:08] Jeff: Ready?'));
+      expect(md, contains('speakers:\n  - Jeff\n  - Dana\n'));
+      expect(md, isNot(contains('Speaker 1')));
+    });
+
+    test('a partial map names what it knows and leaves the rest raw — no '
+        'heading pairing once a map exists', () {
+      final md = transcriptMarkdown(
+        dump: row(
+          transcript: '## Jeff\n\nMorning\n\n## Dana\n\nMorning to you',
+          speakerNames: '{"Speaker 2":"Dana"}',
+        ),
+        timings: two,
+        options: stamped,
+      );
+
+      expect(md, contains('[00:00] Speaker 1: Morning'));
+      expect(md, contains('[00:04] Dana: Morning to you'));
+      expect(md, isNot(contains('Jeff:')));
+    });
+
+    test('unstamped export renders the body through the map', () {
+      final md = transcriptMarkdown(
+        dump: row(
+          transcript: '## Speaker 1\n\nMorning\n\n## Speaker 2\n\nHi',
+          speakerNames: '{"Speaker 1":"Jeff"}',
+        ),
+        timings: null,
+        options: const TranscriptMarkdownOptions(
+          timestamps: false,
+          includeSummary: true,
+        ),
+      );
+
+      expect(md, contains('## Jeff\n'));
+      expect(md, contains('## Speaker 2\n'));
+      expect(md, contains('speakers:\n  - Jeff\n'));
     });
 
     test('speakers key is omitted when there are none', () {
