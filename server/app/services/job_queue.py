@@ -15,6 +15,7 @@ import sqlite3
 import time
 import uuid
 
+from app import vocabulary
 from app.logging_config import get_logger
 from app.services.transcription import get_transcription_service
 
@@ -136,7 +137,9 @@ def run_job_inline(job_id: str, audio_path: str) -> None:
                 raise FileNotFoundError(f"Audio file not found at {audio_path}")
 
             service = get_transcription_service()
-            result = service.transcribe(audio_path)
+            # Resolve at RUN time, not enqueue time: queued jobs use the most
+            # recently saved global vocabulary.
+            result = service.transcribe(audio_path, hotwords=vocabulary.load_hotwords(db))
             transcript = result.text
             # Segment timings describe the raw audio, so they are stored as
             # transcribed and are NOT rewritten by mode-specific formatting.

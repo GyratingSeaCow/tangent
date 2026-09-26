@@ -260,6 +260,36 @@ class TestSummarizeDump:
         assert ok is True
         assert seen == [expected]
 
+    def test_vocabulary_suffix_follows_template_and_empty_keeps_meeting_prompt_exact(
+        self, db
+    ):
+        _insert_dump(db, "d-vocab")
+        seen: list[str] = []
+
+        summarizer_worker.summarize_dump(
+            db,
+            "d-vocab",
+            infer=lambda i, t, prompt: seen.append(prompt) or SUMMARY_MD,
+        )
+        assert seen == [MEETING_PROMPT], "empty vocabulary is byte-identical"
+
+        db.execute(
+            "INSERT INTO app_settings (key, value) VALUES "
+            "('custom_vocabulary', 'Hermes, CachyOS')"
+        )
+        db.commit()
+        seen.clear()
+        summarizer_worker.summarize_dump(
+            db,
+            "d-vocab",
+            infer=lambda i, t, prompt: seen.append(prompt) or SUMMARY_MD,
+        )
+        assert seen == [
+            MEETING_PROMPT
+            + "\n\nPreferred spellings for names and terms that may appear in the\n"
+            "transcript: Hermes, CachyOS. Use these spellings exactly."
+        ]
+
     def test_stored_template_overrides_the_mode_default(self, db):
         _insert_dump(db, "d-lecture", mode="meeting", template="lecture")
         seen: list[str] = []

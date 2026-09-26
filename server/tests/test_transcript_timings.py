@@ -81,7 +81,9 @@ class _FakeService:
     def __init__(self, result: TranscriptionResult) -> None:
         self.result = result
 
-    def transcribe(self, _audio_path: str) -> TranscriptionResult:
+    def transcribe(
+        self, _audio_path: str, *, hotwords: str | None = None
+    ) -> TranscriptionResult:
         return self.result
 
 
@@ -163,7 +165,9 @@ def test_retranscribe_start_clears_stale_timings(temp_data_dir: Path, monkeypatc
     audio = _seed_dump_and_job(temp_data_dir, timings=json.dumps(TIMINGS))
 
     class InspectingService:
-        def transcribe(self, _audio_path: str) -> TranscriptionResult:
+        def transcribe(
+            self, _audio_path: str, *, hotwords: str | None = None
+        ) -> TranscriptionResult:
             conn = _connect(temp_data_dir)
             try:
                 row = conn.execute(
