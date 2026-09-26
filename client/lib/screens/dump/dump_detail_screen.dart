@@ -20,12 +20,15 @@ import '../../services/transcript_timings.dart';
 import '../../widgets/listen_transcript_view.dart';
 import '../../widgets/waveform_scrubber.dart';
 import 'dumps_providers.dart';
+import 'summarize_flow.dart';
 import '../../services/transcription_notifications.dart'
     show describedWhisperModel;
 import 'local_deletion_presentation.dart';
 import 'sync_status_presentation.dart';
 import '../home/home_screen.dart' show localDbProvider;
 import '../settings/settings_screen.dart' show settingsStoreProvider;
+import '../settings/ai_summaries_section.dart'
+    show summariesClientProvider, summariesEnabledProvider;
 import '../home/home_providers.dart'
     show
         recordingPlaybackEngineFactoryProvider,
@@ -849,6 +852,12 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
     final transcription = TranscriptionStatus.fromWire(row.transcriptionStatus);
     final operationActive = transcription.isInProgress;
     final displayTranscript = row.transcript;
+    // Arc B: the Summarize / Summarize again button follows the list
+    // screen's regenerate action exactly — it needs a transcript to work on
+    // and the AI-summaries capability switched on (while the feature is off,
+    // none of its UI appears anywhere).
+    final bool summarizable = (row.transcript?.trim().isNotEmpty ?? false) &&
+        ref.watch(summariesEnabledProvider);
     // Tap-to-hear: timings are server-owned; Listen is offered only when
     // they exist and defaults on the first time we see them (spec §3.3).
     final timings = _timingsFor(row);
@@ -1149,6 +1158,18 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
               ),
             ),
           ),
+          // Preserve-until-success: tapping this never clears or hides the
+          // body above — the new summary replaces it when it arrives via
+          // sync, so the user keeps the old text until the server has a
+          // better one.
+          if (summarizable) ...[
+            const SizedBox(height: 8),
+            _summarizeButton(row, again: true),
+          ],
+          const SizedBox(height: 16),
+        ] else if (summarizable) ...[
+          // No summary yet: the button stands alone in the summary slot.
+          _summarizeButton(row, again: false),
           const SizedBox(height: 16),
         ],
         if (operationActive || transcription == TranscriptionStatus.failed) ...[
@@ -1219,6 +1240,27 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
           ],
         ),
       ],
+    );
+  }
+
+  /// Opens the template picker and queues a (re)summary for [row].
+  ///
+  /// [again] only changes the label: with a summary on screen the button
+  /// reads 'Summarize again', otherwise 'Summarize'. The flow itself is the
+  /// shared one the recordings list uses (pick → POST → snackbar).
+  Widget _summarizeButton(DumpRow row, {required bool again}) {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: FilledButton.tonalIcon(
+        key: ValueKey('summarize-again-${widget.dumpId}'),
+        icon: const Icon(Icons.auto_awesome, size: 18),
+        label: Text(again ? 'Summarize again' : 'Summarize'),
+        onPressed: () => runSummarizeFlow(
+          context,
+          client: ref.read(summariesClientProvider.future),
+          dump: row,
+        ),
+      ),
     );
   }
 
