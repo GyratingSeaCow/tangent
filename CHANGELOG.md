@@ -5,6 +5,27 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.16.0] - 2026-09-26
+
+Feature release: **take the transcript with you, with the clock on it.**
+
+### Added
+
+- **Export Markdown** on any transcribed recording (⋮ on the list or the
+  detail screen): frontmatter (title, date, duration, speakers, summary
+  template), the summary, and the transcript as one `[mm:ss] Name: text`
+  line per segment — `[h:mm:ss]` once a recording passes an hour. Speaker
+  names you set in 1.15.0 are used. Android/iOS open the share sheet;
+  Linux/Windows write to Documents and open the file.
+- Obsidian export: **Include timestamps** (off by default) and **Include
+  summary** switches. With both off, exported vault files are byte-
+  identical to 1.15.0 — nothing changes until you opt in.
+
+### Fixed
+
+- A summary that starts with its own `## Summary` heading is no longer
+  doubled in exports.
+
 ## [1.15.0] - 2026-09-26
 
 Feature release: **call Speaker 1 by name.**

@@ -50,13 +50,25 @@ ADH2/
 
 ## Status
 
-Shipping — **v1.15.0** (see CHANGELOG.md). Client and server are both
-implemented and tested (2000
+Shipping — **v1.16.0** (see CHANGELOG.md). Client and server are both
+implemented and tested (2042
 Flutter tests, 523 server tests, 100 Kotlin tests). The client runs
 natively on Linux AND Windows (tray icon, global record hotkey,
 close-to-tray, single instance, right-click = long-press; AppImage and
 Inno Setup installer under `packaging/`) — verified on CachyOS/KDE
 Plasma Wayland and Windows 11; see the README's Desktop sections.
+
+v1.16.0 adds **timestamped Markdown export** (client-only): one renderer
+(`transcriptMarkdown`) emits frontmatter (title, speakers, template,
+timestamps) + `## Summary` + `## Transcript` with one `[mm:ss] Name:`
+line per timing segment (`h:mm:ss` for the whole document once any
+segment passes an hour); speaker names come from the transcript's
+`## ` headings paired to `Speaker N` by first appearance. Obsidian
+export gets 'Include timestamps' (default OFF) and 'Include summary'
+switches — with both off the vault file is byte-identical to v1.15.0.
+⋮ → 'Export Markdown' on list and detail shares (mobile) or writes to
+Documents and opens (desktop). See
+`docs/design/2026-09-26-timestamped-markdown-export.md`.
 
 v1.15.0 adds **speaker naming** (client-only): ⋮ → "Name speakers" on
 list and detail, and tapping a speaker header in Listen mode, opens a
