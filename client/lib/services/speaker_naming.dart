@@ -132,6 +132,17 @@ List<String> suggestedSpeakerNames(Iterable<String> transcriptsNewestFirst) {
   return out;
 }
 
+/// True when [transcript] carries a `## <heading>` that is neither a raw
+/// `Speaker N` label, `[unattributed]`, nor a known section heading — i.e.
+/// a name the user gave a speaker. A re-transcribe rewrites the transcript
+/// from scratch (S1=b: no name map), so the detail screen warns before it.
+bool hasUserSpeakerNames(String transcript) => _headings(transcript).any(
+      (String heading) =>
+          heading.isNotEmpty &&
+          !_speakerLabel.hasMatch(heading) &&
+          !_knownSectionHeadings.contains(heading),
+    );
+
 /// Trims and collapses internal whitespace runs to one space — the exact
 /// normalisation [applySpeakerNames] writes, so collision checks compare
 /// what would actually land in the transcript.

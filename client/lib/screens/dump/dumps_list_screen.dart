@@ -14,12 +14,14 @@ import '../../models/sync_status.dart' show SyncStatus, SyncStatusX;
 import '../../models/transcription_status.dart';
 import 'dump_detail_screen.dart';
 import 'dumps_providers.dart';
+import 'name_speakers_sheet.dart';
 import 'summarize_flow.dart';
 import '../../widgets/signal_bars.dart';
 import '../../widgets/sync_button.dart';
 import '../home/home_providers.dart' show documentSyncEngineProvider;
 import '../../services/bulk_dump_actions.dart';
 import '../../services/server_transcription_service.dart';
+import '../../services/speaker_naming.dart' show detectSpeakers;
 import '../../services/synced_audio_download.dart';
 import '../../services/transcript_search.dart'
     show DumpSearchMatch, SnippetRun, findTranscriptMatches, parseSnippet;
@@ -590,6 +592,9 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
     // right now, not a transient condition worth explaining.
     final bool summarizable = (dump.transcript?.trim().isNotEmpty ?? false) &&
         ref.read(summariesEnabledProvider);
+    // Speaker naming (v1.15.0 §4.1): absent, not disabled, when the transcript
+    // has no `## Speaker N` headings — there is nothing to name.
+    final bool nameable = detectSpeakers(dump.transcript ?? '').isNotEmpty;
     final ItemAction? action = await showItemActionSheet(
       context,
       title: dump.title.isEmpty ? '(untitled)' : dump.title,
@@ -599,6 +604,7 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
         if (downloadable) ItemAction.download,
         if (summarizable) ItemAction.regenerateSummary,
         ItemAction.rename,
+        if (nameable) ItemAction.nameSpeakers,
         ItemAction.move,
         ItemAction.select,
         ItemAction.delete,
@@ -634,6 +640,9 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
         }
       case ItemAction.rename:
         await _renameDump(dump);
+      case ItemAction.nameSpeakers:
+        if (!context.mounted) return;
+        await showNameSpeakersSheet(context, ref, dump);
       case ItemAction.move:
         await _moveDump(dump);
       case ItemAction.select:

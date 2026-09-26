@@ -36,6 +36,10 @@ enum ItemAction {
   /// only on transcribed recordings while the AI-summaries capability is
   /// enabled on this device.
   regenerateSummary,
+
+  /// Give the `Speaker N` labels of a diarized transcript real names.
+  /// Offered only when the row's transcript has speaker headings.
+  nameSpeakers,
   select,
   delete,
 }
@@ -51,6 +55,7 @@ const List<ItemAction> _canonicalOrder = <ItemAction>[
   ItemAction.download,
   ItemAction.regenerateSummary,
   ItemAction.rename,
+  ItemAction.nameSpeakers,
   ItemAction.move,
   ItemAction.duplicate,
   ItemAction.share,
@@ -101,6 +106,8 @@ class ItemActionSheet extends StatelessWidget {
         return 'Download audio';
       case ItemAction.regenerateSummary:
         return 'Regenerate summary';
+      case ItemAction.nameSpeakers:
+        return 'Name speakers';
       case ItemAction.select:
         return 'Select';
       case ItemAction.delete:
@@ -126,6 +133,8 @@ class ItemActionSheet extends StatelessWidget {
         return Icons.download_for_offline_outlined;
       case ItemAction.regenerateSummary:
         return Icons.auto_awesome_outlined;
+      case ItemAction.nameSpeakers:
+        return Icons.record_voice_over;
       case ItemAction.select:
         return Icons.check_circle_outline;
       case ItemAction.delete:

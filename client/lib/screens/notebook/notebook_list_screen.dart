@@ -163,8 +163,7 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
 
   void _toggleSelectAll(List<NotebookListEntry> rows) {
     setState(() {
-      final Set<String> all =
-          rows.map((NotebookListEntry n) => n.id).toSet();
+      final Set<String> all = rows.map((NotebookListEntry n) => n.id).toSet();
       if (_selectedIds.containsAll(all)) {
         _selectedIds.clear();
       } else {
@@ -337,6 +336,8 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
       case ItemAction.download:
       // Notebooks have no transcript to summarize either.
       case ItemAction.regenerateSummary:
+      // …nor diarized speakers to name.
+      case ItemAction.nameSpeakers:
         break;
     }
   }
