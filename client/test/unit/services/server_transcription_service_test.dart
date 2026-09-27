@@ -3562,9 +3562,13 @@ void main() {
     );
     addTearDown(service.dispose);
 
+    // The seam under test is recoveryRequestTimeout (1 ms) NOT cutting a
+    // normal transcription short. The four real 10 ms delays above must
+    // run to completion; a tight wall-clock ceiling here only measures
+    // machine load (flaked at exactly 500 ms under a full suite).
     await service
         .transcribeDump('r1')
-        .timeout(const Duration(milliseconds: 500));
+        .timeout(const Duration(seconds: 10));
 
     final completed = (await db.getDump('r1'))!;
     expect(completed.transcriptionStatus, 'completed');
