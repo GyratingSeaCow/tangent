@@ -580,21 +580,25 @@ void main() {
 
       test('credentials POSTs id+secret to /v1/google-tasks/credentials',
           () async {
-        when(() => dio.post<dynamic>(
-              '/v1/google-tasks/credentials',
-              data: any(named: 'data'),
-            )).thenAnswer((_) async => ok('/v1/google-tasks/credentials'));
+        when(
+          () => dio.post<dynamic>(
+            '/v1/google-tasks/credentials',
+            data: any(named: 'data'),
+          ),
+        ).thenAnswer((_) async => ok('/v1/google-tasks/credentials'));
         await client.saveGoogleTasksCredentials(
           clientId: 'fake-id',
           clientSecret: 'fake-secret',
         );
-        verify(() => dio.post<dynamic>(
-              '/v1/google-tasks/credentials',
-              data: <String, dynamic>{
-                'client_id': 'fake-id',
-                'client_secret': 'fake-secret',
-              },
-            )).called(1);
+        verify(
+          () => dio.post<dynamic>(
+            '/v1/google-tasks/credentials',
+            data: <String, dynamic>{
+              'client_id': 'fake-id',
+              'client_secret': 'fake-secret',
+            },
+          ),
+        ).called(1);
       });
 
       test('connect POSTs /v1/google-tasks/connect and returns auth_url',
