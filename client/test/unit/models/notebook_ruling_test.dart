@@ -15,10 +15,10 @@ import 'package:tangent/widgets/notebook_ink_canvas.dart';
 
 /// Counts the lines a painter draws onto a canvas of [height].
 int _linesDrawn(NotebookRuling ruling, {double height = 1000}) {
-  final _CountingCanvas canvas = _CountingCanvas();
+  final _RecordingCanvas canvas = _RecordingCanvas();
   NotebookRulingPainter(ruling: ruling)
       .paint(canvas, Size(800, height));
-  return canvas.lines;
+  return canvas.lines.length;
 }
 
 void main() {
@@ -43,6 +43,15 @@ void main() {
       // reordered.
       expect(NotebookRuling.small.wireValue, 'small');
       expect(NotebookRuling.medium.wireValue, 'medium');
+      expect(NotebookRuling.graph.wireValue, 'graph');
+      expect(NotebookRuling.dots.wireValue, 'dots');
+    });
+
+    test('graph and dots parse back explicitly', () {
+      // The values loop above already proves this, but these two are the new
+      // wire words this arc ships; name them.
+      expect(NotebookRuling.parse('graph'), NotebookRuling.graph);
+      expect(NotebookRuling.parse('dots'), NotebookRuling.dots);
     });
   });
 
@@ -52,6 +61,12 @@ void main() {
       // narrow ruled  6.35 mm -> 40 px; college ruled 7.1 mm -> 45 px.
       expect(NotebookRuling.small.lineSpacing, 40);
       expect(NotebookRuling.medium.lineSpacing, 45);
+    });
+
+    test('graph and dots share the 5 mm quad-rule spacing', () {
+      // 5 mm at 6.3 px/mm rounds to 32 logical px.
+      expect(NotebookRuling.graph.lineSpacing, 32);
+      expect(NotebookRuling.dots.lineSpacing, 32);
     });
 
     test('small is tighter than medium', () {
@@ -79,6 +94,91 @@ void main() {
       expect(_linesDrawn(NotebookRuling.medium, height: 1000), 22);
     });
 
+    test('small and medium keep their exact line positions', () {
+      // Byte-identical to the pre-graph painter: restructuring paint onto a
+      // switch must not move a single line under existing notebooks.
+      final _RecordingCanvas small = _RecordingCanvas();
+      const NotebookRulingPainter(ruling: NotebookRuling.small)
+          .paint(small, const Size(800, 200));
+      expect(small.lines, <(Offset, Offset)>[
+        (const Offset(0, 40), const Offset(800, 40)),
+        (const Offset(0, 80), const Offset(800, 80)),
+        (const Offset(0, 120), const Offset(800, 120)),
+        (const Offset(0, 160), const Offset(800, 160)),
+      ]);
+      expect(small.circles, isEmpty, reason: 'lined pages draw only lines');
+
+      final _RecordingCanvas medium = _RecordingCanvas();
+      const NotebookRulingPainter(ruling: NotebookRuling.medium)
+          .paint(medium, const Size(800, 200));
+      expect(medium.lines, <(Offset, Offset)>[
+        (const Offset(0, 45), const Offset(800, 45)),
+        (const Offset(0, 90), const Offset(800, 90)),
+        (const Offset(0, 135), const Offset(800, 135)),
+        (const Offset(0, 180), const Offset(800, 180)),
+      ]);
+      expect(medium.circles, isEmpty);
+    });
+
+    test('graph draws verticals AND horizontals at the grid spacing', () {
+      final _RecordingCanvas canvas = _RecordingCanvas();
+      const NotebookRulingPainter(ruling: NotebookRuling.graph)
+          .paint(canvas, const Size(100, 80));
+      expect(
+        canvas.lines,
+        containsAll(<(Offset, Offset)>[
+          // Horizontals every 32 px, one gap down from the top.
+          (const Offset(0, 32), const Offset(100, 32)),
+          (const Offset(0, 64), const Offset(100, 64)),
+          // Verticals every 32 px — a graph with no verticals is just a
+          // lined page wearing the wrong label.
+          (const Offset(32, 0), const Offset(32, 80)),
+          (const Offset(64, 0), const Offset(64, 80)),
+          (const Offset(96, 0), const Offset(96, 80)),
+        ]),
+      );
+      expect(canvas.lines, hasLength(5), reason: 'nothing beyond the grid');
+      expect(canvas.circles, isEmpty, reason: 'graph is lines, not dots');
+    });
+
+    test('dots draws circles at the intersections and no lines at all', () {
+      final _RecordingCanvas canvas = _RecordingCanvas();
+      const NotebookRulingPainter(ruling: NotebookRuling.dots)
+          .paint(canvas, const Size(100, 80));
+      expect(canvas.lines, isEmpty, reason: 'a dot grid has no lines');
+      expect(canvas.circles, <(Offset, double)>[
+        (const Offset(32, 32), 1.5),
+        (const Offset(64, 32), 1.5),
+        (const Offset(96, 32), 1.5),
+        (const Offset(32, 64), 1.5),
+        (const Offset(64, 64), 1.5),
+        (const Offset(96, 64), 1.5),
+      ]);
+    });
+
+    test('graph and dots paint the same low-contrast guide colour', () {
+      for (final NotebookRuling ruling in <NotebookRuling>[
+        NotebookRuling.graph,
+        NotebookRuling.dots,
+      ]) {
+        final _RecordingCanvas canvas = _RecordingCanvas();
+        NotebookRulingPainter(ruling: ruling)
+            .paint(canvas, const Size(100, 80));
+        expect(canvas.colors, isNotEmpty);
+        // Compare ARGB values: Paint re-wraps its colour, so the object is
+        // never identical to the const token even when the colour is.
+        const Color want = NotebookRulingPainter.lineColor;
+        for (final Color c in canvas.colors) {
+          // Paint stores channels as float32, so compare to within half an
+          // 8-bit step rather than exactly.
+          expect(c.a, closeTo(want.a, 1 / 512));
+          expect(c.r, closeTo(want.r, 1 / 512));
+          expect(c.g, closeTo(want.g, 1 / 512));
+          expect(c.b, closeTo(want.b, 1 / 512));
+        }
+      }
+    });
+
     test('a tighter ruling draws more lines on the same page', () {
       expect(
         _linesDrawn(NotebookRuling.small),
@@ -90,6 +190,8 @@ void main() {
       // An unbounded parent hands a painter infinite width, which has crashed
       // this app before. A zero spacing would loop forever.
       expect(_linesDrawn(NotebookRuling.small, height: double.infinity), 0);
+      expect(_linesDrawn(NotebookRuling.graph, height: double.infinity), 0);
+      expect(_linesDrawn(NotebookRuling.dots, height: double.infinity), 0);
     });
 
     test('changing the ruling repaints; keeping it does not', () {
@@ -165,12 +267,24 @@ double _contrast(Color a, Color b) {
   return (hi + 0.05) / (lo + 0.05);
 }
 
-/// A canvas that only counts drawLine calls.
-class _CountingCanvas implements Canvas {
-  int lines = 0;
+/// Records lines and circles; anything else THROWS, so a painter that starts
+/// drawing rects or paths cannot slip past these tests unnoticed.
+class _RecordingCanvas implements Canvas {
+  final List<(Offset, Offset)> lines = <(Offset, Offset)>[];
+  final List<(Offset, double)> circles = <(Offset, double)>[];
+  final List<Color> colors = <Color>[];
 
   @override
-  void drawLine(Offset p1, Offset p2, Paint paint) => lines++;
+  void drawLine(Offset p1, Offset p2, Paint paint) {
+    lines.add((p1, p2));
+    colors.add(paint.color);
+  }
+
+  @override
+  void drawCircle(Offset c, double radius, Paint paint) {
+    circles.add((c, radius));
+    colors.add(paint.color);
+  }
 
   @override
   dynamic noSuchMethod(Invocation invocation) =>

@@ -46,6 +46,7 @@ import '../../widgets/ink_palette_popup.dart';
 import '../../widgets/notebook_dump_card.dart';
 import '../../widgets/notebook_image_block.dart';
 import '../../widgets/notebook_ink_canvas.dart';
+import '../../widgets/page_background_sheet.dart';
 import '../dump/dump_detail_screen.dart';
 import '../dump/dumps_providers.dart';
 import '../home/home_providers.dart' show recordingPlaybackEngineFactoryProvider;
@@ -203,9 +204,12 @@ enum _InsertAction {
   meeting,
   textNote,
   image,
-  cycleRuling,
   recentre
 }
+
+/// Actions in the top-right notebook menu. One item for now — the call was
+/// to keep it small; more may move here later, not in this arc.
+enum _NotebookMenuAction { pageBackground }
 
 class NotebookEditorScreen extends ConsumerStatefulWidget {
   const NotebookEditorScreen({
@@ -607,17 +611,17 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
     return index < 0 ? _blocks.length : index + 1;
   }
 
-  /// Cycles the page ruling and marks the notebook dirty so the choice is
-  /// saved and reaches the user's other devices.
-  void _cycleRuling() {
-    const List<NotebookRuling> order = <NotebookRuling>[
-      NotebookRuling.blank,
-      NotebookRuling.small,
-      NotebookRuling.medium,
-    ];
-    final int next = (order.indexOf(_ruling) + 1) % order.length;
+  /// Opens the page-background picker and applies the choice.
+  ///
+  /// Dismissing the sheet resolves to null and changes NOTHING — the same
+  /// rule as the ink palette. A real pick marks the notebook dirty so the
+  /// choice is saved and reaches the user's other devices.
+  Future<void> _pickPageBackground() async {
+    final NotebookRuling? picked =
+        await showPageBackgroundSheet(context, current: _ruling);
+    if (!mounted || picked == null || picked == _ruling) return;
     setState(() {
-      _ruling = order[next];
+      _ruling = picked;
       _dirty = true;
     });
   }
@@ -1663,6 +1667,35 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
               tooltip: 'Save notebook',
               onPressed: _notebook == null || _saving ? null : _save,
             ),
+            // The top-right notebook menu. Holds ONLY the page-background
+            // picker for now (the decision was to keep it small); the item's
+            // trailing label answers "what is this page" without opening
+            // anything further.
+            PopupMenuButton<_NotebookMenuAction>(
+              key: const ValueKey('notebook-menu'),
+              icon: const Icon(Icons.menu),
+              tooltip: 'Notebook menu',
+              enabled: _notebook != null,
+              onSelected: (_NotebookMenuAction action) {
+                switch (action) {
+                  case _NotebookMenuAction.pageBackground:
+                    unawaited(_pickPageBackground());
+                }
+              },
+              itemBuilder: (BuildContext context) =>
+                  <PopupMenuEntry<_NotebookMenuAction>>[
+                PopupMenuItem<_NotebookMenuAction>(
+                  key: const ValueKey('notebook-page-background-item'),
+                  value: _NotebookMenuAction.pageBackground,
+                  child: ListTile(
+                    leading: const Icon(Icons.grid_4x4),
+                    title: const Text('Page background'),
+                    trailing: Text(_ruling.label),
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                ),
+              ],
+            ),
           ],
           // ONE unified toolbar, always present: draw toggle, eraser,
           // nib, lasso, undo, redo and the pen size all live on this row.
@@ -1910,8 +1943,6 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                             unawaited(_importDumps(dumps, DumpMode.textNote));
                           case _InsertAction.image:
                             unawaited(_importImage());
-                          case _InsertAction.cycleRuling:
-                            _cycleRuling();
                           case _InsertAction.recentre:
                             _pageScroll.jumpTo(0);
                         }
@@ -1965,20 +1996,6 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                           child: ListTile(
                             leading: Icon(Icons.image_outlined),
                             title: Text('Image'),
-                            contentPadding: EdgeInsets.zero,
-                          ),
-                        ),
-                        const PopupMenuDivider(),
-                        // Cycles blank -> small -> medium -> blank. A submenu
-                        // would be three taps deep for a setting most people
-                        // choose once; the label always states where the next
-                        // tap lands.
-                        PopupMenuItem<_InsertAction>(
-                          key: const ValueKey('notebook-ruling-item'),
-                          value: _InsertAction.cycleRuling,
-                          child: ListTile(
-                            leading: const Icon(Icons.format_align_justify),
-                            title: Text('Page: ${_ruling.label}'),
                             contentPadding: EdgeInsets.zero,
                           ),
                         ),

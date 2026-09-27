@@ -1065,7 +1065,44 @@ void main() {
     );
   });
 
-  testWidgets('cycling the ruling changes what is painted and saves it',
+  /// Opens the top-right notebook menu, then the page-background sheet.
+  Future<void> openPageBackgroundSheet(WidgetTester tester) async {
+    await tester.tap(find.byKey(const ValueKey('notebook-menu')));
+    await tester.pumpAndSettle();
+    await tester
+        .tap(find.byKey(const ValueKey('notebook-page-background-item')));
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('the notebook menu sits in the app bar and names the style',
+      (tester) async {
+    await mountEditor(
+      tester,
+      notebook: testNotebook(id: 'nb-1', ruling: NotebookRuling.medium),
+    );
+
+    final Finder menu = find.byKey(const ValueKey('notebook-menu'));
+    expect(menu, findsOneWidget);
+    expect(
+      find.ancestor(of: menu, matching: find.byType(AppBar)),
+      findsOneWidget,
+      reason: 'the menu lives top-right in the app bar, not the insert row',
+    );
+
+    await tester.tap(menu);
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('notebook-page-background-item')),
+      findsOneWidget,
+    );
+    expect(
+      find.text('Lined (medium)'),
+      findsOneWidget,
+      reason: 'the closed item already answers "what is this page"',
+    );
+  });
+
+  testWidgets('picking Graph from the sheet applies it and saves it',
       (tester) async {
     await mountEditor(
       tester,
@@ -1074,15 +1111,20 @@ void main() {
 
     expect(rulingPainter(tester)?.ruling, NotebookRuling.blank);
 
-    await tester.tap(find.byKey(const ValueKey('notebook-insert-menu')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('notebook-ruling-item')));
+    await openPageBackgroundSheet(tester);
+    expect(
+      find.byKey(const ValueKey('page-background-option-graph')),
+      findsOneWidget,
+      reason: 'the sheet offers every style',
+    );
+    await tester
+        .tap(find.byKey(const ValueKey('page-background-option-graph')));
     await tester.pumpAndSettle();
 
     expect(
       rulingPainter(tester)?.ruling,
-      NotebookRuling.small,
-      reason: 'blank cycles to small',
+      NotebookRuling.graph,
+      reason: 'the pick must reach the mounted painter immediately',
     );
 
     await tester.tap(find.byIcon(Icons.save));
@@ -1091,9 +1133,75 @@ void main() {
 
     expect(
       publishedNotebooks.last.ruling,
-      NotebookRuling.small,
-      reason: 'a ruling the user chose must survive leaving the screen',
+      NotebookRuling.graph,
+      reason: 'a background the user chose must survive leaving the screen',
     );
+  });
+
+  testWidgets('dismissing the page-background sheet changes nothing',
+      (tester) async {
+    await mountEditor(
+      tester,
+      notebook: testNotebook(id: 'nb-1', ruling: NotebookRuling.medium),
+    );
+
+    await openPageBackgroundSheet(tester);
+    // Tap the barrier above the sheet: a dismissal, not a pick.
+    await tester.tapAt(const Offset(540, 40));
+    await tester.pumpAndSettle();
+
+    expect(
+      rulingPainter(tester)?.ruling,
+      NotebookRuling.medium,
+      reason: 'dismiss means "leave it alone", same rule as the ink palette',
+    );
+
+    await tester.tap(find.byIcon(Icons.save));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(publishedNotebooks.last.ruling, NotebookRuling.medium);
+  });
+
+  testWidgets('the insert menu no longer offers a page item', (tester) async {
+    await mountEditor(
+      tester,
+      notebook: testNotebook(id: 'nb-1', ruling: NotebookRuling.blank),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('notebook-insert-menu')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('notebook-ruling-item')),
+      findsNothing,
+      reason: 'the page-background control moved to the top-right menu; a '
+          'second copy here would drift from it',
+    );
+  });
+
+  testWidgets('the notebook menu shows the sheet with the current selection',
+      (tester) async {
+    await mountEditor(
+      tester,
+      notebook: testNotebook(id: 'nb-1', ruling: NotebookRuling.small),
+    );
+
+    await openPageBackgroundSheet(tester);
+
+    // Five rows, one per style; the current one is the selected row.
+    for (final NotebookRuling ruling in NotebookRuling.values) {
+      expect(
+        find.byKey(
+          ValueKey<String>('page-background-option-${ruling.wireValue}'),
+        ),
+        findsOneWidget,
+      );
+    }
+    final ListTile selected = tester.widget<ListTile>(
+      find.byKey(const ValueKey('page-background-option-small')),
+    );
+    expect(selected.selected, isTrue);
+    expect(selected.trailing, isA<Icon>());
   });
 
   testWidgets('the soft keyboard enter key starts the next checkbox item',
