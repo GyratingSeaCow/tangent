@@ -320,4 +320,97 @@ void main() {
     );
     await unmount(tester);
   });
+
+  testWidgets(
+      'the pick sticks: reopening the picker straight after a 202 marks the '
+      'NEW template as current, before the summary has synced down',
+      (tester) async {
+    // Jeff, 2026-09-26: tapped Lecture, reopened Summarize immediately and
+    // saw Meeting still ticked. The picker reads the local row's
+    // summary_template, which only the finished summary's sync used to
+    // update — 30-60 s later. The 202 must mirror the choice locally.
+    useTallViewport(tester);
+    final temp = createResolvedTempSync('tangent-btn-sticks-');
+    addTearDown(() => temp.deleteSync(recursive: true));
+    final storage = AudioStorage.test(temp);
+    final db = LocalDb.forTesting(NativeDatabase.memory());
+    final bound = await createBoundServiceFixture(db, registerDrain: false);
+    final client = _FakeSummariesClient();
+    addTearDown(() async {
+      await disposeBoundWidget(tester, bound);
+      await db.close();
+    });
+    final row = meetingRow(storage, 'btn-6', summary: _summaryMarkdown);
+    await seedFileFixtureRow(db, row);
+    storage.pathFor(row.id).writeAsBytesSync([1, 2, 3]);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          localDbProvider.overrideWithValue(db),
+          recordingMutationsProvider.overrideWithValue(bound.mutations),
+          recordingAccessProvider.overrideWithValue(bound.access),
+          // The REAL row stream: the whole point is what the row says.
+          dumpByIdProvider(row.id).overrideWith(
+            (ref) => db.watchDump(row.id),
+          ),
+          recordingPlaybackEngineFactoryProvider
+              .overrideWithValue(_StubEngine.new),
+          summariesEnabledProvider.overrideWith((ref) => true),
+          summariesClientProvider.overrideWith(
+            (ref) => Future<SummariesClient>.value(client),
+          ),
+        ],
+        child: MaterialApp(
+          home: DumpDetailScreen(
+            dumpId: row.id,
+            audioPath: row.audioPath,
+            durationSeconds: row.durationSeconds,
+          ),
+        ),
+      ),
+    );
+    await pumpBoundUntil(
+      tester,
+      () => find.byIcon(Icons.play_arrow).evaluate().isNotEmpty,
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(button('btn-6'));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey<String>('summary-template-current-meeting')),
+      findsOneWidget,
+    );
+    await tester
+        .tap(find.byKey(const ValueKey<String>('summary-template-lecture')));
+    await tester.pumpAndSettle();
+    expect(client.summarizeCalls, <(String, String?)>[('btn-6', 'lecture')]);
+
+    // Straight away — no sync has happened, no summary has arrived.
+    final DumpRow? after = await db.getDump('btn-6');
+    expect(after?.summaryTemplate, 'lecture',
+          reason: 'the accepted pick is mirrored into the local row',
+    );
+    expect(after?.syncDirty ?? false, isFalse,
+          reason: 'the server already holds it; no push must race the worker',
+    );
+    expect(after?.summary, _summaryMarkdown,
+          reason: 'preserve-until-success: the old summary is untouched',
+    );
+
+    await tester.tap(button('btn-6'));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey<String>('summary-template-current-lecture')),
+      findsOneWidget,
+      reason: 'reopened immediately, the picker shows the NEW pick as current',
+    );
+    expect(
+      find.byKey(const ValueKey<String>('summary-template-current-meeting')),
+      findsNothing,
+    );
+    await tester.tap(find.byKey(const ValueKey<String>('summary-template-lecture')));
+    await tester.pumpAndSettle();
+    await unmount(tester);
+  });
 }

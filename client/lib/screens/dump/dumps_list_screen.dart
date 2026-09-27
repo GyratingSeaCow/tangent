@@ -702,6 +702,9 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
       context,
       client: ref.read(summariesClientProvider.future),
       dump: dump,
+      onAccepted: (String id) => ref
+          .read(localDbProvider)
+          .recordRequestedSummaryTemplate(dump.id, id),
     );
   }
 

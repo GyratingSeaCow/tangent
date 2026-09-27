@@ -143,6 +143,9 @@ Future<void> runSummarizeFlow(
   BuildContext context, {
   required Future<SummariesClient> client,
   required DumpRow dump,
+  /// Called after the server accepts (202) with the picked template id,
+  /// so the caller can mirror the choice into the local row immediately.
+  Future<void> Function(String templateId)? onAccepted,
 }) async {
   final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
   final SummariesClient summaries;
@@ -165,6 +168,15 @@ Future<void> runSummarizeFlow(
   if (picked == null) return;
   try {
     await summaries.summarizeDump(dump.id, template: picked);
+    // The picker reads the LOCAL row's template. Until the finished
+    // summary syncs down the row still says the old one, so a user who
+    // reopens the sheet straight away saw their pick 'not stick'.
+    try {
+      await onAccepted?.call(picked);
+    } catch (_) {
+      // Local mirror only; the server already accepted. Sync will
+      // deliver the template with the finished summary regardless.
+    }
     messenger.showSnackBar(
       const SnackBar(content: Text('Summary queued')),
     );

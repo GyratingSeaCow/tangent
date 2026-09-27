@@ -1129,6 +1129,18 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     });
   }
 
+  /// Records the template the user just asked the server to summarize
+  /// with, so the picker shows it as current while the summary is still
+  /// being written (30-60 s). NOT marked dirty: the server already holds
+  /// this value (the summarize POST wrote it) and a push here would race
+  /// the worker's own publish. Does not bump updated_at for the same
+  /// reason — the server's row time is authoritative for this field.
+  Future<void> recordRequestedSummaryTemplate(String id, String templateId) async {
+    await (update(dumps)..where((d) => d.id.equals(id))).write(
+      DumpsCompanion(summaryTemplate: Value<String?>(templateId)),
+    );
+  }
+
   /// Soft-deletes a recording because a peer deleted it.
   ///
   /// The tombstone is authoritative for metadata. Any audio this device

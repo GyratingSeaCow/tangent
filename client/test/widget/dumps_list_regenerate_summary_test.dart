@@ -14,7 +14,9 @@ import 'package:drift/drift.dart' show Value;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:drift/native.dart';
 import 'package:tangent/data/local_db.dart';
+import 'package:tangent/screens/home/home_screen.dart' show localDbProvider;
 import 'package:tangent/screens/settings/ai_summaries_section.dart';
 import 'package:tangent/services/summaries_client.dart';
 import 'package:tangent/widgets/item_action_sheet.dart';
@@ -76,10 +78,18 @@ void main() {
     List<DumpRow>? rows,
   }) async {
     final _FakeSummariesClient client = _FakeSummariesClient();
+    // A real in-memory row store: the 202 mirrors the picked template
+    // into the local row so the picker shows it as current straight away.
+    final LocalDb db = LocalDb.forTesting(NativeDatabase.memory());
+    addTearDown(db.close);
+    for (final DumpRow r in rows ?? const <DumpRow>[]) {
+      await db.into(db.dumps).insert(r);
+    }
     final ProviderContainer container = await mountSelection(
       tester,
       CountingDeletion(),
       extraOverrides: <Override>[
+        localDbProvider.overrideWithValue(db),
         summariesEnabledProvider.overrideWith((ref) => capability),
         summariesClientProvider.overrideWith(
           (ref) => Future<SummariesClient>.value(client),
@@ -129,7 +139,7 @@ void main() {
       'regenerate opens the template picker; picking Lecture posts the dump '
       'with template=lecture and a 202 shows the queued snackbar',
       (tester) async {
-    final (_, client) = await mountWithSummaries(
+    final (container, client) = await mountWithSummaries(
       tester,
       rows: <DumpRow>[transcribedRow('fixture-a'), viewRow('fixture-b')],
     );
@@ -177,6 +187,14 @@ void main() {
       ),
       findsOneWidget,
       reason: 'a 202 must be acknowledged — the summary arrives via sync',
+    );
+    // The pick sticks locally the moment the server accepts — a user who
+    // reopens the picker before the summary syncs down sees it ticked.
+    final DumpRow? mirrored =
+        await container.read(localDbProvider).getDump('fixture-a');
+    expect(mirrored?.summaryTemplate, 'lecture');
+    expect(mirrored?.syncDirty ?? false, isFalse,
+          reason: 'server-held value; must not be pushed back',
     );
   });
 
