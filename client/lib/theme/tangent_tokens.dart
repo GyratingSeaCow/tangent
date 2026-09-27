@@ -28,6 +28,16 @@ class TangentColors {
   /// Hairline borders and the lit top edge of a panel.
   static const Color edge = Color(0xFF2B3034);
 
+  /// Notebook ruling — lines, graph grid and dot grid on the page.
+  ///
+  /// Brighter than [edge] on purpose. A hairline divider only has to
+  /// separate two panels, but ruling has to be FOLLOWED by a hand holding
+  /// a stylus: at `edge` it measured 1.42:1 against the page, which read as
+  /// almost nothing on a tablet at arm's length. This sits near 2.9:1 —
+  /// clearly visible, still far enough below the ink (16.7:1) that
+  /// handwriting dominates the page.
+  static const Color rule = Color(0xFF565E65);
+
   /// Live/selected accent.
   static const Color signal = Color(0xFFD4FF47);
 

@@ -83,14 +83,20 @@ class NotebookRulingPainter extends CustomPainter {
 
   final NotebookRuling ruling;
 
-  /// Deliberately dim. On the near-black page (sunken, #0E1113) this reads as
-  /// a guide rather than as content, and it is nowhere near the lime signal
-  /// colour, which means "live or selected" everywhere else in this app.
-  static const Color lineColor = TangentColors.edge;
+  /// Deliberately dim, but not invisible. On the near-black page (sunken,
+  /// #0E1113) this reads as a guide rather than as content, and it is nowhere
+  /// near the lime signal colour, which means "live or selected" everywhere
+  /// else in this app. It is NOT `edge`: a hairline divider only separates
+  /// panels, while ruling has to be followed by a hand holding a stylus —
+  /// `edge` measured 1.42:1 on the page and vanished on a tablet at arm's
+  /// length.
+  static const Color lineColor = TangentColors.rule;
 
   /// Dot-grid dots: just visible at arm's length without ever reading as
-  /// punctuation someone wrote.
-  static const double dotRadius = 1.5;
+  /// punctuation someone wrote. Slightly fatter than a rule line's 1 px
+  /// stroke because a dot has far less area to be seen by — at r=1.5 with
+  /// the old dim colour the grid was effectively invisible on the tablet.
+  static const double dotRadius = 1.8;
 
   @override
   void paint(Canvas canvas, Size size) {

@@ -146,13 +146,17 @@ void main() {
       const NotebookRulingPainter(ruling: NotebookRuling.dots)
           .paint(canvas, const Size(100, 80));
       expect(canvas.lines, isEmpty, reason: 'a dot grid has no lines');
+      // Radius tracks the constant rather than a literal: the POSITIONS are
+      // what this test guards, and tuning dot weight for legibility should
+      // not have to touch six magic numbers.
+      const double r = NotebookRulingPainter.dotRadius;
       expect(canvas.circles, <(Offset, double)>[
-        (const Offset(32, 32), 1.5),
-        (const Offset(64, 32), 1.5),
-        (const Offset(96, 32), 1.5),
-        (const Offset(32, 64), 1.5),
-        (const Offset(64, 64), 1.5),
-        (const Offset(96, 64), 1.5),
+        (const Offset(32, 32), r),
+        (const Offset(64, 32), r),
+        (const Offset(96, 32), r),
+        (const Offset(32, 64), r),
+        (const Offset(64, 64), r),
+        (const Offset(96, 64), r),
       ]);
     });
 
@@ -244,9 +248,14 @@ void main() {
         lessThan(inkOnPage / 4),
         reason: 'ruling must recede behind handwriting, not compete with it',
       );
+      // Jeff's v1.22.0 device feedback: "the lines and dots are too dim".
+      // The old floor was 1.05, which the then-current colour cleared at
+      // 1.42:1 while being effectively invisible on a tablet at arm's
+      // length — a floor nothing can fail is not a floor. 2.5:1 is the
+      // lowest ratio that read as a usable guide on the S11 Ultra.
       expect(
         lineOnPage,
-        greaterThan(1.05),
+        greaterThan(2.5),
         reason: 'a line nobody can see is not a ruled page',
       );
     });
