@@ -20,6 +20,7 @@ import '../../services/meeting_notes_processor.dart';
 import '../../services/recording_playback.dart';
 import '../../services/render_speaker_names.dart';
 import '../../services/speaker_naming.dart' show detectSpeakers;
+import '../../services/summary_pending.dart';
 import '../../services/transcript_alignment.dart'
     show TranscriptAlignment, alignTranscript;
 import '../../services/transcript_search.dart'
@@ -1117,6 +1118,10 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
     // none of its UI appears anywhere).
     final bool summarizable = (row.transcript?.trim().isNotEmpty ?? false) &&
         ref.watch(summariesEnabledProvider);
+    // Summary in progress (v1.18.0): derived from the row alone, so it
+    // clears from the same stream that delivers the finished summary.
+    final bool summaryInProgress =
+        summaryPending(row, now: summaryPendingNow());
     // Tap-to-hear: timings are server-owned; Listen is offered only when
     // they exist and defaults on the first time we see them (spec §3.3).
     final timings = _timingsFor(row);
@@ -1416,6 +1421,13 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
             ],
           ),
           const SizedBox(height: 8),
+          // Summary in progress (v1.18.0): while the server is writing the
+          // summary this device asked for, a progress card sits ABOVE the
+          // old body. Preserve-until-success: the body below never moves.
+          if (summaryInProgress) ...[
+            _SummaryPendingCard(row: row, onExpired: _onSummaryPendingExpired),
+            const SizedBox(height: 8),
+          ],
           Card(
             child: Padding(
               padding: const EdgeInsets.all(12),
@@ -1433,12 +1445,21 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
           // better one.
           if (summarizable) ...[
             const SizedBox(height: 8),
-            _summarizeButton(row, again: true),
+            _summarizeButton(row, again: true, pending: summaryInProgress),
+          ],
+          const SizedBox(height: 16),
+        ] else if (summaryInProgress) ...[
+          // No summary yet but one is being written: the progress card
+          // takes the slot, the button waits below it.
+          _SummaryPendingCard(row: row, onExpired: _onSummaryPendingExpired),
+          if (summarizable) ...[
+            const SizedBox(height: 8),
+            _summarizeButton(row, again: false, pending: true),
           ],
           const SizedBox(height: 16),
         ] else if (summarizable) ...[
           // No summary yet: the button stands alone in the summary slot.
-          _summarizeButton(row, again: false),
+          _summarizeButton(row, again: false, pending: false),
           const SizedBox(height: 16),
         ],
         if (operationActive || transcription == TranscriptionStatus.failed) ...[
@@ -1517,21 +1538,46 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
   /// [again] only changes the label: with a summary on screen the button
   /// reads 'Summarize again', otherwise 'Summarize'. The flow itself is the
   /// shared one the recordings list uses (pick → POST → snackbar).
-  Widget _summarizeButton(DumpRow row, {required bool again}) {
+  ///
+  /// [pending] (a summary is already being written for this row) disables
+  /// the button and relabels it 'Summarizing…': the server's queue dedupes
+  /// by dump id, so a second tap would do nothing but confuse. It
+  /// re-enables from the row stream once the answer syncs down (or the
+  /// ten-minute give-up passes) — no polling.
+  /// The pending card's ticker crossed the ten-minute give-up with no
+  /// answer from the server: rebuild so the card leaves and the button
+  /// comes back. The row itself did not change, so nothing else would.
+  void _onSummaryPendingExpired() {
+    if (mounted) setState(() {});
+  }
+
+  Widget _summarizeButton(
+    DumpRow row, {
+    required bool again,
+    required bool pending,
+  }) {
     return Align(
       alignment: Alignment.centerLeft,
       child: FilledButton.tonalIcon(
         key: ValueKey('summarize-again-${widget.dumpId}'),
         icon: const Icon(Icons.auto_awesome, size: 18),
-        label: Text(again ? 'Summarize again' : 'Summarize'),
-        onPressed: () => runSummarizeFlow(
-          context,
-          client: ref.read(summariesClientProvider.future),
-          dump: row,
-          onAccepted: (String id) => ref
-              .read(localDbProvider)
-              .recordRequestedSummaryTemplate(row.id, id),
+        label: Text(
+          pending
+              ? 'Summarizing…'
+              : again
+                  ? 'Summarize again'
+                  : 'Summarize',
         ),
+        onPressed: pending
+            ? null
+            : () => runSummarizeFlow(
+                  context,
+                  client: ref.read(summariesClientProvider.future),
+                  dump: row,
+                  onAccepted: (String id) => ref
+                      .read(localDbProvider)
+                      .recordRequestedSummaryTemplate(row.id, id),
+                ),
       ),
     );
   }
@@ -1702,6 +1748,98 @@ class _RecordingPlaybackPanel extends StatelessWidget {
     final minutes = (value.inMinutes % 60).toString().padLeft(2, '0');
     final seconds = (value.inSeconds % 60).toString().padLeft(2, '0');
     return hours > 0 ? '$hours:$minutes:$seconds' : '$minutes:$seconds';
+  }
+}
+
+/// The "summary in progress" card (v1.18.0): an indeterminate bar, which
+/// template the server is writing, and a once-a-second elapsed counter.
+/// Mounted only while `summaryPending` says so — the row stream removes
+/// it when the answer lands, so the ticker only ever runs while visible.
+class _SummaryPendingCard extends StatefulWidget {
+  const _SummaryPendingCard({required this.row, required this.onExpired});
+
+  final DumpRow row;
+
+  /// Called once, from the ticker, when the request passes the give-up cap
+  /// with no answer — the parent rebuilds and drops this card.
+  final VoidCallback onExpired;
+
+  @override
+  State<_SummaryPendingCard> createState() => _SummaryPendingCardState();
+}
+
+class _SummaryPendingCardState extends State<_SummaryPendingCard> {
+  Timer? _elapsedTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _elapsedTimer = Timer.periodic(
+      const Duration(seconds: 1),
+      (_) {
+        if (!mounted) return;
+        if (!summaryPending(widget.row, now: summaryPendingNow())) {
+          _elapsedTimer?.cancel();
+          _elapsedTimer = null;
+          widget.onExpired();
+          return;
+        }
+        setState(() {});
+      },
+    );
+  }
+
+  @override
+  void dispose() {
+    _elapsedTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final elapsed = summaryPendingElapsed(widget.row, summaryPendingNow());
+    final minutes = elapsed.inMinutes;
+    final seconds = (elapsed.inSeconds % 60).toString().padLeft(2, '0');
+    final template = summaryTemplateDisplayName(widget.row.summaryTemplate);
+    return Card(
+      key: ValueKey('ai-summary-pending-${widget.row.id}'),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const LinearProgressIndicator(),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Icon(
+                  Icons.auto_awesome,
+                  size: 14,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    'Writing $template summary on your server…',
+                    style: theme.textTheme.bodyMedium,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Elapsed $minutes:$seconds · the current summary stays until '
+              'the new one arrives',
+              key: ValueKey('ai-summary-pending-elapsed-${widget.row.id}'),
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 

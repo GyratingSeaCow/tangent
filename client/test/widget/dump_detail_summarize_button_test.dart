@@ -19,6 +19,7 @@ import 'package:tangent/screens/home/home_screen.dart' show localDbProvider;
 import 'package:tangent/screens/settings/ai_summaries_section.dart';
 import 'package:tangent/services/recording_playback.dart';
 import 'package:tangent/services/summaries_client.dart';
+import 'package:tangent/services/summary_pending.dart';
 
 import '../support/bound_row_fixture.dart';
 import '../support/bound_service_fixture.dart';
@@ -381,9 +382,12 @@ void main() {
       find.byKey(const ValueKey<String>('summary-template-current-meeting')),
       findsOneWidget,
     );
+    // v1.18.0: the 202 also starts the "summary in progress" strip, whose
+    // bar and ticker never settle — bounded pumps from here on.
     await tester
         .tap(find.byKey(const ValueKey<String>('summary-template-lecture')));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
     expect(client.summarizeCalls, <(String, String?)>[('btn-6', 'lecture')]);
 
     // Straight away — no sync has happened, no summary has arrived.
@@ -398,6 +402,15 @@ void main() {
           reason: 'preserve-until-success: the old summary is untouched',
     );
 
+    // While the server works the button is disabled (one job per dump), so
+    // "reopen straight away" here means: nothing synced, the request simply
+    // aged past the ten-minute give-up. The row is untouched either way.
+    final DateTime start = DateTime.now();
+    summaryPendingClock = () => start.add(const Duration(minutes: 11));
+    addTearDown(() => summaryPendingClock = DateTime.now);
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
     await tester.tap(button('btn-6'));
     await tester.pumpAndSettle();
     expect(
@@ -410,7 +423,180 @@ void main() {
       findsNothing,
     );
     await tester.tap(find.byKey(const ValueKey<String>('summary-template-lecture')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await unmount(tester);
+  });
+
+  testWidgets(
+      'summary in progress: after a 202 the pending card sits above the OLD '
+      'summary, the button disables, and the server answer clears it all',
+      (tester) async {
+    // Jeff, 2026-09-26: "there needs to be a loading bar of sorts that
+    // replaces the AI Summary area while it's being worked on by the
+    // server. its too ambiguous right now when it's thinking". The 202
+    // stamps summary_requested_at; the finished summary's sync (a newer
+    // summarized_at) clears it. Preserve-until-success throughout.
+    useTallViewport(tester);
+    final temp = createResolvedTempSync('tangent-btn-pending-');
+    addTearDown(() => temp.deleteSync(recursive: true));
+    final storage = AudioStorage.test(temp);
+    final db = LocalDb.forTesting(NativeDatabase.memory());
+    final bound = await createBoundServiceFixture(db, registerDrain: false);
+    final client = _FakeSummariesClient();
+    addTearDown(() async {
+      await disposeBoundWidget(tester, bound);
+      await db.close();
+    });
+    final row = meetingRow(storage, 'btn-7', summary: _summaryMarkdown);
+    await seedFileFixtureRow(db, row);
+    storage.pathFor(row.id).writeAsBytesSync([1, 2, 3]);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          localDbProvider.overrideWithValue(db),
+          recordingMutationsProvider.overrideWithValue(bound.mutations),
+          recordingAccessProvider.overrideWithValue(bound.access),
+          // The REAL row stream: the card must come and go with the row.
+          dumpByIdProvider(row.id).overrideWith(
+            (ref) => db.watchDump(row.id),
+          ),
+          recordingPlaybackEngineFactoryProvider
+              .overrideWithValue(_StubEngine.new),
+          summariesEnabledProvider.overrideWith((ref) => true),
+          summariesClientProvider.overrideWith(
+            (ref) => Future<SummariesClient>.value(client),
+          ),
+        ],
+        child: MaterialApp(
+          home: DumpDetailScreen(
+            dumpId: row.id,
+            audioPath: row.audioPath,
+            durationSeconds: row.durationSeconds,
+          ),
+        ),
+      ),
+    );
+    await pumpBoundUntil(
+      tester,
+      () => find.byIcon(Icons.play_arrow).evaluate().isNotEmpty,
+    );
     await tester.pumpAndSettle();
+
+    final Finder card =
+        find.byKey(const ValueKey<String>('ai-summary-pending-btn-7'));
+    final Finder body =
+        find.byKey(const ValueKey<String>('ai-summary-body-btn-7'));
+    expect(card, findsNothing, reason: 'nothing requested yet');
+    expect(
+      tester.widget<FilledButton>(button('btn-7')).onPressed,
+      isNotNull,
+    );
+
+    await tester.tap(button('btn-7'));
+    await tester.pumpAndSettle();
+    await tester
+        .tap(find.byKey(const ValueKey<String>('summary-template-lecture')));
+    // Bounded pumps from here on: the card's bar and ticker never settle.
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(client.summarizeCalls, <(String, String?)>[('btn-7', 'lecture')]);
+
+    expect(card, findsOneWidget, reason: 'the 202 shows work in progress');
+    expect(
+      find.descendant(of: card, matching: find.byType(LinearProgressIndicator)),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: card,
+        matching: find.text('Writing Lecture summary on your server…'),
+      ),
+      findsOneWidget,
+      reason: 'names the template the server is writing',
+    );
+    expect(
+      find.descendant(
+        of: card,
+        matching: find.textContaining('the current summary stays'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey<String>('ai-summary-header-btn-7')),
+      findsOneWidget,
+      reason: 'the header is unchanged',
+    );
+    expect(body, findsOneWidget, reason: 'preserve-until-success');
+    expect(tester.widget<MarkdownBody>(body).data, _summaryMarkdown);
+    final FilledButton disabled = tester.widget<FilledButton>(button('btn-7'));
+    expect(disabled.onPressed, isNull, reason: 'one job per dump: no re-tap');
+    expect(
+      find.descendant(of: button('btn-7'), matching: find.text('Summarizing…')),
+      findsOneWidget,
+    );
+
+    // The ticker moves once a second, driven by a periodic timer. The
+    // test binding's fake clock does not move DateTime.now, so the rule's
+    // clock is driven explicitly alongside the pumps.
+    final Finder elapsed = find.byKey(
+      const ValueKey<String>('ai-summary-pending-elapsed-btn-7'),
+    );
+    final DateTime start = DateTime.now();
+    addTearDown(() => summaryPendingClock = DateTime.now);
+    expect(tester.widget<Text>(elapsed).data, startsWith('Elapsed 0:0'));
+    summaryPendingClock = () => start.add(const Duration(seconds: 42));
+    await tester.pump(const Duration(seconds: 1));
+    expect(
+      tester.widget<Text>(elapsed).data,
+      'Elapsed 0:42 · the current summary stays until the new one arrives',
+      reason: 'the periodic timer re-reads the clock every second',
+    );
+    summaryPendingClock = () => start.add(const Duration(seconds: 75));
+    await tester.pump(const Duration(seconds: 1));
+    expect(tester.widget<Text>(elapsed).data, startsWith('Elapsed 1:15'));
+    summaryPendingClock = DateTime.now;
+
+    // The server answers: a newer summarized_at arrives via sync apply.
+    final DumpRow pendingRow = (await db.getDump('btn-7'))!;
+    expect(pendingRow.summaryRequestedAt, isNotNull);
+    await db.applyRemoteDump(
+      id: 'btn-7',
+      mode: 'meeting',
+      title: row.title,
+      transcript: row.transcript,
+      meetingNotes: null,
+      durationSeconds: 4,
+      audioOnServer: true,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+      seq: 12,
+      summary: '## Summary\nThe NEW lecture summary.',
+      summaryModel: 'Qwen3-4B-Instruct-2507-Q4_K_M',
+      summarizedAt: pendingRow.summaryRequestedAt! + 60,
+      summaryTemplate: 'lecture',
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
+
+    expect(card, findsNothing, reason: 'the answer landed: no more strip');
+    expect(
+      tester.widget<MarkdownBody>(body).data,
+      '## Summary\nThe NEW lecture summary.',
+    );
+    expect(
+      tester.widget<FilledButton>(button('btn-7')).onPressed,
+      isNotNull,
+      reason: 're-enabled from the row stream, no polling',
+    );
+    expect(
+      find.descendant(
+        of: button('btn-7'),
+        matching: find.text('Summarize again'),
+      ),
+      findsOneWidget,
+    );
     await unmount(tester);
   });
 }

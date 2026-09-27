@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
@@ -25,6 +27,7 @@ import '../../services/server_transcription_service.dart';
 import '../../models/speaker_names.dart';
 import '../../services/render_speaker_names.dart';
 import '../../services/speaker_naming.dart' show detectSpeakers;
+import '../../services/summary_pending.dart';
 import '../../services/synced_audio_download.dart';
 import '../../services/transcript_search.dart'
     show DumpSearchMatch, SnippetRun, findTranscriptMatches, parseSnippet;
@@ -593,8 +596,12 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
     // of its UI appears). Hidden rather than disabled, matching Download:
     // both gates describe rows/devices where the action can NEVER work
     // right now, not a transient condition worth explaining.
+    // v1.18.0: absent while the server is already writing this row's
+    // summary — the queue dedupes by dump id, so a second request is a no-op
+    // the user would only misread as "it didn't take".
     final bool summarizable = (dump.transcript?.trim().isNotEmpty ?? false) &&
-        ref.read(summariesEnabledProvider);
+        ref.read(summariesEnabledProvider) &&
+        !summaryPending(dump, now: summaryPendingNow());
     // Speaker naming (v1.15.0 §4.1): absent, not disabled, when the transcript
     // has no `## Speaker N` headings — there is nothing to name.
     final bool nameable = detectSpeakers(dump.transcript ?? '').isNotEmpty;
@@ -1158,10 +1165,21 @@ class _DumpListState extends State<_DumpList> {
                 MediaQuery.textScalerOf(context).scale(14) > 21;
             final reason = eligibilityReason(widget.eligibility[dump.id]);
             final isNote = dump.mode == 'text_note';
-            final pill = _TranscriptionStatusPill(
+            // v1.18.0: while the server is writing this row's summary the
+            // status area says so, next to the transcription pill.
+            final Widget transcriptionPill = _TranscriptionStatusPill(
               dumpId: dump.id,
               status: transcription,
             );
+            final Widget pill = summaryPending(dump, now: summaryPendingNow())
+                ? Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _SummaryPendingPill(dump: dump),
+                      transcriptionPill,
+                    ],
+                  )
+                : transcriptionPill;
             final DumpSearchMatch? match = widget.searchQuery.isEmpty
                 ? null
                 : widget.searchMatches[dump.id];
@@ -1520,6 +1538,102 @@ class _TranscriptionStatusPill extends StatelessWidget {
               label,
               style: Theme.of(context).textTheme.labelMedium?.copyWith(
                     color: foreground,
+                    fontWeight: FontWeight.w600,
+                  ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 'Summarizing…' (v1.18.0): the server is writing this row's summary.
+/// Shown from the row alone (`summaryPending`), so it disappears from the
+/// same stream that delivers the finished summary — no polling. The one
+/// timer here is the give-up: with no answer by the ten-minute cap the
+/// pill hides itself, since no row change would otherwise rebuild it.
+class _SummaryPendingPill extends StatefulWidget {
+  const _SummaryPendingPill({required this.dump});
+
+  final DumpRow dump;
+
+  @override
+  State<_SummaryPendingPill> createState() => _SummaryPendingPillState();
+}
+
+class _SummaryPendingPillState extends State<_SummaryPendingPill> {
+  Timer? _giveUp;
+
+  @override
+  void initState() {
+    super.initState();
+    _armGiveUp();
+  }
+
+  @override
+  void didUpdateWidget(_SummaryPendingPill oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.dump.summaryRequestedAt != widget.dump.summaryRequestedAt) {
+      _armGiveUp();
+    }
+  }
+
+  void _armGiveUp() {
+    _giveUp?.cancel();
+    final Duration remaining = summaryPendingTimeout -
+        summaryPendingElapsed(widget.dump, summaryPendingNow());
+    _giveUp = Timer(
+      remaining.isNegative ? Duration.zero : remaining,
+      () {
+        if (mounted) setState(() {});
+      },
+    );
+  }
+
+  @override
+  void dispose() {
+    _giveUp?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!summaryPending(widget.dump, now: summaryPendingNow())) {
+      return const SizedBox.shrink();
+    }
+    final colors = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(right: 6),
+      child: _summaryPendingPill(context, colors),
+    );
+  }
+
+  Widget _summaryPendingPill(BuildContext context, ColorScheme colors) {
+    return Container(
+      key: ValueKey('summary-pending-pill-${widget.dump.id}'),
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+      decoration: BoxDecoration(
+        color: colors.primaryContainer,
+        border: Border.all(color: colors.primary),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox.square(
+            dimension: 12,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: colors.onPrimaryContainer,
+            ),
+          ),
+          const SizedBox(width: 5),
+          Flexible(
+            child: Text(
+              'Summarizing…',
+              style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                    color: colors.onPrimaryContainer,
                     fontWeight: FontWeight.w600,
                   ),
             ),

@@ -109,6 +109,14 @@ class Dumps extends Table {
   /// the map (`renderSpeakerNames`).
   TextColumn get speakerNames => text().nullable()();
 
+  /// Unix seconds when THIS device last asked the server to (re)summarize
+  /// (the summarize POST returned 202). LOCAL-ONLY: never pushed, never
+  /// read from a pull. Drives the "summary in progress" strip: pending
+  /// while newer than [summarizedAt] and under ten minutes old, cleared
+  /// by [LocalDb.applyRemoteDump] the moment a summary at least that new
+  /// syncs down. Null when nothing was ever requested from here.
+  IntColumn get summaryRequestedAt => integer().nullable()();
+
   @override
   Set<Column> get primaryKey => {id};
 }
@@ -308,7 +316,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   LocalDb.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 20;
+  int get schemaVersion => 21;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -727,6 +735,19 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
               await _backfillSpeakerNames();
             }
           }
+          if (from < 21) {
+            // Summary-in-progress marker (v1.18.0): one nullable, local-only
+            // column on dumps. Same ask-the-database guard as v17-v20.
+            final Set<String> dumpCols = <String>{
+              for (final QueryRow row
+                  in await customSelect('PRAGMA table_info(dumps)').get())
+                row.data['name'] as String,
+            };
+            if (dumpCols.isNotEmpty &&
+                !dumpCols.contains('summary_requested_at')) {
+              await m.addColumn(dumps, dumps.summaryRequestedAt);
+            }
+          }
         },
       );
 
@@ -1022,6 +1043,21 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
             ? const Value<int?>.absent()
             : Value<int?>(summarizedAt as int?);
     final DumpRow? existing = await getDumpRow(id);
+    // Summary-in-progress: the server answered. When the incoming
+    // summarized_at is at least as new as what this device asked for, the
+    // pending marker is spent — clear it in the SAME write so the strip
+    // disappears the instant the answer lands and a later re-open never
+    // shows a stale one. An older summarized_at (a stale peer echo) leaves
+    // the marker alone: the requested job has not finished yet.
+    final int? requestedAt = existing?.summaryRequestedAt;
+    final int? incomingSummarizedAt = summarizedAtValue.present
+        ? summarizedAtValue.value
+        : null;
+    final Value<int?> summaryRequestedAtValue = requestedAt != null &&
+            incomingSummarizedAt != null &&
+            incomingSummarizedAt >= requestedAt
+        ? const Value<int?>(null)
+        : const Value<int?>.absent();
     if (existing == null) {
       // Re-creating a row the server still holds. If a COMPLETED local
       // deletion receipt is parked on this id, the server's copy has
@@ -1091,6 +1127,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
         transcriptTimings: timingsValue,
         summaryTemplate: templateValue,
         speakerNames: speakerNamesValue,
+        summaryRequestedAt: summaryRequestedAtValue,
         syncDirty: const Value<bool?>(false),
         syncedSeq: Value(seq),
       ),
@@ -1135,9 +1172,22 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   /// this value (the summarize POST wrote it) and a push here would race
   /// the worker's own publish. Does not bump updated_at for the same
   /// reason — the server's row time is authoritative for this field.
-  Future<void> recordRequestedSummaryTemplate(String id, String templateId) async {
+  ///
+  /// Also stamps [Dumps.summaryRequestedAt] with [now] (unix seconds) so the
+  /// UI can show "summary in progress" until a summary at least that new
+  /// syncs down (see `summaryPending`). Local-only; never pushed.
+  Future<void> recordRequestedSummaryTemplate(
+    String id,
+    String templateId, {
+    DateTime? now,
+  }) async {
+    final int requestedAt =
+        (now ?? DateTime.now()).toUtc().millisecondsSinceEpoch ~/ 1000;
     await (update(dumps)..where((d) => d.id.equals(id))).write(
-      DumpsCompanion(summaryTemplate: Value<String?>(templateId)),
+      DumpsCompanion(
+        summaryTemplate: Value<String?>(templateId),
+        summaryRequestedAt: Value<int?>(requestedAt),
+      ),
     );
   }
 

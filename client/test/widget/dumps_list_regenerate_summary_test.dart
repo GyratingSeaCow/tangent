@@ -286,4 +286,40 @@ void main() {
     );
     expect(client.summarizeCalls, isEmpty);
   });
+
+  testWidgets('the action is absent while a summary is already in progress',
+      (tester) async {
+    // v1.18.0: the server queue dedupes by dump id, so a second request
+    // would do nothing — hide it rather than let the user think it failed.
+    final int nowSeconds = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    final (_, client) = await mountWithSummaries(
+      tester,
+      rows: <DumpRow>[
+        transcribedRow('fixture-a').copyWith(
+          summaryRequestedAt: Value<int?>(nowSeconds - 20),
+        ),
+        transcribedRow('fixture-b'),
+      ],
+    );
+
+    await openSheet(tester, 'fixture-a');
+    expect(
+      find.byKey(ItemActionSheet.keyFor(ItemAction.regenerateSummary)),
+      findsNothing,
+      reason: 'one job per dump: nothing to ask for while it runs',
+    );
+    expect(
+      find.byKey(ItemActionSheet.keyFor(ItemAction.rename)),
+      findsOneWidget,
+    );
+    // Close it and check the idle sibling still offers the action.
+    await tester.tapAt(const Offset(5, 5));
+    await pumpSelection(tester);
+    await openSheet(tester, 'fixture-b');
+    expect(
+      find.byKey(ItemActionSheet.keyFor(ItemAction.regenerateSummary)),
+      findsOneWidget,
+    );
+    expect(client.summarizeCalls, isEmpty);
+  });
 }
