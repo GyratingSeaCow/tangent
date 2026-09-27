@@ -20,21 +20,24 @@ const _todoColumns = [
   // confirms, and the seq the row was last reconciled at.
   'sync_dirty',
   'synced_seq',
+  // v24 (To Do folders, v1.24.0): the shared-folder link, declared last so
+  // fresh and upgraded databases agree.
+  'folder_id',
 ];
 
 List<Object?> _columnNames(Database db, String table) =>
     db.select('PRAGMA table_info($table)').map((r) => r['name']).toList();
 
 void main() {
-  test('a fresh database is created at v23 with the todos table', () async {
+  test('a fresh database is created at v24 with the todos table', () async {
     final sql = sqlite3.openInMemory();
     final db = LocalDb.forTesting(NativeDatabase.opened(sql));
     addTearDown(db.close);
 
     await db.listDumps();
 
-    expect(db.schemaVersion, 23);
-    expect(sql.userVersion, 23);
+    expect(db.schemaVersion, 24);
+    expect(sql.userVersion, 24);
     expect(_columnNames(sql, 'todos'), _todoColumns);
     sql.execute(
       'INSERT INTO todos(id,text,created_at,updated_at) '
@@ -65,7 +68,7 @@ void main() {
 
     await db.listDumps();
 
-    expect(sql.userVersion, 23);
+    expect(sql.userVersion, 24);
     expect(_columnNames(sql, 'todos'), _todoColumns);
     expect(
       sqlRows(sql, 'dumps')
@@ -110,10 +113,54 @@ void main() {
 
     await db.listDumps();
 
-    expect(sql.userVersion, 23);
+    expect(sql.userVersion, 24);
+    expect(_columnNames(sql, 'todos'), _todoColumns);
     expect(
       sql.select("SELECT text FROM todos WHERE id='kept'").single['text'],
       'still here',
     );
+  });
+
+  test('v23 -> v24 adds a null folder_id and keeps every todo row', () async {
+    final sql = oldStorageDatabase(4);
+    // A v23 todos table exactly as Phase 1 created it (no folder_id).
+    sql.execute('''
+      CREATE TABLE todos (
+        id TEXT NOT NULL,
+        text TEXT NOT NULL,
+        done_at TEXT NULL,
+        due_date TEXT NULL,
+        source TEXT NOT NULL DEFAULT 'manual',
+        source_ref TEXT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        deleted_at TEXT NULL,
+        sync_dirty INTEGER NOT NULL DEFAULT 1,
+        synced_seq INTEGER NULL,
+        PRIMARY KEY (id)
+      );
+    ''');
+    sql.execute(
+      'INSERT INTO todos(id,text,due_date,created_at,updated_at) '
+      "VALUES('a','milk','2026-10-01','2026-01-01T00:00:00Z',"
+      "'2026-01-01T00:00:00Z'),"
+      "('b','eggs',NULL,'2026-01-02T00:00:00Z','2026-01-02T00:00:00Z')",
+    );
+    sql.userVersion = 23;
+    final db = LocalDb.forTesting(NativeDatabase.opened(sql));
+    addTearDown(db.close);
+
+    await db.listDumps();
+
+    expect(sql.userVersion, 24);
+    expect(_columnNames(sql, 'todos'), _todoColumns);
+    final rows = sql.select('SELECT id, text, due_date, folder_id FROM todos '
+        'ORDER BY id');
+    expect(rows.length, 2, reason: 'no row is lost by the upgrade');
+    expect(rows[0]['text'], 'milk');
+    expect(rows[0]['due_date'], '2026-10-01');
+    expect(rows[0]['folder_id'], isNull);
+    expect(rows[1]['text'], 'eggs');
+    expect(rows[1]['folder_id'], isNull);
   });
 }

@@ -151,6 +151,52 @@ class TodoRepository {
     await _write(id, const TodosCompanion(deletedAt: Value(null)));
   }
 
+  /// Files the item under [folderId] (a shared `folders` row) or unfiles it
+  /// with null. Goes through [_write] so `updated_at` bumps and the row is
+  /// dirty — a move that kept the old stamp would lose to the server's
+  /// newer-wins rule and silently never reach the other devices.
+  Future<void> moveToFolder(String id, String? folderId) async {
+    await _write(id, TodosCompanion(folderId: Value(folderId)));
+  }
+
+  /// [moveToFolder] for a multi-select set, one transaction.
+  Future<void> moveManyToFolder(Iterable<String> ids, String? folderId) async {
+    await _db.transaction(() async {
+      for (final String id in ids) {
+        await moveToFolder(id, folderId);
+      }
+    });
+  }
+
+  /// Marks every OPEN item in [ids] done (already-done ones are left alone,
+  /// unlike [toggle]). The multi-select toolbar's "Done".
+  Future<void> markManyDone(Iterable<String> ids) async {
+    await _db.transaction(() async {
+      for (final String id in ids) {
+        final TodoRow? row = await _db.getTodoRow(id);
+        if (row == null || row.doneAt != null) continue;
+        await _write(id, TodosCompanion(doneAt: Value(_stamp())));
+      }
+    });
+  }
+
+  /// Soft-deletes the whole set in one transaction; [restoreMany] undoes it.
+  Future<void> softDeleteMany(Iterable<String> ids) async {
+    await _db.transaction(() async {
+      for (final String id in ids) {
+        await softDelete(id);
+      }
+    });
+  }
+
+  Future<void> restoreMany(Iterable<String> ids) async {
+    await _db.transaction(() async {
+      for (final String id in ids) {
+        await restore(id);
+      }
+    });
+  }
+
   Future<void> _write(String id, TodosCompanion changes) async {
     await (_db.update(_db.todos)..where((t) => t.id.equals(id))).write(
       changes.copyWith(

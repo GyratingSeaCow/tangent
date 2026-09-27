@@ -448,6 +448,11 @@ class DocumentSyncEngine extends ChangeNotifier {
       deletedAt: payload.containsKey('deleted_at')
           ? payload['deleted_at'] as String?
           : LocalDb.absentTodoField,
+      // v1.24.0: folder_id joins the nullable family. Absent (a pre-1.24
+      // peer) keeps the local filing; a present null is an explicit unfile.
+      folderId: payload.containsKey('folder_id')
+          ? payload['folder_id'] as String?
+          : LocalDb.absentTodoField,
       seq: change.seq,
     );
   }
@@ -641,6 +646,8 @@ class DocumentSyncEngine extends ChangeNotifier {
             'created_at': row.createdAt,
             'updated_at': row.updatedAt,
             'deleted_at': row.deletedAt,
+            // v1.24.0: filing travels with the item; null means unfiled.
+            'folder_id': row.folderId,
           },
         },
       for (final SyncTombstoneRow stone in tombstones)

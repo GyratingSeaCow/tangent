@@ -146,11 +146,169 @@ void main() {
     expect(payload.keys, contains('done_at'));
     expect(payload.keys, contains('due_date'));
     expect(payload.keys, contains('deleted_at'));
+    expect(payload.keys, contains('folder_id'));
     expect(payload['updated_at'], added.updatedAt);
 
     final TodoRow after = (await db.getTodoRow(added.id))!;
     expect(after.syncDirty, isFalse);
     expect(after.syncedSeq, 41);
+  });
+
+  group('folders (v1.24.0)', () {
+    test('folder_id round-trips: a moved todo pushes its folder with a '
+        'FRESH updated_at, and a pulled folder_id lands on the row', () async {
+      // The row arrived from a peer at T0; the local move must stamp later
+      // than T0 or the server's newer-wins rule drops the move as stale.
+      const String t0 = '2026-09-27T09:00:00.000Z';
+      await db.applyRemoteTodo(
+        id: 'remote-1',
+        text: 'buy filament',
+        createdAt: t0,
+        updatedAt: t0,
+        seq: 1,
+      );
+      final DateTime moveClock = DateTime.utc(2026, 9, 27, 11);
+      final TodoRepository movingRepo =
+          TodoRepository(db: db, now: () => moveClock);
+      await movingRepo.moveToFolder('remote-1', 'folder-shop');
+
+      client.pushResults = <PushResult>[
+        PushResult(
+          entityId: 'remote-1',
+          entityType: 'todo',
+          seq: 42,
+          applied: true,
+        ),
+      ];
+      await build().syncNow();
+
+      final Map<String, dynamic> payload = client.pushedChanges!
+          .singleWhere((chg) => chg['entity_type'] == 'todo')['payload']
+          as Map<String, dynamic>;
+      expect(payload['folder_id'], 'folder-shop', reason: 'push carries it');
+      expect(
+        payload['updated_at'],
+        moveClock.toIso8601String(),
+        reason: 'moveToFolder must bump updated_at past the peer stamp',
+      );
+      expect(
+        (payload['updated_at'] as String).compareTo(t0) > 0,
+        isTrue,
+        reason: 'stale stamp would lose to newer-wins on the server',
+      );
+
+      // The other direction: a peer files it elsewhere.
+      client.pullPages = <SyncPullPage>[
+        SyncPullPage(
+          changes: <RemoteChange>[
+            todoChange(
+              seq: 50,
+              payload: fullPayload(
+                text: 'buy filament',
+                updatedAt: '2026-09-27T12:00:00.000Z',
+              )..['folder_id'] = 'folder-workshop',
+            ),
+          ],
+          headSeq: 50,
+          hasMore: false,
+        ),
+      ];
+      await build().syncNow();
+      expect((await db.getTodoRow('remote-1'))!.folderId, 'folder-workshop');
+    });
+
+    test('a payload WITHOUT folder_id keeps the local filing; a present '
+        'null unfiles', () async {
+      await db.applyRemoteTodo(
+        id: 'remote-1',
+        text: 'filed',
+        createdAt: '2026-09-27T09:00:00.000Z',
+        updatedAt: '2026-09-27T09:00:00.000Z',
+        folderId: 'folder-shop',
+        seq: 1,
+      );
+      client.pullPages = <SyncPullPage>[
+        SyncPullPage(
+          changes: <RemoteChange>[
+            todoChange(
+              seq: 6,
+              payload: <String, dynamic>{
+                'text': 'renamed by a pre-1.24 client',
+                'created_at': '2026-09-27T09:00:00.000Z',
+                'updated_at': '2026-09-27T10:00:00.000Z',
+              },
+            ),
+          ],
+          headSeq: 6,
+          hasMore: false,
+        ),
+      ];
+      await build().syncNow();
+      TodoRow row = (await db.getTodoRow('remote-1'))!;
+      expect(row.body, 'renamed by a pre-1.24 client');
+      expect(row.folderId, 'folder-shop', reason: 'absent key preserves');
+
+      client.pullPages = <SyncPullPage>[
+        SyncPullPage(
+          changes: <RemoteChange>[
+            todoChange(
+              seq: 7,
+              payload: fullPayload(updatedAt: '2026-09-27T11:00:00.000Z')
+                ..['folder_id'] = null,
+            ),
+          ],
+          headSeq: 7,
+          hasMore: false,
+        ),
+      ];
+      await build().syncNow();
+      row = (await db.getTodoRow('remote-1'))!;
+      expect(row.folderId, isNull, reason: 'explicit null unfiles');
+    });
+
+    test('moveManyToFolder files the whole set, dirty with fresh stamps',
+        () async {
+      final DateTime t0 = DateTime.utc(2026, 9, 27, 9);
+      final DateTime t1 = DateTime.utc(2026, 9, 27, 10);
+      DateTime clock = t0;
+      int n = 0;
+      final TodoRepository r = TodoRepository(
+        db: db,
+        idFactory: () => 'id-${n++}',
+        now: () => clock,
+      );
+      await r.add('one');
+      await r.add('two');
+      await r.add('three');
+      await db.markTodoSynced('id-0', seq: 1, pushedUpdatedAt: t0.toIso8601String());
+      await db.markTodoSynced('id-1', seq: 1, pushedUpdatedAt: t0.toIso8601String());
+
+      clock = t1;
+      await r.moveManyToFolder(<String>['id-0', 'id-1'], 'folder-shop');
+
+      for (final String id in <String>['id-0', 'id-1']) {
+        final TodoRow row = (await db.getTodoRow(id))!;
+        expect(row.folderId, 'folder-shop');
+        expect(row.syncDirty, isTrue);
+        expect(row.updatedAt, t1.toIso8601String());
+      }
+      expect((await db.getTodoRow('id-2'))!.folderId, isNull);
+    });
+
+    test('deleting a folder unfiles its todos in the same transaction',
+        () async {
+      final String shop = await db.createFolder(name: 'Shop');
+      final TodoRow a = await repo.add('in shop');
+      await repo.moveToFolder(a.id, shop);
+      await db.markTodoSynced(a.id, seq: 3, pushedUpdatedAt: (await db.getTodoRow(a.id))!.updatedAt);
+
+      await db.deleteFolder(shop);
+
+      final TodoRow after = (await db.getTodoRow(a.id))!;
+      expect(after.folderId, isNull);
+      expect(after.deletedAt, isNull, reason: 'contents are kept');
+      expect(after.syncDirty, isTrue, reason: 'unfiled state must push');
+    });
   });
 
   test('an incoming todo lands clean (no echo back on the next cycle)',
