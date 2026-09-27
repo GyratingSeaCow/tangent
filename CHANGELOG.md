@@ -5,6 +5,17 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.19.0] - 2026-09-27
+
+### Added
+
+- Translation: recordings in another language show a language tag
+  (`ES`, or `ES → EN` once translated) and 'Transcribe again' offers
+  'in the original language' or 'in English'. Per recording only.
+- Summary status from the server: 'Queued — 2nd in line' while waiting,
+  and a red 'Summary failed: <reason>' line with Retry when the
+  summarizer errors, instead of a bar that quietly times out.
+
 ## [1.18.0] - 2026-09-26
 
 Feature release: **you can see the summary being written.**

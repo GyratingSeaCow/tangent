@@ -50,13 +50,27 @@ ADH2/
 
 ## Status
 
-Shipping — **v1.18.0** (see CHANGELOG.md). Client and server are both
-implemented and tested (2097
-Flutter tests, 534 server tests, 100 Kotlin tests). The client runs
+Shipping — **v1.19.0** (see CHANGELOG.md). Client and server are both
+implemented and tested (2141
+Flutter tests, 539 server tests, 100 Kotlin tests). The client runs
 natively on Linux AND Windows (tray icon, global record hotkey,
 close-to-tray, single instance, right-click = long-press; AppImage and
 Inno Setup installer under `packaging/`) — verified on CachyOS/KDE
 Plasma Wayland and Windows 11; see the README's Desktop sections.
+
+v1.19.0 adds **per-recording translation** and **server-driven summary
+status**. Translation: faster-whisper's detected `language` and a
+`translated` flag are stored on the dump (server-authored, client DB
+v22); non-English recordings show an `ES` / `ES → EN` tag and their
+re-transcribe dialog offers 'original' vs 'English' (`JobCreate.
+translate` → `task="translate"`). No global switch by design. Summary
+status: the worker publishes `summary_status` (queued/running/failed/
+null) + `summary_error` + 1-based `summary_queue_position`; success
+clears all three in the same write as the summary. The client shows
+'Queued — 2nd in line', a red 'Summary failed: <reason>' line with
+Retry (no picker) and a local-only dismiss, and a red list pill; the
+v1.18.0 local heuristic remains only as the bridge before the server's
+first publish. See `docs/design/2026-09-27-translation-and-summary-status.md`.
 
 v1.18.0 adds a visible **summary-in-progress state** (client-only):
 `dumps.summary_requested_at` (client DB v21, LOCAL-ONLY — never in the
