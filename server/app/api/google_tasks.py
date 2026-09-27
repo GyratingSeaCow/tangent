@@ -99,6 +99,7 @@ def get_status(
     db: Annotated[sqlite3.Connection, Depends(get_db)],
     _user: Annotated[str, Depends(require_auth)],
 ) -> GoogleTasksStatus:
+    """Return connection state, account metadata, and last-cycle counts."""
     return _status(db)
 
 
@@ -108,6 +109,7 @@ def save_credentials(
     db: Annotated[sqlite3.Connection, Depends(get_db)],
     _user: Annotated[str, Depends(require_auth)],
 ) -> GoogleTasksStatus:
+    """Store the OAuth client credentials and reset any previous Google link."""
     client_id = payload.client_id.strip()
     client_secret = payload.client_secret.strip()
     if not client_id or not client_secret:
@@ -148,6 +150,7 @@ def connect(
     db: Annotated[sqlite3.Connection, Depends(get_db)],
     _user: Annotated[str, Depends(require_auth)],
 ) -> ConnectResponse:
+    """Create a ten-minute OAuth nonce and return Google's consent URL."""
     row = _link(db)
     if row is None or not row["client_id"] or not row["client_secret"]:
         raise HTTPException(
@@ -268,6 +271,7 @@ def disconnect(
     db: Annotated[sqlite3.Connection, Depends(get_db)],
     _user: Annotated[str, Depends(require_auth)],
 ) -> GoogleTasksStatus:
+    """Revoke and clear tokens while retaining the OAuth client credentials."""
     row = _link(db)
     token = None if row is None else (row["refresh_token"] or row["access_token"])
     if token:
