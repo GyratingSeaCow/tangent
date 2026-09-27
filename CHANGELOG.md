@@ -5,6 +5,14 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.22.1 — 2026-09-27
+
+### Fixed
+- Notebook page backgrounds are easier to see. The lines, graph grid, and dot
+  grid were drawn in the hairline-border colour, which nearly disappeared on
+  the dark page; they now use a dedicated ruling colour at twice the contrast,
+  and the dots are slightly fatter. All five styles match.
+
 ## 1.22.0 — 2026-09-27
 
 ### Added
