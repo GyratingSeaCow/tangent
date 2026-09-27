@@ -325,66 +325,77 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
                           maxLines: 2,
                         ),
                       ),
-                      Semantics(
-                        label: 'Select all returned results',
-                        excludeSemantics: true,
-                        button: true,
-                        enabled: ready && !_batchBusy,
-                        onTap: ready && !_batchBusy
-                            ? () => _change(_selection.toggleAll)
-                            : null,
-                        checked: selection.selectedIds.isNotEmpty &&
-                            selection.selectedIds.containsAll(selectableIds),
-                        mixed: selection.selectedIds.isNotEmpty &&
-                            !selection.selectedIds.containsAll(selectableIds),
-                        child: IconButton(
-                          key: const ValueKey('selection-all'),
-                          tooltip: 'Select all returned results',
-                          onPressed: ready && !_batchBusy
+                      // The five actions are 48 px targets each; at 280 px
+                      // they cannot all fit beside the label, so let them
+                      // wrap onto a second line rather than overflow or
+                      // shrink below the a11y minimum.
+                      Flexible(
+                        child: Wrap(
+                          alignment: WrapAlignment.end,
+                          children: [
+                        Semantics(
+                          label: 'Select all returned results',
+                          excludeSemantics: true,
+                          button: true,
+                          enabled: ready && !_batchBusy,
+                          onTap: ready && !_batchBusy
                               ? () => _change(_selection.toggleAll)
                               : null,
-                          icon: const Icon(Icons.select_all),
+                          checked: selection.selectedIds.isNotEmpty &&
+                              selection.selectedIds.containsAll(selectableIds),
+                          mixed: selection.selectedIds.isNotEmpty &&
+                              !selection.selectedIds.containsAll(selectableIds),
+                          child: IconButton(
+                            key: const ValueKey('selection-all'),
+                            tooltip: 'Select all returned results',
+                            onPressed: ready && !_batchBusy
+                                ? () => _change(_selection.toggleAll)
+                                : null,
+                            icon: const Icon(Icons.select_all),
+                          ),
                         ),
-                      ),
-                      IconButton(
-                        key: const ValueKey('selection-download'),
-                        tooltip: 'Download audio for selected',
-                        onPressed: ready &&
-                                !_batchBusy &&
-                                selection.selectedIds.isNotEmpty
-                            ? _downloadSelected
-                            : null,
-                        icon: const Icon(Icons.download_for_offline_outlined),
-                      ),
-                      IconButton(
-                        key: const ValueKey('selection-transcribe'),
-                        tooltip: 'Transcribe selected',
-                        onPressed: ready &&
-                                !_batchBusy &&
-                                selection.selectedIds.isNotEmpty
-                            ? _transcribeSelected
-                            : null,
-                        icon: const Icon(Icons.text_snippet_outlined),
-                      ),
-                      IconButton(
-                        key: const ValueKey('selection-send-to-notebook'),
-                        tooltip: 'Send selected to notebook',
-                        onPressed: ready &&
-                                !_batchBusy &&
-                                selection.selectedIds.isNotEmpty
-                            ? _sendSelectedToNotebook
-                            : null,
-                        icon: const Icon(Icons.menu_book_outlined),
-                      ),
-                      IconButton(
-                        key: const ValueKey('selection-delete'),
-                        tooltip: 'Delete selected local recordings',
-                        onPressed: ready &&
-                                !_batchBusy &&
-                                selection.selectedIds.isNotEmpty
-                            ? _deleteSelected
-                            : null,
-                        icon: const Icon(Icons.delete_outline),
+                        IconButton(
+                          key: const ValueKey('selection-download'),
+                          tooltip: 'Download audio for selected',
+                          onPressed: ready &&
+                                  !_batchBusy &&
+                                  selection.selectedIds.isNotEmpty
+                              ? _downloadSelected
+                              : null,
+                          icon: const Icon(Icons.download_for_offline_outlined),
+                        ),
+                        IconButton(
+                          key: const ValueKey('selection-transcribe'),
+                          tooltip: 'Transcribe selected',
+                          onPressed: ready &&
+                                  !_batchBusy &&
+                                  selection.selectedIds.isNotEmpty
+                              ? _transcribeSelected
+                              : null,
+                          icon: const Icon(Icons.text_snippet_outlined),
+                        ),
+                        IconButton(
+                          key: const ValueKey('selection-send-to-notebook'),
+                          tooltip: 'Send selected to notebook',
+                          onPressed: ready &&
+                                  !_batchBusy &&
+                                  selection.selectedIds.isNotEmpty
+                              ? _sendSelectedToNotebook
+                              : null,
+                          icon: const Icon(Icons.menu_book_outlined),
+                        ),
+                        IconButton(
+                          key: const ValueKey('selection-delete'),
+                          tooltip: 'Delete selected local recordings',
+                          onPressed: ready &&
+                                  !_batchBusy &&
+                                  selection.selectedIds.isNotEmpty
+                              ? _deleteSelected
+                              : null,
+                          icon: const Icon(Icons.delete_outline),
+                        ),
+                          ],
+                        ),
                       ),
                     ],
                   ),
