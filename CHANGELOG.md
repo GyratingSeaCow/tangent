@@ -5,6 +5,15 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.17.1] - 2026-09-26
+
+### Fixed
+
+- Summarize: the style you pick now shows as current the moment the
+  server accepts it. Previously the picker only learned the new style
+  when the finished summary synced back (30-60 s), so reopening it
+  straight away still ticked the old one.
+
 ## [1.17.0] - 2026-09-26
 
 Feature release: **speaker names that stick.**
