@@ -95,7 +95,7 @@ void main() {
     expect(
       (tester
               .widget<IconButton>(find.byKey(const Key('home-todo-button')))
-              .icon! as Icon)
+              .icon as Icon)
           .icon,
       Icons.check_box,
     );

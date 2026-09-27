@@ -15,6 +15,7 @@ import '../data/recording_metadata.dart';
 import '../models/api_exception.dart';
 import '../models/transcription_status.dart';
 import 'meeting_transcript_formatter.dart';
+import 'todo_voice_capture.dart';
 import 'transcription_client.dart';
 
 /// Durable coordinator for server-side transcription.
@@ -735,6 +736,15 @@ class ServerTranscriptionService extends ChangeNotifier {
     );
     _throwIfDisposed();
     if (!completed) return;
+    // To Do phase 2: a transcript just became this dump's, so spoken to-dos
+    // land now. Idempotent in captureVoiceTodos, and quiet on failure — a
+    // to-do bug must not cost the user a transcript that just finished.
+    await captureVoiceTodosQuietly(
+      db: _db,
+      dumpId: row.id,
+      transcript: transcript,
+    );
+    _throwIfDisposed();
     final committed = await _db.getDump(row.id);
     _throwIfDisposed();
     if (committed == null) return;
@@ -1099,6 +1109,15 @@ class ServerTranscriptionService extends ChangeNotifier {
       }
       _throwIfDisposed();
       if (!completionWon) throw const _StaleTranscriptionAttempt();
+      // To Do phase 2, same hook on the normal completion path (the
+      // recovered-completion path above is the other one). Both share
+      // captureVoiceTodos, where the idempotency rule lives.
+      await captureVoiceTodosQuietly(
+        db: _db,
+        dumpId: row.id,
+        transcript: stored,
+      );
+      _throwIfDisposed();
       await _awaitSidecarWrite(
         _access.runSerializedMetadataWrite<void>(
           use.key,

@@ -19,6 +19,7 @@ import 'package:flutter/foundation.dart';
 import '../data/local_db.dart';
 import '../models/sync_change.dart';
 import 'connectivity_service.dart';
+import 'todo_voice_capture.dart';
 import 'transcription_client.dart';
 
 /// How a sync attempt ended, for the UI to report honestly.
@@ -369,6 +370,16 @@ class DocumentSyncEngine extends ChangeNotifier {
           ? (payload['summary_queue_position'] as num?)?.toInt()
           : LocalDb.absentSummaryField,
       seq: change.seq,
+    );
+    // To Do phase 2: the SERVER-synced transcript sink. A transcript made on
+    // another device (or by the server job) lands here; the local
+    // transcription sink is server_transcription_service's completion
+    // paths. Both call captureVoiceTodos, which owns the idempotency rule,
+    // so the same transcript arriving on both routes adds items once.
+    await captureVoiceTodosQuietly(
+      db: _db,
+      dumpId: change.entityId,
+      transcript: payload['transcript'] as String?,
     );
   }
 
