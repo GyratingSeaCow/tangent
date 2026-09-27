@@ -95,7 +95,7 @@ CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at DESC);
 CREATE TABLE IF NOT EXISTS change_log (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
     entity_type TEXT NOT NULL
-        CHECK (entity_type IN ('dump', 'notebook', 'note', 'folder', 'ink_index')),
+        CHECK (entity_type IN ('dump', 'notebook', 'note', 'folder', 'ink_index', 'todo')),
     entity_id TEXT NOT NULL,
     op TEXT NOT NULL CHECK (op IN ('upsert', 'delete')),
     -- Who authored it, so a client can skip the echo of its own push.
@@ -212,6 +212,20 @@ CREATE TABLE IF NOT EXISTS folders (
     deleted_at INTEGER,
     origin_device_id TEXT
 );
+
+CREATE TABLE IF NOT EXISTS todos (
+    id TEXT PRIMARY KEY,
+    text TEXT NOT NULL,
+    done_at TEXT,
+    due_date TEXT,
+    source TEXT NOT NULL DEFAULT 'manual',
+    source_ref TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    deleted_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_todos_updated_at ON todos(updated_at DESC);
 
 -- Server-side persisted settings (key/value). First user: the AI-summaries
 -- toggle — it gates a SERVER worker, so it must live where the worker can
@@ -624,6 +638,45 @@ def _migrate_change_log_ink_index_entity(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_change_log_todo_entity(conn: sqlite3.Connection) -> None:
+    """Rebuild change_log to admit todo without renumbering checkpoints."""
+    ddl = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='change_log'"
+    ).fetchone()
+    if ddl is None or "'todo'" in (ddl[0] or ""):
+        return
+    conn.executescript(
+        """
+        PRAGMA foreign_keys = OFF;
+        CREATE TABLE change_log_new (
+            seq INTEGER PRIMARY KEY AUTOINCREMENT,
+            entity_type TEXT NOT NULL
+                CHECK (entity_type IN
+                       ('dump', 'notebook', 'note', 'folder', 'ink_index', 'todo')),
+            entity_id TEXT NOT NULL,
+            op TEXT NOT NULL CHECK (op IN ('upsert', 'delete')),
+            device_id TEXT NOT NULL,
+            payload TEXT,
+            created_at INTEGER NOT NULL
+        );
+        INSERT INTO change_log_new
+            (seq, entity_type, entity_id, op, device_id, payload, created_at)
+            SELECT seq, entity_type, entity_id, op, device_id, payload,
+                   created_at FROM change_log;
+        DROP TABLE change_log;
+        ALTER TABLE change_log_new RENAME TO change_log;
+        CREATE INDEX IF NOT EXISTS idx_change_log_seq ON change_log(seq);
+        CREATE INDEX IF NOT EXISTS idx_change_log_entity
+            ON change_log(entity_type, entity_id);
+        PRAGMA foreign_keys = ON;
+        """
+    )
+    conn.execute(
+        "INSERT OR REPLACE INTO sqlite_sequence (name, seq) "
+        "SELECT 'change_log', COALESCE(MAX(seq), 0) FROM change_log"
+    )
+
+
 def _migrate_notebooks_ink(conn: sqlite3.Connection) -> None:
     """Add notebooks.ink and backfill it from the change feed.
 
@@ -750,6 +803,7 @@ def init_db(data_dir: str) -> None:
         _migrate_notebooks_folder_id(conn)
         _migrate_change_log_folder_entity(conn)
         _migrate_change_log_ink_index_entity(conn)
+        _migrate_change_log_todo_entity(conn)
         _migrate_notebooks_ink(conn)
         _normalize_notebooks_ink(conn)
         _reconcile_audio_kept(conn, data_dir)
