@@ -5,6 +5,20 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.25.0 — 2026-09-27
+
+### Added
+- **Google Tasks sync.** Settings → Google Tasks: paste a free Google Cloud
+  OAuth client (Desktop app) once, tap *Connect Google*, and your to-dos
+  appear in a Google Tasks list named "Tangent" — on the Google Tasks app,
+  Calendar's side panel, and Assistant. Two-way: add, edit, check off, or
+  delete on either side and the newer change wins. Runs on the server every
+  five minutes (and on *Sync now*), so it works while your phones sleep;
+  tokens never leave the server. Only title, due date, done, and deleted
+  travel — never transcripts or recordings. Folders stay in Tangent.
+  To-dos created in Google show a small "G" chip.
+- Test-mode Google tokens expire weekly; the section shows a *Reconnect*
+  banner instead of stalling silently.
 ## 1.24.1 — 2026-09-27
 
 ### Fixed

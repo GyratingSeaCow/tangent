@@ -50,13 +50,28 @@ ADH2/
 
 ## Status
 
-Shipping — **v1.24.1** (see CHANGELOG.md). Client and server are both
-implemented and tested (2322
-Flutter tests, 559 server tests, 100 Kotlin tests). The client runs
+Shipping — **v1.25.0** (see CHANGELOG.md). Client and server are both
+implemented and tested (2345
+Flutter tests, 586 server tests, 100 Kotlin tests). The client runs
 natively on Linux AND Windows (tray icon, global record hotkey,
 close-to-tray, single instance, right-click = long-press; AppImage and
 Inno Setup installer under `packaging/`) — verified on CachyOS/KDE
 Plasma Wayland and Windows 11; see the README's Desktop sections.
+
+v1.25.0 adds **Google Tasks sync** (two-way, last-write-wins, one Google
+list named "Tangent"; folders stay Tangent-only). It runs server-side:
+Settings → Google Tasks takes an OAuth client id/secret (Desktop app
+type) once, *Connect Google* opens the consent page in the browser and
+the server's loopback callback stores the tokens (`google_tasks_link`,
+single row, never on a device). A five-minute worker pushes todos whose
+`updated_at` passed `google_updated`, pulls with `updatedMin` +
+`showDeleted`, applies Google-newer only, and records server-authored
+changes in `change_log` so devices pull them like any other edit.
+`todos.google_task_id` / `google_updated` are server-only columns —
+projected OUT of the sync feed and preserved across device upserts.
+Google-origin todos carry `source='google'` and a 'G' chip. Testing-mode
+OAuth tokens expire weekly → `reauth_required` + Reconnect banner. See
+`docs/design/2026-09-27-google-tasks-sync.md`.
 
 v1.22.0 is client-only: **page backgrounds** and a **vocabulary
 cleanup**. `NotebookRuling` gains `graph` (5 mm quad grid) and `dots`
