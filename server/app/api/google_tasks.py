@@ -200,6 +200,7 @@ def callback(
             "UPDATE google_tasks_link SET status = 'disconnected', oauth_state = NULL, "
             "oauth_state_expires_at = NULL, last_error = 'OAuth state expired' WHERE id = 1"
         )
+        db.commit()  # get_db rolls back exceptions unless failure state is sealed first
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="OAuth state expired")
     if error:
         db.execute(
@@ -207,6 +208,7 @@ def callback(
             "oauth_state_expires_at = NULL, last_error = ? WHERE id = 1",
             (f"Google authorization failed: {error}"[:500],),
         )
+        db.commit()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Google authorization failed")
     if not code:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing OAuth code")
@@ -235,6 +237,7 @@ def callback(
             "oauth_state_expires_at = NULL WHERE id = 1",
             (next_status, str(exc)[:500]),
         )
+        db.commit()
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Google connection failed",

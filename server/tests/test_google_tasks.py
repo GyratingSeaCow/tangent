@@ -93,6 +93,7 @@ def _save_and_start(client: TestClient, token: str) -> str:
         ("post", "/v1/google-tasks/credentials"),
         ("post", "/v1/google-tasks/connect"),
         ("post", "/v1/google-tasks/disconnect"),
+        ("post", "/v1/google-tasks/sync-now"),
     ],
 )
 def test_management_endpoints_require_bearer_auth(google_api, method, path):
@@ -207,6 +208,9 @@ def test_callback_rejects_mismatched_and_expired_state_without_google_http(
     )
     assert expired.status_code == 400
     assert "expired" in expired.json()["detail"].lower()
+    persisted = client.get("/v1/google-tasks/status", headers=_headers(token)).json()
+    assert persisted["status"] == "disconnected"
+    assert persisted["last_error"] == "OAuth state expired"
 
 
 def test_disconnect_revokes_and_clears_tokens_but_keeps_credentials(
