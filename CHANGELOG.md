@@ -5,6 +5,17 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.25.1 — 2026-09-27
+
+### Fixed
+- **Google sign-in actually completes.** Google only accepts a loopback
+  redirect (`http://127.0.0.1:<port>`) for Desktop-app OAuth clients — the
+  LAN/Tailscale address the phone reached the server on produced
+  `Error 400: invalid_request`. The consent page now has to be finished in a
+  browser on the server machine; Settings gained **Copy sign-in link** for
+  exactly that. Proven end to end: 13 to-dos landed in the "Tangent" list.
+- Settings → Google Tasks no longer forgets saved credentials on the client
+  (it read a field name the server never sent).
 ## 1.25.0 — 2026-09-27
 
 ### Added
