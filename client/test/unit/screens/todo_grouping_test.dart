@@ -179,4 +179,33 @@ void main() {
       ],
     );
   });
+  test('a voice-captured todo with a due date lands in the dated order too '
+      '(nothing filters by source)', () {
+    final TodoRow voice = TodoRow(
+      id: 'id-voice',
+      body: 'go to the store',
+      doneAt: null,
+      dueDate: '2026-09-30',
+      source: 'voice',
+      sourceRef: 'dump-1',
+      createdAt: '2026-09-27T14:03:00Z',
+      updatedAt: '2026-09-27T14:03:00Z',
+      deletedAt: null,
+      syncDirty: true,
+      syncedSeq: null,
+      folderId: null,
+    );
+    final sections = groupTodos(
+      todos: <TodoRow>[
+        todo('undated'),
+        todo('later', dueDate: '2026-10-05'),
+        voice,
+      ],
+      folders: const <FolderSummary>[],
+    );
+    expect(
+      bodies(sections.single),
+      <String>['go to the store', 'later', 'undated'],
+    );
+  });
 }

@@ -62,6 +62,7 @@ void main() {
         transcript: transcript ??
             'add to my to do list pick up thermal paste and email the '
                 'Zionsville customer back',
+        recordedOn: DateTime(2026, 9, 27),
         repository: repo,
       );
 

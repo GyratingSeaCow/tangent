@@ -39,11 +39,15 @@ void main() {
   Future<List<TodoRow>> arrive({
     String id = dumpId,
     String? text = transcript,
+    DateTime? recordedOn,
   }) =>
       captureVoiceTodos(
         db: db,
         dumpId: id,
         transcript: text,
+        // The dump row's created_at; a fixed day so the tests never depend
+        // on when they run.
+        recordedOn: recordedOn ?? DateTime(2026, 9, 27, 14, 3),
         repository: repo,
       );
 
@@ -150,5 +154,62 @@ void main() {
     expect(manual.source, 'manual');
     expect(manual.sourceRef, isNull);
     expect(await repo.hasTodosFromSource(dumpId), isFalse);
+  });
+  group('due dates (v1.26.0)', () {
+    test('a leading date phrase puts due_date on EVERY captured row',
+        () async {
+      final List<TodoRow> created = await arrive(
+        text: 'add to my to do list for September 30th buy milk and call Dana',
+        recordedOn: DateTime(2026, 9, 27, 14, 3),
+      );
+
+      expect(created.map((r) => r.body), ['buy milk', 'call Dana']);
+      expect(created.map((r) => r.dueDate), ['2026-09-30', '2026-09-30']);
+      // ...and it is what the database holds, not just the returned rows.
+      expect(
+        (await repo.todosFromSource(dumpId)).map((r) => r.dueDate),
+        ['2026-09-30', '2026-09-30'],
+      );
+    });
+
+    test('fixture 1: "for September 30th to go to the store" recorded 09-27',
+        () async {
+      final List<TodoRow> created = await arrive(
+        text: 'Add to my to-do list for September 30th to go to the store.',
+        recordedOn: DateTime(2026, 9, 27, 14, 3),
+      );
+      expect(created.single.body, 'go to the store');
+      expect(created.single.dueDate, '2026-09-30');
+      expect(created.single.source, 'voice');
+    });
+
+    test('a transcript with no date leaves due_date null', () async {
+      final List<TodoRow> created = await arrive();
+      expect(created.length, 2);
+      for (final TodoRow row in created) {
+        expect(row.dueDate, isNull);
+      }
+    });
+
+    test('recordedOn comes from the dump row, not the clock (D2)', () async {
+      // The repository clock says Sep 27 but the dump was recorded Oct 5:
+      // "September 30th" must roll to next year.
+      clock = DateTime.utc(2026, 9, 27, 12);
+      final List<TodoRow> created = await arrive(
+        text: 'Add to my to-do list for September 30th to go to the store.',
+        recordedOn: DateTime(2026, 10, 5, 9),
+      );
+      expect(created.single.dueDate, '2027-09-30');
+    });
+
+    test('a UTC created_at is read as the local recording day', () async {
+      final DateTime utcStamp = DateTime.utc(2026, 9, 30, 12);
+      final List<TodoRow> created = await arrive(
+        text: 'add to my to do list for September 30th pay rent',
+        recordedOn: utcStamp,
+      );
+      // Noon UTC is Sep 30 in every zone from UTC-12 to UTC+11.
+      expect(created.single.dueDate, '2026-09-30');
+    });
   });
 }
