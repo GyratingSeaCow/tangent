@@ -8,6 +8,25 @@ re-derive it.
 
 ## 1. Open items
 
+### 1.17 Translation + summary status — DONE (2026-09-27, v1.19.0)
+
+Jeff's picks: per-recording translation only (no global switch), language
+tag shown, failures surfaced with Retry + queue position.
+- Server-authored `language`/`translated` (faster-whisper `task=translate`)
+  and `summary_status`/`summary_error`/`summary_queue_position` driven by
+  the worker. Client DB v22. Proven on a real Spanish clip both ways and
+  on a real killed inference child (`RuntimeError: summarize_infer exited -9`).
+- Device check caught what tests didn't: under the real theme `error` ==
+  `errorContainer`, so the Retry label was invisible. Fixed + pinned under
+  `tangentTheme()`. Lesson recorded: any new coloured surface gets one
+  screenshot on a device before tagging.
+
+Open:
+- Queue position only shows while ≥2 summaries are queued — rarely seen
+  on a single-user server; fine.
+- A not-installed summarizer env is still a 409 at request time, not a
+  `failed` status (correct — the client already routes that 409).
+
 ### 1.16 Summarize UX fixes — DONE (2026-09-26, v1.17.1 + v1.18.0)
 
 Both from Jeff's live use of 1.17.0 the same evening.
