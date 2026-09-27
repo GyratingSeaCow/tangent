@@ -16,6 +16,18 @@ void main() {
       );
     });
 
+    test('Whisper closes the trigger with a period — first item is not ". Go…"', () {
+      // Real recording, v1.23.0 first-day data: the server stored
+      // '. Go to the store' and '. Go out for a drive'.
+      expect(
+        TodoVoiceParser.parse('Add to my to do list. Go to the store and go get Advil.'),
+        ['Go to the store', 'go get Advil'],
+      );
+      expect(
+        TodoVoiceParser.parse('add to my to do list… go out for a drive'),
+        ['go out for a drive'],
+      );
+    });
     test('add to my todo list (one word)', () {
       expect(
         TodoVoiceParser.parse('add to my todo list call the bank'),

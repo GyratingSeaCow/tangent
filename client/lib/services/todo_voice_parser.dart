@@ -74,8 +74,14 @@ class TodoVoiceParser {
     return items;
   }
 
+  /// Sentence punctuation Whisper glues to the FRONT of the first item:
+  /// it closes the trigger phrase with a period ("…to do list. Go to the
+  /// store"), so the span opens with ". ". Real-data finding, v1.23.0.
+  static final RegExp _leadingPunctuation = RegExp(r'^[.,;:!?…\s]+');
+
   static String _clean(String raw) {
     String item = raw.trim().replaceAll(_whitespace, ' ');
+    item = item.replaceFirst(_leadingPunctuation, '');
     item = item.replaceFirst(_leadingTo, '');
     // Trailing sentence punctuation, then any space it was hiding.
     while (item.endsWith('.')) {
