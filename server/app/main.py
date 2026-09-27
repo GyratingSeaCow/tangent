@@ -69,6 +69,11 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             summarizer_worker.start_worker_if_installed
         )
         summarizer_worker.start_worker_if_installed()
+        # Google Tasks is always a lightweight poller. The cycle itself checks
+        # the persisted connection state and does no HTTP work unless linked.
+        from app.services import google_tasks_worker
+
+        google_tasks_worker.start_worker()
         if not is_setup_complete(db):
             print("")
             print("=" * 60)
@@ -97,13 +102,19 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             next(gen)
 
     yield
-    from app.services import ocr_env, summarizer_env, summarizer_worker
+    from app.services import (
+        google_tasks_worker,
+        ocr_env,
+        summarizer_env,
+        summarizer_worker,
+    )
     from app.services.ocr_worker import stop_worker
 
     ocr_env.set_on_installed(None)  # no worker starts after shutdown
     stop_worker()
     summarizer_env.set_on_installed(None)
     summarizer_worker.stop_worker()
+    google_tasks_worker.stop_worker()
     log.info("server.stopping")
 
 

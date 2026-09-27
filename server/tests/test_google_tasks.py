@@ -555,3 +555,37 @@ def test_sync_now_returns_last_cycle_counts(google_api, monkeypatch):
     assert response.json()["pushed"] == 1
     assert response.json()["pulled"] == 0
     assert response.json()["last_sync_at"] is not None
+
+
+@pytest.mark.parametrize(
+    "link_status", ["disconnected", "pending", "reauth_required", "error"]
+)
+def test_worker_skips_cycle_entirely_unless_connected(
+    google_api, monkeypatch, link_status
+):
+    _client, _token, db_path = google_api
+    with _db(db_path) as db:
+        db.execute(
+            "INSERT OR REPLACE INTO google_tasks_link (id, status) VALUES (1, ?)",
+            (link_status,),
+        )
+        db.commit()
+        monkeypatch.setattr(
+            google_tasks_worker,
+            "run_cycle",
+            lambda _db: pytest.fail("non-connected worker must skip the cycle"),
+        )
+        assert google_tasks_worker.run_cycle_if_connected(db) is False
+    assert google_tasks_worker.SYNC_INTERVAL_S == 300
+
+
+def test_worker_runs_one_cycle_when_connected(google_api, monkeypatch):
+    _client, _token, db_path = google_api
+    seen: list[sqlite3.Connection] = []
+    with _db(db_path) as db:
+        _connected(db)
+        monkeypatch.setattr(
+            google_tasks_worker, "run_cycle", lambda connection: seen.append(connection)
+        )
+        assert google_tasks_worker.run_cycle_if_connected(db) is True
+        assert seen == [db]

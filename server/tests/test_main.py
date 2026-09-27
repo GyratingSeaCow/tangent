@@ -97,3 +97,21 @@ def test_app_lifespan_fails_interrupted_jobs(temp_data_dir: Path):
     assert rows['job-completed'][2] is None
     assert rows['job-failed'][0] == 'failed'
     assert rows['job-failed'][2] == 'existing failure'
+
+
+def test_app_lifespan_starts_and_stops_google_tasks_worker(
+    temp_data_dir: Path, monkeypatch
+):
+    from app.services import google_tasks_worker
+
+    events: list[str] = []
+    monkeypatch.setattr(
+        google_tasks_worker, "start_worker", lambda: events.append("start")
+    )
+    monkeypatch.setattr(
+        google_tasks_worker, "stop_worker", lambda: events.append("stop")
+    )
+
+    with TestClient(create_app()):
+        assert events == ["start"]
+    assert events == ["start", "stop"]
