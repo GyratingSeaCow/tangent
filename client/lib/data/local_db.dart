@@ -117,6 +117,34 @@ class Dumps extends Table {
   /// syncs down. Null when nothing was ever requested from here.
   IntColumn get summaryRequestedAt => integer().nullable()();
 
+  /// ISO 639-1 code Whisper detected for the audio (v1.19.0 Part A), e.g.
+  /// 'es'; null until the first transcription lands. SERVER-authored: only
+  /// ever set from a pull, never in the push payload.
+  TextColumn get language => text().nullable()();
+
+  /// True when the stored transcript is an English TRANSLATION of the audio
+  /// (the job ran with `translate`). Server-authored like [language]; null
+  /// reads as false (the column is nullable so the generated row class does
+  /// not force every constructor to name it; the wire value is 0/1).
+  BoolColumn get translated => boolean().nullable()();
+
+  /// Server-side summary job state (v1.19.0 Part B): 'queued', 'running',
+  /// 'failed', or null for idle/done. Server-authored, pull only.
+  TextColumn get summaryStatus => text().nullable()();
+
+  /// Short human reason when [summaryStatus] is 'failed'. Server-authored.
+  TextColumn get summaryError => text().nullable()();
+
+  /// 1-based place in the server's summary queue, only while 'queued'.
+  /// Server-authored.
+  IntColumn get summaryQueuePosition => integer().nullable()();
+
+  /// Unix seconds when the user dismissed the 'Summary failed' line on THIS
+  /// device. LOCAL-ONLY: never pushed, never read from a pull. Cleared by
+  /// [LocalDb.applyRemoteDump] when the summary succeeds or a new attempt
+  /// starts, so the line returns on the next failure.
+  IntColumn get summaryErrorDismissedAt => integer().nullable()();
+
   @override
   Set<Column> get primaryKey => {id};
 }
@@ -316,7 +344,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   LocalDb.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 21;
+  int get schemaVersion => 22;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -748,6 +776,37 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
               await m.addColumn(dumps, dumps.summaryRequestedAt);
             }
           }
+          if (from < 22) {
+            // v1.19.0: translation (language, translated) and summary status
+            // (summary_status, summary_error, summary_queue_position) —
+            // all server-authored, pulled only — plus the local-only
+            // summary_error_dismissed_at. Same ask-the-database guard.
+            final Set<String> dumpCols = <String>{
+              for (final QueryRow row
+                  in await customSelect('PRAGMA table_info(dumps)').get())
+                row.data['name'] as String,
+            };
+            if (dumpCols.isNotEmpty) {
+              if (!dumpCols.contains('language')) {
+                await m.addColumn(dumps, dumps.language);
+              }
+              if (!dumpCols.contains('translated')) {
+                await m.addColumn(dumps, dumps.translated);
+              }
+              if (!dumpCols.contains('summary_status')) {
+                await m.addColumn(dumps, dumps.summaryStatus);
+              }
+              if (!dumpCols.contains('summary_error')) {
+                await m.addColumn(dumps, dumps.summaryError);
+              }
+              if (!dumpCols.contains('summary_queue_position')) {
+                await m.addColumn(dumps, dumps.summaryQueuePosition);
+              }
+              if (!dumpCols.contains('summary_error_dismissed_at')) {
+                await m.addColumn(dumps, dumps.summaryErrorDismissedAt);
+              }
+            }
+          }
         },
       );
 
@@ -1018,7 +1077,34 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     // Device-authored, but the same wire rule: an older server never sends
     // the key (leave the map alone); a present null is "no names".
     Object? speakerNames = absentSpeakerNamesField,
+    // v1.19.0 server-authored fields, same absent-vs-null contract: an
+    // older server never sends the keys (keep what we hold); a present null
+    // is authoritative ('unknown language' / 'idle' / 'no error').
+    Object? language = absentSummaryField,
+    Object? translated = absentSummaryField,
+    Object? summaryStatus = absentSummaryField,
+    Object? summaryError = absentSummaryField,
+    Object? summaryQueuePosition = absentSummaryField,
   }) async {
+    final Value<String?> languageValue = identical(language, absentSummaryField)
+        ? const Value<String?>.absent()
+        : Value<String?>(language as String?);
+    final Value<bool?> translatedValue =
+        identical(translated, absentSummaryField)
+            ? const Value<bool?>.absent()
+            : Value<bool?>(_wireBool(translated));
+    final Value<String?> summaryStatusValue =
+        identical(summaryStatus, absentSummaryField)
+            ? const Value<String?>.absent()
+            : Value<String?>(summaryStatus as String?);
+    final Value<String?> summaryErrorValue =
+        identical(summaryError, absentSummaryField)
+            ? const Value<String?>.absent()
+            : Value<String?>(summaryError as String?);
+    final Value<int?> summaryQueuePositionValue =
+        identical(summaryQueuePosition, absentSummaryField)
+            ? const Value<int?>.absent()
+            : Value<int?>(summaryQueuePosition as int?);
     final Value<String?> speakerNamesValue =
         identical(speakerNames, absentSpeakerNamesField)
             ? const Value<String?>.absent()
@@ -1053,11 +1139,35 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     final int? incomingSummarizedAt = summarizedAtValue.present
         ? summarizedAtValue.value
         : null;
-    final Value<int?> summaryRequestedAtValue = requestedAt != null &&
-            incomingSummarizedAt != null &&
-            incomingSummarizedAt >= requestedAt
-        ? const Value<int?>(null)
-        : const Value<int?>.absent();
+    final bool summaryAnswered = requestedAt != null &&
+        incomingSummarizedAt != null &&
+        incomingSummarizedAt >= requestedAt;
+    // v1.19.0: the server's own verdict outranks the local guess. A 'failed'
+    // status ends the request too — the local heuristic must not keep the
+    // strip saying 'in progress' over a failure the server already reported.
+    final bool summaryFailedNow =
+        summaryStatusValue.present && summaryStatusValue.value == 'failed';
+    final Value<int?> summaryRequestedAtValue =
+        summaryAnswered || summaryFailedNow
+            ? const Value<int?>(null)
+            : const Value<int?>.absent();
+    // A successful summary (status null, summarized_at advanced past what we
+    // hold) also spends the local 'dismissed' marker, so the red line comes
+    // back on the NEXT failure rather than staying hidden forever.
+    final bool summarySucceeded = summaryStatusValue.present &&
+        summaryStatusValue.value == null &&
+        incomingSummarizedAt != null &&
+        (existing?.summarizedAt == null ||
+            incomingSummarizedAt > existing!.summarizedAt!);
+    // A NEW attempt (server says queued/running) spends it as well: if that
+    // attempt fails, the user must see the fresh failure.
+    final bool summaryAttemptStarted = summaryStatusValue.present &&
+        (summaryStatusValue.value == 'queued' ||
+            summaryStatusValue.value == 'running');
+    final Value<int?> summaryErrorDismissedAtValue =
+        summarySucceeded || summaryAnswered || summaryAttemptStarted
+            ? const Value<int?>(null)
+            : const Value<int?>.absent();
     if (existing == null) {
       // Re-creating a row the server still holds. If a COMPLETED local
       // deletion receipt is parked on this id, the server's copy has
@@ -1100,6 +1210,11 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
           transcriptTimings: timingsValue,
           summaryTemplate: templateValue,
           speakerNames: speakerNamesValue,
+          language: languageValue,
+          translated: translatedValue,
+          summaryStatus: summaryStatusValue,
+          summaryError: summaryErrorValue,
+          summaryQueuePosition: summaryQueuePositionValue,
           syncedSeq: Value(seq),
         ),
         mode: InsertMode.insertOrReplace,
@@ -1128,9 +1243,36 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
         summaryTemplate: templateValue,
         speakerNames: speakerNamesValue,
         summaryRequestedAt: summaryRequestedAtValue,
+        language: languageValue,
+        translated: translatedValue,
+        summaryStatus: summaryStatusValue,
+        summaryError: summaryErrorValue,
+        summaryQueuePosition: summaryQueuePositionValue,
+        summaryErrorDismissedAt: summaryErrorDismissedAtValue,
         syncDirty: const Value<bool?>(false),
         syncedSeq: Value(seq),
       ),
+    );
+  }
+
+  /// The wire `translated` is 0/1 (SQLite integer) but a bool or null is
+  /// accepted too; null reads as "not translated".
+  static bool? _wireBool(Object? raw) {
+    if (raw == null) return null;
+    if (raw is bool) return raw;
+    if (raw is num) return raw != 0;
+    return raw.toString() == '1' || raw.toString() == 'true';
+  }
+
+  /// Hides the 'Summary failed' line on THIS device (v1.19.0): stamps the
+  /// local-only [Dumps.summaryErrorDismissedAt] with [now] (unix seconds).
+  /// Not dirty, updated_at untouched — nothing here is the server's
+  /// business. [applyRemoteDump] clears it again when the summary succeeds.
+  Future<void> dismissSummaryError(String id, {DateTime? now}) async {
+    final int dismissedAt =
+        (now ?? DateTime.now()).toUtc().millisecondsSinceEpoch ~/ 1000;
+    await (update(dumps)..where((d) => d.id.equals(id))).write(
+      DumpsCompanion(summaryErrorDismissedAt: Value<int?>(dismissedAt)),
     );
   }
 
@@ -1187,6 +1329,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
       DumpsCompanion(
         summaryTemplate: Value<String?>(templateId),
         summaryRequestedAt: Value<int?>(requestedAt),
+        // A fresh request supersedes a dismissed failure: the strip shows
+        // 'in progress' now and a new failure must be visible again.
+        summaryErrorDismissedAt: const Value<int?>(null),
       ),
     );
   }
