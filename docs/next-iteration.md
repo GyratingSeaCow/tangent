@@ -8,6 +8,45 @@ re-derive it.
 
 ## 1. Open items
 
+### 1.22 To Do section + voice capture — DONE (2026-09-27, v1.23.0)
+
+Jeff's picks: manual list + inflow (T1), synced via the server (T2),
+voice capture (T3), due dates + Today/Upcoming, no reminders (T4);
+trigger family "add to my to do list" / "add that to my list" /
+"remind me to" / "put on my to do list" (V2), everything after the
+phrase split on commas and "and" (V1), auto-add + card with Undo (V3);
+icon `Icons.check_box` top-right (I1). Proven live: Fold added "buy
+thermal paste" → server `sync.push applied=1` → change_log seq 1454
+`todo/upsert` → S11 Ultra received it (Jeff: "worked well").
+Specs `docs/design/2026-09-27-todo-section.md`, `...-todo-voice-capture.md`.
+
+Open:
+- Voice capture is proven by tests and sabotage, not yet by a real
+  recording on a device — first brain dump with the phrase is the proof.
+- Reminders/notifications deliberately out (T4); revisit if asked.
+- Trigger phrases are a client-side list (`TodoVoiceParser`); tune
+  without a server redeploy.
+
+### 1.21 Page backgrounds, Recordings rename, meeting capture removed — DONE (2026-09-27, v1.22.1)
+
+Graph + dot grid (B1), picker sheet with live swatches under the new
+top-right notebook menu (B2/B3); "Dumps" → "Recordings" on every
+surface, Brain Dump MODE keeps its name (R1); meeting capture gone from
+home picker + list create menu, existing meeting rows untouched (M1).
+Ruling brightened in v1.22.1 to a dedicated `rule` token (2.87:1) after
+Jeff found it invisible on the tablet; his note: "seems better, we may
+adjust it again in the future" — the knob is one colour in
+`tangent_tokens.dart` inside the 2.5–4.2:1 test window.
+
+### 1.20 Pinned playback controls — DONE (2026-09-27, v1.21.0)
+
+Player + waveform pinned above the scrolling transcript so you can
+pause while reading. Same release train as ink-to-text.
+
+### 1.19 Ink to text — DONE (2026-09-27, v1.21.0)
+
+Lasso → Convert to text replaces ink in-place (K1) via server-side
+TrOCR `POST /v1/ocr/recognize` (K2). One undoable step.
 ### 1.18 Transcript → notebook — DONE (2026-09-27, v1.20.0)
 
 Jeff's picks: send from the recording (N1=a), rendered `[mm:ss] Name:`
