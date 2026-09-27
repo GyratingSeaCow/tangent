@@ -19,6 +19,7 @@ import 'package:tangent/data/storage/local_deletion_service.dart';
 import 'package:tangent/data/storage/recording_importer.dart';
 import 'package:tangent/data/storage/storage_catalog.dart';
 import 'package:tangent/main.dart';
+import 'package:tangent/models/dump_mode.dart';
 import 'package:tangent/screens/home/home_providers.dart';
 import 'package:tangent/screens/home/home_screen.dart';
 import 'package:tangent/screens/note/note_compose_screen.dart';
@@ -450,13 +451,28 @@ void main() {
     await db.close();
   }
 
-  testWidgets('mode selector renders Brain Dump, Meeting, and Text Note',
-      (tester) async {
+  testWidgets(
+      'mode selector renders exactly Brain Dump and Text Note — no Meeting '
+      'segment (M1: meeting capture removed)', (tester) async {
     final db = await mountHome(tester);
 
     expect(find.text('Brain Dump'), findsOneWidget);
-    expect(find.text('Meeting'), findsOneWidget);
     expect(find.text('Text Note'), findsOneWidget);
+    expect(
+      find.text('Meeting'),
+      findsNothing,
+      reason: 'meeting capture is removed from the home picker',
+    );
+    final segments = tester
+        .widget<SegmentedButton<DumpMode>>(
+          find.byType(SegmentedButton<DumpMode>),
+        )
+        .segments;
+    expect(
+      segments.map((s) => s.value).toList(),
+      [DumpMode.brainDump, DumpMode.textNote],
+      reason: 'create surfaces offer exactly {brain dump, note}',
+    );
     expect(tester.takeException(), isNull);
 
     await unmountHome(tester, db);

@@ -624,7 +624,7 @@ void main() {
       // Requirement 8: the status line is a STATUS line — the model list
       // moved into WhisperModelSection's radios, so 'default model:' and the
       // 'available:' pseudo-menu are gone from here.
-      expect(find.textContaining('Connected · 2 dumps'), findsOneWidget);
+      expect(find.textContaining('Connected · 2 recordings'), findsOneWidget);
       expect(find.textContaining('default model:'), findsNothing);
       expect(find.textContaining('available:'), findsNothing);
       // This test's original intent — the user can see WHICH model the

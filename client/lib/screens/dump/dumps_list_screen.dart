@@ -47,7 +47,7 @@ import '../home/home_screen.dart' show localDbProvider;
 /// What the `+` FAB on the dumps list asks the home screen to create.
 /// The list pops itself with one of these; home switches mode and either
 /// opens note compose or starts recording immediately.
-enum DumpsCreateAction { textNote, brainDump, meeting }
+enum DumpsCreateAction { textNote, brainDump }
 
 class DumpsListScreen extends ConsumerStatefulWidget {
   const DumpsListScreen({super.key, this.onOpenDump});
@@ -169,7 +169,10 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
     final direct = switch (ref.read(dumpModeFilterProvider)) {
       DumpModeFilter.textNote => DumpsCreateAction.textNote,
       DumpModeFilter.brainDump => DumpsCreateAction.brainDump,
-      DumpModeFilter.meeting => DumpsCreateAction.meeting,
+      // Meeting capture is removed (v1.22.0): the filter still shows
+      // existing meeting recordings, but the FAB falls back to the create
+      // sheet instead of starting a new meeting recording.
+      DumpModeFilter.meeting => null,
       DumpModeFilter.all => null,
     };
     final action = direct ??
@@ -192,13 +195,6 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
                   title: const Text('Brain Dump'),
                   onTap: () => Navigator.of(sheetContext)
                       .pop(DumpsCreateAction.brainDump),
-                ),
-                ListTile(
-                  key: const ValueKey('create-option-meeting'),
-                  leading: const Icon(Icons.groups),
-                  title: const Text('Meeting'),
-                  onTap: () =>
-                      Navigator.of(sheetContext).pop(DumpsCreateAction.meeting),
                 ),
               ],
             ),
@@ -278,13 +274,13 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
                   controller: _searchController,
                   autofocus: true,
                   decoration: const InputDecoration(
-                    hintText: 'Search dumps…',
+                    hintText: 'Search recordings…',
                     border: InputBorder.none,
                   ),
                   onChanged: (value) =>
                       ref.read(searchQueryProvider.notifier).state = value,
                 )
-              : const Text('Dumps'),
+              : const Text('Recordings'),
           actions: [
             if (!_searching)
               SyncButton(engineProvider: documentSyncEngineProvider),
@@ -467,7 +463,7 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
                               dumps: results.rows,
                               empty: showingSearch
                                   ? 'No matches'
-                                  : 'No dumps yet — record one!',
+                                  : 'No recordings yet — record one!',
                               searchQuery: showingSearch ? query.trim() : '',
                               searchMatches: showingSearch
                                   ? ref

@@ -172,8 +172,9 @@ void main() {
   });
 
   testWidgets(
-      'DumpsCreateAction.meeting result starts recording immediately with '
-      'mode meeting', (tester) async {
+      'Meeting filter FAB no longer creates a meeting recording: the create '
+      'sheet opens and home never receives a meeting action (M1)',
+      (tester) async {
     final db = await mountHome(tester);
 
     await openDumps(tester);
@@ -188,9 +189,16 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
     await tester.pump(const Duration(milliseconds: 100));
 
-    expect(stub.events, contains('start'));
-    expect(coordinator.startedModes, ['meeting']);
-    expect(selectedModes(tester), {DumpMode.meeting});
+    // The list stays up behind the create sheet; nothing reached the
+    // recorder and no meeting mode can ever be started from here again.
+    expect(find.byType(DumpsListScreen), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('create-option-meeting')),
+      findsNothing,
+      reason: 'create surfaces offer exactly {brain dump, note}',
+    );
+    expect(stub.events, isEmpty);
+    expect(coordinator.startedModes, isEmpty);
     expect(tester.takeException(), isNull);
 
     await unmountHome(tester, db);

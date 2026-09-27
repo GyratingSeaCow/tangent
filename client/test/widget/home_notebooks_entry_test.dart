@@ -101,7 +101,7 @@ void main() {
           )
           .map((IconButton button) => button.tooltip)
           .toList(),
-      <String>['Sync now', 'View dumps', 'Notebooks', 'Settings'],
+      <String>['Sync now', 'Recordings', 'Notebooks', 'Settings'],
     );
     expect(tester.takeException(), isNull);
 

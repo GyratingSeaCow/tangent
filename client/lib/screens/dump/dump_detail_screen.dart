@@ -1145,14 +1145,14 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
   }
 
   String _modeTitle(DumpRow? row) {
-    if (row == null) return 'Dump';
+    if (row == null) return 'Recording';
     final mode = DumpMode.fromWire(row.mode);
-    return mode == DumpMode.meeting ? 'Meeting' : 'Dump';
+    return mode == DumpMode.meeting ? 'Meeting' : 'Recording';
   }
 
   Widget _buildBody(BuildContext context, DumpRow? row) {
     if (row == null) {
-      return const Center(child: Text('Dump not found'));
+      return const Center(child: Text('Recording not found'));
     }
 
     _syncTranscriptEditor(row);

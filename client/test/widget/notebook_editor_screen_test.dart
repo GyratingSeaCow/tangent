@@ -447,7 +447,7 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('notebook-insert-menu')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Dump'));
+    await tester.tap(find.text('Recording'));
     await tester.pumpAndSettle();
 
     expect(find.byType(DumpPickerSheet), findsOneWidget);
@@ -516,7 +516,7 @@ void main() {
       for (final String label in <String>[
         'Text block',
         'Checkbox',
-        'Dump',
+        'Recording',
         'Meeting notes',
         'Text note',
       ]) {
@@ -1808,7 +1808,7 @@ void main() {
     // Insert it through the real menu, exactly as a user would.
     await tester.tap(find.byKey(const ValueKey('notebook-insert-menu')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Dump'));
+    await tester.tap(find.text('Recording'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Morning ideas').last);
     await tester.pumpAndSettle();
@@ -3093,7 +3093,7 @@ void main() {
     Future<void> importDump(WidgetTester tester, String pickKey) async {
       await tester.tap(find.byKey(const ValueKey('notebook-insert-menu')));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Dump'));
+      await tester.tap(find.text('Recording'));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(ValueKey(pickKey)));
       await tester.pump();

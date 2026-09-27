@@ -135,7 +135,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       _mode = switch (action) {
         DumpsCreateAction.textNote => DumpMode.textNote,
         DumpsCreateAction.brainDump => DumpMode.brainDump,
-        DumpsCreateAction.meeting => DumpMode.meeting,
       };
     });
     if (action == DumpsCreateAction.textNote) {
@@ -241,7 +240,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           ),
           IconButton(
             icon: const Icon(Icons.list),
-            tooltip: 'View dumps',
+            tooltip: 'Recordings',
             onPressed: _openDumpsList,
           ),
           IconButton(
@@ -383,9 +382,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   String _modeDescription(DumpMode m) => switch (m) {
         DumpMode.brainDump =>
           'Quick voice memo — gets transcribed and searchable.',
-        DumpMode.meeting =>
-          'Secretary mode — meeting notes with action items extracted.',
-        DumpMode.textNote => 'Type a quick note — searchable with your dumps.',
+        // Meeting capture is removed (v1.22.0); the enum value survives
+        // for existing recordings but [_mode] can never be meeting again.
+        DumpMode.meeting => '',
+        DumpMode.textNote =>
+          'Type a quick note — searchable with your recordings.',
       };
 }
 
@@ -403,11 +404,6 @@ class _ModeSelector extends StatelessWidget {
           value: DumpMode.brainDump,
           label: Text('Brain Dump'),
           icon: Icon(Icons.psychology),
-        ),
-        ButtonSegment(
-          value: DumpMode.meeting,
-          label: Text('Meeting'),
-          icon: Icon(Icons.groups),
         ),
         ButtonSegment(
           value: DumpMode.textNote,
