@@ -113,6 +113,46 @@ Also open, small, from this morning: **Regenerate notes** is the rule-based
 `MeetingNotesProcessor`, not the AI summarizer; Jeff may want it routed
 through the summarizer or removed — ask when convenient.
 
+## 3b. QUEUED AFTER ink-to-text: a To Do section (Jeff, 2026-09-27)
+
+Jeff: "we also need to start building a To Do section of the app. This
+seems to be a natural progression." Not specced. Why it's natural: the app
+already EXTRACTS action items (the rule-based `MeetingNotesProcessor`
+"Action items" section and the server "Actions only" summary template) and
+Jeff keeps "To Do - Personal" / "To Do - Work" notebooks by hand — nothing
+connects them. Do NOT integrate Trello (Jeff's real kanban) unless he asks;
+this is an in-app list first.
+
+Sketch to put in front of Jeff (ask these, one at a time, with examples
+from his own summaries):
+
+- **D1 — where tasks come from.** (a) manual + one-tap "Add as tasks" on a
+  summary's / meeting-notes' action-item bullets + "Make a task" from a
+  lassoed notebook text block [default: all three], (b) manual only first.
+- **D2 — what a task links back to.** (a) the source recording at the
+  transcript moment (reuse v1.20.0 `TextStamp` seconds → detail
+  `initialSeekSeconds`) and/or the notebook block [default], (b) no back-link.
+- **D3 — structure.** (a) one flat list with Today / Upcoming / No date /
+  Done sections, folders reusing the existing dump/notebook folder model
+  [default], (b) separate Personal/Work lists, (c) full kanban columns.
+- **D4 — due dates + reminders.** (a) optional due date, Android
+  notification at 9:00 that day, desktop just shows it [default], (b) no
+  dates in v1.
+- **D5 — where it lives.** (a) fourth top-bar icon on Home next to
+  Recordings / Notebooks [default], (b) inside Notebooks.
+
+Shape if defaults hold: new synced `tasks` entity (server table + client
+DB v23, device-authored, absent-vs-null sentinel like the other columns;
+`entity_type` CHECK in `server/app/db.py` line ~98 must gain `'task'`;
+`document_sync_engine.dart` gets a fourth entity) with `title, done_at,
+due_on, source_dump_id, source_seconds, source_notebook_id,
+source_block_id, folder_id, sort_order`. Server half is tiny (CRUD via the
+existing sync push/pull, no AI). Client: `TodoListScreen` + checkbox rows
++ swipe-done + "Add as tasks" sheet that parses `- ` bullets under the
+Action items / Actions heading of a summary. Proof: import the action
+items from a REAL meeting summary on the Fold, tick one, watch it sync
+to the S11 Ultra.
+
 ## 4. Recovery
 
 - This session: `session_search(query='…', session_id='20260926_020631_934331')`.
