@@ -12,9 +12,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tangent/data/local_db.dart';
+import 'package:tangent/data/notebook_repository.dart';
+import 'package:tangent/data/settings_store.dart';
 import 'package:tangent/data/storage/storage_contract.dart';
 import 'package:tangent/data/storage/storage_providers.dart';
 import 'package:tangent/screens/dump/dump_detail_screen.dart';
+import 'package:tangent/screens/notebook/notebook_editor_screen.dart';
+import 'package:tangent/screens/notebook/send_to_notebook.dart';
+import 'package:tangent/screens/settings/settings_screen.dart'
+    show settingsStoreProvider;
+import 'package:tangent/services/notebook_import.dart';
 import 'package:tangent/screens/home/home_providers.dart';
 import 'package:tangent/screens/home/home_screen.dart' show localDbProvider;
 import 'package:tangent/screens/settings/ai_summaries_section.dart';
@@ -24,6 +31,7 @@ import 'package:tangent/services/recording_playback.dart';
 import '../support/bound_row_fixture.dart';
 import '../support/bound_service_fixture.dart';
 import '../support/bound_widget_lifetime.dart';
+import '../support/fake_notebook_repository.dart';
 import '../support/legacy_audio_storage_fixture.dart';
 import '../support/resolved_temp.dart';
 
@@ -221,6 +229,73 @@ void main() {
       findsOneWidget,
       reason: 'a viewer-less desktop still learns where the file landed',
     );
+    await unmount(tester);
+  });
+
+  // Transcript-to-notebook spec §A (2): the same "Send to notebook…" flow
+  // from the detail overflow — picker → New → shape → import recorded →
+  // snackbar → Open pushes the editor at the new block.
+  testWidgets('detail overflow: Send to notebook runs picker, sheet, import',
+      (tester) async {
+    final FakeNotebookRepository repository = FakeNotebookRepository();
+    addTearDown(repository.dispose);
+    final List<(String, int, ImportShape, bool)> calls =
+        <(String, int, ImportShape, bool)>[];
+    await mountDetail(
+      tester,
+      'md-5',
+      _plain,
+      extraOverrides: <Override>[
+        notebookRepositoryProvider.overrideWithValue(repository),
+        settingsStoreProvider.overrideWithValue(SettingsStore()),
+        notebookImportProvider.overrideWithValue(({
+          required String notebookId,
+          required List<DumpRow> dumps,
+          required ImportShape shape,
+          required bool includeAudioCard,
+        }) async {
+          calls.add((notebookId, dumps.length, shape, includeAudioCard));
+          return (notebookId: notebookId, newBlockIds: <String>['blk-1']);
+        }),
+      ],
+    );
+
+    final Finder sendEntry =
+        find.byKey(const ValueKey('detail-send-to-notebook'));
+    await tester.tap(more);
+    await tester.pumpAndSettle();
+    expect(sendEntry, findsOneWidget);
+    expect(find.text('Send to notebook…'), findsOneWidget);
+    await tester.tap(sendEntry);
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('notebook-picker')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('notebook-picker-new')));
+    await tester.pumpAndSettle();
+    expect(repository.snapshot.single.title, 'Sprint planning');
+
+    await tester.tap(find.byKey(const ValueKey('import-as-text')));
+    await tester.pumpAndSettle();
+
+    expect(calls, hasLength(1));
+    expect(calls.single.$1, repository.snapshot.single.id);
+    expect(calls.single.$2, 1);
+    expect(calls.single.$3, ImportShape.text);
+    expect(calls.single.$4, isTrue);
+    expect(
+      find.byKey(const ValueKey('send-to-notebook-done')),
+      findsOneWidget,
+    );
+    expect(find.text('Added to Sprint planning'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('send-to-notebook-open')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    final NotebookEditorScreen editor = tester.widget<NotebookEditorScreen>(
+      find.byType(NotebookEditorScreen),
+    );
+    expect(editor.notebookId, repository.snapshot.single.id);
+    expect(editor.scrollToBlockId, 'blk-1');
     await unmount(tester);
   });
 }

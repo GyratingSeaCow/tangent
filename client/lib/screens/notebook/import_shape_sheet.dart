@@ -94,60 +94,64 @@ class _ImportShapeSheetState extends State<_ImportShapeSheet> {
       );
 
   @override
+  // Scrollable: with the summary shapes and the switch the sheet is five
+  // rows, which overflows a short landscape viewport otherwise.
   Widget build(BuildContext context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            ListTile(
-              key: const ValueKey<String>('import-as-card'),
-              leading: const Icon(Icons.graphic_eq),
-              title: const Text('Audio bubble'),
-              subtitle: const Text('A playable card you can drag around'),
-              onTap: () => _pick(ImportShape.audio),
-            ),
-            const Divider(height: 1),
-            ListTile(
-              key: const ValueKey<String>('import-as-text'),
-              leading: const Icon(Icons.notes),
-              title: const Text('Text'),
-              subtitle: const Text('The transcript, in an editable text box'),
-              onTap: () => _pick(ImportShape.text),
-            ),
-            if (widget.offerSummary) ...<Widget>[
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
               ListTile(
-                key: const ValueKey<String>('import-as-summary'),
-                leading: const Icon(Icons.auto_awesome_outlined),
-                title: const Text('Summary'),
-                subtitle: const Text(
-                  'Key points and action items, in an editable text box',
-                ),
-                onTap: () => _pick(ImportShape.summary),
+                key: const ValueKey<String>('import-as-card'),
+                leading: const Icon(Icons.graphic_eq),
+                title: const Text('Audio bubble'),
+                subtitle: const Text('A playable card you can drag around'),
+                onTap: () => _pick(ImportShape.audio),
               ),
+              const Divider(height: 1),
               ListTile(
-                key: const ValueKey<String>('import-as-both'),
-                leading: const Icon(Icons.library_books),
-                title: const Text('Transcript + summary'),
-                subtitle: const Text(
-                  'Both, as two text boxes — summary first',
+                key: const ValueKey<String>('import-as-text'),
+                leading: const Icon(Icons.notes),
+                title: const Text('Text'),
+                subtitle: const Text('The transcript, in an editable text box'),
+                onTap: () => _pick(ImportShape.text),
+              ),
+              if (widget.offerSummary) ...<Widget>[
+                ListTile(
+                  key: const ValueKey<String>('import-as-summary'),
+                  leading: const Icon(Icons.auto_awesome_outlined),
+                  title: const Text('Summary'),
+                  subtitle: const Text(
+                    'Key points and action items, in an editable text box',
+                  ),
+                  onTap: () => _pick(ImportShape.summary),
                 ),
-                onTap: () => _pick(ImportShape.both),
+                ListTile(
+                  key: const ValueKey<String>('import-as-both'),
+                  leading: const Icon(Icons.library_books),
+                  title: const Text('Transcript + summary'),
+                  subtitle: const Text(
+                    'Both, as two text boxes — summary first',
+                  ),
+                  onTap: () => _pick(ImportShape.both),
+                ),
+              ],
+              // Applies to the text shapes above it: the card gives the
+              // [mm:ss] stamps a player to seek in place. The Audio bubble row
+              // IS the card, so it sits on the other side of the divider.
+              SwitchListTile(
+                key: const ValueKey<String>('import-include-audio'),
+                secondary: const Icon(Icons.graphic_eq),
+                title: const Text('Include audio bubble'),
+                subtitle: const Text(
+                  'Also add a playable card next to the text shapes',
+                ),
+                value: _includeAudioCard,
+                onChanged: (bool value) =>
+                    setState(() => _includeAudioCard = value),
               ),
             ],
-            // Applies to the text shapes above it: the card gives the
-            // [mm:ss] stamps a player to seek in place. The Audio bubble row
-            // IS the card, so it sits on the other side of the divider.
-            SwitchListTile(
-              key: const ValueKey<String>('import-include-audio'),
-              secondary: const Icon(Icons.graphic_eq),
-              title: const Text('Include audio bubble'),
-              subtitle: const Text(
-                'Also add a playable card next to the text shapes',
-              ),
-              value: _includeAudioCard,
-              onChanged: (bool value) =>
-                  setState(() => _includeAudioCard = value),
-            ),
-          ],
+          ),
         ),
       );
 }
