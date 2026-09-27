@@ -1181,7 +1181,7 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
     final listen = timings != null &&
         (_listenMode ??= defaultListenMode(timings: timings, audioLocal: true));
 
-    return ListView(
+    final Widget scrollBody = ListView(
       // The action row is the LAST child, so the scroll view must reserve the
       // system bar's height on top of its own padding — otherwise the taskbar
       // (taller than a gesture pill on the Fold) sits on Save and Transcribe
@@ -1232,19 +1232,6 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
             onPressed: _playbackOpening || _deleteBusy ? null : _retryPlayback,
             child: const Text('Retry playback'),
           ),
-        if (!isNote) ...[
-          _RecordingPlaybackPanel(
-            state: _playbackController?.state ??
-                RecordingPlaybackState(
-                  loading: _playbackOpening,
-                  error: _playbackError,
-                ),
-            expectedDuration: Duration(seconds: row.durationSeconds),
-            onToggle: _playbackController?.togglePlayback ?? () async {},
-            onSeek: _playbackController?.seek ?? (_) async {},
-          ),
-          const SizedBox(height: 16),
-        ],
         if (mode == DumpMode.meeting &&
             row.meetingNotes != null &&
             row.meetingNotes!.trim().isNotEmpty) ...[
@@ -1351,29 +1338,10 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
           if ((mode != DumpMode.meeting || _transcriptExpanded) && listen) ...[
             // Listen mode (spec §3): read-only, tap a word to hear it.
             // Bounded height so the page still scrolls as one list and
-            // the action row keeps its inset.
+            // the action row keeps its inset. The waveform scrubber lives
+            // in the pinned header with the playback panel (see below), so
+            // it stays reachable while this card scrolls.
             if (mode == DumpMode.meeting) _listenToggle(listen),
-            // Waveform scrubber (spec §3.6): peaks are server-computed and
-            // ride with the timings, so it draws even before the audio is
-            // local; tapping it then routes to the download affordance.
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: WaveformScrubber(
-                key: ValueKey('waveform-${widget.dumpId}'),
-                peaks: timings.peaks,
-                position: _playhead,
-                duration: _playbackController != null &&
-                        _playbackController!.state.duration > Duration.zero
-                    ? _playbackController!.state.duration
-                    : Duration(seconds: row.durationSeconds),
-                onSeek: (t) => unawaited(_seekAndPlay(t)),
-                enabled: _playbackController != null &&
-                    _playbackController!.state.error == null,
-                onDisabledTap: ref.read(syncedAudioDownloaderProvider) == null
-                    ? null
-                    : () => unawaited(_downloadAudioForListen()),
-              ),
-            ),
             SizedBox(
               height: 360,
               child: Card(
@@ -1616,6 +1584,70 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
             ],
           ],
         ),
+      ],
+    );
+
+    // Pinned-player fix: for recordings, the playback controls must stay
+    // reachable while a long transcript scrolls — so the playback panel
+    // (and in Listen mode the waveform scrubber) sits in a fixed header
+    // above the scrolling list instead of inside it. Notes keep the plain
+    // single-list layout: they have no playback at all.
+    if (isNote) return scrollBody;
+
+    return Column(
+      key: ValueKey('pinned-playback-layout-${widget.dumpId}'),
+      children: [
+        Material(
+          // Modest elevation so the header reads as pinned above the list,
+          // using the surface the neighboring Cards already sit on.
+          elevation: 1,
+          color: Theme.of(context).colorScheme.surface,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _RecordingPlaybackPanel(
+                  state: _playbackController?.state ??
+                      RecordingPlaybackState(
+                        loading: _playbackOpening,
+                        error: _playbackError,
+                      ),
+                  expectedDuration: Duration(seconds: row.durationSeconds),
+                  onToggle: _playbackController?.togglePlayback ?? () async {},
+                  onSeek: _playbackController?.seek ?? (_) async {},
+                ),
+                if (listen &&
+                    (displayTranscript?.isNotEmpty ?? false) &&
+                    (mode != DumpMode.meeting || _transcriptExpanded)) ...[
+                  const SizedBox(height: 8),
+                  // Waveform scrubber (spec §3.6): peaks are server-computed
+                  // and ride with the timings, so it draws even before the
+                  // audio is local; tapping it then routes to the download
+                  // affordance.
+                  WaveformScrubber(
+                    key: ValueKey('waveform-${widget.dumpId}'),
+                    peaks: timings.peaks,
+                    position: _playhead,
+                    duration: _playbackController != null &&
+                            _playbackController!.state.duration >
+                                Duration.zero
+                        ? _playbackController!.state.duration
+                        : Duration(seconds: row.durationSeconds),
+                    onSeek: (t) => unawaited(_seekAndPlay(t)),
+                    enabled: _playbackController != null &&
+                        _playbackController!.state.error == null,
+                    onDisabledTap:
+                        ref.read(syncedAudioDownloaderProvider) == null
+                            ? null
+                            : () => unawaited(_downloadAudioForListen()),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+        Expanded(child: scrollBody),
       ],
     );
   }
