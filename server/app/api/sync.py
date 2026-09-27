@@ -325,6 +325,22 @@ def _instant_value(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(UTC)
 
 
+def _todo_sync_payload(row: sqlite3.Row) -> dict[str, Any]:
+    """Public todo projection; Google IDs/timestamps are server-only."""
+    return {
+        "id": row["id"],
+        "text": row["text"],
+        "done_at": row["done_at"],
+        "due_date": row["due_date"],
+        "source": row["source"],
+        "source_ref": row["source_ref"],
+        "folder_id": row["folder_id"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+        "deleted_at": row["deleted_at"],
+    }
+
+
 def _apply_todo(
     conn: sqlite3.Connection, change: SyncChange, now: int
 ) -> tuple[bool, dict[str, Any] | None]:
@@ -406,7 +422,7 @@ def _apply_todo(
          folder_id, created_at, updated_at, deleted_at),
     )
     stored = conn.execute("SELECT * FROM todos WHERE id = ?", (change.entity_id,)).fetchone()
-    return True, dict(stored)
+    return True, _todo_sync_payload(stored)
 
 
 def _apply_document(

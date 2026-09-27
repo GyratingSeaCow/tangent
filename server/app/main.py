@@ -1,5 +1,4 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-# SPDX-License-Identifier: AGPL-3.0-or-later
 """FastAPI app factory. Lifespan handles DB init + logging setup."""
 
 from __future__ import annotations
@@ -11,6 +10,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.api.dumps import router as dumps_router
+from app.api.google_tasks import router as google_tasks_router
 from app.api.jobs import router as jobs_router
 from app.api.models import router as models_router
 from app.api.ocr import router as ocr_router
@@ -68,6 +68,11 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             summarizer_worker.start_worker_if_installed
         )
         summarizer_worker.start_worker_if_installed()
+        # Google Tasks is always a lightweight poller. The cycle itself checks
+        # the persisted connection state and does no HTTP work unless linked.
+        from app.services import google_tasks_worker
+
+        google_tasks_worker.start_worker()
         if not is_setup_complete(db):
             print("")
             print("=" * 60)
@@ -96,13 +101,19 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             next(gen)
 
     yield
-    from app.services import ocr_env, summarizer_env, summarizer_worker
+    from app.services import (
+        google_tasks_worker,
+        ocr_env,
+        summarizer_env,
+        summarizer_worker,
+    )
     from app.services.ocr_worker import stop_worker
 
     ocr_env.set_on_installed(None)  # no worker starts after shutdown
     stop_worker()
     summarizer_env.set_on_installed(None)
     summarizer_worker.stop_worker()
+    google_tasks_worker.stop_worker()
     log.info("server.stopping")
 
 
@@ -126,6 +137,7 @@ def create_app() -> FastAPI:
     app.include_router(ocr_router)    # /v1/ocr/*
     app.include_router(summaries_router)  # /v1/summaries/*, /v1/dumps/{id}/summarize
     app.include_router(transcription_models_router)  # /v1/transcription/model(s)
+    app.include_router(google_tasks_router)  # /v1/google-tasks/*
 
     register_exception_handlers(app)
     return app
