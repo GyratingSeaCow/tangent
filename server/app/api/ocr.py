@@ -7,12 +7,12 @@ import sqlite3
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.auth import require_auth
 from app.db import get_db
 from app.logging_config import get_logger
-from app.services import ocr_env, ocr_worker
+from app.services import ink_render, ink_segmentation, ocr_env, ocr_worker
 from app.services.change_log import record_change
 
 router = APIRouter()
@@ -67,6 +67,71 @@ class IndexStatusResponse(BaseModel):
     backlog: int
     #: Notebooks currently queued for (re)indexing.
     queue_depth: int
+
+
+class InkPointRequest(BaseModel):
+    x: float
+    y: float
+
+
+class InkStrokeRequest(BaseModel):
+    id: str = Field(min_length=1)
+    width: float = Field(gt=0)
+    tool: Literal["pen", "highlighter"] = "pen"
+    points: list[InkPointRequest] = Field(min_length=1)
+
+
+class RecognizeRequest(BaseModel):
+    strokes: list[InkStrokeRequest]
+
+
+class RecognizedLine(BaseModel):
+    text: str
+    stroke_ids: list[str]
+    bbox: tuple[float, float, float, float]
+
+
+class RecognizeResponse(BaseModel):
+    lines: list[RecognizedLine]
+
+
+@router.post("/v1/ocr/recognize", response_model=RecognizeResponse)
+def recognize_ink(
+    payload: RecognizeRequest,
+    _user: Annotated[str, Depends(require_auth)],
+) -> RecognizeResponse:
+    """Recognize notebook strokes without writing to the OCR index or DB."""
+    if ocr_env.python_path() is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="OCR environment is not installed",
+        )
+
+    strokes = [stroke.model_dump() for stroke in payload.strokes]
+    recognized: list[RecognizedLine] = []
+    for line in ink_segmentation.segment_ink(strokes):
+        words = sorted(line.words, key=lambda word: word.bbox[0])
+        stroke_ids = [stroke_id for word in words for stroke_id in word.stroke_ids]
+        bbox = (
+            min(word.bbox[0] for word in words),
+            min(word.bbox[1] for word in words),
+            max(word.bbox[2] for word in words),
+            max(word.bbox[3] for word in words),
+        )
+        try:
+            image = ink_render.render_line(strokes, stroke_ids, scale=2.0)
+            text = ocr_worker.run_inference(image).strip()
+        except Exception as exc:
+            log.warning("ocr.recognize_failed", line_id=line.line_id, error=str(exc))
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="handwriting recognition failed",
+            ) from exc
+        if text:
+            recognized.append(
+                RecognizedLine(text=text, stroke_ids=stroke_ids, bbox=bbox)
+            )
+    return RecognizeResponse(lines=recognized)
 
 
 @router.get("/v1/ocr/capability", response_model=CapabilityResponse)
