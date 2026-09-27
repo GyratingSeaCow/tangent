@@ -166,6 +166,72 @@ final class SummaryTemplateException extends ApiException {
       : super(statusCode: 422, code: 'invalid_template');
 }
 
+/// Where the household's Google Tasks link stands — mirrors the server's
+/// `google_tasks_link.status` (docs/design/2026-09-27-google-tasks-sync.md).
+enum GoogleTasksLinkStatus {
+  disconnected,
+  pending,
+  connected,
+  reauthRequired,
+  error;
+
+  /// Wire value → enum. An unknown or missing value reads as
+  /// [disconnected]: the section then offers Connect, which is the safe
+  /// verb — nothing runs until the server confirms a link.
+  static GoogleTasksLinkStatus parse(String? raw) => switch (raw) {
+        'pending' => pending,
+        'connected' => connected,
+        'reauth_required' => reauthRequired,
+        'error' => error,
+        _ => disconnected,
+      };
+}
+
+/// GET /v1/google-tasks/status (also returned by sync-now).
+class GoogleTasksStatus {
+  const GoogleTasksStatus({
+    required this.status,
+    this.googleEmail,
+    this.lastSyncAt,
+    this.lastError,
+    this.pushed = 0,
+    this.pulled = 0,
+    this.hasCredentials = false,
+  });
+
+  factory GoogleTasksStatus.fromJson(Map<String, dynamic> json) {
+    final String? rawSync = json['last_sync_at'] as String?;
+    return GoogleTasksStatus(
+      status: GoogleTasksLinkStatus.parse(json['status'] as String?),
+      googleEmail: json['google_email'] as String?,
+      lastSyncAt: rawSync == null ? null : DateTime.tryParse(rawSync),
+      lastError: json['last_error'] as String?,
+      pushed: (json['pushed'] as num?)?.toInt() ?? 0,
+      pulled: (json['pulled'] as num?)?.toInt() ?? 0,
+      hasCredentials: json['has_credentials'] as bool? ?? false,
+    );
+  }
+
+  final GoogleTasksLinkStatus status;
+
+  /// The Google account the server signed in as; null until connected.
+  final String? googleEmail;
+
+  /// When the last sync cycle finished; null when none has run.
+  final DateTime? lastSyncAt;
+
+  /// The server's last failure message (status [GoogleTasksLinkStatus.error]).
+  final String? lastError;
+
+  /// Counts from the LAST cycle, not lifetime totals.
+  final int pushed;
+  final int pulled;
+
+  /// A client id + secret are stored server-side, so Connect is possible.
+  /// The secret itself is never returned.
+  final bool hasCredentials;
+}
+
 /// Talks to /v1/summaries/* with the same Dio conventions as
 /// [OcrSettingsClient]: bearer token, sub-500 statuses surfaced as
 /// [ApiException] via _checkStatus.
@@ -274,6 +340,73 @@ class SummariesClient {
   Future<void> uninstall() async {
     final resp = await _dio.post<dynamic>('/v1/summaries/uninstall');
     _checkStatus(resp);
+  }
+
+
+  // ---- Google Tasks (/v1/google-tasks/*) ------------------------------------
+  //
+  // Same bearer auth and status conventions; the link is server-side (one
+  // Google sign-in for the household), so these are thin verbs over it.
+
+  /// GET /v1/google-tasks/status.
+  Future<GoogleTasksStatus> getGoogleTasksStatus() async {
+    final resp = await _dio.get<dynamic>('/v1/google-tasks/status');
+    _checkStatus(resp);
+    return GoogleTasksStatus.fromJson(
+      (resp.data as Map<String, dynamic>?) ?? const {},
+    );
+  }
+
+  /// POST /v1/google-tasks/credentials — stores the OAuth client id and
+  /// secret server-side (status rests `disconnected`). The values are
+  /// sent once and never read back.
+  Future<void> saveGoogleTasksCredentials({
+    required String clientId,
+    required String clientSecret,
+  }) async {
+    final resp = await _dio.post<dynamic>(
+      '/v1/google-tasks/credentials',
+      data: <String, dynamic>{
+        'client_id': clientId,
+        'client_secret': clientSecret,
+      },
+    );
+    _checkStatus(resp);
+  }
+
+  /// POST /v1/google-tasks/connect — the server starts the OAuth loopback
+  /// flow and returns the consent URL for the phone browser to open.
+  Future<Uri> connectGoogleTasks() async {
+    final resp = await _dio.post<dynamic>('/v1/google-tasks/connect');
+    _checkStatus(resp);
+    final Map<String, dynamic> body =
+        (resp.data as Map<String, dynamic>?) ?? const {};
+    final Uri? url = Uri.tryParse(body['auth_url'] as String? ?? '');
+    if (url == null || !url.hasScheme) {
+      throw const ApiException(
+        statusCode: 502,
+        code: 'no_auth_url',
+        message: 'The server did not return a Google sign-in URL',
+      );
+    }
+    return url;
+  }
+
+  /// POST /v1/google-tasks/disconnect — revokes the token and clears it;
+  /// the stored client id/secret survive so Connect works again later.
+  Future<void> disconnectGoogleTasks() async {
+    final resp = await _dio.post<dynamic>('/v1/google-tasks/disconnect');
+    _checkStatus(resp);
+  }
+
+  /// POST /v1/google-tasks/sync-now — one cycle inline; returns the fresh
+  /// status (counts are from THIS cycle).
+  Future<GoogleTasksStatus> syncGoogleTasksNow() async {
+    final resp = await _dio.post<dynamic>('/v1/google-tasks/sync-now');
+    _checkStatus(resp);
+    return GoogleTasksStatus.fromJson(
+      (resp.data as Map<String, dynamic>?) ?? const {},
+    );
   }
 
   /// POST /v1/dumps/{id}/summarize — (re)generate one dump's summary.
