@@ -5,6 +5,31 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.18.0] - 2026-09-26
+
+Feature release: **you can see the summary being written.**
+
+### Added
+
+- While your server is writing a summary, the AI summary area shows a
+  progress card — an indeterminate bar, which style it is writing
+  ('Writing Lecture summary on your server…') and a live elapsed
+  counter. The current summary stays readable underneath until the new
+  one arrives, and the Summarize button reads 'Summarizing…' and is
+  disabled while the job runs (the server runs one job per recording).
+- The recordings list shows a 'Summarizing…' pill on that row, and its
+  ⋮ menu hides Summarize again until the job finishes.
+- The state comes from the row itself (a local-only `summary_requested_at`
+  stamped when the server accepts the request, cleared when the finished
+  summary syncs down), so it clears the instant the answer lands — no
+  polling. If no answer arrives within ten minutes (server offline, job
+  failed) the card gives up rather than spinning forever.
+
+### Changed
+
+- Client database schema v21 (adds `dumps.summary_requested_at`, never
+  synced).
+
 ## [1.17.1] - 2026-09-26
 
 ### Fixed

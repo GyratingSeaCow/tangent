@@ -50,13 +50,26 @@ ADH2/
 
 ## Status
 
-Shipping — **v1.17.1** (see CHANGELOG.md). Client and server are both
-implemented and tested (2079
+Shipping — **v1.18.0** (see CHANGELOG.md). Client and server are both
+implemented and tested (2097
 Flutter tests, 534 server tests, 100 Kotlin tests). The client runs
 natively on Linux AND Windows (tray icon, global record hotkey,
 close-to-tray, single instance, right-click = long-press; AppImage and
 Inno Setup installer under `packaging/`) — verified on CachyOS/KDE
 Plasma Wayland and Windows 11; see the README's Desktop sections.
+
+v1.18.0 adds a visible **summary-in-progress state** (client-only):
+`dumps.summary_requested_at` (client DB v21, LOCAL-ONLY — never in the
+push payload, never read from a pull) is stamped by
+`recordRequestedSummaryTemplate` on the summarize 202 and cleared by
+`applyRemoteDump` in the same write that lands a `summarized_at` >= it.
+`services/summary_pending.dart` holds the one rule (`summaryPending`:
+requested newer than summarized_at AND under 10 min old — the give-up
+for offline/failed jobs) plus a swappable clock for widget tests. Detail
+shows an indeterminate progress card (template name + 1 s elapsed
+ticker) ABOVE the preserved old summary and disables the button as
+'Summarizing…'; the list shows a 'Summarizing…' pill and hides ⋮
+Summarize again. All driven by the row stream, no polling.
 
 v1.17.0 adds the **speaker name map** (supersedes 1.15.0's rewrite-in-
 place): names live in `dumps.speaker_names` (JSON `{"Speaker 1":
