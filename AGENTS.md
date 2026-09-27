@@ -50,13 +50,24 @@ ADH2/
 
 ## Status
 
-Shipping — **v1.25.1** (see CHANGELOG.md). Client and server are both
-implemented and tested (2345
+Shipping — **v1.26.0** (see CHANGELOG.md). Client and server are both
+implemented and tested (2382
 Flutter tests, 586 server tests, 100 Kotlin tests). The client runs
 natively on Linux AND Windows (tray icon, global record hotkey,
 close-to-tray, single instance, right-click = long-press; AppImage and
 Inno Setup installer under `packaging/`) — verified on CachyOS/KDE
 Plasma Wayland and Windows 11; see the README's Desktop sections.
+
+v1.26.0 (client-only) adds **voice to-do due dates**: ONE date phrase
+directly after the trigger ("…to-do list for September 30th to go to
+the store") becomes `due_date` on EVERY item in that sentence and is
+removed from the text (`TodoVoiceParser.parseWithDate`, `VoiceTodoParse`).
+Month-name+day, `the Nth of Month`, numeric M/D, optional year; no
+year = next occurrence on/after the RECORDING's created_at (never a past
+date, never `DateTime.now()`); impossible dates (Feb 30) stay text; dates
+inside an item stay text; relative words (tomorrow/Friday) not parsed.
+With no date phrase the output is byte-identical to v1.23.1. See
+`docs/design/2026-09-27-voice-todo-due-dates.md`.
 
 v1.25.0 adds **Google Tasks sync** (two-way, last-write-wins, one Google
 list named "Tangent"; folders stay Tangent-only). It runs server-side:

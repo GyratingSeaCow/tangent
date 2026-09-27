@@ -5,6 +5,18 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.26.0 — 2026-09-27
+
+### Added
+- **Spoken due dates.** "Add to my to-do list for September 30th to go to the
+  store" now creates *go to the store* due Sep 30 — the date phrase at the
+  front applies to every item in that sentence and no longer clutters the
+  text. Month and day ("Sept 30", "the 30th of September", "9/30"),
+  optional year; without a year it is the next such date after the
+  recording, never one in the past. Impossible dates are left as text.
+  Due dates flow to Google Tasks like any other.
+- Client-only; server stays functionally at 1.25.1 (version number kept
+  uniform).
 ## 1.25.1 — 2026-09-27
 
 ### Fixed
