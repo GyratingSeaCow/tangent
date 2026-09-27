@@ -637,4 +637,385 @@ void main() {
     );
     await unmount(tester);
   });
+  /// v1.19.0 harness: a REAL row stream (db.watchDump) so server publishes
+  /// applied through applyRemoteDump reach the screen, plus a recorded
+  /// summaries client. Returns the db/client pair the test drives.
+  Future<({LocalDb db, _FakeSummariesClient client, DumpRow row})> mountLive(
+    WidgetTester tester,
+    AudioStorage storage,
+    String id, {
+    String? summary,
+  }) async {
+    final db = LocalDb.forTesting(NativeDatabase.memory());
+    final bound = await createBoundServiceFixture(db, registerDrain: false);
+    final client = _FakeSummariesClient();
+    addTearDown(() async {
+      await disposeBoundWidget(tester, bound);
+      await db.close();
+    });
+    final row = meetingRow(storage, id, summary: summary);
+    await seedFileFixtureRow(db, row);
+    storage.pathFor(row.id).writeAsBytesSync([1, 2, 3]);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          localDbProvider.overrideWithValue(db),
+          recordingMutationsProvider.overrideWithValue(bound.mutations),
+          recordingAccessProvider.overrideWithValue(bound.access),
+          dumpByIdProvider(row.id).overrideWith(
+            (ref) => db.watchDump(row.id),
+          ),
+          recordingPlaybackEngineFactoryProvider
+              .overrideWithValue(_StubEngine.new),
+          summariesEnabledProvider.overrideWith((ref) => true),
+          summariesClientProvider.overrideWith(
+            (ref) => Future<SummariesClient>.value(client),
+          ),
+        ],
+        child: MaterialApp(
+          home: DumpDetailScreen(
+            dumpId: row.id,
+            audioPath: row.audioPath,
+            durationSeconds: row.durationSeconds,
+          ),
+        ),
+      ),
+    );
+    await pumpBoundUntil(
+      tester,
+      () => find.byIcon(Icons.play_arrow).evaluate().isNotEmpty,
+    );
+    await tester.pumpAndSettle();
+    return (db: db, client: client, row: row);
+  }
+
+  /// A server publish for [row] carrying the summary verdict (v1.19.0:
+  /// `summary_status` is always present on the wire; null = idle/done).
+  Future<void> publish(
+    LocalDb db,
+    DumpRow row, {
+    required int seq,
+    required String? summary,
+    required int? summarizedAt,
+    required String? summaryStatus,
+    String? summaryError,
+    int? summaryQueuePosition,
+  }) =>
+      db.applyRemoteDump(
+        id: row.id,
+        mode: 'meeting',
+        title: row.title,
+        transcript: row.transcript,
+        meetingNotes: null,
+        durationSeconds: 4,
+        audioOnServer: true,
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+        seq: seq,
+        summary: summary,
+        summaryModel:
+            summary == null ? null : 'Qwen3-4B-Instruct-2507-Q4_K_M',
+        summarizedAt: summarizedAt,
+        summaryTemplate: summary == null ? null : 'meeting',
+        summaryStatus: summaryStatus,
+        summaryError: summaryError,
+        summaryQueuePosition: summaryQueuePosition,
+      );
+
+  testWidgets(
+      'summary failed (v1.19.0): the pulled failure shows the red line over '
+      'the OLD summary with the button enabled; Retry re-posts the row\'s '
+      'template without the picker; dismiss hides the line locally; the '
+      'pulled success clears both the line and the dismissal',
+      (tester) async {
+    useTallViewport(tester);
+    final temp = createResolvedTempSync('tangent-btn-failed-');
+    addTearDown(() => temp.deleteSync(recursive: true));
+    final storage = AudioStorage.test(temp);
+    final live = await mountLive(
+      tester,
+      storage,
+      'btn-8',
+      summary: _summaryMarkdown,
+    );
+    final LocalDb db = live.db;
+    final DumpRow row = live.row;
+    final int before = row.summarizedAt!;
+
+    final Finder failed =
+        find.byKey(const ValueKey<String>('ai-summary-failed-btn-8'));
+    final Finder card =
+        find.byKey(const ValueKey<String>('ai-summary-pending-btn-8'));
+    final Finder body =
+        find.byKey(const ValueKey<String>('ai-summary-body-btn-8'));
+    expect(failed, findsNothing, reason: 'nothing failed yet');
+
+    // (a) The server reports the last attempt failed. The old summary
+    // echoes back unchanged with the verdict on it.
+    await publish(
+      db,
+      row,
+      seq: 20,
+      summary: _summaryMarkdown,
+      summarizedAt: before,
+      summaryStatus: 'failed',
+      summaryError: 'RuntimeError: model missing',
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(failed, findsOneWidget, reason: 'the red line replaces the card');
+    expect(
+      find.descendant(
+        of: failed,
+        matching: find.text('Summary failed: RuntimeError: model missing'),
+      ),
+      findsOneWidget,
+    );
+    expect(card, findsNothing, reason: 'failed is never "in progress"');
+    expect(body, findsOneWidget, reason: 'the old body stays underneath');
+    expect(tester.widget<MarkdownBody>(body).data, _summaryMarkdown);
+    expect(
+      tester.widget<FilledButton>(button('btn-8')).onPressed,
+      isNotNull,
+      reason: 'a failure is a terminal state: the button is live again',
+    );
+
+    // Retry: the row's CURRENT effective template (meeting), no picker.
+    await tester.tap(find.byKey(const ValueKey<String>('summary-retry-btn-8')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(
+      find.byKey(const ValueKey<String>('summary-template-sheet')),
+      findsNothing,
+      reason: 'Retry re-runs the last choice; it never asks again',
+    );
+    expect(
+      live.client.summarizeCalls,
+      <(String, String?)>[('btn-8', 'meeting')],
+    );
+    // The 202 stamped a fresh request: the strip is back, the line gone.
+    expect(card, findsOneWidget, reason: 'a retry is a request in progress');
+    expect(failed, findsNothing);
+    expect((await db.getDump('btn-8'))!.summaryRequestedAt, isNotNull);
+
+    // (b) The retry fails as well. The local marker is spent by the
+    // verdict, and the user dismisses the line on this device.
+    await publish(
+      db,
+      row,
+      seq: 21,
+      summary: _summaryMarkdown,
+      summarizedAt: before,
+      summaryStatus: 'failed',
+      summaryError: 'RuntimeError: model missing',
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(card, findsNothing, reason: 'the verdict outranks the local guess');
+    expect(failed, findsOneWidget);
+    expect((await db.getDump('btn-8'))!.summaryRequestedAt, isNull);
+
+    await tester
+        .tap(find.byKey(const ValueKey<String>('summary-dismiss-btn-8')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(failed, findsNothing, reason: 'dismissed on this device');
+    expect(body, findsOneWidget, reason: 'the old body is untouched');
+    final DumpRow dismissed = (await db.getDump('btn-8'))!;
+    expect(dismissed.summaryErrorDismissedAt, isNotNull);
+    expect(dismissed.summaryStatus, 'failed', reason: 'the verdict stays');
+    expect(
+      tester.widget<FilledButton>(button('btn-8')).onPressed,
+      isNotNull,
+    );
+
+    // (c) A later attempt succeeds: status null, summarized_at advances.
+    await publish(
+      db,
+      row,
+      seq: 22,
+      summary: '## Summary\nThe NEW summary after the fix.',
+      summarizedAt: before + 600,
+      summaryStatus: null,
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
+
+    expect(failed, findsNothing);
+    expect(card, findsNothing);
+    expect(
+      tester.widget<MarkdownBody>(body).data,
+      '## Summary\nThe NEW summary after the fix.',
+    );
+    final DumpRow succeeded = (await db.getDump('btn-8'))!;
+    expect(
+      succeeded.summaryErrorDismissedAt,
+      isNull,
+      reason: 'success spends the dismissal: the next failure must show',
+    );
+    expect(succeeded.summaryStatus, isNull);
+
+    // ...and the next failure does show, with no dismiss in the way.
+    await publish(
+      db,
+      row,
+      seq: 23,
+      summary: '## Summary\nThe NEW summary after the fix.',
+      summarizedAt: before + 600,
+      summaryStatus: 'failed',
+      summaryError: 'timeout',
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(failed, findsOneWidget, reason: 'a fresh failure is never hidden');
+    expect(
+      find.descendant(
+        of: failed,
+        matching: find.text('Summary failed: timeout'),
+      ),
+      findsOneWidget,
+    );
+    await unmount(tester);
+  });
+
+  testWidgets(
+      'summary failed with NO prior summary: the red line takes the slot and '
+      'the plain Summarize button stays enabled below it', (tester) async {
+    useTallViewport(tester);
+    final temp = createResolvedTempSync('tangent-btn-failed-first-');
+    addTearDown(() => temp.deleteSync(recursive: true));
+    final storage = AudioStorage.test(temp);
+    final live = await mountLive(tester, storage, 'btn-9', summary: null);
+
+    await publish(
+      live.db,
+      live.row,
+      seq: 20,
+      summary: null,
+      summarizedAt: null,
+      summaryStatus: 'failed',
+      summaryError: 'RuntimeError: model missing',
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    final Finder failed =
+        find.byKey(const ValueKey<String>('ai-summary-failed-btn-9'));
+    expect(failed, findsOneWidget);
+    expect(find.byKey(const ValueKey('ai-summary-body-btn-9')), findsNothing);
+    expect(find.byKey(const ValueKey('ai-summary-header-btn-9')), findsNothing);
+    expect(
+      tester.widget<FilledButton>(button('btn-9')).onPressed,
+      isNotNull,
+    );
+    expect(
+      find.descendant(of: button('btn-9'), matching: find.text('Summarize')),
+      findsOneWidget,
+    );
+    await unmount(tester);
+  });
+
+  testWidgets(
+      'server-reported queue position names the place in line; running '
+      'keeps the Writing line (v1.19.0)', (tester) async {
+    useTallViewport(tester);
+    final temp = createResolvedTempSync('tangent-btn-queued-');
+    addTearDown(() => temp.deleteSync(recursive: true));
+    final storage = AudioStorage.test(temp);
+    final live = await mountLive(
+      tester,
+      storage,
+      'btn-10',
+      summary: _summaryMarkdown,
+    );
+    final int before = live.row.summarizedAt!;
+    final Finder card =
+        find.byKey(const ValueKey<String>('ai-summary-pending-btn-10'));
+    final Finder headline = find.byKey(
+      const ValueKey<String>('ai-summary-pending-headline-btn-10'),
+    );
+
+    // Queued, 2nd in line — a job another device requested: no local
+    // request time, so the card carries no elapsed counter either.
+    await publish(
+      live.db,
+      live.row,
+      seq: 20,
+      summary: _summaryMarkdown,
+      summarizedAt: before,
+      summaryStatus: 'queued',
+      summaryQueuePosition: 2,
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(card, findsOneWidget, reason: 'queued on the server is pending');
+    expect(tester.widget<Text>(headline).data, 'Queued — 2nd in line');
+    expect(
+      tester
+          .widget<Text>(
+            find.byKey(
+              const ValueKey<String>('ai-summary-pending-elapsed-btn-10'),
+            ),
+          )
+          .data,
+      'The current summary stays until the new one arrives',
+    );
+    expect(
+      tester.widget<FilledButton>(button('btn-10')).onPressed,
+      isNull,
+      reason: 'one job per dump, whoever asked',
+    );
+    expect(
+      find.byKey(const ValueKey<String>('ai-summary-failed-btn-10')),
+      findsNothing,
+    );
+
+    // Running: the position is gone, the writing line names the template.
+    await publish(
+      live.db,
+      live.row,
+      seq: 21,
+      summary: _summaryMarkdown,
+      summarizedAt: before,
+      summaryStatus: 'running',
+      summaryQueuePosition: null,
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(card, findsOneWidget);
+    expect(tester.widget<Text>(headline).data, contains('Writing'));
+    expect(tester.widget<Text>(headline).data, contains('Meeting'));
+
+    // A server 'running' never expires client-side: ten minutes on, with
+    // no local request to give up on, the card still stands.
+    final DateTime start =
+        DateTime.fromMillisecondsSinceEpoch(before * 1000, isUtc: true);
+    addTearDown(() => summaryPendingClock = DateTime.now);
+    summaryPendingClock = () => start.add(const Duration(minutes: 11));
+    await tester.pump(const Duration(minutes: 11));
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(card, findsOneWidget, reason: 'the server publishes the outcome');
+    summaryPendingClock = DateTime.now;
+
+    // The outcome: idle with a newer summary clears the card.
+    await publish(
+      live.db,
+      live.row,
+      seq: 22,
+      summary: '## Summary\nDone.',
+      summarizedAt: before + 60,
+      summaryStatus: null,
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
+    expect(card, findsNothing);
+    expect(
+      tester.widget<FilledButton>(button('btn-10')).onPressed,
+      isNotNull,
+    );
+    await unmount(tester);
+  });
 }

@@ -20,12 +20,14 @@ import '../../services/meeting_notes_processor.dart';
 import '../../services/recording_playback.dart';
 import '../../services/render_speaker_names.dart';
 import '../../services/speaker_naming.dart' show detectSpeakers;
+import '../../services/language_display.dart';
 import '../../services/summary_pending.dart';
 import '../../services/transcript_alignment.dart'
     show TranscriptAlignment, alignTranscript;
 import '../../services/transcript_search.dart'
     show alignedTokenAt, findTranscriptMatches, matchSeekSeconds;
 import '../../services/transcript_timings.dart';
+import '../../widgets/language_tag.dart';
 import '../../widgets/listen_transcript_view.dart';
 import '../../widgets/waveform_scrubber.dart';
 import 'dumps_providers.dart';
@@ -753,26 +755,21 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
       // Speaker names live in the per-recording map (N2=y), so a fresh
       // transcription keeps them: its raw labels render through the map.
       // No warning line.
+      //
+      // v1.19.0 (T1=b): a recording Whisper detected as non-English gets
+      // one extra choice — keep the original language or translate to
+      // English — defaulting to whatever the stored transcript already is.
+      // English / unknown-language rows see exactly the dialog they always
+      // did (no radios, translate stays false).
+      final bool offerTranslate = isForeignLanguage(row.language);
       showDialog<void>(
         context: context,
-        builder: (dialogContext) => AlertDialog(
-          title: const Text('Overwrite transcript?'),
-          content: const Text(
-            'The current transcript stays visible while replacement transcription runs. It is replaced only if the new transcription succeeds.',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () {
-                Navigator.of(dialogContext).pop();
-                unawaited(_runTranscription());
-              },
-              child: const Text('Overwrite'),
-            ),
-          ],
+        builder: (dialogContext) => _RetranscribeDialog(
+          dumpId: row.id,
+          language: offerTranslate ? row.language!.trim().toLowerCase() : null,
+          initialTranslate: offerTranslate && (row.translated ?? false),
+          onConfirm: (bool translate) =>
+              unawaited(_runTranscription(translate: translate)),
         ),
       );
       return;
@@ -780,7 +777,7 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
     unawaited(_runTranscription());
   }
 
-  Future<void> _runTranscription() async {
+  Future<void> _runTranscription({bool translate = false}) async {
     if (!mounted) return;
     setState(() {
       _statusError = null;
@@ -788,7 +785,7 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
     });
     final service = ref.read(serverTranscriptionServiceProvider);
     try {
-      await service.transcribeDump(widget.dumpId);
+      await service.transcribeDump(widget.dumpId, translate: translate);
     } catch (error) {
       if (mounted) {
         setState(() => _statusError = 'Transcribe failed: $error');
@@ -1122,6 +1119,8 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
     // clears from the same stream that delivers the finished summary.
     final bool summaryInProgress =
         summaryPending(row, now: summaryPendingNow());
+    // Summary failed (v1.19.0): the server's verdict, until dismissed here.
+    final bool summaryHasFailed = summaryFailed(row);
     // Tap-to-hear: timings are server-owned; Listen is offered only when
     // they exist and defaults on the first time we see them (spec §3.3).
     final timings = _timingsFor(row);
@@ -1152,6 +1151,9 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
             _MetaChip(label: 'Mode: ${mode.displayName}'),
             if (!isNote) _MetaChip(label: '${row.durationSeconds}s'),
             _MetaChip(label: sync.displayName, color: _syncColor(sync)),
+            // v1.19.0: 'ES' / 'ES → EN' for non-English recordings; nothing
+            // for English (LanguageTag renders an empty box then).
+            if (LanguageTag.labelFor(row) != null) LanguageTag(row),
           ],
         ),
         const SizedBox(height: 16),
@@ -1427,6 +1429,15 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
           if (summaryInProgress) ...[
             _SummaryPendingCard(row: row, onExpired: _onSummaryPendingExpired),
             const SizedBox(height: 8),
+          ] else if (summaryHasFailed) ...[
+            // v1.19.0: the server reported a failure. The red line replaces
+            // the progress card; the old body below still stands.
+            _SummaryFailedRow(
+              row: row,
+              onRetry: () => _retrySummary(row),
+              onDismiss: () => _dismissSummaryError(row),
+            ),
+            const SizedBox(height: 8),
           ],
           Card(
             child: Padding(
@@ -1455,6 +1466,19 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
           if (summarizable) ...[
             const SizedBox(height: 8),
             _summarizeButton(row, again: false, pending: true),
+          ],
+          const SizedBox(height: 16),
+        ] else if (summaryHasFailed) ...[
+          // No summary yet and the first attempt failed: the red line takes
+          // the slot; the button stays enabled below it.
+          _SummaryFailedRow(
+            row: row,
+            onRetry: () => _retrySummary(row),
+            onDismiss: () => _dismissSummaryError(row),
+          ),
+          if (summarizable) ...[
+            const SizedBox(height: 8),
+            _summarizeButton(row, again: false, pending: false),
           ],
           const SizedBox(height: 16),
         ] else if (summarizable) ...[
@@ -1550,6 +1574,23 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
   void _onSummaryPendingExpired() {
     if (mounted) setState(() {});
   }
+
+  /// Retry on a failed summary (v1.19.0): the same flow as the button, but
+  /// with the row's CURRENT effective template and no picker — the user
+  /// already chose; the server just failed to deliver.
+  Future<void> _retrySummary(DumpRow row) => runSummarizeFlow(
+        context,
+        client: ref.read(summariesClientProvider.future),
+        dump: row,
+        templateId: effectiveTemplateId(row.summaryTemplate, row.mode),
+        onAccepted: (String id) => ref
+            .read(localDbProvider)
+            .recordRequestedSummaryTemplate(row.id, id),
+      );
+
+  /// × on the failed line: hide it on this device until the next failure.
+  Future<void> _dismissSummaryError(DumpRow row) =>
+      ref.read(localDbProvider).dismissSummaryError(row.id);
 
   Widget _summarizeButton(
     DumpRow row, {
@@ -1802,6 +1843,11 @@ class _SummaryPendingCardState extends State<_SummaryPendingCard> {
     final minutes = elapsed.inMinutes;
     final seconds = (elapsed.inSeconds % 60).toString().padLeft(2, '0');
     final template = summaryTemplateDisplayName(widget.row.summaryTemplate);
+    // v1.19.0: while the server says 'queued' with a place in line, name
+    // it; 'running' (and the local bridge) keep the writing line.
+    final String headline = summaryQueued(widget.row)
+        ? 'Queued — ${ordinal(widget.row.summaryQueuePosition!)} in line'
+        : 'Writing $template summary on your server…';
     return Card(
       key: ValueKey('ai-summary-pending-${widget.row.id}'),
       child: Padding(
@@ -1821,7 +1867,8 @@ class _SummaryPendingCardState extends State<_SummaryPendingCard> {
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
-                    'Writing $template summary on your server…',
+                    headline,
+                    key: ValueKey('ai-summary-pending-headline-${widget.row.id}'),
                     style: theme.textTheme.bodyMedium,
                   ),
                 ),
@@ -1829,8 +1876,12 @@ class _SummaryPendingCardState extends State<_SummaryPendingCard> {
             ),
             const SizedBox(height: 4),
             Text(
-              'Elapsed $minutes:$seconds · the current summary stays until '
-              'the new one arrives',
+              // A server-reported job this device never asked for has no
+              // local request time to count from: skip the counter.
+              widget.row.summaryRequestedAt == null
+                  ? 'The current summary stays until the new one arrives'
+                  : 'Elapsed $minutes:$seconds · the current summary stays '
+                      'until the new one arrives',
               key: ValueKey('ai-summary-pending-elapsed-${widget.row.id}'),
               style: theme.textTheme.bodySmall?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
@@ -1839,6 +1890,148 @@ class _SummaryPendingCardState extends State<_SummaryPendingCard> {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// 'Summary failed: reason' (v1.19.0): a red-tinted line with Retry and a
+/// dismiss ×. Sits where the progress card would; the old summary body (if
+/// any) stays underneath, untouched.
+class _SummaryFailedRow extends StatelessWidget {
+  const _SummaryFailedRow({
+    required this.row,
+    required this.onRetry,
+    required this.onDismiss,
+  });
+
+  final DumpRow row;
+  final VoidCallback onRetry;
+  final VoidCallback onDismiss;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme colors = Theme.of(context).colorScheme;
+    final String reason = (row.summaryError ?? '').trim();
+    return Container(
+      key: ValueKey('ai-summary-failed-${row.id}'),
+      padding: const EdgeInsets.fromLTRB(12, 4, 4, 4),
+      decoration: BoxDecoration(
+        color: colors.errorContainer,
+        border: Border.all(color: colors.error),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.error_outline, size: 18, color: colors.onErrorContainer),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              reason.isEmpty
+                  ? 'Summary failed'
+                  : 'Summary failed: $reason',
+              key: ValueKey('ai-summary-failed-text-${row.id}'),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context)
+                  .textTheme
+                  .bodyMedium
+                  ?.copyWith(color: colors.onErrorContainer),
+            ),
+          ),
+          TextButton(
+            key: ValueKey('summary-retry-${row.id}'),
+            onPressed: onRetry,
+            style: TextButton.styleFrom(foregroundColor: colors.error),
+            child: const Text('Retry'),
+          ),
+          IconButton(
+            key: ValueKey('summary-dismiss-${row.id}'),
+            tooltip: 'Dismiss',
+            icon: const Icon(Icons.close, size: 18),
+            color: colors.onErrorContainer,
+            onPressed: onDismiss,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The 'Overwrite transcript?' dialog behind Transcribe again. For a
+/// non-English recording ([language] non-null, v1.19.0 T1=b) it adds two
+/// radios — keep the original language or translate to English — starting
+/// on the stored transcript's current state; otherwise it is the plain
+/// two-button dialog it always was.
+class _RetranscribeDialog extends StatefulWidget {
+  const _RetranscribeDialog({
+    required this.dumpId,
+    required this.language,
+    required this.initialTranslate,
+    required this.onConfirm,
+  });
+
+  final String dumpId;
+
+  /// ISO code of the detected language, or null when no choice is offered.
+  final String? language;
+  final bool initialTranslate;
+  final void Function(bool translate) onConfirm;
+
+  @override
+  State<_RetranscribeDialog> createState() => _RetranscribeDialogState();
+}
+
+class _RetranscribeDialogState extends State<_RetranscribeDialog> {
+  late bool _translate = widget.initialTranslate;
+
+  @override
+  Widget build(BuildContext context) {
+    final String? language = widget.language;
+    return AlertDialog(
+      title: const Text('Overwrite transcript?'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'The current transcript stays visible while replacement transcription runs. It is replaced only if the new transcription succeeds.',
+          ),
+          if (language != null) ...[
+            const SizedBox(height: 12),
+            RadioListTile<bool>(
+              key: ValueKey('retranscribe-original-${widget.dumpId}'),
+              contentPadding: EdgeInsets.zero,
+              dense: true,
+              value: false,
+              groupValue: _translate,
+              onChanged: (bool? v) => setState(() => _translate = v ?? false),
+              title: Text('In ${languageDisplayName(language)} (original)'),
+            ),
+            RadioListTile<bool>(
+              key: ValueKey('retranscribe-english-${widget.dumpId}'),
+              contentPadding: EdgeInsets.zero,
+              dense: true,
+              value: true,
+              groupValue: _translate,
+              onChanged: (bool? v) => setState(() => _translate = v ?? true),
+              title: const Text('In English (translate)'),
+            ),
+          ],
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () {
+            Navigator.of(context).pop();
+            widget.onConfirm(language != null && _translate);
+          },
+          child: const Text('Overwrite'),
+        ),
+      ],
     );
   }
 }

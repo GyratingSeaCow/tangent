@@ -146,26 +146,44 @@ Future<void> runSummarizeFlow(
   /// Called after the server accepts (202) with the picked template id,
   /// so the caller can mirror the choice into the local row immediately.
   Future<void> Function(String templateId)? onAccepted,
+  /// v1.19.0: when given, SKIPS the picker (and the catalogue fetch) and
+  /// posts this template straight away — the 'Retry' on a failed summary
+  /// re-runs the row's current template without asking again.
+  String? templateId,
 }) async {
   final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
   final SummariesClient summaries;
-  final SummaryTemplates catalogue;
-  try {
-    summaries = await client;
-    catalogue = await summaries.listTemplates();
-  } catch (e) {
-    messenger.showSnackBar(
-      SnackBar(content: Text('Could not load summary templates: $e')),
+  final String picked;
+  if (templateId != null) {
+    try {
+      summaries = await client;
+    } catch (e) {
+      messenger.showSnackBar(
+        SnackBar(content: Text('Could not queue summary: $e')),
+      );
+      return;
+    }
+    picked = templateId;
+  } else {
+    final SummaryTemplates catalogue;
+    try {
+      summaries = await client;
+      catalogue = await summaries.listTemplates();
+    } catch (e) {
+      messenger.showSnackBar(
+        SnackBar(content: Text('Could not load summary templates: $e')),
+      );
+      return;
+    }
+    if (!context.mounted) return;
+    final String? chosen = await SummaryTemplateSheet.show(
+      context,
+      catalogue: catalogue,
+      currentId: effectiveTemplateId(dump.summaryTemplate, dump.mode),
     );
-    return;
+    if (chosen == null) return;
+    picked = chosen;
   }
-  if (!context.mounted) return;
-  final String? picked = await SummaryTemplateSheet.show(
-    context,
-    catalogue: catalogue,
-    currentId: effectiveTemplateId(dump.summaryTemplate, dump.mode),
-  );
-  if (picked == null) return;
   try {
     await summaries.summarizeDump(dump.id, template: picked);
     // The picker reads the LOCAL row's template. Until the finished
