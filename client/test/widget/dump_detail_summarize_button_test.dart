@@ -597,6 +597,38 @@ void main() {
       ),
       findsOneWidget,
     );
+    expect(
+      (await db.getDump('btn-7'))!.summaryRequestedAt,
+      isNull,
+      reason: 'the marker is spent the moment the answer lands',
+    );
+
+    // A later change that carries an OLDER summarized_at (a peer's stale
+    // echo of the previous summary) must NOT bring the strip back: the
+    // request was answered and the marker is gone, not merely outranked.
+    await db.applyRemoteDump(
+      id: 'btn-7',
+      mode: 'meeting',
+      title: 'Sprint planning (renamed on the tablet)',
+      transcript: row.transcript,
+      meetingNotes: null,
+      durationSeconds: 4,
+      audioOnServer: true,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+      seq: 13,
+      summary: _summaryMarkdown,
+      summaryModel: 'Qwen3-4B-Instruct-2507-Q4_K_M',
+      summarizedAt: pendingRow.summaryRequestedAt! - 100,
+      summaryTemplate: 'meeting',
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(card, findsNothing, reason: 'a stale echo never revives the strip');
+    expect(
+      tester.widget<FilledButton>(button('btn-7')).onPressed,
+      isNotNull,
+    );
     await unmount(tester);
   });
 }
