@@ -87,6 +87,7 @@ class _NoopTranscriptionClient implements TranscriptionClient {
     String dumpId, {
     required String requestId,
     String? model,
+    bool translate = false,
   }) async =>
       TranscriptionJobSnapshot(
         id: 'job',

@@ -50,7 +50,7 @@ class _GatedTranscriptionService extends ServerTranscriptionService {
   final List<String> requested = <String>[];
 
   @override
-  Future<void> transcribeDump(String dumpId) {
+  Future<void> transcribeDump(String dumpId, {bool translate = false}) {
     requested.add(dumpId);
     return gate.future;
   }

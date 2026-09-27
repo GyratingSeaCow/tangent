@@ -109,6 +109,11 @@ RemoteChange dumpChange({
   Object? transcriptTimings = _absent,
   Object? summaryTemplate = _absent,
   Object? speakerNames = _absent,
+  Object? language = _absent,
+  Object? translated = _absent,
+  Object? summaryStatus = _absent,
+  Object? summaryError = _absent,
+  Object? summaryQueuePosition = _absent,
 }) {
   final int now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
   return RemoteChange(
@@ -139,6 +144,14 @@ RemoteChange dumpChange({
               'summary_template': summaryTemplate,
             if (!identical(speakerNames, _absent))
               'speaker_names': speakerNames,
+            if (!identical(language, _absent)) 'language': language,
+            if (!identical(translated, _absent)) 'translated': translated,
+            if (!identical(summaryStatus, _absent))
+              'summary_status': summaryStatus,
+            if (!identical(summaryError, _absent))
+              'summary_error': summaryError,
+            if (!identical(summaryQueuePosition, _absent))
+              'summary_queue_position': summaryQueuePosition,
           },
   );
 }
@@ -717,6 +730,88 @@ void main() {
           as Map<String, dynamic>;
       expect(payload.containsKey('speaker_names'), isTrue);
       expect(payload['speaker_names'], isNull);
+    });
+  });
+
+  group('v1.19.0 server-authored fields (translation + summary status)', () {
+    test('the pull accepts all five and stores them', () async {
+      await build(
+        _ScriptedClient(
+          incoming: <RemoteChange>[
+            dumpChange(
+              id: 'dump-v119-1',
+              language: 'es',
+              translated: 1,
+              summaryStatus: 'queued',
+              summaryError: null,
+              summaryQueuePosition: 2,
+            ),
+          ],
+        ),
+      ).syncNow();
+      final DumpRow row = (await db.getDumpRow('dump-v119-1'))!;
+      expect(row.language, 'es');
+      expect(row.translated, isTrue, reason: 'wire 1 reads as true');
+      expect(row.summaryStatus, 'queued');
+      expect(row.summaryError, isNull);
+      expect(row.summaryQueuePosition, 2);
+
+      // The next publish: running, position gone; then failed with a reason.
+      await build(
+        _ScriptedClient(
+          incoming: <RemoteChange>[
+            dumpChange(
+              id: 'dump-v119-1',
+              seq: 2,
+              translated: 0,
+              summaryStatus: 'running',
+              summaryQueuePosition: null,
+            ),
+            dumpChange(
+              id: 'dump-v119-1',
+              seq: 3,
+              summaryStatus: 'failed',
+              summaryError: 'RuntimeError: model not loaded',
+            ),
+          ],
+        ),
+      ).syncNow();
+      final DumpRow after = (await db.getDumpRow('dump-v119-1'))!;
+      expect(after.translated, isFalse);
+      expect(after.summaryStatus, 'failed');
+      expect(after.summaryError, 'RuntimeError: model not loaded');
+      expect(after.summaryQueuePosition, isNull);
+      expect(after.language, 'es', reason: 'absent key keeps the value');
+    });
+
+    test('the push payload carries none of the six', () async {
+      await seedLocal('dump-v119-2', dirty: true);
+      await (db.update(db.dumps)..where((d) => d.id.equals('dump-v119-2')))
+          .write(
+        const DumpsCompanion(
+          language: Value<String?>('es'),
+          translated: Value<bool?>(true),
+          summaryStatus: Value<String?>('failed'),
+          summaryError: Value<String?>('boom'),
+          summaryQueuePosition: Value<int?>(1),
+          summaryErrorDismissedAt: Value<int?>(1790000000),
+        ),
+      );
+      final client = _ScriptedClient();
+      await build(client).syncNow();
+      final payload = client.pushed
+              .firstWhere((c) => c['entity_id'] == 'dump-v119-2')['payload']
+          as Map<String, dynamic>;
+      for (final String key in <String>[
+        'language',
+        'translated',
+        'summary_status',
+        'summary_error',
+        'summary_queue_position',
+        'summary_error_dismissed_at',
+      ]) {
+        expect(payload.containsKey(key), isFalse, reason: '$key is not ours');
+      }
     });
   });
 

@@ -160,6 +160,93 @@ void main() {
       expect(snapshot.status, 'queued');
     });
 
+    test('enqueue with translate=true sends translate: true and nothing '
+        'else new (v1.19.0)', () async {
+      when(
+        () => mock.post<dynamic>(
+          '/v1/dumps/dump-es/transcribe',
+          data: any(named: 'data'),
+        ),
+      ).thenAnswer(
+        (_) async => Response(
+          requestOptions: RequestOptions(
+            path: '/v1/dumps/dump-es/transcribe',
+          ),
+          statusCode: 201,
+          data: {
+            'id': 'job-es',
+            'request_id': 'request-client-es',
+            'dump_id': 'dump-es',
+            'status': 'queued',
+            'model': 'large-v3',
+            'started_at': null,
+            'completed_at': null,
+            'result_transcript': null,
+            'error': null,
+          },
+        ),
+      );
+
+      await client.enqueueTranscription(
+        'dump-es',
+        requestId: 'request-client-es',
+        translate: true,
+      );
+      final request = verify(
+        () => mock.post<dynamic>(
+          '/v1/dumps/dump-es/transcribe',
+          data: captureAny(named: 'data'),
+        ),
+      ).captured.single;
+
+      expect(request, {
+        'request_id': 'request-client-es',
+        'translate': true,
+      });
+    });
+
+    test('the default enqueue body carries no translate key (older servers '
+        'see the same body as before)', () async {
+      when(
+        () => mock.post<dynamic>(
+          '/v1/dumps/dump-en/transcribe',
+          data: any(named: 'data'),
+        ),
+      ).thenAnswer(
+        (_) async => Response(
+          requestOptions: RequestOptions(
+            path: '/v1/dumps/dump-en/transcribe',
+          ),
+          statusCode: 201,
+          data: {
+            'id': 'job-en',
+            'request_id': 'request-client-en',
+            'dump_id': 'dump-en',
+            'status': 'queued',
+            'model': 'large-v3',
+            'started_at': null,
+            'completed_at': null,
+            'result_transcript': null,
+            'error': null,
+          },
+        ),
+      );
+
+      await client.enqueueTranscription(
+        'dump-en',
+        requestId: 'request-client-en',
+      );
+      final request = verify(
+        () => mock.post<dynamic>(
+          '/v1/dumps/dump-en/transcribe',
+          data: captureAny(named: 'data'),
+        ),
+      ).captured.single as Map<String, dynamic>;
+
+      expect(request.containsKey('translate'), isFalse);
+      expect(request, {'request_id': 'request-client-en'});
+    });
+
     test('enqueue maps the server request-id conflict response', () async {
       when(
         () => mock.post<dynamic>(

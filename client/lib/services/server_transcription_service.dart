@@ -24,9 +24,19 @@ import 'transcription_client.dart';
 /// interrupted attempts without exposing a second in-memory status model.
 
 final class _QueuedTranscription {
-  _QueuedTranscription(this.dumpId, {this.recoveryOnly = false});
+  _QueuedTranscription(
+    this.dumpId, {
+    this.recoveryOnly = false,
+    this.translate = false,
+  });
   final String dumpId;
   bool recoveryOnly;
+
+  /// v1.19.0: ask Whisper for an English translation of non-English audio.
+  /// Only a user-chosen re-transcribe sets this; first runs and recovery
+  /// re-enqueues are always false (the language is unknown before Whisper
+  /// has run once).
+  final bool translate;
   late final Future<void> ready;
   DumpRow? ownedRow;
   UseLease? use;
@@ -851,7 +861,10 @@ class ServerTranscriptionService extends ChangeNotifier {
   /// job. Returns a future that completes when the job reaches a terminal
   /// state (`complete` or `error`). Duplicate taps for an active or queued
   /// dump return the same future.
-  Future<void> transcribeDump(String dumpId) {
+  ///
+  /// [translate] (v1.19.0) is threaded to the enqueue request as
+  /// `translate: true`; the default keeps the wire body identical to before.
+  Future<void> transcribeDump(String dumpId, {bool translate = false}) {
     if (_disposed) throw StateError('ServerTranscriptionService is disposed');
     if (_activeJob?.dumpId == dumpId) return _activeJob!.completer.future;
     final existing = _queue.where((job) => job.dumpId == dumpId).firstOrNull;
@@ -860,6 +873,7 @@ class ServerTranscriptionService extends ChangeNotifier {
     final job = _QueuedTranscription(
       dumpId,
       recoveryOnly: _resolvingRecoveryDumpIds.contains(dumpId),
+      translate: translate,
     );
     _queue.add(job);
     job.ready = _prepareOwnership(job);
@@ -973,6 +987,7 @@ class ServerTranscriptionService extends ChangeNotifier {
           () => _client.enqueueTranscription(
             row.id,
             requestId: row.transcriptionRequestId!,
+            translate: job.translate,
           ),
         );
         _throwIfDisposed();

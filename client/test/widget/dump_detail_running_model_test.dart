@@ -99,6 +99,7 @@ class _UnusedTranscriptionClient implements TranscriptionClient {
     String dumpId, {
     required String requestId,
     String? model,
+    bool translate = false,
   }) async =>
       throw UnimplementedError();
 
