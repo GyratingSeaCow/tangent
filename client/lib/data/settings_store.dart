@@ -37,6 +37,7 @@ class SettingsStore {
   static const _whisperModelKey = 'whisper_model';
   static const _obsidianTimestampsKey = 'obsidian_export_timestamps';
   static const _obsidianSummaryKey = 'obsidian_export_summary';
+  static const _notebookImportAudioCardKey = 'notebook-import-audio-card';
 
   final SharedPreferences? _preferences;
 
@@ -115,6 +116,11 @@ class SettingsStore {
   /// default (spec decision E3).
   bool obsidianExportSummary;
 
+  /// Transcript → notebook: whether the Text / Transcript + summary shapes
+  /// also drop an Audio bubble card beside the text so the `[mm:ss]` stamps
+  /// can seek it in place. ON by default (spec §C); remembered per device.
+  bool notebookImportAudioCard;
+
   SettingsStore({
     this.wifiOnlySync = true,
     this.autoSync = true,
@@ -130,6 +136,7 @@ class SettingsStore {
     this.whisperModel = defaultWhisperModel,
     this.obsidianExportTimestamps = false,
     this.obsidianExportSummary = true,
+    this.notebookImportAudioCard = true,
     SharedPreferences? preferences,
   }) : _preferences = preferences;
 
@@ -161,6 +168,8 @@ class SettingsStore {
       obsidianExportTimestamps:
           preferences.getBool(_obsidianTimestampsKey) ?? false,
       obsidianExportSummary: preferences.getBool(_obsidianSummaryKey) ?? true,
+      notebookImportAudioCard:
+          preferences.getBool(_notebookImportAudioCardKey) ?? true,
     );
   }
 
@@ -225,6 +234,11 @@ class SettingsStore {
   Future<void> setObsidianExportSummary(bool value) async {
     obsidianExportSummary = value;
     await _preferences?.setBool(_obsidianSummaryKey, value);
+  }
+
+  Future<void> setNotebookImportAudioCard(bool value) async {
+    notebookImportAudioCard = value;
+    await _preferences?.setBool(_notebookImportAudioCardKey, value);
   }
 
   /// Records the user's explicit microphone choice. Passing a null [id] clears

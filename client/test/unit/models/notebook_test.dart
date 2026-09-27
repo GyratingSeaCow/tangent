@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tangent/models/notebook.dart';
+import 'package:tangent/models/text_stamp.dart';
 
 Map<String, dynamic> _decode(String source) =>
     jsonDecode(source) as Map<String, dynamic>;
@@ -113,7 +114,10 @@ void main() {
       final document = NotebookDocument.decode(
         '{"blocks":[{"kind":"checkbox","id":"b","text":"t"}]}',
       );
-      expect((document.blocks.single as NotebookCheckboxBlock).checked, isFalse);
+      expect(
+        (document.blocks.single as NotebookCheckboxBlock).checked,
+        isFalse,
+      );
     });
 
     test('preserves an unknown block kind verbatim across load and save', () {
@@ -185,6 +189,104 @@ void main() {
       );
       expect(document.blocks, hasLength(1));
       expect((document.blocks.single as NotebookTextBlock).text, 'kept');
+    });
+  });
+
+  group('text block stamps (v1.20.0)', () {
+    const stamps = <TextStamp>[
+      TextStamp(offset: 0, length: 7, seconds: 0, dumpId: 'd1'),
+      TextStamp(offset: 23, length: 7, seconds: 5.5, dumpId: 'd1'),
+    ];
+
+    test('an unstamped block encodes exactly as before — no stamps key', () {
+      const block = NotebookTextBlock(id: 'b', text: 'plain', x: 1, y: 2);
+      expect(block.stamps, isEmpty);
+      expect(
+        jsonEncode(block.toJson()),
+        '{"kind":"text","id":"b","text":"plain","x":1.0,"y":2.0}',
+      );
+    });
+
+    test('round trips with stamps under the short-key wire shape', () {
+      const block = NotebookTextBlock(
+        id: 'b',
+        text: '[00:00] Jeff: Morning\n\n[00:05] Dana: Hi',
+        x: 16,
+        y: 40,
+        stamps: stamps,
+      );
+      final encoded = NotebookDocument([block]).encode();
+      expect(
+        encoded,
+        contains('"stamps":[{"o":0,"l":7,"s":0.0,"d":"d1"},'
+            '{"o":23,"l":7,"s":5.5,"d":"d1"}]'),
+      );
+      final decoded = NotebookDocument.decode(encoded).blocks.single;
+      expect(decoded, isA<NotebookTextBlock>());
+      final text = decoded as NotebookTextBlock;
+      expect(text.text, block.text);
+      expect(text.x, 16);
+      expect(text.y, 40);
+      expect(text.stamps, stamps);
+      expect(NotebookDocument([text]).encode(), encoded);
+    });
+
+    test('round trips without stamps', () {
+      const block = NotebookTextBlock(id: 'b', text: 'plain');
+      final decoded = NotebookDocument.decode(
+        NotebookDocument([block]).encode(),
+      ).blocks.single as NotebookTextBlock;
+      expect(decoded.stamps, isEmpty);
+      expect(decoded.toJson().containsKey('stamps'), isFalse);
+    });
+
+    test('a text block with an unknown key still parses as a text block', () {
+      final document = NotebookDocument.decode(
+        '{"blocks":[{"kind":"text","id":"b","text":"kept",'
+        '"fromTheFuture":{"deep":1}}]}',
+      );
+      final block = document.blocks.single;
+      expect(block, isA<NotebookTextBlock>());
+      expect((block as NotebookTextBlock).text, 'kept');
+      expect(block.stamps, isEmpty);
+    });
+
+    test('missing or garbage stamps degrade to none, never to unknown', () {
+      for (final raw in <String>[
+        '{"kind":"text","id":"b","text":"t"}',
+        '{"kind":"text","id":"b","text":"t","stamps":null}',
+        '{"kind":"text","id":"b","text":"t","stamps":"nope"}',
+        '{"kind":"text","id":"b","text":"t","stamps":42}',
+        '{"kind":"text","id":"b","text":"t","stamps":[1,"x",null,{}]}',
+        '{"kind":"text","id":"b","text":"t","stamps":[{"o":"0","l":7,"s":0,"d":"d"}]}',
+      ]) {
+        final block =
+            NotebookDocument.decode('{"blocks":[$raw]}').blocks.single;
+        expect(block, isA<NotebookTextBlock>(), reason: raw);
+        expect((block as NotebookTextBlock).stamps, isEmpty, reason: raw);
+      }
+    });
+
+    test('well-formed stamps survive beside garbage entries', () {
+      final block = NotebookDocument.decode(
+        '{"blocks":[{"kind":"text","id":"b","text":"t","stamps":'
+        '[{"o":0,"l":7,"s":1,"d":"d"},"junk",{"o":-1,"l":7,"s":1,"d":"d"}]}]}',
+      ).blocks.single as NotebookTextBlock;
+      expect(block.stamps, [
+        const TextStamp(offset: 0, length: 7, seconds: 1, dumpId: 'd'),
+      ]);
+    });
+
+    test('copyWith keeps stamps unless replaced', () {
+      const block = NotebookTextBlock(id: 'b', text: 't', stamps: stamps);
+      expect(block.copyWith(x: 5).stamps, stamps);
+      expect(
+        block.copyWith(text: 'edited').stamps,
+        stamps,
+        reason: 'copyWith does not reconcile; callers pass new stamps',
+      );
+      expect(block.copyWith(stamps: const <TextStamp>[]).stamps, isEmpty);
+      expect(block.copyWith(stamps: [stamps.first]).stamps, [stamps.first]);
     });
   });
 

@@ -8,14 +8,18 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tangent/data/local_db.dart';
 import 'package:tangent/data/notebook_repository.dart';
+import 'package:tangent/data/storage/storage_contract.dart' show AudioLocator;
 import 'package:tangent/models/dump.dart';
 import 'package:tangent/models/notebook.dart';
 import 'package:tangent/models/notebook_ruling.dart';
+import 'package:tangent/models/text_stamp.dart';
+import 'package:tangent/screens/dump/dump_detail_screen.dart';
 import 'package:tangent/screens/dump/dumps_providers.dart';
 import 'package:tangent/screens/notebook/notebook_editor_screen.dart';
 import 'package:tangent/screens/settings/ai_summaries_section.dart'
     show summariesEnabledProvider;
 import 'package:tangent/services/notebook_persistence.dart';
+import 'package:tangent/services/recording_playback.dart';
 import 'package:tangent/widgets/dump_picker_sheet.dart';
 import 'package:tangent/widgets/notebook_dump_card.dart';
 import 'package:tangent/widgets/notebook_ink_canvas.dart';
@@ -68,6 +72,32 @@ class _RecordingNotebookPersistence implements NotebookPersistence {
   noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
+/// Records seeks and plays so a stamp tap can be proven to reach the card's
+/// player (spec §C rule 1).
+final class _RecordingEngine implements RecordingPlaybackEngine {
+  final List<Duration> seeks = <Duration>[];
+  int plays = 0;
+  @override
+  Stream<Duration> get positionStream => const Stream<Duration>.empty();
+  @override
+  Stream<Duration?> get durationStream => const Stream<Duration?>.empty();
+  @override
+  Stream<bool> get playingStream => const Stream<bool>.empty();
+  @override
+  Stream<bool> get completedStream => const Stream<bool>.empty();
+  @override
+  Future<Duration?> load(AudioLocator source) async =>
+      const Duration(seconds: 95);
+  @override
+  Future<void> play() async => plays += 1;
+  @override
+  Future<void> pause() async {}
+  @override
+  Future<void> seek(Duration position) async => seeks.add(position);
+  @override
+  Future<void> dispose() async {}
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -84,6 +114,7 @@ void main() {
     List<DumpRow> dumps = const <DumpRow>[],
     bool setViewSize = true,
     bool summariesEnabled = false,
+    List<Override> extraOverrides = const <Override>[],
   }) async {
     if (setViewSize) {
       tester.view.physicalSize = const Size(1080, 2340);
@@ -103,6 +134,7 @@ void main() {
           ),
           dumpsProvider.overrideWith((_) => Stream<List<DumpRow>>.value(dumps)),
           summariesEnabledProvider.overrideWith((_) => summariesEnabled),
+          ...extraOverrides,
         ],
         child: MaterialApp(
           home: Builder(
@@ -2997,6 +3029,10 @@ void main() {
       );
 
       await importDump(tester, 'dump-pick-d1');
+      // The shared sheet's "Include audio bubble" switch defaults ON (spec
+      // §C); this case is the text-only import, so switch it off first.
+      await tester.tap(find.byKey(const ValueKey('import-include-audio')));
+      await tester.pump();
       await tester.tap(find.byKey(const ValueKey('import-as-text')));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
@@ -3019,6 +3055,37 @@ void main() {
       expect(texts, hasLength(1));
       expect(texts.single.text, 'remember to buy solder and flux');
       expect(tester.takeException(), isNull);
+
+      await unmount(tester);
+    });
+
+    testWidgets(
+        'Text with "Include audio bubble" left on lands the text AND a card',
+        (tester) async {
+      await mountEditor(
+        tester,
+        notebook: testNotebook(id: 'nb-1'),
+        dumps: <DumpRow>[
+          _dumpRow('d1', 'Morning ideas', transcript: 'solder and flux'),
+        ],
+      );
+
+      await importDump(tester, 'dump-pick-d1');
+      expect(
+        tester
+            .widget<SwitchListTile>(
+              find.byKey(const ValueKey('import-include-audio')),
+            )
+            .value,
+        isTrue,
+        reason: 'the switch defaults on (SettingsStore default)',
+      );
+      await tester.tap(find.byKey(const ValueKey('import-as-text')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(find.byType(NotebookDumpCard), findsOneWidget);
+      expect(find.text('solder and flux'), findsOneWidget);
 
       await unmount(tester);
     });
@@ -3379,6 +3446,168 @@ void main() {
       expect(find.byKey(const ValueKey('import-as-summary')), findsOneWidget);
       expect(find.byKey(const ValueKey('import-as-both')), findsOneWidget);
 
+      await unmount(tester);
+    });
+  });
+
+  group('tappable stamps (spec §C)', () {
+    const String stamped = '[00:42] Jeff: solder the header pins\n'
+        '[01:05] Ann: then flux';
+    const List<TextStamp> stamps = <TextStamp>[
+      TextStamp(offset: 0, length: 7, seconds: 42, dumpId: 'd1'),
+      TextStamp(offset: 36, length: 7, seconds: 65, dumpId: 'd1'),
+    ];
+
+    Notebook stampedNotebook({bool withCard = true}) => testNotebook(
+          id: 'nb-1',
+          blocks: <NotebookBlock>[
+            const NotebookTextBlock(
+              id: 't1',
+              text: stamped,
+              stamps: stamps,
+              x: 24,
+              y: 40,
+            ),
+            if (withCard)
+              const NotebookDumpCardBlock(
+                id: 'c1',
+                dumpId: 'd1',
+                x: 24,
+                y: 300,
+              ),
+          ],
+        );
+
+    Override fakePlayback(_RecordingEngine engine) =>
+        notebookCardPlaybackProvider.overrideWithValue((String dumpId) async {
+          final RecordingPlaybackController controller =
+              RecordingPlaybackController(engine: engine);
+          await controller.initialize((kind: 'file', value: '/audio/d1.m4a'));
+          return (controller: controller, close: () async {});
+        });
+
+    testWidgets('at rest the stamps are keyed spans; focused it is a field',
+        (tester) async {
+      await mountEditor(
+        tester,
+        notebook: stampedNotebook(),
+        dumps: <DumpRow>[_dumpRow('d1', 'Bench notes')],
+        extraOverrides: <Override>[fakePlayback(_RecordingEngine())],
+      );
+
+      expect(find.byKey(const ValueKey('stamp-t1-0')), findsOneWidget);
+      expect(find.byKey(const ValueKey('stamp-t1-1')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('notebook-text-block-t1')),
+        findsNothing,
+        reason: 'no TextField while the block is at rest',
+      );
+
+      await tester.tap(find.byKey(const ValueKey('stamp-t1-0')).hitTestable());
+      await tester.pump();
+      // (the tap above went to the stamp, not to edit; edit via the body)
+      await tester.tap(
+        find.byKey(const ValueKey('notebook-text-block-at-rest-t1')),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.byKey(const ValueKey('notebook-text-block-t1')), findsOne);
+      expect(
+        find.byKey(const ValueKey('stamp-t1-0')),
+        findsNothing,
+        reason: 'plain text while editing — no taps while typing',
+      );
+      await unmount(tester);
+    });
+
+    testWidgets('tap with a same-recording card on the page seeks that card',
+        (tester) async {
+      final _RecordingEngine engine = _RecordingEngine();
+      await mountEditor(
+        tester,
+        notebook: stampedNotebook(),
+        dumps: <DumpRow>[_dumpRow('d1', 'Bench notes')],
+        extraOverrides: <Override>[fakePlayback(engine)],
+      );
+
+      await tester.tap(find.byKey(const ValueKey('stamp-t1-0')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(engine.seeks, <Duration>[const Duration(seconds: 42)]);
+      expect(engine.plays, 1, reason: 'seek THEN play');
+      expect(
+        find.byType(DumpDetailScreen),
+        findsNothing,
+        reason: 'the card played in place; the editor stays open',
+      );
+      await unmount(tester);
+    });
+
+    testWidgets('tap with no card pushes the detail at that moment',
+        (tester) async {
+      final _RecordingEngine engine = _RecordingEngine();
+      final List<({String dumpId, double? seekSeconds})> opened =
+          <({String dumpId, double? seekSeconds})>[];
+      await mountEditor(
+        tester,
+        notebook: stampedNotebook(withCard: false),
+        dumps: <DumpRow>[_dumpRow('d1', 'Bench notes')],
+        extraOverrides: <Override>[
+          fakePlayback(engine),
+          notebookDumpOpenerProvider.overrideWithValue(
+            (BuildContext _, DumpRow row, {double? seekSeconds}) =>
+                opened.add((dumpId: row.id, seekSeconds: seekSeconds)),
+          ),
+        ],
+      );
+
+      await tester.tap(find.byKey(const ValueKey('stamp-t1-0')));
+      await tester.pump();
+
+      // The detail screen is covered by its own tests; pin WHAT the editor
+      // asked to open, and that it did not try to seek a card that isn't there.
+      expect(opened, <({String dumpId, double? seekSeconds})>[
+        (dumpId: 'd1', seekSeconds: 42.0),
+      ]);
+      expect(engine.seeks, isEmpty, reason: 'no card, nothing to seek');
+      await unmount(tester);
+    });
+
+    testWidgets('editing drops the stamp the edit broke and keeps the rest',
+        (tester) async {
+      await mountEditor(
+        tester,
+        notebook: stampedNotebook(),
+        dumps: <DumpRow>[_dumpRow('d1', 'Bench notes')],
+      );
+
+      await tester.tap(
+        find.byKey(const ValueKey('notebook-text-block-at-rest-t1')),
+      );
+      await tester.pump();
+      // Break the SECOND stamp: replace its '[' — the first is untouched.
+      await tester.enterText(
+        find.byKey(const ValueKey('notebook-text-block-t1')),
+        '[00:42] Jeff: solder the header pins\n(01:05] Ann: then flux',
+      );
+      await tester.pump();
+
+      await tester.tap(find.byIcon(Icons.save));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      final NotebookTextBlock saved = repository.saved.single.document.blocks
+          .whereType<NotebookTextBlock>()
+          .single;
+      expect(saved.stamps.map((TextStamp s) => s.seconds), <double>[42]);
+
+      // Blurred again, only the surviving stamp is tappable.
+      FocusManager.instance.primaryFocus?.unfocus();
+      await tester.pump();
+      expect(find.byKey(const ValueKey('stamp-t1-0')), findsOneWidget);
+      expect(find.byKey(const ValueKey('stamp-t1-1')), findsNothing);
       await unmount(tester);
     });
   });

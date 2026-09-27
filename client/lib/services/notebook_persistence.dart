@@ -10,7 +10,9 @@ import '../data/storage/storage_providers.dart';
 import '../models/notebook.dart';
 
 /// Result of re-adopting durable notebook files from the selected folder.
-typedef NotebookImportResult = ({
+/// (Named "adoption", not "import": `NotebookImportResult` is the dump →
+/// notebook import service's result in `notebook_import.dart`.)
+typedef NotebookAdoptionResult = ({
   List<String> adoptedIds,
   List<String> keptLocalIds,
   List<StorageProblem> problems
@@ -153,6 +155,11 @@ class NotebookPersistence {
     );
   }
 
+  /// The working copy of one notebook, or null when no row exists. The
+  /// headless import (`importDumpsIntoNotebook`) reads through here so it
+  /// depends on the same object it saves through.
+  Future<Notebook?> getNotebook(String id) => _repository.getNotebook(id);
+
   /// Creates a notebook and publishes it immediately, so an uninstall right
   /// after creation still leaves the file behind.
   Future<Notebook> createNotebook({String? title}) async {
@@ -229,7 +236,7 @@ class NotebookPersistence {
   /// The file's `id` is the durable identity. The copy with the NEWER
   /// `updatedAt` wins; equal timestamps keep the local row. A file this build
   /// cannot read is reported and skipped. No user file is ever deleted here.
-  Future<NotebookImportResult> importNotebooks() async {
+  Future<NotebookAdoptionResult> importNotebooks() async {
     final adopted = <String>[];
     final keptLocal = <String>[];
     final problems = <StorageProblem>[];
@@ -245,9 +252,13 @@ class NotebookPersistence {
         ),
       );
     } on StorageFault catch (e) {
-      return (adoptedIds: adopted, keptLocalIds: keptLocal, problems: [
-        e.problem,
-      ]);
+      return (
+        adoptedIds: adopted,
+        keptLocalIds: keptLocal,
+        problems: [
+          e.problem,
+        ]
+      );
     }
     for (final document in documents) {
       try {
@@ -272,11 +283,7 @@ class NotebookPersistence {
         problems.add(e.problem);
       }
     }
-    return (
-      adoptedIds: adopted,
-      keptLocalIds: keptLocal,
-      problems: problems
-    );
+    return (adoptedIds: adopted, keptLocalIds: keptLocal, problems: problems);
   }
 }
 
