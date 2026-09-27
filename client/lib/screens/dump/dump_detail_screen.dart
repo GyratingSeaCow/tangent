@@ -39,6 +39,7 @@ import '../../services/transcription_notifications.dart'
 import 'local_deletion_presentation.dart';
 import 'sync_status_presentation.dart';
 import '../home/home_screen.dart' show localDbProvider;
+import '../notebook/send_to_notebook.dart';
 import '../settings/settings_screen.dart' show settingsStoreProvider;
 import '../settings/ai_summaries_section.dart'
     show summariesClientProvider, summariesEnabledProvider;
@@ -102,12 +103,20 @@ class DumpDetailScreen extends ConsumerStatefulWidget {
   /// persisted.
   final String? initialSearchQuery;
 
+  /// Opened from a notebook `[mm:ss]` stamp (transcript-to-notebook spec
+  /// §C): once playback is ready the screen seeks here and plays, exactly
+  /// as a Listen-mode word tap would. Null (the ordinary open) does nothing.
+  /// Audio that lives only on the server shows the usual download prompt
+  /// instead; the seek is simply never applied.
+  final double? initialSeekSeconds;
+
   const DumpDetailScreen({
     super.key,
     required this.dumpId,
     required this.audioPath,
     required this.durationSeconds,
     this.initialSearchQuery,
+    this.initialSeekSeconds,
   });
 
   @override
@@ -298,6 +307,7 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
       _playbackController = controller;
       setState(() {});
       await controller.initialize(lease.source);
+      await _applyInitialSeek(controller);
     } catch (error) {
       await raw.dispose();
       if (mounted && !_closing) {
@@ -1017,6 +1027,7 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
     final bool nameable = currentRow != null &&
         detectSpeakers(currentRow.transcript ?? '').isNotEmpty;
     final bool exportable = currentRow != null && canExportMarkdown(currentRow);
+    final bool sendable = currentRow != null && canSendToNotebook(currentRow);
 
     return Scaffold(
       appBar: AppBar(
@@ -1029,7 +1040,7 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
                 ? null
                 : _delete,
           ),
-          if (nameable || exportable)
+          if (nameable || exportable || sendable)
             PopupMenuButton<String>(
               key: const ValueKey('detail-more'),
               tooltip: 'More actions',
@@ -1038,6 +1049,10 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
                   unawaited(showNameSpeakersSheet(context, ref, currentRow));
                 } else if (value == 'export-markdown') {
                   unawaited(_exportMarkdown(currentRow));
+                } else if (value == 'send-to-notebook') {
+                  unawaited(
+                    sendDumpsToNotebook(context, ref, <DumpRow>[currentRow]),
+                  );
                 }
               },
               itemBuilder: (BuildContext context) => [
@@ -1058,6 +1073,16 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
                     child: ListTile(
                       leading: Icon(Icons.description),
                       title: Text('Export Markdown'),
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                  ),
+                if (sendable)
+                  const PopupMenuItem<String>(
+                    key: ValueKey('detail-send-to-notebook'),
+                    value: 'send-to-notebook',
+                    child: ListTile(
+                      leading: Icon(Icons.menu_book_outlined),
+                      title: Text('Send to notebook…'),
                       contentPadding: EdgeInsets.zero,
                     ),
                   ),
@@ -1646,6 +1671,25 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
       ],
       selected: {listen},
       onSelectionChanged: (s) => setState(() => _listenMode = s.first),
+    );
+  }
+
+  /// Whether [DumpDetailScreen.initialSeekSeconds] has been consumed. A
+  /// playback retry re-runs initialisation; the deep-linked seek must fire
+  /// once, on the first successful open, never again after a retry.
+  bool _initialSeekApplied = false;
+
+  /// Applies the deep-linked seek from a notebook stamp once the controller
+  /// has loaded its source, through the same seek-then-play a word tap uses.
+  Future<void> _applyInitialSeek(RecordingPlaybackController controller) async {
+    final double? seconds = widget.initialSeekSeconds;
+    if (seconds == null || _initialSeekApplied || _closing || !mounted) {
+      return;
+    }
+    if (controller.state.error != null) return;
+    _initialSeekApplied = true;
+    await _seekAndPlay(
+      Duration(milliseconds: (seconds * 1000).round()),
     );
   }
 

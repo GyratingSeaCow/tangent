@@ -40,6 +40,7 @@ import '../../widgets/folder_header_actions.dart';
 import '../../widgets/folder_picker.dart';
 import '../../widgets/press_actions.dart';
 import '../notebook/notebook_grouping.dart' show FolderSummary;
+import '../notebook/send_to_notebook.dart';
 import '../../data/notebook_repository.dart' show foldersProvider;
 import '../home/home_screen.dart' show localDbProvider;
 
@@ -366,6 +367,16 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
                         icon: const Icon(Icons.text_snippet_outlined),
                       ),
                       IconButton(
+                        key: const ValueKey('selection-send-to-notebook'),
+                        tooltip: 'Send selected to notebook',
+                        onPressed: ready &&
+                                !_batchBusy &&
+                                selection.selectedIds.isNotEmpty
+                            ? _sendSelectedToNotebook
+                            : null,
+                        icon: const Icon(Icons.menu_book_outlined),
+                      ),
+                      IconButton(
                         key: const ValueKey('selection-delete'),
                         tooltip: 'Delete selected local recordings',
                         onPressed: ready &&
@@ -609,6 +620,9 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
     // Markdown export (v1.16.0 §4): absent, not disabled, when there is no
     // transcript text — an untranscribed recording has nothing to export.
     final bool exportable = canExportMarkdown(dump);
+    // Send to notebook (v1.20.0 §A): absent when there is neither a
+    // transcript nor a summary to send.
+    final bool sendable = canSendToNotebook(dump);
     final ItemAction? action = await showItemActionSheet(
       context,
       title: dump.title.isEmpty ? '(untitled)' : dump.title,
@@ -621,6 +635,7 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
         if (nameable) ItemAction.nameSpeakers,
         ItemAction.move,
         if (exportable) ItemAction.exportMarkdown,
+        if (sendable) ItemAction.sendToNotebook,
         ItemAction.select,
         ItemAction.delete,
       ],
@@ -672,6 +687,9 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
         await _regenerateSummary(dump);
       case ItemAction.exportMarkdown:
         await _exportMarkdown(dump);
+      case ItemAction.sendToNotebook:
+        if (!context.mounted) return;
+        await sendDumpsToNotebook(context, ref, <DumpRow>[dump]);
       case ItemAction.duplicate:
       case ItemAction.share:
       case ItemAction.exportPdf:
@@ -881,6 +899,35 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
         ],
       ),
     );
+  }
+
+  /// Sends every selected recording that has something to send to one
+  /// chosen notebook (v1.20.0 §A: multi-select sends all selected). Rows
+  /// with neither transcript nor summary are skipped, and the skip is said
+  /// out loud rather than silently shrinking the batch.
+  Future<void> _sendSelectedToNotebook() async {
+    final List<DumpRow> rows = _selectedRows();
+    final List<DumpRow> sendable =
+        rows.where(canSendToNotebook).toList(growable: false);
+    if (sendable.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Nothing to send: no transcript or summary yet'),
+        ),
+      );
+      return;
+    }
+    if (sendable.length < rows.length) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Skipping ${rows.length - sendable.length} without a transcript',
+          ),
+        ),
+      );
+    }
+    await sendDumpsToNotebook(context, ref, sendable);
+    if (mounted) _change(_selection.cancel);
   }
 
   /// The selected rows in list order, resolved from the presented results —

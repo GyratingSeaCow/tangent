@@ -33,6 +33,11 @@ enum ItemAction {
   /// Offered only when the row has transcript text to export.
   exportMarkdown,
 
+  /// Append a recording (transcript / summary / audio bubble) to a notebook
+  /// chosen from a picker, without opening the editor (v1.20.0). Offered
+  /// only when the row has a transcript or a summary to send.
+  sendToNotebook,
+
   /// Fetch a synced recording's audio from the server onto this device.
   /// Offered only when the server holds audio this device does not.
   download,
@@ -66,6 +71,7 @@ const List<ItemAction> _canonicalOrder = <ItemAction>[
   ItemAction.share,
   ItemAction.exportPdf,
   ItemAction.exportMarkdown,
+  ItemAction.sendToNotebook,
   ItemAction.select,
   ItemAction.delete,
 ];
@@ -110,6 +116,8 @@ class ItemActionSheet extends StatelessWidget {
         return 'Export to PDF';
       case ItemAction.exportMarkdown:
         return 'Export Markdown';
+      case ItemAction.sendToNotebook:
+        return 'Send to notebook…';
       case ItemAction.download:
         return 'Download audio';
       case ItemAction.regenerateSummary:
@@ -139,6 +147,8 @@ class ItemActionSheet extends StatelessWidget {
         return Icons.picture_as_pdf_outlined;
       case ItemAction.exportMarkdown:
         return Icons.description;
+      case ItemAction.sendToNotebook:
+        return Icons.menu_book_outlined;
       case ItemAction.download:
         return Icons.download_for_offline_outlined;
       case ItemAction.regenerateSummary:

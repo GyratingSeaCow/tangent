@@ -341,6 +341,7 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
       case ItemAction.nameSpeakers:
       // …nor a transcript to export as Markdown.
       case ItemAction.exportMarkdown:
+      case ItemAction.sendToNotebook:
         break;
     }
   }
