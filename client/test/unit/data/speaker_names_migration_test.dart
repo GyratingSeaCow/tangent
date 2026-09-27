@@ -134,7 +134,7 @@ void main() {
     addTearDown(db.close);
     await db.listDumps();
 
-    expect(raw.userVersion, 21);
+    expect(raw.userVersion, 22);
     expect(_columns(raw, 'dumps'), contains('speaker_names'));
     expect(_tables(raw), contains('settings'));
     final DumpRow row = (await db.getDump('plain'))!;
@@ -154,7 +154,7 @@ void main() {
     final LocalDb db = LocalDb.forTesting(NativeDatabase.opened(raw));
     addTearDown(db.close);
     await expectLater(db.listDumps(), completes);
-    expect(raw.userVersion, 21);
+    expect(raw.userVersion, 22);
   });
 
   test(
@@ -238,7 +238,7 @@ void main() {
     addTearDown(again.close);
     await again.listDumps();
 
-    expect(raw.userVersion, 21);
+    expect(raw.userVersion, 22);
     final DumpRow second = (await again.getDump('renamed'))!;
     expect(second.transcript, _renamedRaw, reason: 'still raw');
     expect(

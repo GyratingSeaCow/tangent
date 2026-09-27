@@ -120,6 +120,7 @@ class _FakeTranscriptionClient implements TranscriptionClient {
     String dumpId, {
     required String requestId,
     String? model,
+    bool translate = false,
   }) async {
     enqueueCalls++;
     requestIds.add(requestId);

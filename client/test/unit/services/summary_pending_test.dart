@@ -8,7 +8,14 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:tangent/data/local_db.dart';
 import 'package:tangent/services/summary_pending.dart';
 
-DumpRow _row({int? requestedAt, int? summarizedAt, String? template}) =>
+DumpRow _row({
+  int? requestedAt,
+  int? summarizedAt,
+  String? template,
+  String? status,
+  int? queuePosition,
+  int? dismissedAt,
+}) =>
     DumpRow(
       id: 'p-1',
       createdAt: DateTime.utc(2026, 9, 26),
@@ -26,6 +33,9 @@ DumpRow _row({int? requestedAt, int? summarizedAt, String? template}) =>
       summarizedAt: summarizedAt,
       summaryRequestedAt: requestedAt,
       summaryTemplate: template,
+      summaryStatus: status,
+      summaryQueuePosition: queuePosition,
+      summaryErrorDismissedAt: dismissedAt,
     );
 
 void main() {
@@ -108,6 +118,107 @@ void main() {
       expect(summaryTemplateDisplayName('daily_standup'), 'Daily standup');
       expect(summaryTemplateDisplayName(null), 'AI');
       expect(summaryTemplateDisplayName(''), 'AI');
+    });
+  });
+
+  group('summaryPending with the server status (v1.19.0)', () {
+    test('queued -> true, with or without a local request', () {
+      expect(summaryPending(_row(status: 'queued'), now: now), isTrue);
+      expect(
+        summaryPending(_row(status: 'queued', queuePosition: 3), now: now),
+        isTrue,
+      );
+    });
+
+    test('running -> true even 30 minutes after the local request', () {
+      expect(
+        summaryPending(
+          _row(status: 'running', requestedAt: t0),
+          now: now.add(const Duration(minutes: 30)),
+        ),
+        isTrue,
+        reason: 'a server running never expires client-side',
+      );
+    });
+
+    test('failed with no local request -> false', () {
+      expect(summaryPending(_row(status: 'failed'), now: now), isFalse);
+    });
+
+    test('failed with a fresh local request (a Retry 202) -> the local '
+        'bridge decides', () {
+      // applyRemoteDump spends the marker on every failed verdict, so a
+      // surviving marker is newer than the failure: pending, with the
+      // ten-minute give-up still in force.
+      expect(
+        summaryPending(_row(status: 'failed', requestedAt: t0), now: now),
+        isTrue,
+      );
+      expect(
+        summaryPending(
+          _row(status: 'failed', requestedAt: t0),
+          now: now.add(const Duration(minutes: 11)),
+        ),
+        isFalse,
+      );
+    });
+
+    test('null status -> the local heuristic decides', () {
+      expect(
+        summaryPending(_row(requestedAt: t0, summarizedAt: t0 - 100), now: now),
+        isTrue,
+      );
+      expect(
+        summaryPending(
+          _row(requestedAt: t0),
+          now: now.add(const Duration(minutes: 11)),
+        ),
+        isFalse,
+        reason: 'the ten-minute give-up still applies locally',
+      );
+      expect(summaryPending(_row(), now: now), isFalse);
+    });
+  });
+
+  group('summaryFailed', () {
+    test('failed and not dismissed -> true', () {
+      expect(summaryFailed(_row(status: 'failed')), isTrue);
+    });
+
+    test('failed but dismissed -> false', () {
+      expect(summaryFailed(_row(status: 'failed', dismissedAt: t0)), isFalse);
+    });
+
+    test('any other status -> false', () {
+      expect(summaryFailed(_row()), isFalse);
+      expect(summaryFailed(_row(status: 'queued')), isFalse);
+      expect(summaryFailed(_row(status: 'running')), isFalse);
+    });
+  });
+
+  group('summaryQueued', () {
+    test('needs both queued and a position', () {
+      expect(summaryQueued(_row(status: 'queued', queuePosition: 2)), isTrue);
+      expect(summaryQueued(_row(status: 'queued')), isFalse);
+      expect(summaryQueued(_row(status: 'running', queuePosition: 2)), isFalse);
+    });
+  });
+
+  group('ordinal', () {
+    test('English ordinals including the teens', () {
+      expect(ordinal(1), '1st');
+      expect(ordinal(2), '2nd');
+      expect(ordinal(3), '3rd');
+      expect(ordinal(4), '4th');
+      expect(ordinal(11), '11th');
+      expect(ordinal(12), '12th');
+      expect(ordinal(13), '13th');
+      expect(ordinal(21), '21st');
+      expect(ordinal(22), '22nd');
+      expect(ordinal(23), '23rd');
+      expect(ordinal(101), '101st');
+      expect(ordinal(111), '111th');
+      expect(ordinal(112), '112th');
     });
   });
 }

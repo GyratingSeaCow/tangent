@@ -164,10 +164,16 @@ class TranscriptionClient {
   /// [model] is optional: when omitted the SERVER resolves its own selected
   /// model at enqueue time, so the job row records what the engine will
   /// actually load. Pass a name only for an explicit per-job override.
+  ///
+  /// [translate] (v1.19.0) asks Whisper for an ENGLISH transcript of
+  /// non-English audio (`task="translate"`). The key is sent only when true,
+  /// so an older server that has never heard of it sees the same body as
+  /// before.
   Future<TranscriptionJobSnapshot> enqueueTranscription(
     String dumpId, {
     required String requestId,
     String? model,
+    bool translate = false,
   }) async {
     final resp = await _fetch(
       '/v1/dumps/$dumpId/transcribe',
@@ -175,6 +181,7 @@ class TranscriptionClient {
       data: {
         if (model != null) 'model': model,
         'request_id': requestId,
+        if (translate) 'translate': true,
       },
     );
     return _snapshotFromJson(resp);

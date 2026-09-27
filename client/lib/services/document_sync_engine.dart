@@ -347,6 +347,23 @@ class DocumentSyncEngine extends ChangeNotifier {
       speakerNames: payload.containsKey('speaker_names')
           ? _timingsText(payload['speaker_names'])
           : LocalDb.absentSpeakerNamesField,
+      // v1.19.0 server-authored fields (translation + summary status): same
+      // absent-vs-null contract. None of them is ever pushed from here.
+      language: payload.containsKey('language')
+          ? payload['language'] as String?
+          : LocalDb.absentSummaryField,
+      translated: payload.containsKey('translated')
+          ? payload['translated']
+          : LocalDb.absentSummaryField,
+      summaryStatus: payload.containsKey('summary_status')
+          ? payload['summary_status'] as String?
+          : LocalDb.absentSummaryField,
+      summaryError: payload.containsKey('summary_error')
+          ? payload['summary_error'] as String?
+          : LocalDb.absentSummaryField,
+      summaryQueuePosition: payload.containsKey('summary_queue_position')
+          ? (payload['summary_queue_position'] as num?)?.toInt()
+          : LocalDb.absentSummaryField,
       seq: change.seq,
     );
   }
@@ -516,6 +533,9 @@ class DocumentSyncEngine extends ChangeNotifier {
             // audio_kept is deliberately absent: whether the SERVER holds the
             // audio is the server's own fact, and sending our view of it
             // would let a device that never uploaded clear the flag.
+            // Likewise absent (v1.19.0): language, translated,
+            // summary_status, summary_error, summary_queue_position are
+            // server-authored, and summary_error_dismissed_at is local-only.
           },
         },
       for (final SyncTombstoneRow stone in tombstones)

@@ -106,6 +106,7 @@ class _RecordingClient implements TranscriptionClient {
     String dumpId, {
     required String requestId,
     String? model,
+    bool translate = false,
   }) async {
     calls.add('enqueue');
     return TranscriptionJobSnapshot(

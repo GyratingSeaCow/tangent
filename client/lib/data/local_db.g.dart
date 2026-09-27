@@ -227,6 +227,45 @@ class $DumpsTable extends Dumps with TableInfo<$DumpsTable, DumpRow> {
   late final GeneratedColumn<int> summaryRequestedAt = GeneratedColumn<int>(
       'summary_requested_at', aliasedName, true,
       type: DriftSqlType.int, requiredDuringInsert: false);
+  static const VerificationMeta _languageMeta =
+      const VerificationMeta('language');
+  @override
+  late final GeneratedColumn<String> language = GeneratedColumn<String>(
+      'language', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _translatedMeta =
+      const VerificationMeta('translated');
+  @override
+  late final GeneratedColumn<bool> translated = GeneratedColumn<bool>(
+      'translated', aliasedName, true,
+      type: DriftSqlType.bool,
+      requiredDuringInsert: false,
+      defaultConstraints:
+          GeneratedColumn.constraintIsAlways('CHECK ("translated" IN (0, 1))'));
+  static const VerificationMeta _summaryStatusMeta =
+      const VerificationMeta('summaryStatus');
+  @override
+  late final GeneratedColumn<String> summaryStatus = GeneratedColumn<String>(
+      'summary_status', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _summaryErrorMeta =
+      const VerificationMeta('summaryError');
+  @override
+  late final GeneratedColumn<String> summaryError = GeneratedColumn<String>(
+      'summary_error', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _summaryQueuePositionMeta =
+      const VerificationMeta('summaryQueuePosition');
+  @override
+  late final GeneratedColumn<int> summaryQueuePosition = GeneratedColumn<int>(
+      'summary_queue_position', aliasedName, true,
+      type: DriftSqlType.int, requiredDuringInsert: false);
+  static const VerificationMeta _summaryErrorDismissedAtMeta =
+      const VerificationMeta('summaryErrorDismissedAt');
+  @override
+  late final GeneratedColumn<int> summaryErrorDismissedAt =
+      GeneratedColumn<int>('summary_error_dismissed_at', aliasedName, true,
+          type: DriftSqlType.int, requiredDuringInsert: false);
   @override
   List<GeneratedColumn> get $columns => [
         id,
@@ -261,7 +300,13 @@ class $DumpsTable extends Dumps with TableInfo<$DumpsTable, DumpRow> {
         transcriptTimings,
         summaryTemplate,
         speakerNames,
-        summaryRequestedAt
+        summaryRequestedAt,
+        language,
+        translated,
+        summaryStatus,
+        summaryError,
+        summaryQueuePosition,
+        summaryErrorDismissedAt
       ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -469,6 +514,41 @@ class $DumpsTable extends Dumps with TableInfo<$DumpsTable, DumpRow> {
           summaryRequestedAt.isAcceptableOrUnknown(
               data['summary_requested_at']!, _summaryRequestedAtMeta));
     }
+    if (data.containsKey('language')) {
+      context.handle(_languageMeta,
+          language.isAcceptableOrUnknown(data['language']!, _languageMeta));
+    }
+    if (data.containsKey('translated')) {
+      context.handle(
+          _translatedMeta,
+          translated.isAcceptableOrUnknown(
+              data['translated']!, _translatedMeta));
+    }
+    if (data.containsKey('summary_status')) {
+      context.handle(
+          _summaryStatusMeta,
+          summaryStatus.isAcceptableOrUnknown(
+              data['summary_status']!, _summaryStatusMeta));
+    }
+    if (data.containsKey('summary_error')) {
+      context.handle(
+          _summaryErrorMeta,
+          summaryError.isAcceptableOrUnknown(
+              data['summary_error']!, _summaryErrorMeta));
+    }
+    if (data.containsKey('summary_queue_position')) {
+      context.handle(
+          _summaryQueuePositionMeta,
+          summaryQueuePosition.isAcceptableOrUnknown(
+              data['summary_queue_position']!, _summaryQueuePositionMeta));
+    }
+    if (data.containsKey('summary_error_dismissed_at')) {
+      context.handle(
+          _summaryErrorDismissedAtMeta,
+          summaryErrorDismissedAt.isAcceptableOrUnknown(
+              data['summary_error_dismissed_at']!,
+              _summaryErrorDismissedAtMeta));
+    }
     return context;
   }
 
@@ -548,6 +628,19 @@ class $DumpsTable extends Dumps with TableInfo<$DumpsTable, DumpRow> {
           .read(DriftSqlType.string, data['${effectivePrefix}speaker_names']),
       summaryRequestedAt: attachedDatabase.typeMapping.read(
           DriftSqlType.int, data['${effectivePrefix}summary_requested_at']),
+      language: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}language']),
+      translated: attachedDatabase.typeMapping
+          .read(DriftSqlType.bool, data['${effectivePrefix}translated']),
+      summaryStatus: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}summary_status']),
+      summaryError: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}summary_error']),
+      summaryQueuePosition: attachedDatabase.typeMapping.read(
+          DriftSqlType.int, data['${effectivePrefix}summary_queue_position']),
+      summaryErrorDismissedAt: attachedDatabase.typeMapping.read(
+          DriftSqlType.int,
+          data['${effectivePrefix}summary_error_dismissed_at']),
     );
   }
 
@@ -648,6 +741,34 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
   /// by [LocalDb.applyRemoteDump] the moment a summary at least that new
   /// syncs down. Null when nothing was ever requested from here.
   final int? summaryRequestedAt;
+
+  /// ISO 639-1 code Whisper detected for the audio (v1.19.0 Part A), e.g.
+  /// 'es'; null until the first transcription lands. SERVER-authored: only
+  /// ever set from a pull, never in the push payload.
+  final String? language;
+
+  /// True when the stored transcript is an English TRANSLATION of the audio
+  /// (the job ran with `translate`). Server-authored like [language]; null
+  /// reads as false (the column is nullable so the generated row class does
+  /// not force every constructor to name it; the wire value is 0/1).
+  final bool? translated;
+
+  /// Server-side summary job state (v1.19.0 Part B): 'queued', 'running',
+  /// 'failed', or null for idle/done. Server-authored, pull only.
+  final String? summaryStatus;
+
+  /// Short human reason when [summaryStatus] is 'failed'. Server-authored.
+  final String? summaryError;
+
+  /// 1-based place in the server's summary queue, only while 'queued'.
+  /// Server-authored.
+  final int? summaryQueuePosition;
+
+  /// Unix seconds when the user dismissed the 'Summary failed' line on THIS
+  /// device. LOCAL-ONLY: never pushed, never read from a pull. Cleared by
+  /// [LocalDb.applyRemoteDump] when the summary succeeds or a new attempt
+  /// starts, so the line returns on the next failure.
+  final int? summaryErrorDismissedAt;
   const DumpRow(
       {required this.id,
       required this.createdAt,
@@ -681,7 +802,13 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
       this.transcriptTimings,
       this.summaryTemplate,
       this.speakerNames,
-      this.summaryRequestedAt});
+      this.summaryRequestedAt,
+      this.language,
+      this.translated,
+      this.summaryStatus,
+      this.summaryError,
+      this.summaryQueuePosition,
+      this.summaryErrorDismissedAt});
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -764,6 +891,25 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
     if (!nullToAbsent || summaryRequestedAt != null) {
       map['summary_requested_at'] = Variable<int>(summaryRequestedAt);
     }
+    if (!nullToAbsent || language != null) {
+      map['language'] = Variable<String>(language);
+    }
+    if (!nullToAbsent || translated != null) {
+      map['translated'] = Variable<bool>(translated);
+    }
+    if (!nullToAbsent || summaryStatus != null) {
+      map['summary_status'] = Variable<String>(summaryStatus);
+    }
+    if (!nullToAbsent || summaryError != null) {
+      map['summary_error'] = Variable<String>(summaryError);
+    }
+    if (!nullToAbsent || summaryQueuePosition != null) {
+      map['summary_queue_position'] = Variable<int>(summaryQueuePosition);
+    }
+    if (!nullToAbsent || summaryErrorDismissedAt != null) {
+      map['summary_error_dismissed_at'] =
+          Variable<int>(summaryErrorDismissedAt);
+    }
     return map;
   }
 
@@ -844,6 +990,24 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
       summaryRequestedAt: summaryRequestedAt == null && nullToAbsent
           ? const Value.absent()
           : Value(summaryRequestedAt),
+      language: language == null && nullToAbsent
+          ? const Value.absent()
+          : Value(language),
+      translated: translated == null && nullToAbsent
+          ? const Value.absent()
+          : Value(translated),
+      summaryStatus: summaryStatus == null && nullToAbsent
+          ? const Value.absent()
+          : Value(summaryStatus),
+      summaryError: summaryError == null && nullToAbsent
+          ? const Value.absent()
+          : Value(summaryError),
+      summaryQueuePosition: summaryQueuePosition == null && nullToAbsent
+          ? const Value.absent()
+          : Value(summaryQueuePosition),
+      summaryErrorDismissedAt: summaryErrorDismissedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(summaryErrorDismissedAt),
     );
   }
 
@@ -893,6 +1057,14 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
       summaryTemplate: serializer.fromJson<String?>(json['summaryTemplate']),
       speakerNames: serializer.fromJson<String?>(json['speakerNames']),
       summaryRequestedAt: serializer.fromJson<int?>(json['summaryRequestedAt']),
+      language: serializer.fromJson<String?>(json['language']),
+      translated: serializer.fromJson<bool?>(json['translated']),
+      summaryStatus: serializer.fromJson<String?>(json['summaryStatus']),
+      summaryError: serializer.fromJson<String?>(json['summaryError']),
+      summaryQueuePosition:
+          serializer.fromJson<int?>(json['summaryQueuePosition']),
+      summaryErrorDismissedAt:
+          serializer.fromJson<int?>(json['summaryErrorDismissedAt']),
     );
   }
   @override
@@ -936,6 +1108,13 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
       'summaryTemplate': serializer.toJson<String?>(summaryTemplate),
       'speakerNames': serializer.toJson<String?>(speakerNames),
       'summaryRequestedAt': serializer.toJson<int?>(summaryRequestedAt),
+      'language': serializer.toJson<String?>(language),
+      'translated': serializer.toJson<bool?>(translated),
+      'summaryStatus': serializer.toJson<String?>(summaryStatus),
+      'summaryError': serializer.toJson<String?>(summaryError),
+      'summaryQueuePosition': serializer.toJson<int?>(summaryQueuePosition),
+      'summaryErrorDismissedAt':
+          serializer.toJson<int?>(summaryErrorDismissedAt),
     };
   }
 
@@ -972,7 +1151,13 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
           Value<String?> transcriptTimings = const Value.absent(),
           Value<String?> summaryTemplate = const Value.absent(),
           Value<String?> speakerNames = const Value.absent(),
-          Value<int?> summaryRequestedAt = const Value.absent()}) =>
+          Value<int?> summaryRequestedAt = const Value.absent(),
+          Value<String?> language = const Value.absent(),
+          Value<bool?> translated = const Value.absent(),
+          Value<String?> summaryStatus = const Value.absent(),
+          Value<String?> summaryError = const Value.absent(),
+          Value<int?> summaryQueuePosition = const Value.absent(),
+          Value<int?> summaryErrorDismissedAt = const Value.absent()}) =>
       DumpRow(
         id: id ?? this.id,
         createdAt: createdAt ?? this.createdAt,
@@ -1031,6 +1216,18 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
         summaryRequestedAt: summaryRequestedAt.present
             ? summaryRequestedAt.value
             : this.summaryRequestedAt,
+        language: language.present ? language.value : this.language,
+        translated: translated.present ? translated.value : this.translated,
+        summaryStatus:
+            summaryStatus.present ? summaryStatus.value : this.summaryStatus,
+        summaryError:
+            summaryError.present ? summaryError.value : this.summaryError,
+        summaryQueuePosition: summaryQueuePosition.present
+            ? summaryQueuePosition.value
+            : this.summaryQueuePosition,
+        summaryErrorDismissedAt: summaryErrorDismissedAt.present
+            ? summaryErrorDismissedAt.value
+            : this.summaryErrorDismissedAt,
       );
   DumpRow copyWithCompanion(DumpsCompanion data) {
     return DumpRow(
@@ -1110,6 +1307,21 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
       summaryRequestedAt: data.summaryRequestedAt.present
           ? data.summaryRequestedAt.value
           : this.summaryRequestedAt,
+      language: data.language.present ? data.language.value : this.language,
+      translated:
+          data.translated.present ? data.translated.value : this.translated,
+      summaryStatus: data.summaryStatus.present
+          ? data.summaryStatus.value
+          : this.summaryStatus,
+      summaryError: data.summaryError.present
+          ? data.summaryError.value
+          : this.summaryError,
+      summaryQueuePosition: data.summaryQueuePosition.present
+          ? data.summaryQueuePosition.value
+          : this.summaryQueuePosition,
+      summaryErrorDismissedAt: data.summaryErrorDismissedAt.present
+          ? data.summaryErrorDismissedAt.value
+          : this.summaryErrorDismissedAt,
     );
   }
 
@@ -1148,7 +1360,13 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
           ..write('transcriptTimings: $transcriptTimings, ')
           ..write('summaryTemplate: $summaryTemplate, ')
           ..write('speakerNames: $speakerNames, ')
-          ..write('summaryRequestedAt: $summaryRequestedAt')
+          ..write('summaryRequestedAt: $summaryRequestedAt, ')
+          ..write('language: $language, ')
+          ..write('translated: $translated, ')
+          ..write('summaryStatus: $summaryStatus, ')
+          ..write('summaryError: $summaryError, ')
+          ..write('summaryQueuePosition: $summaryQueuePosition, ')
+          ..write('summaryErrorDismissedAt: $summaryErrorDismissedAt')
           ..write(')'))
         .toString();
   }
@@ -1187,7 +1405,13 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
         transcriptTimings,
         summaryTemplate,
         speakerNames,
-        summaryRequestedAt
+        summaryRequestedAt,
+        language,
+        translated,
+        summaryStatus,
+        summaryError,
+        summaryQueuePosition,
+        summaryErrorDismissedAt
       ]);
   @override
   bool operator ==(Object other) =>
@@ -1225,7 +1449,13 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
           other.transcriptTimings == this.transcriptTimings &&
           other.summaryTemplate == this.summaryTemplate &&
           other.speakerNames == this.speakerNames &&
-          other.summaryRequestedAt == this.summaryRequestedAt);
+          other.summaryRequestedAt == this.summaryRequestedAt &&
+          other.language == this.language &&
+          other.translated == this.translated &&
+          other.summaryStatus == this.summaryStatus &&
+          other.summaryError == this.summaryError &&
+          other.summaryQueuePosition == this.summaryQueuePosition &&
+          other.summaryErrorDismissedAt == this.summaryErrorDismissedAt);
 }
 
 class DumpsCompanion extends UpdateCompanion<DumpRow> {
@@ -1262,6 +1492,12 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
   final Value<String?> summaryTemplate;
   final Value<String?> speakerNames;
   final Value<int?> summaryRequestedAt;
+  final Value<String?> language;
+  final Value<bool?> translated;
+  final Value<String?> summaryStatus;
+  final Value<String?> summaryError;
+  final Value<int?> summaryQueuePosition;
+  final Value<int?> summaryErrorDismissedAt;
   final Value<int> rowid;
   const DumpsCompanion({
     this.id = const Value.absent(),
@@ -1297,6 +1533,12 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
     this.summaryTemplate = const Value.absent(),
     this.speakerNames = const Value.absent(),
     this.summaryRequestedAt = const Value.absent(),
+    this.language = const Value.absent(),
+    this.translated = const Value.absent(),
+    this.summaryStatus = const Value.absent(),
+    this.summaryError = const Value.absent(),
+    this.summaryQueuePosition = const Value.absent(),
+    this.summaryErrorDismissedAt = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   DumpsCompanion.insert({
@@ -1333,6 +1575,12 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
     this.summaryTemplate = const Value.absent(),
     this.speakerNames = const Value.absent(),
     this.summaryRequestedAt = const Value.absent(),
+    this.language = const Value.absent(),
+    this.translated = const Value.absent(),
+    this.summaryStatus = const Value.absent(),
+    this.summaryError = const Value.absent(),
+    this.summaryQueuePosition = const Value.absent(),
+    this.summaryErrorDismissedAt = const Value.absent(),
     this.rowid = const Value.absent(),
   })  : id = Value(id),
         createdAt = Value(createdAt),
@@ -1377,6 +1625,12 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
     Expression<String>? summaryTemplate,
     Expression<String>? speakerNames,
     Expression<int>? summaryRequestedAt,
+    Expression<String>? language,
+    Expression<bool>? translated,
+    Expression<String>? summaryStatus,
+    Expression<String>? summaryError,
+    Expression<int>? summaryQueuePosition,
+    Expression<int>? summaryErrorDismissedAt,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -1421,6 +1675,14 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
       if (speakerNames != null) 'speaker_names': speakerNames,
       if (summaryRequestedAt != null)
         'summary_requested_at': summaryRequestedAt,
+      if (language != null) 'language': language,
+      if (translated != null) 'translated': translated,
+      if (summaryStatus != null) 'summary_status': summaryStatus,
+      if (summaryError != null) 'summary_error': summaryError,
+      if (summaryQueuePosition != null)
+        'summary_queue_position': summaryQueuePosition,
+      if (summaryErrorDismissedAt != null)
+        'summary_error_dismissed_at': summaryErrorDismissedAt,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -1459,6 +1721,12 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
       Value<String?>? summaryTemplate,
       Value<String?>? speakerNames,
       Value<int?>? summaryRequestedAt,
+      Value<String?>? language,
+      Value<bool?>? translated,
+      Value<String?>? summaryStatus,
+      Value<String?>? summaryError,
+      Value<int?>? summaryQueuePosition,
+      Value<int?>? summaryErrorDismissedAt,
       Value<int>? rowid}) {
     return DumpsCompanion(
       id: id ?? this.id,
@@ -1498,6 +1766,13 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
       summaryTemplate: summaryTemplate ?? this.summaryTemplate,
       speakerNames: speakerNames ?? this.speakerNames,
       summaryRequestedAt: summaryRequestedAt ?? this.summaryRequestedAt,
+      language: language ?? this.language,
+      translated: translated ?? this.translated,
+      summaryStatus: summaryStatus ?? this.summaryStatus,
+      summaryError: summaryError ?? this.summaryError,
+      summaryQueuePosition: summaryQueuePosition ?? this.summaryQueuePosition,
+      summaryErrorDismissedAt:
+          summaryErrorDismissedAt ?? this.summaryErrorDismissedAt,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -1608,6 +1883,25 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
     if (summaryRequestedAt.present) {
       map['summary_requested_at'] = Variable<int>(summaryRequestedAt.value);
     }
+    if (language.present) {
+      map['language'] = Variable<String>(language.value);
+    }
+    if (translated.present) {
+      map['translated'] = Variable<bool>(translated.value);
+    }
+    if (summaryStatus.present) {
+      map['summary_status'] = Variable<String>(summaryStatus.value);
+    }
+    if (summaryError.present) {
+      map['summary_error'] = Variable<String>(summaryError.value);
+    }
+    if (summaryQueuePosition.present) {
+      map['summary_queue_position'] = Variable<int>(summaryQueuePosition.value);
+    }
+    if (summaryErrorDismissedAt.present) {
+      map['summary_error_dismissed_at'] =
+          Variable<int>(summaryErrorDismissedAt.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -1650,6 +1944,12 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
           ..write('summaryTemplate: $summaryTemplate, ')
           ..write('speakerNames: $speakerNames, ')
           ..write('summaryRequestedAt: $summaryRequestedAt, ')
+          ..write('language: $language, ')
+          ..write('translated: $translated, ')
+          ..write('summaryStatus: $summaryStatus, ')
+          ..write('summaryError: $summaryError, ')
+          ..write('summaryQueuePosition: $summaryQueuePosition, ')
+          ..write('summaryErrorDismissedAt: $summaryErrorDismissedAt, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -6516,6 +6816,12 @@ typedef $$DumpsTableCreateCompanionBuilder = DumpsCompanion Function({
   Value<String?> summaryTemplate,
   Value<String?> speakerNames,
   Value<int?> summaryRequestedAt,
+  Value<String?> language,
+  Value<bool?> translated,
+  Value<String?> summaryStatus,
+  Value<String?> summaryError,
+  Value<int?> summaryQueuePosition,
+  Value<int?> summaryErrorDismissedAt,
   Value<int> rowid,
 });
 typedef $$DumpsTableUpdateCompanionBuilder = DumpsCompanion Function({
@@ -6552,6 +6858,12 @@ typedef $$DumpsTableUpdateCompanionBuilder = DumpsCompanion Function({
   Value<String?> summaryTemplate,
   Value<String?> speakerNames,
   Value<int?> summaryRequestedAt,
+  Value<String?> language,
+  Value<bool?> translated,
+  Value<String?> summaryStatus,
+  Value<String?> summaryError,
+  Value<int?> summaryQueuePosition,
+  Value<int?> summaryErrorDismissedAt,
   Value<int> rowid,
 });
 
@@ -6692,6 +7004,26 @@ class $$DumpsTableFilterComposer extends Composer<_$LocalDb, $DumpsTable> {
 
   ColumnFilters<int> get summaryRequestedAt => $composableBuilder(
       column: $table.summaryRequestedAt,
+      builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get language => $composableBuilder(
+      column: $table.language, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<bool> get translated => $composableBuilder(
+      column: $table.translated, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get summaryStatus => $composableBuilder(
+      column: $table.summaryStatus, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get summaryError => $composableBuilder(
+      column: $table.summaryError, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get summaryQueuePosition => $composableBuilder(
+      column: $table.summaryQueuePosition,
+      builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get summaryErrorDismissedAt => $composableBuilder(
+      column: $table.summaryErrorDismissedAt,
       builder: (column) => ColumnFilters(column));
 
   Expression<bool> syncQueueRefs(
@@ -6842,6 +7174,28 @@ class $$DumpsTableOrderingComposer extends Composer<_$LocalDb, $DumpsTable> {
   ColumnOrderings<int> get summaryRequestedAt => $composableBuilder(
       column: $table.summaryRequestedAt,
       builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get language => $composableBuilder(
+      column: $table.language, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<bool> get translated => $composableBuilder(
+      column: $table.translated, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get summaryStatus => $composableBuilder(
+      column: $table.summaryStatus,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get summaryError => $composableBuilder(
+      column: $table.summaryError,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get summaryQueuePosition => $composableBuilder(
+      column: $table.summaryQueuePosition,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get summaryErrorDismissedAt => $composableBuilder(
+      column: $table.summaryErrorDismissedAt,
+      builder: (column) => ColumnOrderings(column));
 }
 
 class $$DumpsTableAnnotationComposer extends Composer<_$LocalDb, $DumpsTable> {
@@ -6951,6 +7305,24 @@ class $$DumpsTableAnnotationComposer extends Composer<_$LocalDb, $DumpsTable> {
   GeneratedColumn<int> get summaryRequestedAt => $composableBuilder(
       column: $table.summaryRequestedAt, builder: (column) => column);
 
+  GeneratedColumn<String> get language =>
+      $composableBuilder(column: $table.language, builder: (column) => column);
+
+  GeneratedColumn<bool> get translated => $composableBuilder(
+      column: $table.translated, builder: (column) => column);
+
+  GeneratedColumn<String> get summaryStatus => $composableBuilder(
+      column: $table.summaryStatus, builder: (column) => column);
+
+  GeneratedColumn<String> get summaryError => $composableBuilder(
+      column: $table.summaryError, builder: (column) => column);
+
+  GeneratedColumn<int> get summaryQueuePosition => $composableBuilder(
+      column: $table.summaryQueuePosition, builder: (column) => column);
+
+  GeneratedColumn<int> get summaryErrorDismissedAt => $composableBuilder(
+      column: $table.summaryErrorDismissedAt, builder: (column) => column);
+
   Expression<T> syncQueueRefs<T extends Object>(
       Expression<T> Function($$SyncQueueTableAnnotationComposer a) f) {
     final $$SyncQueueTableAnnotationComposer composer = $composerBuilder(
@@ -7029,6 +7401,12 @@ class $$DumpsTableTableManager extends RootTableManager<
             Value<String?> summaryTemplate = const Value.absent(),
             Value<String?> speakerNames = const Value.absent(),
             Value<int?> summaryRequestedAt = const Value.absent(),
+            Value<String?> language = const Value.absent(),
+            Value<bool?> translated = const Value.absent(),
+            Value<String?> summaryStatus = const Value.absent(),
+            Value<String?> summaryError = const Value.absent(),
+            Value<int?> summaryQueuePosition = const Value.absent(),
+            Value<int?> summaryErrorDismissedAt = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               DumpsCompanion(
@@ -7065,6 +7443,12 @@ class $$DumpsTableTableManager extends RootTableManager<
             summaryTemplate: summaryTemplate,
             speakerNames: speakerNames,
             summaryRequestedAt: summaryRequestedAt,
+            language: language,
+            translated: translated,
+            summaryStatus: summaryStatus,
+            summaryError: summaryError,
+            summaryQueuePosition: summaryQueuePosition,
+            summaryErrorDismissedAt: summaryErrorDismissedAt,
             rowid: rowid,
           ),
           createCompanionCallback: ({
@@ -7101,6 +7485,12 @@ class $$DumpsTableTableManager extends RootTableManager<
             Value<String?> summaryTemplate = const Value.absent(),
             Value<String?> speakerNames = const Value.absent(),
             Value<int?> summaryRequestedAt = const Value.absent(),
+            Value<String?> language = const Value.absent(),
+            Value<bool?> translated = const Value.absent(),
+            Value<String?> summaryStatus = const Value.absent(),
+            Value<String?> summaryError = const Value.absent(),
+            Value<int?> summaryQueuePosition = const Value.absent(),
+            Value<int?> summaryErrorDismissedAt = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               DumpsCompanion.insert(
@@ -7137,6 +7527,12 @@ class $$DumpsTableTableManager extends RootTableManager<
             summaryTemplate: summaryTemplate,
             speakerNames: speakerNames,
             summaryRequestedAt: summaryRequestedAt,
+            language: language,
+            translated: translated,
+            summaryStatus: summaryStatus,
+            summaryError: summaryError,
+            summaryQueuePosition: summaryQueuePosition,
+            summaryErrorDismissedAt: summaryErrorDismissedAt,
             rowid: rowid,
           ),
           withReferenceMapper: (p0) => p0

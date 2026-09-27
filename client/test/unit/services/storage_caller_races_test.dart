@@ -105,6 +105,7 @@ final class FixtureClient extends Fake implements TranscriptionClient {
     String dumpId, {
     required String requestId,
     String? model,
+    bool translate = false,
   }) async {
     enqueues++;
     return TranscriptionJobSnapshot(

@@ -35,6 +35,7 @@ import '../home/home_providers.dart' show serverTranscriptionServiceProvider;
 import '../settings/ai_summaries_section.dart'
     show summariesClientProvider, summariesEnabledProvider;
 import '../../widgets/item_action_sheet.dart';
+import '../../widgets/language_tag.dart';
 import '../../widgets/folder_header_actions.dart';
 import '../../widgets/folder_picker.dart';
 import '../../widgets/press_actions.dart';
@@ -1171,15 +1172,31 @@ class _DumpListState extends State<_DumpList> {
               dumpId: dump.id,
               status: transcription,
             );
-            final Widget pill = summaryPending(dump, now: summaryPendingNow())
-                ? Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      _SummaryPendingPill(dump: dump),
-                      transcriptionPill,
-                    ],
-                  )
-                : transcriptionPill;
+            // v1.19.0: a red 'Summary failed' pill while the server reports
+            // a failure (until dismissed), and the language tag for
+            // non-English recordings ('ES' / 'ES → EN').
+            final bool hasLanguageTag = LanguageTag.labelFor(dump) != null;
+            final bool showSummaryPill =
+                summaryPending(dump, now: summaryPendingNow());
+            // A Retry in flight outranks the failure it retries.
+            final bool showFailedPill =
+                !showSummaryPill && summaryFailed(dump);
+            final Widget pill =
+                showSummaryPill || showFailedPill || hasLanguageTag
+                    ? Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (hasLanguageTag)
+                            Padding(
+                              padding: const EdgeInsets.only(right: 6),
+                              child: LanguageTag(dump),
+                            ),
+                          if (showSummaryPill) _SummaryPendingPill(dump: dump),
+                          if (showFailedPill) _SummaryFailedPill(dump: dump),
+                          transcriptionPill,
+                        ],
+                      )
+                    : transcriptionPill;
             final DumpSearchMatch? match = widget.searchQuery.isEmpty
                 ? null
                 : widget.searchMatches[dump.id];
@@ -1639,6 +1656,48 @@ class _SummaryPendingPillState extends State<_SummaryPendingPill> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// 'Summary failed' (v1.19.0): the server reported the last summary attempt
+/// failed and the user has not dismissed it on this device. Row-derived, so
+/// it leaves with the same stream that brings the retry's success.
+class _SummaryFailedPill extends StatelessWidget {
+  const _SummaryFailedPill({required this.dump});
+
+  final DumpRow dump;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(right: 6),
+      child: Container(
+        key: ValueKey('summary-failed-pill-${dump.id}'),
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+        decoration: BoxDecoration(
+          color: colors.errorContainer,
+          border: Border.all(color: colors.error),
+          borderRadius: BorderRadius.circular(999),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.error_outline, size: 14, color: colors.onErrorContainer),
+            const SizedBox(width: 5),
+            Flexible(
+              child: Text(
+                'Summary failed',
+                style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                      color: colors.onErrorContainer,
+                      fontWeight: FontWeight.w600,
+                    ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
