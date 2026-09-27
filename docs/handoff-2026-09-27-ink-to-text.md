@@ -115,6 +115,13 @@ through the summarizer or removed — ask when convenient.
 
 ## 3b. QUEUED AFTER ink-to-text: a To Do section (Jeff, 2026-09-27)
 
+> **SUPERSEDED 2026-09-27 (same day):** Jeff answered the forks directly
+> (T1=both manual+inflow, T2=synced, T3=voice capture, T4=due dates +
+> Today/Upcoming, NO reminders). The approved spec is
+> docs/design/2026-09-27-todo-section.md (phase 1 dispatched). Do not
+> re-ask D1-D5.
+
+
 Jeff: "we also need to start building a To Do section of the app. This
 seems to be a natural progression." Not specced. Why it's natural: the app
 already EXTRACTS action items (the rule-based `MeetingNotesProcessor`
