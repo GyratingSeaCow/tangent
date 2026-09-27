@@ -83,6 +83,10 @@ def _save_and_start(client: TestClient, token: str) -> str:
     assert query["access_type"] == ["offline"]
     assert query["prompt"] == ["consent"]
     assert "https://www.googleapis.com/auth/tasks" in query["scope"][0]
+    # Google only accepts loopback redirect URIs for Desktop-app clients;
+    # a LAN/Tailscale address produced "Error 400: invalid_request" on a
+    # real device. TestClient calls us as http://testserver (port 80).
+    assert query["redirect_uri"] == ["http://127.0.0.1:80/v1/google-tasks/callback"]
     return query["state"][0]
 
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import secrets
 import sqlite3
 import time
@@ -91,7 +92,21 @@ def _email_from_id_token(raw_token: object) -> str | None:
 
 
 def _redirect_uri(request: Request) -> str:
-    return str(request.url_for("google_tasks_callback"))
+    """Loopback callback, always.
+
+    Google rejects OAuth redirect URIs on private or Tailscale addresses
+    (`Error 400: invalid_request` on a real device) and accepts only
+    `http://127.0.0.1:<port>` / `localhost` for Desktop-app clients, or a
+    public HTTPS domain. So the consent page must be finished in a browser
+    ON the machine that runs the server, where 127.0.0.1:<port> is Tangent.
+    The port is the one the caller reached us on (the published host port).
+    `TANGENT_GOOGLE_REDIRECT_URI` overrides for a public-domain deployment.
+    """
+    override = os.environ.get("TANGENT_GOOGLE_REDIRECT_URI")
+    if override:
+        return override
+    port = request.url.port or (443 if request.url.scheme == "https" else 80)
+    return f"http://127.0.0.1:{port}/v1/google-tasks/callback"
 
 
 @router.get("/status", response_model=GoogleTasksStatus)
