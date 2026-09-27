@@ -27,11 +27,13 @@ import '../../models/dump.dart';
 import '../../models/dump_mode.dart';
 import '../../models/notebook.dart';
 import '../../models/notebook_ruling.dart';
+import '../../models/speaker_names.dart';
 import '../../models/sync_status.dart';
 import '../../services/image_file_picker.dart';
 import '../../services/ink_search.dart';
+import '../../services/notebook_import.dart';
 import '../../services/notebook_persistence.dart';
-import '../../services/summary_page_text.dart';
+import '../../services/transcript_timings.dart';
 import '../../widgets/dump_picker_sheet.dart';
 import '../../widgets/ink_palette_popup.dart';
 import '../../widgets/notebook_dump_card.dart';
@@ -79,26 +81,18 @@ const ColorFilter kNotebookInkCutout = ColorFilter.matrix(<double>[
   0.2126, 0.7152, 0.0722, 0, 0, //
 ]);
 
+// Page geometry is owned by the import service (`notebook_import.dart`) so
+// the headless *Send to notebook…* path and this editor place content with
+// ONE formula. The aliases keep the editor's flow layout reading as before.
+
 /// Inset of the page's content from its top-left corner.
-const double _pagePadding = 12;
+const double _pagePadding = kNotebookPagePadding;
 
 /// Vertical step between blocks that have never been moved.
-const double _unplacedBlockSpacing = 72;
+const double _unplacedBlockSpacing = kNotebookUnplacedBlockSpacing;
 
 /// Vertical gap between the current content bottom and an imported item.
-const double _importSpacing = 24;
-
-/// Nominal height reserved for a block when computing the content bottom.
-const double _importBlockHeight = 90;
-
-/// Spacing between consecutive imported audio cards.
-const double _importCardSpacing = 104;
-
-/// How a picked dump lands on the page.
-///
-/// [summary] and [both] exist only while AI summaries are in play (see
-/// `_askImportShape`); the sheet never lists them otherwise.
-enum _ImportShape { card, text, summary, both }
+const double _importSpacing = kNotebookImportSpacing;
 
 /// Width of the typed-block column on the canvas.
 ///
@@ -436,9 +430,9 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
       final ScrollPosition position = _pageScroll.position;
       // The bbox lives in canonical page space; the viewport shows the page
       // scaled by [_pageScale] (see the LayoutBuilder in _buildBody).
-      final double target = (match.bbox.top * _pageScale -
-              position.viewportDimension / 3)
-          .clamp(0.0, position.maxScrollExtent);
+      final double target =
+          (match.bbox.top * _pageScale - position.viewportDimension / 3)
+              .clamp(0.0, position.maxScrollExtent);
       unawaited(
         _pageScroll.animateTo(
           target,
@@ -659,81 +653,48 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
       for (final String id in added)
         if (dumpsById[id] != null) dumpsById[id]!,
     ];
-    final _ImportShape? shape = await _askImportShape(
+    final ImportShape? shape = await _askImportShape(
       offerSummary: _summaryShapesApply(pickedDumps),
     );
     if (shape == null || !mounted) return;
 
-    // Content-aware insert: everything new starts below the lowest existing
-    // content (blocks AND ink), never on top of what is already there.
-    double insertY = _contentBottom() + _importSpacing;
+    // The rows carry what the renderer needs (timings, name map) and the
+    // picker's `Dump`s do not; the same rows fed the picker, so a picked id
+    // always resolves. Block content comes from the shared import service
+    // — the recording-side *Send to notebook…* path builds the identical
+    // blocks — and placement from its layout formula.
+    final Map<String, DumpRow> rowsById = <String, DumpRow>{
+      for (final DumpRow row
+          in ref.read(dumpsProvider).valueOrNull ?? const <DumpRow>[])
+        row.id: row,
+    };
+    final List<NotebookBlock> incoming = <NotebookBlock>[
+      for (final String dumpId in added)
+        if (rowsById[dumpId] case final DumpRow row)
+          ...importBlocksForDump(
+            dump: row,
+            shape: shape,
+            // The shape sheet's "Include audio bubble" switch (spec §C) is
+            // not wired in this editor yet; until it is, Text stays text.
+            includeAudioCard: false,
+            timings: TranscriptTimings.parse(row.transcriptTimings),
+            speakerNames: SpeakerNames.decode(row.speakerNames),
+            newId: _uuid.v4,
+          ),
+    ];
+    final List<NotebookBlock> placed = layoutImportedBlocks(
+      existing: _blocks,
+      strokes: _strokes,
+      incoming: incoming,
+    );
 
     setState(() {
-      final List<NotebookBlock> newBlocks = <NotebookBlock>[];
-
-      /// Lands one text box at the cursor and advances it. Transcripts and
-      /// summaries vary in length; leave room proportional to the text so
-      /// consecutive imports do not overlap each other.
-      void addText(String text) {
-        final String id = _uuid.v4();
-        _controllerFor(id, text);
-        newBlocks.add(
-          NotebookTextBlock(
-            id: id,
-            text: text,
-            x: _pagePadding + 4,
-            y: insertY,
-          ),
-        );
-        insertY += _importSpacing + (text.length / 40).ceil() * 24.0;
+      for (final NotebookBlock block in placed) {
+        if (block is NotebookTextBlock) _controllerFor(block.id, block.text);
       }
-
-      for (final String dumpId in added) {
-        final Dump? dump = dumpsById[dumpId];
-        switch (shape) {
-          case _ImportShape.card:
-            newBlocks.add(
-              NotebookDumpCardBlock(
-                id: _uuid.v4(),
-                dumpId: dumpId,
-                x: _pagePadding + 4,
-                y: insertY,
-              ),
-            );
-            insertY += _importCardSpacing;
-          case _ImportShape.text:
-            addText(_transcriptPageText(dump, dumpId));
-          case _ImportShape.summary:
-            addText(_summaryPageText(dump, dumpId));
-          case _ImportShape.both:
-            // Summary first, transcript beneath it: the whole record lands
-            // in one import, each half honest on its own.
-            addText(_summaryPageText(dump, dumpId));
-            addText(_transcriptPageText(dump, dumpId));
-        }
-      }
-      _blocks = <NotebookBlock>[..._blocks, ...newBlocks];
+      _blocks = <NotebookBlock>[..._blocks, ...placed];
       _dirty = true;
     });
-  }
-
-  /// The transcript as page text. Honest fallback: an empty text box would
-  /// read as a broken import, so a missing transcript says so in the box.
-  String _transcriptPageText(Dump? dump, String dumpId) {
-    final String? transcript = dump?.transcript?.trim();
-    return (transcript == null || transcript.isEmpty)
-        ? '(no transcript for "${dump?.title ?? dumpId}")'
-        : transcript;
-  }
-
-  /// The AI summary as page text (markdown headings flattened for the plain
-  /// block editor). Mirrors the transcript's fallback: a dump the server has
-  /// not summarized yet says so rather than landing an empty box.
-  String _summaryPageText(Dump? dump, String dumpId) {
-    final String normalised = summaryToPageText(dump?.summary ?? '');
-    return normalised.isEmpty
-        ? '(no summary yet for "${dump?.title ?? dumpId}")'
-        : normalised;
   }
 
   /// Whether the Summary shapes belong on the sheet for this batch.
@@ -750,8 +711,8 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
 
   /// Asks whether the import lands as audio bubbles or transcript text —
   /// plus, when [offerSummary], the summary alone or summary-and-transcript.
-  Future<_ImportShape?> _askImportShape({required bool offerSummary}) =>
-      showModalBottomSheet<_ImportShape>(
+  Future<ImportShape?> _askImportShape({required bool offerSummary}) =>
+      showModalBottomSheet<ImportShape>(
         context: context,
         builder: (BuildContext sheetContext) => SafeArea(
           child: Column(
@@ -762,14 +723,14 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                 leading: const Icon(Icons.graphic_eq),
                 title: const Text('Audio bubble'),
                 subtitle: const Text('A playable card you can drag around'),
-                onTap: () => Navigator.of(sheetContext).pop(_ImportShape.card),
+                onTap: () => Navigator.of(sheetContext).pop(ImportShape.audio),
               ),
               ListTile(
                 key: const ValueKey<String>('import-as-text'),
                 leading: const Icon(Icons.notes),
                 title: const Text('Text'),
                 subtitle: const Text('The transcript, in an editable text box'),
-                onTap: () => Navigator.of(sheetContext).pop(_ImportShape.text),
+                onTap: () => Navigator.of(sheetContext).pop(ImportShape.text),
               ),
               if (offerSummary) ...<Widget>[
                 ListTile(
@@ -780,7 +741,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                     'Key points and action items, in an editable text box',
                   ),
                   onTap: () =>
-                      Navigator.of(sheetContext).pop(_ImportShape.summary),
+                      Navigator.of(sheetContext).pop(ImportShape.summary),
                 ),
                 ListTile(
                   key: const ValueKey<String>('import-as-both'),
@@ -789,8 +750,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                   subtitle: const Text(
                     'Both, as two text boxes — summary first',
                   ),
-                  onTap: () =>
-                      Navigator.of(sheetContext).pop(_ImportShape.both),
+                  onTap: () => Navigator.of(sheetContext).pop(ImportShape.both),
                 ),
               ],
             ],
@@ -873,33 +833,9 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
 
   /// The lowest edge of everything currently on the page: placed blocks
   /// (plus a nominal footprint height), flow-laid blocks at their computed
-  /// slots, and every ink point.
-  double _contentBottom() {
-    double lowest = 0;
-    double flowY = _pagePadding;
-    for (final NotebookBlock block in _blocks) {
-      switch (block) {
-        case NotebookTextBlock t:
-          lowest = math.max(lowest, (t.y ?? flowY) + _importBlockHeight);
-          if (t.y == null) flowY += _unplacedBlockSpacing;
-        case NotebookCheckboxBlock c:
-          lowest = math.max(lowest, (c.y ?? flowY) + _importBlockHeight);
-          if (c.y == null) flowY += _unplacedBlockSpacing;
-        case NotebookDumpCardBlock d:
-          lowest = math.max(lowest, d.y + _importBlockHeight);
-        case NotebookImageBlock i:
-          lowest = math.max(lowest, i.y + i.height);
-        case NotebookBlock():
-          break;
-      }
-    }
-    for (final InkStroke stroke in _strokes) {
-      for (final InkPoint point in stroke.points) {
-        lowest = math.max(lowest, point.y);
-      }
-    }
-    return lowest;
-  }
+  /// slots, and every ink point. Delegates to the import service so the
+  /// headless import and this editor agree on where content ends.
+  double _contentBottom() => notebookContentBottom(_blocks, _strokes);
 
   // -------------------------------------------------------------------
   // Saving / leaving
@@ -1820,8 +1756,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
         // the column, so a page whose ink reaches x=808 must scale against
         // 808 (+padding) or everything past the column is clipped away. That
         // was the Fold's cover screen losing the right end of every line.
-        final double canon =
-            math.max(_pageColumnWidth, _contentRightEdge());
+        final double canon = math.max(_pageColumnWidth, _contentRightEdge());
         final double scale = math.min(1.0, constraints.maxWidth / canon);
         // Captured for scroll-to-match: a match bbox is canonical, the
         // scroll offset is in viewport px. Plain assignment — layout is not
