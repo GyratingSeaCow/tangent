@@ -8,6 +8,24 @@ re-derive it.
 
 ## 1. Open items
 
+### 1.18 Transcript → notebook — DONE (2026-09-27, v1.20.0)
+
+Jeff's picks: send from the recording (N1=a), rendered `[mm:ss] Name:`
+text (N2=a), tappable stamps (N3=y). Client-only; one optional `stamps`
+key on text blocks. Proven live on the Fold: ⋮ → Send to notebook → New
+→ Text → Open → page showed the audio bubble + `[01:45] Jeff: …` lines,
+stamp tap flipped the card to pause-icon and Android saw a new AudioTrack
+start from Tangent.
+- Also fixed: 'Regenerate notes' looked ignored (ms-fast, identical
+  output) → busy spinner ≥600 ms + snackbar. And the 280 px selection
+  toolbar overflow from the 6th action.
+
+Open:
+- Regenerate notes still uses the rule-based extractor, not the AI
+  summarizer; consider routing it (or removing it) — ask Jeff.
+- Stamps do not shift on edits before them (dropped instead) — fine for
+  now; a diff-based remap is a later polish.
+
 ### 1.17 Translation + summary status — DONE (2026-09-27, v1.19.0)
 
 Jeff's picks: per-recording translation only (no global switch), language
