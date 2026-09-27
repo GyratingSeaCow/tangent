@@ -1939,7 +1939,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                           value: _InsertAction.dump,
                           child: ListTile(
                             leading: Icon(dumpModeIcon(DumpMode.brainDump)),
-                            title: const Text('Dump'),
+                            title: const Text('Recording'),
                             contentPadding: EdgeInsets.zero,
                           ),
                         ),

@@ -320,7 +320,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     // ([WhisperModelSection] below), so the status line is a STATUS line —
     // no 'default model:' note and no 'available:' pseudo-menu that
     // selected nothing.
-    if (info.dumpCount != null) parts.add('${info.dumpCount} dumps');
+    if (info.dumpCount != null) parts.add('${info.dumpCount} recordings');
     if (info.setupComplete == false) parts.add('SETUP INCOMPLETE — open the server URL in a browser');
     return parts.join(' · ');
   }

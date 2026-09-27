@@ -120,7 +120,7 @@ class _ObsidianExportSectionState extends ConsumerState<ObsidianExportSection> {
         const Padding(
           padding: EdgeInsets.fromLTRB(16, 4, 16, 12),
           child: Text(
-            'Writes every brain dump and notebook as a markdown file into '
+            'Writes every recording and notebook as a markdown file into '
             'an "Obsidian Export" folder inside your recordings folder. '
             'Point an Obsidian vault at it (or copy it into one) and your '
             'notes are searchable there. Transcripts export as text; '

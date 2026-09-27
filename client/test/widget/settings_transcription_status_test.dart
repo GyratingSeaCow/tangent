@@ -5,7 +5,7 @@
 /// base, small, medium, large-v3 · N dumps` — an "available" list that
 /// looked like a menu and selected nothing. The model list now lives in
 /// [WhisperModelSection] as real radios, so the status line shrinks to
-/// `Connected · N dumps` and the busy / unreachable / not-configured
+/// `Connected · N recordings` and the busy / unreachable / not-configured
 /// branches stay exactly as they were.
 library;
 
@@ -101,12 +101,12 @@ Future<void> _mount(
 
 void main() {
   testWidgets(
-      'a connected server shows "Connected · N dumps" and no model list',
+      'a connected server shows "Connected · N recordings" and no model list',
       (tester) async {
     await _mount(tester, client: _StubClient(info: _info));
     await tester.pumpAndSettle();
 
-    expect(find.text('Connected · 7 dumps'), findsOneWidget);
+    expect(find.text('Connected · 7 recordings'), findsOneWidget);
     // The dead menu is gone: neither the default-model note nor the
     // "available:" list may appear in the status line any more.
     expect(find.textContaining('default model'), findsNothing);
@@ -133,7 +133,7 @@ void main() {
     );
   });
 
-  testWidgets('a setup-incomplete server still warns, after the dump count',
+  testWidgets('a setup-incomplete server still warns, after the recording count',
       (tester) async {
     await _mount(
       tester,
@@ -151,7 +151,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.textContaining('SETUP INCOMPLETE'), findsOneWidget);
-    expect(find.textContaining('Connected · 0 dumps'), findsOneWidget);
+    expect(find.textContaining('Connected · 0 recordings'), findsOneWidget);
   });
 
   testWidgets('the busy, unreachable and not-configured branches are unchanged',
@@ -162,7 +162,7 @@ void main() {
     expect(find.text('Loading server information…'), findsOneWidget);
     held.gate.complete(_info);
     await tester.pumpAndSettle();
-    expect(find.text('Connected · 7 dumps'), findsOneWidget);
+    expect(find.text('Connected · 7 recordings'), findsOneWidget);
   });
 
   testWidgets('an unreachable server still says so', (tester) async {

@@ -11,7 +11,8 @@ import 'package:tangent/screens/dump/dumps_providers.dart';
 
 /// T2: the dumps list carries a blue `+` FAB (bottom-right) whose result
 /// depends on the active mode filter — a concrete [DumpsCreateAction] when a
-/// mode chip is active, or a three-option bottom sheet under the All filter.
+/// mode chip is active, or a two-option bottom sheet (Brain Dump | Text
+/// Note — meeting capture is removed, M1) under the All filter.
 /// The screen pops itself with the chosen action; home consumes it.
 
 void _useTaskViewport(WidgetTester tester) {
@@ -168,8 +169,8 @@ void main() {
   });
 
   testWidgets(
-      'All filter: FAB opens a three-option sheet; Meeting pops with '
-      'DumpsCreateAction.meeting', (tester) async {
+      'All filter: FAB opens a sheet offering exactly Brain Dump and '
+      'Text Note — meeting capture is gone (M1)', (tester) async {
     _useTaskViewport(tester);
     final probe = await _pushList(tester);
 
@@ -182,10 +183,17 @@ void main() {
     final textNoteOption = find.byKey(const ValueKey('create-option-textNote'));
     final brainDumpOption =
         find.byKey(const ValueKey('create-option-brainDump'));
-    final meetingOption = find.byKey(const ValueKey('create-option-meeting'));
     expect(textNoteOption, findsOneWidget);
     expect(brainDumpOption, findsOneWidget);
-    expect(meetingOption, findsOneWidget);
+    // M1: create surfaces offer exactly {brain dump, note} — two ListTiles,
+    // no Meeting option by key or label.
+    expect(
+      find.byKey(const ValueKey('create-option-meeting')),
+      findsNothing,
+      reason: 'meeting capture is removed from every create surface',
+    );
+    expect(find.text('Meeting'), findsNothing);
+    expect(find.byType(ListTile), findsNWidgets(2));
     expect(
       find.descendant(of: textNoteOption, matching: find.text('Text Note')),
       findsOneWidget,
@@ -194,18 +202,41 @@ void main() {
       find.descendant(of: brainDumpOption, matching: find.text('Brain Dump')),
       findsOneWidget,
     );
-    expect(
-      find.descendant(of: meetingOption, matching: find.text('Meeting')),
-      findsOneWidget,
-    );
 
-    await tester.tap(meetingOption);
+    await tester.tap(brainDumpOption);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
 
     expect(probe.completed, isTrue);
-    expect(probe.result, DumpsCreateAction.meeting);
+    expect(probe.result, DumpsCreateAction.brainDump);
     expect(find.byType(DumpsListScreen), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'Meeting filter active: FAB falls back to the create sheet instead of '
+      'starting a new meeting recording', (tester) async {
+    _useTaskViewport(tester);
+    final probe = await _pushList(tester);
+
+    await tester.tap(find.byKey(const ValueKey('mode-filter-menu')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('mode-filter-meeting')));
+    await _pumpData(tester);
+    await tester.tap(find.byType(FloatingActionButton));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(probe.completed, isFalse,
+        reason: 'no direct meeting creation exists anymore',);
+    expect(
+      find.byKey(const ValueKey('create-option-meeting')),
+      findsNothing,
+    );
+    expect(find.byKey(const ValueKey('create-option-textNote')),
+        findsOneWidget,);
+    expect(find.byKey(const ValueKey('create-option-brainDump')),
+        findsOneWidget,);
     expect(tester.takeException(), isNull);
   });
 }

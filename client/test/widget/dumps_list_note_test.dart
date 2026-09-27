@@ -340,7 +340,7 @@ void main() {
         findsNothing,
         reason: 'notes never match transcript-progress filters',
       );
-      expect(find.text('No dumps yet — record one!'), findsOneWidget);
+      expect(find.text('No recordings yet — record one!'), findsOneWidget);
 
       // Filters are dropdowns now: open the menu, then tap the same key.
       await tester.tap(find.byKey(const ValueKey('transcript-filter-menu')));
@@ -493,7 +493,7 @@ void main() {
       expect(await f.audio('A', 'fixture-recording').exists(), isFalse);
       expect(await f.metadata('A', 'fixture-recording').exists(), isFalse);
     });
-    expect(find.text('No dumps yet — record one!'), findsOneWidget);
+    expect(find.text('No recordings yet — record one!'), findsOneWidget);
     await disposeBoundWidget(tester, bound!);
     await tester.pump(const Duration(milliseconds: 1));
     expect(tester.takeException(), isNull);
