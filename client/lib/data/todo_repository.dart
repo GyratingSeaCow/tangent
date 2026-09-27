@@ -95,7 +95,11 @@ class TodoRepository {
   /// The rows stay as tombstoned provenance, so [hasTodosFromSource] keeps
   /// answering true and detection never re-fires for that dump.
   Future<int> softDeleteFromSource(String sourceRef) async {
-    final List<TodoRow> rows = await watchTodosFromSource(sourceRef).first;
+    // A one-shot .get(), not the watch stream's .first: awaiting a stream
+    // inside a widget-test pump serialises badly and the card never redrew.
+    final List<TodoRow> rows = await (_db.select(_db.todos)
+          ..where((t) => t.sourceRef.equals(sourceRef) & t.deletedAt.isNull()))
+        .get();
     for (final TodoRow row in rows) {
       await softDelete(row.id);
     }
