@@ -8,6 +8,26 @@ re-derive it.
 
 ## 1. Open items
 
+### 1.16 Summarize UX fixes — DONE (2026-09-26, v1.17.1 + v1.18.0)
+
+Both from Jeff's live use of 1.17.0 the same evening.
+- v1.17.1: the picked template is mirrored into the local row on 202
+  (`recordRequestedSummaryTemplate`, not dirty, no updated_at bump) so
+  the picker ticks the new style immediately instead of after the
+  summary syncs back 30-60 s later.
+- v1.18.0: visible in-progress state. Local-only `summary_requested_at`
+  (client DB v21) set on 202, cleared by `applyRemoteDump` when a
+  summarized_at >= requested lands, 10-minute give-up. Detail shows an
+  indeterminate bar + 'Writing <Template> summary on your server…' +
+  elapsed ticker ABOVE the preserved old summary; button disabled as
+  'Summarizing…'; list rows get a 'Summarizing…' pill.
+
+Candidates left open (not built):
+- Server-side progress: a `summary_status` (queued/running/failed) on
+  the dump would replace the 10-minute guess with truth and let a
+  failed job show an error instead of silently timing out.
+- Queue position when several recordings are summarizing at once.
+
 ### 1.15 Speaker name map — DONE (2026-09-26, v1.17.0)
 
 Shipped per `docs/design/2026-09-26-speaker-name-map.md` (N1=a look-up
