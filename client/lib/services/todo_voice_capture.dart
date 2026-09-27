@@ -17,12 +17,14 @@ import 'todo_voice_parser.dart';
 /// "re-sync can't resurrect them".
 ///
 /// [recordedOn] is the dump's `created_at` — the day the words were spoken,
-/// which anchors "September 30th" (v1.26.0, D2). Never `DateTime.now()`: a
-/// recording transcribed days later still means the date it was said on.
-/// Every item from the transcript gets the same due date (D1).
+/// which anchors "September 30th" and "Friday" (v1.26.0 D2). Never
+/// `DateTime.now()`: a recording transcribed days later still means the
+/// date it was said on. Each row gets its item's OWN date when it named
+/// one, else the sentence date (v1.27.0, R2).
 ///
-/// Spec: docs/design/2026-09-27-todo-voice-capture.md and
-/// docs/design/2026-09-27-voice-todo-due-dates.md.
+/// Spec: docs/design/2026-09-27-todo-voice-capture.md,
+/// docs/design/2026-09-27-voice-todo-due-dates.md and
+/// docs/design/2026-09-27-voice-todo-relative-dates.md.
 Future<List<TodoRow>> captureVoiceTodos({
   required LocalDb db,
   required String dumpId,
@@ -39,13 +41,13 @@ Future<List<TodoRow>> captureVoiceTodos({
     transcript,
     recordedOn: recordedOn.toLocal(),
   );
-  if (parse.items.isEmpty) return const <TodoRow>[];
+  if (parse.entries.isEmpty) return const <TodoRow>[];
   final List<TodoRow> created = <TodoRow>[];
-  for (final String item in parse.items) {
+  for (final VoiceTodoItem entry in parse.entries) {
     created.add(
       await repo.add(
-        item,
-        dueDate: parse.dueDate,
+        entry.text,
+        dueDate: entry.dueDate ?? parse.dueDate,
         source: voiceTodoSource,
         sourceRef: dumpId,
       ),

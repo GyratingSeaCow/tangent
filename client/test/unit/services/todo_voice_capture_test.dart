@@ -212,4 +212,51 @@ void main() {
       expect(created.single.dueDate, '2026-09-30');
     });
   });
+
+  group('relative + per-item dates (v1.27.0)', () {
+    // 2026-09-27 is a Sunday.
+    test('a per-item date beats the sentence date; others inherit it (R2)',
+        () async {
+      final List<TodoRow> created = await arrive(
+        text: 'Add to my to-do list for Friday, buy milk and call mom on Sunday.',
+        recordedOn: DateTime(2026, 9, 27, 14, 3),
+      );
+      expect(created.map((r) => r.body), ['buy milk', 'call mom']);
+      expect(created.map((r) => r.dueDate), ['2026-10-02', '2026-10-04']);
+      expect(
+        (await repo.todosFromSource(dumpId)).map((r) => r.dueDate),
+        ['2026-10-02', '2026-10-04'],
+      );
+    });
+
+    test('per-item dates with NO sentence date leave the rest undated',
+        () async {
+      // The device-proof sentence from the spec.
+      final List<TodoRow> created = await arrive(
+        text: 'Add to my to-do list, call the dentist on Friday and pay the '
+            'water bill tomorrow',
+        recordedOn: DateTime(2026, 9, 27, 14, 3),
+      );
+      expect(created.map((r) => r.body), ['call the dentist', 'pay the water bill']);
+      expect(created.map((r) => r.dueDate), ['2026-10-02', '2026-09-28']);
+
+      final List<TodoRow> more = await arrive(
+        id: 'dump-2',
+        text: 'add to my to do list buy nails and call Dana tomorrow',
+        recordedOn: DateTime(2026, 9, 27, 14, 3),
+      );
+      expect(more.map((r) => r.dueDate), [null, '2026-09-28']);
+    });
+
+    test('a relative sentence date resolves against the dump day, not the clock',
+        () async {
+      clock = DateTime.utc(2026, 9, 27, 12);
+      final List<TodoRow> created = await arrive(
+        text: 'Remind me to take the bins out tomorrow.',
+        recordedOn: DateTime(2026, 10, 5, 9),
+      );
+      expect(created.single.body, 'take the bins out');
+      expect(created.single.dueDate, '2026-10-06');
+    });
+  });
 }
