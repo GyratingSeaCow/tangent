@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Ink to text.** Lasso handwriting in a notebook and tap *Convert to text*: the server's handwriting recognizer (the same TrOCR engine behind handwriting search) replaces the ink with a typed text block at the same spot. One undo brings the handwriting back and removes the block; one redo re-applies both. Requires the OCR environment (the install wizard offers it if missing); failures leave the page untouched.
 - Server: `POST /v1/ocr/recognize` — synchronous ink recognition for the lassoed strokes, no index writes.
 
+### Fixed
+- Playback controls (and the Listen-mode waveform) now stay pinned above the transcript while you scroll — pause and play work from anywhere in a long recording instead of only at the top.
+
 ## 1.20.0 — 2026-09-27
 
 ### Added
