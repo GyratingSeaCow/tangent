@@ -33,10 +33,19 @@ class TodoRepository {
 
   /// Every live (non-deleted) todo, oldest first so the UI's sections keep
   /// entry order. Sectioning happens in the UI layer, not here.
-  Stream<List<TodoRow>> watchTodos() => (_db.select(_db.todos)
+  Stream<List<TodoRow>> watchTodos() => _liveTodosQuery().watch();
+
+  /// One-shot form of [watchTodos]. Prefer this over `watchTodos().first`
+  /// anywhere the caller is not a long-lived listener — a drift stream's
+  /// first emission is delivered through a `Timer.run`, which under a
+  /// widget test's fake clock never fires until the tree is pumped, so
+  /// `.first` there awaits forever.
+  Future<List<TodoRow>> listTodos() => _liveTodosQuery().get();
+
+  SimpleSelectStatement<$TodosTable, TodoRow> _liveTodosQuery() =>
+      _db.select(_db.todos)
         ..where((t) => t.deletedAt.isNull())
-        ..orderBy([(t) => OrderingTerm.asc(t.createdAt)]))
-      .watch();
+        ..orderBy([(t) => OrderingTerm.asc(t.createdAt)]);
 
   /// Every todo carrying [sourceRef] as its provenance, live OR soft-deleted,
   /// oldest first. Soft-deleted rows are deliberately included: this is the

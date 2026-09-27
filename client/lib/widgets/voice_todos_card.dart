@@ -7,8 +7,12 @@ import '../data/todo_repository.dart';
 import '../screens/todo/todo_list_screen.dart';
 
 /// Live voice-captured todos for one dump, keyed by dump id.
+///
+/// `autoDispose` like the detail screen's own `dumpByIdProvider`: a family
+/// member per visited recording must not stay subscribed to a drift query
+/// stream after its screen is gone.
 final voiceTodosForDumpProvider =
-    StreamProvider.family<List<TodoRow>, String>((ref, dumpId) {
+    StreamProvider.autoDispose.family<List<TodoRow>, String>((ref, dumpId) {
   return ref.watch(todoRepositoryProvider).watchTodosFromSource(dumpId);
 });
 

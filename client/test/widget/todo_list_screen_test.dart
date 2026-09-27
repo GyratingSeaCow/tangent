@@ -95,10 +95,12 @@ void main() {
       final TodoRepository repo = await mount(tester);
 
       await tester.tap(find.byKey(TodoListScreen.quickAddDateChipKey));
-      await settle(tester);
+      // The date picker is a ROUTE with a 150 ms transition, longer than the
+      // 50 ms `settle` helper the rest of this file uses.
+      await tester.pumpAndSettle();
       // Accept the picker's default (today, from the pinned clock).
       await tester.tap(find.text('OK'));
-      await settle(tester);
+      await tester.pumpAndSettle();
       await tester.enterText(
         find.byKey(TodoListScreen.quickAddFieldKey),
         'dated item',
@@ -112,7 +114,11 @@ void main() {
       await tester.testTextInput.receiveAction(TextInputAction.done);
       await settle(tester);
 
-      final List<TodoRow> rows = await repo.watchTodos().first;
+      // One-shot read, NOT `watchTodos().first`: a drift stream's first
+      // emission rides a `Timer.run`, which the widget test's fake clock only
+      // fires on a pump — so `.first` here awaited forever (a 10-minute
+      // TimeoutException that took the rest of this file down with it).
+      final List<TodoRow> rows = await repo.listTodos();
       expect(
         rows.singleWhere((t) => t.body == 'dated item').dueDate,
         todoDateKey(fixedNow),
@@ -188,9 +194,12 @@ void main() {
     await settle(tester);
 
     await tester.tap(find.byKey(Key('todo-menu-${added.id}')));
-    await settle(tester);
+    // The overflow menu is a ROUTE (same story as the date picker above):
+    // its transition outlives the 50 ms `settle`, and tapping 'Delete'
+    // mid-animation misses the hit test entirely.
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Delete'));
-    await settle(tester);
+    await tester.pumpAndSettle();
 
     expect(find.text('nearly lost'), findsNothing);
     expect(find.text('Undo'), findsOneWidget);

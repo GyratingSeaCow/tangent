@@ -456,6 +456,17 @@ void main() {
     await tester.pump();
     expect(find.text('Reactive transcript'), findsOneWidget);
     expect(find.text('Transcribe again'), findsOneWidget);
+
+    // Unmount IN the test body, not in teardown. The detail screen now
+    // watches a drift query stream (the voice-todos card); drift closes a
+    // cancelled stream through a zero-duration Timer that only fires on a
+    // timed pump. The binding's own end-of-test unmount is a warm-up frame
+    // that never advances the clock, and addTearDown callbacks run AFTER it —
+    // so left to the binding, the cancel timer is still pending at the
+    // '!timersPending' check and the test fails with "A Timer is still
+    // pending even after the widget tree was disposed".
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(milliseconds: 1));
   });
 
   testWidgets(
