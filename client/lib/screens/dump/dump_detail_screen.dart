@@ -30,6 +30,7 @@ import '../../services/transcript_timings.dart';
 import '../../widgets/language_tag.dart';
 import '../../widgets/listen_transcript_view.dart';
 import '../../widgets/waveform_scrubber.dart';
+import '../../widgets/summary_failed_row.dart';
 import 'dumps_providers.dart';
 import 'name_speakers_sheet.dart';
 import 'summarize_flow.dart';
@@ -1432,7 +1433,7 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
           ] else if (summaryHasFailed) ...[
             // v1.19.0: the server reported a failure. The red line replaces
             // the progress card; the old body below still stands.
-            _SummaryFailedRow(
+            SummaryFailedRow(
               row: row,
               onRetry: () => _retrySummary(row),
               onDismiss: () => _dismissSummaryError(row),
@@ -1471,7 +1472,7 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
         ] else if (summaryHasFailed) ...[
           // No summary yet and the first attempt failed: the red line takes
           // the slot; the button stays enabled below it.
-          _SummaryFailedRow(
+          SummaryFailedRow(
             row: row,
             onRetry: () => _retrySummary(row),
             onDismiss: () => _dismissSummaryError(row),
@@ -1889,69 +1890,6 @@ class _SummaryPendingCardState extends State<_SummaryPendingCard> {
             ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-/// 'Summary failed: reason' (v1.19.0): a red-tinted line with Retry and a
-/// dismiss ×. Sits where the progress card would; the old summary body (if
-/// any) stays underneath, untouched.
-class _SummaryFailedRow extends StatelessWidget {
-  const _SummaryFailedRow({
-    required this.row,
-    required this.onRetry,
-    required this.onDismiss,
-  });
-
-  final DumpRow row;
-  final VoidCallback onRetry;
-  final VoidCallback onDismiss;
-
-  @override
-  Widget build(BuildContext context) {
-    final ColorScheme colors = Theme.of(context).colorScheme;
-    final String reason = (row.summaryError ?? '').trim();
-    return Container(
-      key: ValueKey('ai-summary-failed-${row.id}'),
-      padding: const EdgeInsets.fromLTRB(12, 4, 4, 4),
-      decoration: BoxDecoration(
-        color: colors.errorContainer,
-        border: Border.all(color: colors.error),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        children: [
-          Icon(Icons.error_outline, size: 18, color: colors.onErrorContainer),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              reason.isEmpty
-                  ? 'Summary failed'
-                  : 'Summary failed: $reason',
-              key: ValueKey('ai-summary-failed-text-${row.id}'),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: Theme.of(context)
-                  .textTheme
-                  .bodyMedium
-                  ?.copyWith(color: colors.onErrorContainer),
-            ),
-          ),
-          TextButton(
-            key: ValueKey('summary-retry-${row.id}'),
-            onPressed: onRetry,
-            style: TextButton.styleFrom(foregroundColor: colors.error),
-            child: const Text('Retry'),
-          ),
-          IconButton(
-            key: ValueKey('summary-dismiss-${row.id}'),
-            tooltip: 'Dismiss',
-            icon: const Icon(Icons.close, size: 18),
-            color: colors.onErrorContainer,
-            onPressed: onDismiss,
-          ),
-        ],
       ),
     );
   }
