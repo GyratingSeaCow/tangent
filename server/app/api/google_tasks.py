@@ -289,3 +289,13 @@ def disconnect(
         )
     log.info("google_tasks.disconnected")
     return _status(db)
+
+
+@router.post("/sync-now", response_model=GoogleTasksStatus)
+def sync_now(
+    db: Annotated[sqlite3.Connection, Depends(get_db)],
+    _user: Annotated[str, Depends(require_auth)],
+) -> GoogleTasksStatus:
+    """Run one cycle inline. Error/reauth state is returned, not hidden."""
+    google_tasks_worker.run_cycle(db)
+    return _status(db)

@@ -242,3 +242,316 @@ def test_disconnect_revokes_and_clears_tokens_but_keeps_credentials(
         assert row["refresh_token"] is None
         assert row["access_token"] is None
         assert row["tasklist_id"] is None
+
+
+def _connected(db: sqlite3.Connection, *, expired: bool = False) -> None:
+    db.execute(
+        """
+        INSERT OR REPLACE INTO google_tasks_link
+            (id, client_id, client_secret, refresh_token, access_token,
+             access_expires_at, tasklist_id, status)
+        VALUES (1, 'client', 'secret', 'refresh', 'access', ?, 'list-1', 'connected')
+        """,
+        (int(time.time()) - 1 if expired else int(time.time()) + 3600,),
+    )
+    db.commit()
+
+
+def _insert_todo(
+    db: sqlite3.Connection,
+    todo_id: str,
+    *,
+    text: str = "Buy milk",
+    updated: str = "2026-09-27T12:00:00Z",
+    done_at: str | None = None,
+    due_date: str | None = "2026-09-28",
+    deleted_at: str | None = None,
+    google_id: str | None = None,
+    google_updated: str | None = None,
+) -> None:
+    db.execute(
+        """
+        INSERT INTO todos
+            (id, text, done_at, due_date, source, source_ref, folder_id,
+             created_at, updated_at, deleted_at, google_task_id, google_updated)
+        VALUES (?, ?, ?, ?, 'manual', NULL, NULL,
+                '2026-09-27T11:00:00Z', ?, ?, ?, ?)
+        """,
+        (
+            todo_id,
+            text,
+            done_at,
+            due_date,
+            updated,
+            deleted_at,
+            google_id,
+            google_updated,
+        ),
+    )
+    db.commit()
+
+
+def test_mapping_due_and_done_both_directions():
+    local = {
+        "text": "Finish report",
+        "due_date": "2026-09-30",
+        "done_at": "2026-09-27T12:30:00Z",
+    }
+    mapped = google_tasks_worker.todo_to_google(local)
+    assert mapped == {
+        "title": "Finish report",
+        "due": "2026-09-30T00:00:00.000Z",
+        "status": "completed",
+        "completed": "2026-09-27T12:30:00Z",
+    }
+    pending = google_tasks_worker.todo_to_google({**local, "done_at": None})
+    assert pending["status"] == "needsAction"
+    assert "completed" not in pending
+
+    remote = google_tasks_worker.google_to_todo({
+        "title": "From Google",
+        "due": "2026-10-01T00:00:00.000Z",
+        "status": "completed",
+        "completed": "2026-09-27T14:00:00Z",
+        "updated": "2026-09-27T14:01:00Z",
+    })
+    assert remote == {
+        "text": "From Google",
+        "due_date": "2026-10-01",
+        "done_at": "2026-09-27T14:00:00Z",
+    }
+
+
+def test_push_creates_then_patches_instead_of_inserting_twice(
+    google_api, monkeypatch
+):
+    _client, _token, db_path = google_api
+    with _db(db_path) as db:
+        _connected(db)
+        _insert_todo(db, "todo-1")
+
+        def first_cycle(method: str, url: str, kwargs: dict[str, Any]) -> FakeResponse:
+            if method == "POST":
+                assert url.endswith("/lists/list-1/tasks")
+                assert kwargs["json"]["due"] == "2026-09-28T00:00:00.000Z"
+                return FakeResponse(200, {
+                    "id": "google-1", "updated": "2026-09-27T12:01:00Z",
+                })
+            assert method == "GET"
+            return FakeResponse(200, {"items": []})
+
+        calls = _install_fake_http(monkeypatch, first_cycle)
+        assert google_tasks_worker.run_cycle(db) == (1, 0)
+        assert [call[0] for call in calls] == ["POST", "GET"]
+        row = db.execute("SELECT * FROM todos WHERE id='todo-1'").fetchone()
+        assert row["google_task_id"] == "google-1"
+
+        db.execute(
+            "UPDATE todos SET text='Buy oat milk', updated_at=? WHERE id='todo-1'",
+            ("2026-09-27T12:02:00Z",),
+        )
+        db.commit()
+
+        def second_cycle(method: str, url: str, kwargs: dict[str, Any]) -> FakeResponse:
+            if method == "PATCH":
+                assert url.endswith("/lists/list-1/tasks/google-1")
+                assert kwargs["json"]["title"] == "Buy oat milk"
+                return FakeResponse(200, {
+                    "id": "google-1", "updated": "2026-09-27T12:03:00Z",
+                })
+            assert method == "GET"
+            return FakeResponse(200, {"items": []})
+
+        calls = _install_fake_http(monkeypatch, second_cycle)
+        assert google_tasks_worker.run_cycle(db) == (1, 0)
+        assert [call[0] for call in calls] == ["PATCH", "GET"]
+
+
+def test_pull_lww_google_newer_wins_local_newer_kept_equal_skipped(
+    google_api, monkeypatch
+):
+    _client, _token, db_path = google_api
+    with _db(db_path) as db:
+        _connected(db)
+        _insert_todo(
+            db, "google-wins", text="old", updated="2026-09-27T12:00:00Z",
+            google_id="g-new", google_updated="2026-09-27T12:00:00Z",
+        )
+        _insert_todo(
+            db, "local-wins", text="local", updated="2026-09-27T14:00:00Z",
+            google_id="g-old", google_updated="2026-09-27T14:00:00Z",
+        )
+        _insert_todo(
+            db, "equal", text="equal-local", updated="2026-09-27T15:00:00Z",
+            google_id="g-equal", google_updated="2026-09-27T14:59:00Z",
+        )
+        remote = [
+            {"id": "g-new", "title": "google", "status": "needsAction",
+             "updated": "2026-09-27T13:00:00Z"},
+            {"id": "g-old", "title": "stale-google", "status": "needsAction",
+             "updated": "2026-09-27T13:00:00Z"},
+            {"id": "g-equal", "title": "equal-google", "status": "needsAction",
+             "updated": "2026-09-27T15:00:00Z"},
+        ]
+
+        calls = _install_fake_http(
+            monkeypatch,
+            lambda method, url, kwargs: FakeResponse(200, {"items": remote}),
+        )
+        pulled, updated_min = google_tasks_worker._pull(db, "list-1", "access", None)
+        assert pulled == 1
+        assert updated_min == "2026-09-27T14:59:59.000Z"
+        assert db.execute("SELECT text FROM todos WHERE id='google-wins'").fetchone()[0] == "google"
+        assert db.execute("SELECT text FROM todos WHERE id='local-wins'").fetchone()[0] == "local"
+        assert db.execute("SELECT text FROM todos WHERE id='equal'").fetchone()[0] == "equal-local"
+        assert calls[0][2]["params"]["showDeleted"] == "true"
+        assert db.execute(
+            "SELECT COUNT(*) FROM change_log WHERE device_id='server'"
+        ).fetchone()[0] == 1
+
+
+def test_echo_guard_push_is_not_reapplied_by_following_pull(
+    google_api, monkeypatch
+):
+    _client, _token, db_path = google_api
+    with _db(db_path) as db:
+        _connected(db)
+        _insert_todo(db, "echo", text="Local title")
+
+        def google(method: str, url: str, kwargs: dict[str, Any]) -> FakeResponse:
+            if method == "POST":
+                return FakeResponse(200, {
+                    "id": "g-echo", "updated": "2026-09-27T12:01:00Z",
+                })
+            return FakeResponse(200, {"items": [{
+                "id": "g-echo", "title": "Local title", "status": "needsAction",
+                "updated": "2026-09-27T12:01:00Z",
+            }]})
+
+        _install_fake_http(monkeypatch, google)
+        assert google_tasks_worker.run_cycle(db) == (1, 0)
+        assert db.execute("SELECT text FROM todos WHERE id='echo'").fetchone()[0] == "Local title"
+        assert db.execute(
+            "SELECT COUNT(*) FROM change_log WHERE entity_id='echo'"
+        ).fetchone()[0] == 0
+
+
+def test_google_deleted_soft_deletes_and_records_server_change(
+    google_api, monkeypatch
+):
+    _client, _token, db_path = google_api
+    with _db(db_path) as db:
+        _connected(db)
+        _insert_todo(
+            db, "deleted-by-google", google_id="g-delete",
+            google_updated="2026-09-27T12:00:00Z",
+        )
+        calls = _install_fake_http(
+            monkeypatch,
+            lambda method, url, kwargs: FakeResponse(200, {"items": [{
+                "id": "g-delete", "deleted": True,
+                "updated": "2026-09-27T13:00:00Z",
+            }]}),
+        )
+        assert google_tasks_worker.run_cycle(db) == (0, 1)
+        row = db.execute("SELECT * FROM todos WHERE id='deleted-by-google'").fetchone()
+        assert row["deleted_at"] == "2026-09-27T13:00:00Z"
+        change = db.execute(
+            "SELECT * FROM change_log WHERE entity_id='deleted-by-google'"
+        ).fetchone()
+        assert change["op"] == "delete"
+        assert change["device_id"] == "server"
+        assert change["payload"] is None
+        assert calls[0][2]["params"]["showDeleted"] == "true"
+
+
+@pytest.mark.parametrize("delete_status", [204, 404])
+def test_tangent_soft_delete_calls_google_delete_tolerates_404_and_clears_id(
+    google_api, monkeypatch, delete_status
+):
+    _client, _token, db_path = google_api
+    with _db(db_path) as db:
+        _connected(db)
+        _insert_todo(
+            db, "local-delete", deleted_at="2026-09-27T13:00:00Z",
+            updated="2026-09-27T13:00:00Z", google_id="g-delete",
+            google_updated="2026-09-27T12:00:00Z",
+        )
+
+        def google(method: str, url: str, kwargs: dict[str, Any]) -> FakeResponse:
+            if method == "DELETE":
+                return FakeResponse(delete_status, {"error": {"message": "gone"}})
+            return FakeResponse(200, {"items": []})
+
+        calls = _install_fake_http(monkeypatch, google)
+        assert google_tasks_worker.run_cycle(db) == (1, 0)
+        assert calls[0][0] == "DELETE"
+        assert db.execute(
+            "SELECT google_task_id FROM todos WHERE id='local-delete'"
+        ).fetchone()[0] is None
+
+
+def test_unknown_google_task_creates_google_sourced_todo_and_change(
+    google_api, monkeypatch
+):
+    _client, _token, db_path = google_api
+    with _db(db_path) as db:
+        _connected(db)
+        _install_fake_http(
+            monkeypatch,
+            lambda method, url, kwargs: FakeResponse(200, {"items": [{
+                "id": "g-new", "title": "Added in Google",
+                "status": "completed", "completed": "2026-09-27T13:00:00Z",
+                "due": "2026-09-30T00:00:00.000Z",
+                "updated": "2026-09-27T13:01:00Z",
+            }]}),
+        )
+        assert google_tasks_worker.run_cycle(db) == (0, 1)
+        row = db.execute("SELECT * FROM todos WHERE google_task_id='g-new'").fetchone()
+        assert row["source"] == "google"
+        assert row["source_ref"] == "g-new"
+        assert row["folder_id"] is None
+        assert row["due_date"] == "2026-09-30"
+        assert row["done_at"] == "2026-09-27T13:00:00Z"
+        change = db.execute(
+            "SELECT payload, device_id FROM change_log WHERE entity_id=?", (row["id"],)
+        ).fetchone()
+        assert change["device_id"] == "server"
+        assert "google_task_id" not in change["payload"]
+
+
+def test_invalid_grant_refresh_sets_reauth_required(google_api, monkeypatch):
+    _client, _token, db_path = google_api
+    with _db(db_path) as db:
+        _connected(db, expired=True)
+        calls = _install_fake_http(
+            monkeypatch,
+            lambda method, url, kwargs: FakeResponse(
+                400, {"error": "invalid_grant", "error_description": "expired"}
+            ),
+        )
+        assert google_tasks_worker.run_cycle(db) == (0, 0)
+        row = db.execute("SELECT status, last_error FROM google_tasks_link").fetchone()
+        assert row["status"] == "reauth_required"
+        assert "expired" in row["last_error"]
+        assert len(calls) == 1
+
+
+def test_sync_now_returns_last_cycle_counts(google_api, monkeypatch):
+    client, token, db_path = google_api
+    with _db(db_path) as db:
+        _connected(db)
+        _insert_todo(db, "manual-sync")
+    _install_fake_http(
+        monkeypatch,
+        lambda method, url, kwargs: (
+            FakeResponse(200, {"id": "g-manual", "updated": "2026-09-27T12:01:00Z"})
+            if method == "POST" else FakeResponse(200, {"items": []})
+        ),
+    )
+    response = client.post("/v1/google-tasks/sync-now", headers=_headers(token))
+    assert response.status_code == 200
+    assert response.json()["status"] == "connected"
+    assert response.json()["pushed"] == 1
+    assert response.json()["pulled"] == 0
+    assert response.json()["last_sync_at"] is not None
