@@ -1657,8 +1657,12 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
 
   /// Creates a folder and returns its id.
   Future<String> createFolder({required String name, String? id}) async {
-    final String folderId =
-        id ?? 'folder-${DateTime.now().microsecondsSinceEpoch}';
+    // UUID, not a clock reading: Windows ticks `microsecondsSinceEpoch` in
+    // ~1 ms steps, so two folders created back-to-back collided on the
+    // primary key (UNIQUE constraint failed: folders.id) in the full suite.
+    // Two devices could do the same in the wild. The prefix stays so
+    // existing ids and logs still read as folders.
+    final String folderId = id ?? 'folder-${const Uuid().v4()}';
     await into(folders).insert(
       FoldersCompanion.insert(
         id: folderId,

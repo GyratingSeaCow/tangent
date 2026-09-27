@@ -1114,5 +1114,15 @@ void main() {
       expect(after.transcriptionStatus, 'not_applicable');
       expect(after.transcriptionAttempt, 0);
     });
+    test('createFolder ids never collide, even back-to-back in one clock tick', () async {
+    // Regression: ids were DateTime.now().microsecondsSinceEpoch; Windows
+    // advances that in ~1 ms steps, so a burst of creates hit UNIQUE
+    // constraint failed: folders.id.
+    final Set<String> ids = <String>{};
+    for (int i = 0; i < 50; i++) {
+      ids.add(await db.createFolder(name: 'Burst $i'));
+    }
+    expect(ids, hasLength(50));
   });
+});
 }

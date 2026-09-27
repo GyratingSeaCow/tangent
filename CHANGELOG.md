@@ -5,6 +5,19 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.24.1 — 2026-09-27
+
+### Fixed
+- **Duplicate voice to-dos across devices.** To-do changes were not on the
+  auto-sync watch list, so a capture (or an edit, move, or delete) sat on
+  the device until a manual or 30-minute sync. A second device transcribing
+  the same recording could not see the capture and captured it again. To-dos
+  now push a moment after you stop editing, like everything else.
+- **Folder id collisions.** New folder ids came from the clock at microsecond
+  resolution, which Windows only advances in ~1 ms steps — two folders created
+  back-to-back collided. Ids are now UUIDs (same `folder-` prefix).
+  Client-only; server stays on 1.24.0.
+
 ## 1.24.0 — 2026-09-27
 
 ### Added

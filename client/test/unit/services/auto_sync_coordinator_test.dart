@@ -10,6 +10,7 @@ import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tangent/data/local_db.dart';
+import 'package:tangent/data/todo_repository.dart';
 import 'package:tangent/services/auto_sync_coordinator.dart';
 
 void main() {
@@ -133,6 +134,17 @@ void main() {
     expect(syncCalls, greaterThanOrEqualTo(1));
   });
 
+  // v1.24.1: todos were missing from the watched tables, so a voice capture
+  // sat local and a second device transcribing the same recording captured
+  // it again.
+  test('a to-do change triggers a sync', () async {
+    coordinator = build()..start();
+
+    await TodoRepository(db: db).add('buy thermal paste');
+    await settle();
+
+    expect(syncCalls, greaterThanOrEqualTo(1));
+  });
   test('nothing fires after dispose', () async {
     coordinator = build()..start();
     coordinator.dispose();

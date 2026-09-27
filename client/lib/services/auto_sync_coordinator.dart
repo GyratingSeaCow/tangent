@@ -55,6 +55,7 @@ class AutoSyncCoordinator {
             _db.notebooks,
             _db.dumps,
             _db.folders,
+            _db.todos,
             _db.syncTombstones,
           ]),
         )
@@ -75,6 +76,11 @@ class AutoSyncCoordinator {
     final bool dirty = (await _db.notebooksNeedingPush()).isNotEmpty ||
         (await _db.dumpsNeedingMetadataPush()).isNotEmpty ||
         (await _db.foldersNeedingPush()).isNotEmpty ||
+        // todos joined the synced tables in v1.23.0 but not this list: a
+        // to-do edited, moved, or deleted sat local until the next manual
+        // or 30-minute sync, so another device transcribing the same
+        // recording could not see the capture and captured it AGAIN.
+        (await _db.todosNeedingPush()).isNotEmpty ||
         (await _db.pendingTombstones()).isNotEmpty;
     if (!dirty || _disposed) return;
     await _syncNow();

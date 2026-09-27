@@ -6,7 +6,7 @@
 
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](./LICENSE)
 [![Version: 1.24.0](https://img.shields.io/badge/version-1.24.0-blue.svg)](./CHANGELOG.md)
-[![Client tests: 2320 passing](https://img.shields.io/badge/client_tests-2320%20passing-brightgreen.svg)]()
+[![Client tests: 2322 passing](https://img.shields.io/badge/client_tests-2322%20passing-brightgreen.svg)]()
 [![Server tests: 284 passing](https://img.shields.io/badge/server_tests-284%20passing-brightgreen.svg)]()
 
 ---
