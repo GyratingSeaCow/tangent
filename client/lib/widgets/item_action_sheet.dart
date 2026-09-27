@@ -83,7 +83,13 @@ class ItemActionSheet extends StatelessWidget {
     required this.actions,
     this.subtitle,
     this.disabledActions = const <ItemAction, String>{},
+    this.labelOverrides = const <ItemAction, String>{},
   });
+
+  /// Per-screen wording for an action whose canonical label does not fit
+  /// (the To Do list's inline edit is "Edit", not "Rename"). Icons, order
+  /// and keys stay canonical so muscle memory still holds.
+  final Map<ItemAction, String> labelOverrides;
 
   final String title;
   final String? subtitle;
@@ -222,7 +228,7 @@ class ItemActionSheet extends StatelessWidget {
                         enabled: !isDisabled,
                         leading: Icon(iconFor(action), color: tint),
                         title: Text(
-                          labelFor(action),
+                          labelOverrides[action] ?? labelFor(action),
                           style: tint == null ? null : TextStyle(color: tint),
                         ),
                         subtitle: blocked == null ? null : Text(blocked),
@@ -250,6 +256,7 @@ Future<ItemAction?> showItemActionSheet(
   required List<ItemAction> actions,
   String? subtitle,
   Map<ItemAction, String> disabledActions = const <ItemAction, String>{},
+  Map<ItemAction, String> labelOverrides = const <ItemAction, String>{},
 }) {
   return showModalBottomSheet<ItemAction>(
     context: context,
@@ -259,6 +266,7 @@ Future<ItemAction?> showItemActionSheet(
       subtitle: subtitle,
       actions: actions,
       disabledActions: disabledActions,
+      labelOverrides: labelOverrides,
     ),
   );
 }

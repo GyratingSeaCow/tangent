@@ -362,6 +362,11 @@ class Todos extends Table {
   /// Same contract as notebooks: true until the server confirms a push.
   BoolColumn get syncDirty => boolean().withDefault(const Constant(true))();
   IntColumn get syncedSeq => integer().nullable()();
+
+  /// v1.24.0: the SHARED folder this item is filed under (same `folders`
+  /// rows as recordings and notebooks). Null = unfiled. Declared last so a
+  /// fresh onCreate and a v23 `addColumn` upgrade agree on column order.
+  TextColumn get folderId => text().nullable()();
   @override
   Set<Column> get primaryKey => {id};
 }
@@ -391,7 +396,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   LocalDb.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 23;
+  int get schemaVersion => 24;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -864,6 +869,19 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
             ).get();
             if (todosTable.isEmpty) {
               await m.createTable(todos);
+            }
+          }
+          if (from < 24) {
+            // v1.24.0: to-do folders. Ask-the-database guard: the v23 branch
+            // above may have just created the table WITH this column (a
+            // createTable uses the current schema), and addColumn on an
+            // existing column is a hard failure.
+            final List<QueryRow> todoColumns =
+                await customSelect('PRAGMA table_info(todos)').get();
+            final bool hasFolderId = todoColumns
+                .any((QueryRow row) => row.read<String>('name') == 'folder_id');
+            if (!hasFolderId) {
+              await m.addColumn(todos, todos.folderId);
             }
           }
         },
@@ -1611,6 +1629,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     Object? dueDate = absentTodoField,
     Object? sourceRef = absentTodoField,
     Object? deletedAt = absentTodoField,
+    Object? folderId = absentTodoField,
   }) async {
     final TodoRow? existing = await getTodoRow(id);
     String? resolve(Object? incoming, String? held) =>
@@ -1626,6 +1645,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
         dueDate: Value(resolve(dueDate, existing?.dueDate)),
         sourceRef: Value(resolve(sourceRef, existing?.sourceRef)),
         deletedAt: Value(resolve(deletedAt, existing?.deletedAt)),
+        folderId: Value(resolve(folderId, existing?.folderId)),
         syncDirty: const Value(false),
         syncedSeq: Value(seq),
       ),
@@ -1721,6 +1741,15 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
         const DumpsCompanion(
           folderId: Value<String?>(null),
           syncDirty: Value<bool?>(true),
+        ),
+      );
+      // v1.24.0: to-dos share the folder too (F1), so they unfile here as
+      // well — dirty, so the unfiled state pushes with the tombstone.
+      await (update(todos)..where((t) => t.folderId.equals(folderId))).write(
+        TodosCompanion(
+          folderId: const Value<String?>(null),
+          updatedAt: Value(DateTime.now().toUtc().toIso8601String()),
+          syncDirty: const Value(true),
         ),
       );
       await (delete(folders)..where((t) => t.id.equals(folderId))).go();

@@ -6797,6 +6797,12 @@ class $TodosTable extends Todos with TableInfo<$TodosTable, TodoRow> {
   late final GeneratedColumn<int> syncedSeq = GeneratedColumn<int>(
       'synced_seq', aliasedName, true,
       type: DriftSqlType.int, requiredDuringInsert: false);
+  static const VerificationMeta _folderIdMeta =
+      const VerificationMeta('folderId');
+  @override
+  late final GeneratedColumn<String> folderId = GeneratedColumn<String>(
+      'folder_id', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
   @override
   List<GeneratedColumn> get $columns => [
         id,
@@ -6809,7 +6815,8 @@ class $TodosTable extends Todos with TableInfo<$TodosTable, TodoRow> {
         updatedAt,
         deletedAt,
         syncDirty,
-        syncedSeq
+        syncedSeq,
+        folderId
       ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -6872,6 +6879,10 @@ class $TodosTable extends Todos with TableInfo<$TodosTable, TodoRow> {
       context.handle(_syncedSeqMeta,
           syncedSeq.isAcceptableOrUnknown(data['synced_seq']!, _syncedSeqMeta));
     }
+    if (data.containsKey('folder_id')) {
+      context.handle(_folderIdMeta,
+          folderId.isAcceptableOrUnknown(data['folder_id']!, _folderIdMeta));
+    }
     return context;
   }
 
@@ -6903,6 +6914,8 @@ class $TodosTable extends Todos with TableInfo<$TodosTable, TodoRow> {
           .read(DriftSqlType.bool, data['${effectivePrefix}sync_dirty'])!,
       syncedSeq: attachedDatabase.typeMapping
           .read(DriftSqlType.int, data['${effectivePrefix}synced_seq']),
+      folderId: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}folder_id']),
     );
   }
 
@@ -6942,6 +6955,11 @@ class TodoRow extends DataClass implements Insertable<TodoRow> {
   /// Same contract as notebooks: true until the server confirms a push.
   final bool syncDirty;
   final int? syncedSeq;
+
+  /// v1.24.0: the SHARED folder this item is filed under (same `folders`
+  /// rows as recordings and notebooks). Null = unfiled. Declared last so a
+  /// fresh onCreate and a v23 `addColumn` upgrade agree on column order.
+  final String? folderId;
   const TodoRow(
       {required this.id,
       required this.body,
@@ -6953,7 +6971,8 @@ class TodoRow extends DataClass implements Insertable<TodoRow> {
       required this.updatedAt,
       this.deletedAt,
       required this.syncDirty,
-      this.syncedSeq});
+      this.syncedSeq,
+      this.folderId});
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -6977,6 +6996,9 @@ class TodoRow extends DataClass implements Insertable<TodoRow> {
     map['sync_dirty'] = Variable<bool>(syncDirty);
     if (!nullToAbsent || syncedSeq != null) {
       map['synced_seq'] = Variable<int>(syncedSeq);
+    }
+    if (!nullToAbsent || folderId != null) {
+      map['folder_id'] = Variable<String>(folderId);
     }
     return map;
   }
@@ -7003,6 +7025,9 @@ class TodoRow extends DataClass implements Insertable<TodoRow> {
       syncedSeq: syncedSeq == null && nullToAbsent
           ? const Value.absent()
           : Value(syncedSeq),
+      folderId: folderId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(folderId),
     );
   }
 
@@ -7021,6 +7046,7 @@ class TodoRow extends DataClass implements Insertable<TodoRow> {
       deletedAt: serializer.fromJson<String?>(json['deletedAt']),
       syncDirty: serializer.fromJson<bool>(json['syncDirty']),
       syncedSeq: serializer.fromJson<int?>(json['syncedSeq']),
+      folderId: serializer.fromJson<String?>(json['folderId']),
     );
   }
   @override
@@ -7038,6 +7064,7 @@ class TodoRow extends DataClass implements Insertable<TodoRow> {
       'deletedAt': serializer.toJson<String?>(deletedAt),
       'syncDirty': serializer.toJson<bool>(syncDirty),
       'syncedSeq': serializer.toJson<int?>(syncedSeq),
+      'folderId': serializer.toJson<String?>(folderId),
     };
   }
 
@@ -7052,7 +7079,8 @@ class TodoRow extends DataClass implements Insertable<TodoRow> {
           String? updatedAt,
           Value<String?> deletedAt = const Value.absent(),
           bool? syncDirty,
-          Value<int?> syncedSeq = const Value.absent()}) =>
+          Value<int?> syncedSeq = const Value.absent(),
+          Value<String?> folderId = const Value.absent()}) =>
       TodoRow(
         id: id ?? this.id,
         body: body ?? this.body,
@@ -7065,6 +7093,7 @@ class TodoRow extends DataClass implements Insertable<TodoRow> {
         deletedAt: deletedAt.present ? deletedAt.value : this.deletedAt,
         syncDirty: syncDirty ?? this.syncDirty,
         syncedSeq: syncedSeq.present ? syncedSeq.value : this.syncedSeq,
+        folderId: folderId.present ? folderId.value : this.folderId,
       );
   TodoRow copyWithCompanion(TodosCompanion data) {
     return TodoRow(
@@ -7079,6 +7108,7 @@ class TodoRow extends DataClass implements Insertable<TodoRow> {
       deletedAt: data.deletedAt.present ? data.deletedAt.value : this.deletedAt,
       syncDirty: data.syncDirty.present ? data.syncDirty.value : this.syncDirty,
       syncedSeq: data.syncedSeq.present ? data.syncedSeq.value : this.syncedSeq,
+      folderId: data.folderId.present ? data.folderId.value : this.folderId,
     );
   }
 
@@ -7095,14 +7125,15 @@ class TodoRow extends DataClass implements Insertable<TodoRow> {
           ..write('updatedAt: $updatedAt, ')
           ..write('deletedAt: $deletedAt, ')
           ..write('syncDirty: $syncDirty, ')
-          ..write('syncedSeq: $syncedSeq')
+          ..write('syncedSeq: $syncedSeq, ')
+          ..write('folderId: $folderId')
           ..write(')'))
         .toString();
   }
 
   @override
   int get hashCode => Object.hash(id, body, doneAt, dueDate, source, sourceRef,
-      createdAt, updatedAt, deletedAt, syncDirty, syncedSeq);
+      createdAt, updatedAt, deletedAt, syncDirty, syncedSeq, folderId);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -7117,7 +7148,8 @@ class TodoRow extends DataClass implements Insertable<TodoRow> {
           other.updatedAt == this.updatedAt &&
           other.deletedAt == this.deletedAt &&
           other.syncDirty == this.syncDirty &&
-          other.syncedSeq == this.syncedSeq);
+          other.syncedSeq == this.syncedSeq &&
+          other.folderId == this.folderId);
 }
 
 class TodosCompanion extends UpdateCompanion<TodoRow> {
@@ -7132,6 +7164,7 @@ class TodosCompanion extends UpdateCompanion<TodoRow> {
   final Value<String?> deletedAt;
   final Value<bool> syncDirty;
   final Value<int?> syncedSeq;
+  final Value<String?> folderId;
   final Value<int> rowid;
   const TodosCompanion({
     this.id = const Value.absent(),
@@ -7145,6 +7178,7 @@ class TodosCompanion extends UpdateCompanion<TodoRow> {
     this.deletedAt = const Value.absent(),
     this.syncDirty = const Value.absent(),
     this.syncedSeq = const Value.absent(),
+    this.folderId = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   TodosCompanion.insert({
@@ -7159,6 +7193,7 @@ class TodosCompanion extends UpdateCompanion<TodoRow> {
     this.deletedAt = const Value.absent(),
     this.syncDirty = const Value.absent(),
     this.syncedSeq = const Value.absent(),
+    this.folderId = const Value.absent(),
     this.rowid = const Value.absent(),
   })  : id = Value(id),
         body = Value(body),
@@ -7176,6 +7211,7 @@ class TodosCompanion extends UpdateCompanion<TodoRow> {
     Expression<String>? deletedAt,
     Expression<bool>? syncDirty,
     Expression<int>? syncedSeq,
+    Expression<String>? folderId,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -7190,6 +7226,7 @@ class TodosCompanion extends UpdateCompanion<TodoRow> {
       if (deletedAt != null) 'deleted_at': deletedAt,
       if (syncDirty != null) 'sync_dirty': syncDirty,
       if (syncedSeq != null) 'synced_seq': syncedSeq,
+      if (folderId != null) 'folder_id': folderId,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -7206,6 +7243,7 @@ class TodosCompanion extends UpdateCompanion<TodoRow> {
       Value<String?>? deletedAt,
       Value<bool>? syncDirty,
       Value<int?>? syncedSeq,
+      Value<String?>? folderId,
       Value<int>? rowid}) {
     return TodosCompanion(
       id: id ?? this.id,
@@ -7219,6 +7257,7 @@ class TodosCompanion extends UpdateCompanion<TodoRow> {
       deletedAt: deletedAt ?? this.deletedAt,
       syncDirty: syncDirty ?? this.syncDirty,
       syncedSeq: syncedSeq ?? this.syncedSeq,
+      folderId: folderId ?? this.folderId,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -7259,6 +7298,9 @@ class TodosCompanion extends UpdateCompanion<TodoRow> {
     if (syncedSeq.present) {
       map['synced_seq'] = Variable<int>(syncedSeq.value);
     }
+    if (folderId.present) {
+      map['folder_id'] = Variable<String>(folderId.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -7279,6 +7321,7 @@ class TodosCompanion extends UpdateCompanion<TodoRow> {
           ..write('deletedAt: $deletedAt, ')
           ..write('syncDirty: $syncDirty, ')
           ..write('syncedSeq: $syncedSeq, ')
+          ..write('folderId: $folderId, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -10716,6 +10759,7 @@ typedef $$TodosTableCreateCompanionBuilder = TodosCompanion Function({
   Value<String?> deletedAt,
   Value<bool> syncDirty,
   Value<int?> syncedSeq,
+  Value<String?> folderId,
   Value<int> rowid,
 });
 typedef $$TodosTableUpdateCompanionBuilder = TodosCompanion Function({
@@ -10730,6 +10774,7 @@ typedef $$TodosTableUpdateCompanionBuilder = TodosCompanion Function({
   Value<String?> deletedAt,
   Value<bool> syncDirty,
   Value<int?> syncedSeq,
+  Value<String?> folderId,
   Value<int> rowid,
 });
 
@@ -10773,6 +10818,9 @@ class $$TodosTableFilterComposer extends Composer<_$LocalDb, $TodosTable> {
 
   ColumnFilters<int> get syncedSeq => $composableBuilder(
       column: $table.syncedSeq, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get folderId => $composableBuilder(
+      column: $table.folderId, builder: (column) => ColumnFilters(column));
 }
 
 class $$TodosTableOrderingComposer extends Composer<_$LocalDb, $TodosTable> {
@@ -10815,6 +10863,9 @@ class $$TodosTableOrderingComposer extends Composer<_$LocalDb, $TodosTable> {
 
   ColumnOrderings<int> get syncedSeq => $composableBuilder(
       column: $table.syncedSeq, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get folderId => $composableBuilder(
+      column: $table.folderId, builder: (column) => ColumnOrderings(column));
 }
 
 class $$TodosTableAnnotationComposer extends Composer<_$LocalDb, $TodosTable> {
@@ -10857,6 +10908,9 @@ class $$TodosTableAnnotationComposer extends Composer<_$LocalDb, $TodosTable> {
 
   GeneratedColumn<int> get syncedSeq =>
       $composableBuilder(column: $table.syncedSeq, builder: (column) => column);
+
+  GeneratedColumn<String> get folderId =>
+      $composableBuilder(column: $table.folderId, builder: (column) => column);
 }
 
 class $$TodosTableTableManager extends RootTableManager<
@@ -10893,6 +10947,7 @@ class $$TodosTableTableManager extends RootTableManager<
             Value<String?> deletedAt = const Value.absent(),
             Value<bool> syncDirty = const Value.absent(),
             Value<int?> syncedSeq = const Value.absent(),
+            Value<String?> folderId = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               TodosCompanion(
@@ -10907,6 +10962,7 @@ class $$TodosTableTableManager extends RootTableManager<
             deletedAt: deletedAt,
             syncDirty: syncDirty,
             syncedSeq: syncedSeq,
+            folderId: folderId,
             rowid: rowid,
           ),
           createCompanionCallback: ({
@@ -10921,6 +10977,7 @@ class $$TodosTableTableManager extends RootTableManager<
             Value<String?> deletedAt = const Value.absent(),
             Value<bool> syncDirty = const Value.absent(),
             Value<int?> syncedSeq = const Value.absent(),
+            Value<String?> folderId = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               TodosCompanion.insert(
@@ -10935,6 +10992,7 @@ class $$TodosTableTableManager extends RootTableManager<
             deletedAt: deletedAt,
             syncDirty: syncDirty,
             syncedSeq: syncedSeq,
+            folderId: folderId,
             rowid: rowid,
           ),
           withReferenceMapper: (p0) => p0

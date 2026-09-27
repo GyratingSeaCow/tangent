@@ -3,18 +3,40 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/local_db.dart';
+import '../../data/notebook_repository.dart' show foldersProvider;
 import '../../data/todo_repository.dart';
 import '../../services/todo_sections.dart';
+import '../../widgets/folder_header_actions.dart';
+import '../../widgets/folder_picker.dart';
+import '../../widgets/item_action_sheet.dart';
+import '../home/home_screen.dart' show localDbProvider;
+import 'todo_grouping.dart';
 
-/// The To Do screen (Phase 1): quick-add pinned at top, then the sections
-/// Overdue / Today / Upcoming / Someday / Done, empty ones hidden, Done
-/// collapsed by default.
+/// The To Do screen (v1.24.0, folders): quick-add pinned at top, then one
+/// collapsible section per SHARED folder (alphabetical, same rows as
+/// Recordings and Notebooks), `No folder` last, one `Done` section at the
+/// bottom (collapsed by default). Flat list when no folders exist.
+///
+/// Gesture contract (`references/list-screens-and-folders.md`):
+/// long-press a row = multi-select; ⋮ on the row = Move / Edit / Delete;
+/// long-press a folder header = rename/delete the folder, never selection;
+/// long-press the date chip = clear the due date (it is a chip, not the row).
 class TodoListScreen extends ConsumerStatefulWidget {
   const TodoListScreen({super.key});
 
   static const Key quickAddFieldKey = Key('todo-quick-add-field');
   static const Key quickAddDateChipKey = Key('todo-quick-add-date-chip');
-  static const Key doneHeaderKey = Key('todo-done-header');
+  static const Key doneHeaderKey = Key('todo-section-done');
+  static const Key unfiledHeaderKey = Key('todo-section-unfiled');
+  static Key folderHeaderKey(String folderId) =>
+      Key('todo-section-$folderId');
+
+  static const Key selectCancelKey = Key('todo-select-cancel');
+  static const Key selectAllKey = Key('todo-select-all');
+  static const Key selectMoveKey = Key('todo-select-move');
+  static const Key selectDoneKey = Key('todo-select-done');
+  static const Key selectDeleteKey = Key('todo-select-delete');
+  static const Key bulkDeleteConfirmKey = Key('todo-bulk-delete-confirm');
 
   @override
   ConsumerState<TodoListScreen> createState() => _TodoListScreenState();
@@ -36,7 +58,17 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
   String? _editingId;
   final TextEditingController _editController = TextEditingController();
 
-  bool _doneExpanded = false;
+  /// Collapsed section keys. Done starts collapsed; folders start open.
+  final Set<String> _collapsed = <String>{_doneSectionKey};
+
+  static const String _doneSectionKey = 'done';
+  static const String _unfiledSectionKey = 'unfiled';
+
+  /// Multi-select state. [_selecting] is the mode flag (the toolbar and
+  /// PopScope key off it); [_selected] is the set, pruned every build so a
+  /// row that vanished under a sync can never be acted on.
+  bool _selecting = false;
+  final Set<String> _selected = <String>{};
 
   @override
   void dispose() {
@@ -55,6 +87,7 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
     final String? due = _pendingDueDate;
     _quickAdd.clear();
     setState(() => _pendingDueDate = null);
+    // New items land unfiled; Move files them after.
     await ref.read(todoRepositoryProvider).add(text, dueDate: due);
   }
 
@@ -72,8 +105,8 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
 
   Future<void> _editDueDate(TodoRow todo) async {
     final DateTime now = todoNow();
-    final DateTime initial =
-        DateTime.tryParse(todo.dueDate ?? '') ?? DateTime(now.year, now.month, now.day);
+    final DateTime initial = DateTime.tryParse(todo.dueDate ?? '') ??
+        DateTime(now.year, now.month, now.day);
     final DateTime? picked = await showDatePicker(
       context: context,
       initialDate: initial,
@@ -107,6 +140,11 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
       );
   }
 
+  void _startEdit(TodoRow todo) {
+    _editController.text = todo.body;
+    setState(() => _editingId = todo.id);
+  }
+
   Future<void> _commitEdit() async {
     final String? id = _editingId;
     if (id == null) return;
@@ -116,24 +154,276 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
     await ref.read(todoRepositoryProvider).editText(id, text);
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final AsyncValue<List<TodoRow>> todos = ref.watch(todosProvider);
-    return Scaffold(
-      appBar: AppBar(title: const Text('To Do')),
-      body: Column(
-        children: [
-          _buildQuickAdd(context),
-          const Divider(height: 1),
-          Expanded(
-            child: todos.when(
-              data: (rows) => _buildSections(context, rows),
-              loading: () => const Center(child: CircularProgressIndicator()),
-              error: (e, _) => Center(child: Text('Could not load: $e')),
+  // ---- folders -----------------------------------------------------------
+
+  /// Runs the shared picker and resolves the destination, creating the
+  /// folder when the user typed a new one. Null means "nothing moves"
+  /// (dismissed); an explicit "No folder" arrives as a present null id.
+  Future<({String? folderId})?> _pickDestination(String? currentFolderId) async {
+    final LocalDb db = ref.read(localDbProvider);
+    final List<Folder> folders =
+        ref.read(foldersProvider).valueOrNull ?? const <Folder>[];
+    final FolderChoice? choice = await showFolderPicker(
+      context,
+      folders: folders
+          .map((Folder f) => FolderOption(id: f.id, name: f.name))
+          .toList(growable: false),
+      currentFolderId: currentFolderId,
+    );
+    if (choice == null || !mounted) return null;
+    String? destination = choice.folderId;
+    if (choice.isNewFolder) {
+      destination = await db.createFolder(name: choice.newFolderName!);
+    }
+    return (folderId: destination);
+  }
+
+  Future<void> _move(TodoRow todo) async {
+    try {
+      final ({String? folderId})? dest = await _pickDestination(todo.folderId);
+      if (dest == null) return;
+      await ref.read(todoRepositoryProvider).moveToFolder(todo.id, dest.folderId);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not move to-do: $error')),
+      );
+    }
+  }
+
+  Future<void> _showRowMenu(TodoRow todo) async {
+    final ItemAction? action = await showItemActionSheet(
+      context,
+      title: todo.body,
+      actions: const <ItemAction>[
+        ItemAction.move,
+        ItemAction.rename,
+        ItemAction.delete,
+      ],
+      labelOverrides: const <ItemAction, String>{ItemAction.rename: 'Edit'},
+    );
+    if (action == null || !mounted) return;
+    switch (action) {
+      case ItemAction.move:
+        await _move(todo);
+      case ItemAction.rename:
+        _startEdit(todo);
+      case ItemAction.delete:
+        await _delete(todo);
+      case ItemAction.open:
+      case ItemAction.duplicate:
+      case ItemAction.share:
+      case ItemAction.exportPdf:
+      case ItemAction.exportMarkdown:
+      case ItemAction.sendToNotebook:
+      case ItemAction.download:
+      case ItemAction.regenerateSummary:
+      case ItemAction.nameSpeakers:
+      case ItemAction.select:
+        break;
+    }
+  }
+
+  Future<void> _folderHeaderActions(TodoSectionGroup section) async {
+    final String? folderId = section.folderId;
+    if (folderId == null) return;
+    await showFolderHeaderActions(
+      context,
+      folderId: folderId,
+      name: section.title ?? '',
+      db: ref.read(localDbProvider),
+    );
+  }
+
+  // ---- multi-select --------------------------------------------------------
+
+  void _enterSelection(String id) {
+    setState(() {
+      _selecting = true;
+      _selected.add(id);
+      _editingId = null;
+    });
+  }
+
+  void _toggleSelected(String id) {
+    setState(() {
+      if (!_selected.remove(id)) _selected.add(id);
+      // Deselecting the last row leaves selection mode, as on Android.
+      if (_selected.isEmpty) _selecting = false;
+    });
+  }
+
+  void _cancelSelection() {
+    setState(() {
+      _selecting = false;
+      _selected.clear();
+    });
+  }
+
+  void _selectAll(Iterable<String> ids) {
+    setState(() => _selected.addAll(ids));
+  }
+
+  Future<void> _moveSelected() async {
+    final List<String> ids = _selected.toList(growable: false);
+    if (ids.isEmpty) return;
+    try {
+      final ({String? folderId})? dest = await _pickDestination(null);
+      if (dest == null || !mounted) return;
+      await ref.read(todoRepositoryProvider).moveManyToFolder(ids, dest.folderId);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not move to-dos: $error')),
+      );
+      return;
+    }
+    if (mounted) _cancelSelection();
+  }
+
+  Future<void> _markSelectedDone() async {
+    final List<String> ids = _selected.toList(growable: false);
+    if (ids.isEmpty) return;
+    await ref.read(todoRepositoryProvider).markManyDone(ids);
+    if (mounted) _cancelSelection();
+  }
+
+  Future<void> _deleteSelected() async {
+    final List<String> ids = _selected.toList(growable: false);
+    if (ids.isEmpty) return;
+    // ONE confirmation for the set, then ONE soft delete and ONE undo that
+    // restores the whole set. Nothing is hard-deleted.
+    final bool? confirmed = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext dialogContext) => AlertDialog(
+        title: Text(
+          ids.length == 1 ? 'Delete 1 to-do?' : 'Delete ${ids.length} to-dos?',
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            key: TodoListScreen.bulkDeleteConfirmKey,
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text(
+              'Delete',
+              style: TextStyle(
+                color: Theme.of(dialogContext).colorScheme.error,
+              ),
             ),
           ),
         ],
       ),
+    );
+    if (confirmed != true || !mounted) return;
+    final TodoRepository repo = ref.read(todoRepositoryProvider);
+    await repo.softDeleteMany(ids);
+    if (!mounted) return;
+    _cancelSelection();
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(
+            ids.length == 1 ? 'Deleted 1 to-do' : 'Deleted ${ids.length} to-dos',
+          ),
+          duration: const Duration(seconds: 5),
+          action: SnackBarAction(
+            label: 'Undo',
+            onPressed: () => repo.restoreMany(ids),
+          ),
+        ),
+      );
+  }
+
+  // ---- build ---------------------------------------------------------------
+
+  @override
+  Widget build(BuildContext context) {
+    final AsyncValue<List<TodoRow>> todos = ref.watch(todosProvider);
+    final List<Folder> folders =
+        ref.watch(foldersProvider).valueOrNull ?? const <Folder>[];
+    final List<TodoRow> rows = todos.valueOrNull ?? const <TodoRow>[];
+
+    // Prune the selection against what is live NOW, so a row deleted or
+    // synced away under us can never be bulk-acted on.
+    _selected.retainAll(rows.map((TodoRow t) => t.id).toSet());
+    if (_selecting && _selected.isEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _selecting && _selected.isEmpty) _cancelSelection();
+      });
+    }
+
+    return PopScope(
+      canPop: !_selecting,
+      onPopInvokedWithResult: (bool didPop, _) {
+        if (!didPop && _selecting) _cancelSelection();
+      },
+      child: Scaffold(
+        appBar: _selecting
+            ? _buildSelectionBar(context, rows)
+            : AppBar(title: const Text('To Do')),
+        body: Column(
+          children: [
+            _buildQuickAdd(context),
+            const Divider(height: 1),
+            Expanded(
+              child: todos.when(
+                data: (List<TodoRow> data) =>
+                    _buildSections(context, data, folders),
+                loading: () =>
+                    const Center(child: CircularProgressIndicator()),
+                error: (Object e, _) =>
+                    Center(child: Text('Could not load: $e')),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  PreferredSizeWidget _buildSelectionBar(
+    BuildContext context,
+    List<TodoRow> rows,
+  ) {
+    final int count = _selected.length;
+    return AppBar(
+      leading: IconButton(
+        key: TodoListScreen.selectCancelKey,
+        icon: const Icon(Icons.close),
+        tooltip: 'Cancel selection',
+        onPressed: _cancelSelection,
+      ),
+      title: Text('$count selected'),
+      actions: <Widget>[
+        IconButton(
+          key: TodoListScreen.selectAllKey,
+          icon: const Icon(Icons.select_all),
+          tooltip: 'Select all',
+          onPressed: () => _selectAll(rows.map((TodoRow t) => t.id)),
+        ),
+        IconButton(
+          key: TodoListScreen.selectMoveKey,
+          icon: const Icon(Icons.drive_file_move_outline),
+          tooltip: 'Move to folder',
+          onPressed: count == 0 ? null : _moveSelected,
+        ),
+        IconButton(
+          key: TodoListScreen.selectDoneKey,
+          icon: const Icon(Icons.check_circle_outline),
+          tooltip: 'Mark done',
+          onPressed: count == 0 ? null : _markSelectedDone,
+        ),
+        IconButton(
+          key: TodoListScreen.selectDeleteKey,
+          icon: const Icon(Icons.delete_outline),
+          tooltip: 'Delete',
+          onPressed: count == 0 ? null : _deleteSelected,
+        ),
+      ],
     );
   }
 
@@ -169,59 +459,108 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
     );
   }
 
-  Widget _buildSections(BuildContext context, List<TodoRow> rows) {
-    final Map<TodoSection, List<TodoRow>> sections =
-        sectionTodos(rows, now: todoNow());
+  String _sectionKeyOf(TodoSectionGroup section) {
+    if (section.isDone) return _doneSectionKey;
+    return section.folderId ?? _unfiledSectionKey;
+  }
+
+  Widget _buildSections(
+    BuildContext context,
+    List<TodoRow> rows,
+    List<Folder> folders,
+  ) {
+    final List<TodoSectionGroup> sections = groupTodos(
+      todos: rows,
+      folders: folders
+          .map((Folder f) => FolderSummary(id: f.id, name: f.name))
+          .toList(growable: false),
+    );
+    if (rows.isEmpty && folders.isEmpty) {
+      return const Center(child: Text('Nothing to do. Add one above.'));
+    }
+    final DateTime now = todoNow();
     final List<Widget> children = <Widget>[];
-    for (final TodoSection section in TodoSection.values) {
-      final List<TodoRow> items = sections[section]!;
-      if (items.isEmpty) continue;
-      if (section == TodoSection.done) {
-        children.add(
-          ListTile(
-            key: TodoListScreen.doneHeaderKey,
-            title: Text('Done (${items.length})'),
-            trailing: Icon(
-              _doneExpanded ? Icons.expand_less : Icons.expand_more,
-            ),
-            onTap: () => setState(() => _doneExpanded = !_doneExpanded),
-          ),
-        );
-        if (_doneExpanded) {
-          children.addAll(
-            items.map((t) => _buildRow(context, t, section)),
-          );
-        }
+    for (final TodoSectionGroup section in sections) {
+      if (section.title == null) {
+        // Rule 1: flat, no header.
+        children.addAll(section.todos.map((t) => _buildRow(context, t, now)));
         continue;
       }
+      final String key = _sectionKeyOf(section);
+      final bool collapsed = _collapsed.contains(key);
       children.add(
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
-          child: Text(
-            '${todoSectionTitles[section]} (${items.length})',
+        ListTile(
+          key: section.isDone
+              ? TodoListScreen.doneHeaderKey
+              : section.folderId == null
+                  ? TodoListScreen.unfiledHeaderKey
+                  : TodoListScreen.folderHeaderKey(section.folderId!),
+          leading: Icon(
+            section.isDone
+                ? Icons.check_circle_outline
+                : section.folderId == null
+                    ? Icons.folder_off_outlined
+                    : Icons.folder_outlined,
+          ),
+          title: Text(
+            '${section.title} (${section.todos.length})',
             style: Theme.of(context).textTheme.titleSmall,
           ),
+          trailing: Icon(collapsed ? Icons.expand_more : Icons.expand_less),
+          onTap: () => setState(() {
+            if (!_collapsed.remove(key)) _collapsed.add(key);
+          }),
+          // Folder headers long-press into the shared rename/delete sheet —
+          // NEVER selection. `No folder` and `Done` have no actions.
+          onLongPress: section.folderId == null
+              ? null
+              : () => _folderHeaderActions(section),
         ),
       );
-      children.addAll(items.map((t) => _buildRow(context, t, section)));
-    }
-    if (children.isEmpty) {
-      return const Center(child: Text('Nothing to do. Add one above.'));
+      if (!collapsed) {
+        children.addAll(section.todos.map((t) => _buildRow(context, t, now)));
+      }
     }
     return ListView(children: children);
   }
 
-  Widget _buildRow(BuildContext context, TodoRow todo, TodoSection section) {
+  /// The time chip's label and tint: Overdue (red) / Today / the date.
+  ({String label, bool overdue})? _chipFor(TodoRow todo, DateTime now) {
+    final String? due = todo.dueDate;
+    if (due == null) return null;
+    final String today = todoDateKey(now);
+    if (due.compareTo(today) < 0) return (label: 'Overdue · $due', overdue: true);
+    if (due == today) return (label: 'Today', overdue: false);
+    return (label: due, overdue: false);
+  }
+
+  Widget _buildRow(BuildContext context, TodoRow todo, DateTime now) {
     final bool done = todo.doneAt != null;
+    final bool selected = _selected.contains(todo.id);
     final TodoRepository repo = ref.read(todoRepositoryProvider);
+    final ({String label, bool overdue})? chip = _chipFor(todo, now);
+    final Widget text = Text(
+      todo.body,
+      style: done ? const TextStyle(decoration: TextDecoration.lineThrough) : null,
+    );
     return ListTile(
       key: Key('todo-row-${todo.id}'),
-      leading: Checkbox(
-        key: Key('todo-check-${todo.id}'),
-        value: done,
-        onChanged: (_) => repo.toggle(todo.id),
-      ),
-      title: _editingId == todo.id
+      selected: selected,
+      selectedTileColor: Theme.of(context).colorScheme.primaryContainer,
+      onTap: _selecting ? () => _toggleSelected(todo.id) : null,
+      onLongPress: _selecting ? null : () => _enterSelection(todo.id),
+      leading: _selecting
+          ? Checkbox(
+              key: Key('todo-select-${todo.id}'),
+              value: selected,
+              onChanged: (_) => _toggleSelected(todo.id),
+            )
+          : Checkbox(
+              key: Key('todo-check-${todo.id}'),
+              value: done,
+              onChanged: (_) => repo.toggle(todo.id),
+            ),
+      title: _editingId == todo.id && !_selecting
           ? TextField(
               key: Key('todo-edit-${todo.id}'),
               controller: _editController,
@@ -229,45 +568,34 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
               onSubmitted: (_) => _commitEdit(),
               onTapOutside: (_) => _commitEdit(),
             )
+          : _selecting
+              ? text
+              : GestureDetector(onTap: () => _startEdit(todo), child: text),
+      subtitle: chip == null || _selecting
+          ? (chip == null ? null : Text(chip.label))
           : GestureDetector(
-              onTap: () {
-                _editController.text = todo.body;
-                setState(() => _editingId = todo.id);
-              },
-              child: Text(
-                todo.body,
-                style: done
-                    ? const TextStyle(
-                        decoration: TextDecoration.lineThrough,
-                      )
-                    : null,
-              ),
-            ),
-      subtitle: todo.dueDate == null
-          ? null
-          : GestureDetector(
-              key: Key('todo-date-${todo.id}'),
+              key: Key('todo-chip-${todo.id}'),
               onTap: () => _editDueDate(todo),
-              // Long-press clears the date; the row drops to Someday.
+              // Long-press clears the date; the row drops to undated.
               onLongPress: () => repo.setDueDate(todo.id, null),
               child: Text(
-                todo.dueDate!,
+                chip.label,
                 style: TextStyle(
-                  color: section == TodoSection.overdue
+                  color: chip.overdue && !done
                       ? Theme.of(context).colorScheme.error
                       : null,
                 ),
               ),
             ),
-      trailing: PopupMenuButton<String>(
-        key: Key('todo-menu-${todo.id}'),
-        onSelected: (value) {
-          if (value == 'delete') _delete(todo);
-        },
-        itemBuilder: (_) => const [
-          PopupMenuItem<String>(value: 'delete', child: Text('Delete')),
-        ],
-      ),
+      // ⋮ hides while selecting: the toolbar is the only verb source then.
+      trailing: _selecting
+          ? null
+          : IconButton(
+              key: Key('todo-menu-${todo.id}'),
+              icon: const Icon(Icons.more_vert),
+              tooltip: 'More',
+              onPressed: () => _showRowMenu(todo),
+            ),
     );
   }
 }
