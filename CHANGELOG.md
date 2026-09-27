@@ -5,6 +5,27 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.24.0 — 2026-09-27
+
+### Added
+- **Folders in To Do.** The To Do screen now groups by folder, the way
+  Notebooks does: one collapsible header per folder, items inside sorted by
+  due date with an Overdue / Today / date chip, 'No folder' last, and one
+  collapsed Done section at the bottom. Folders are the SAME folders as
+  Recordings and Notebooks — a folder holds all three.
+- **Move, Edit, Delete behind ⋮** on every to-do; Move opens the folder
+  picker (with 'New folder…'). **Long-press a row to multi-select**, then
+  Move / Done / Delete the whole set from the toolbar (delete confirms
+  once, with one Undo). Back exits selection before it leaves the screen.
+  Long-press on a folder header still renames / deletes the folder;
+  long-press on the date chip still clears the date.
+- Server: `todos.folder_id` (nullable, absent-vs-null sentinel on sync).
+  Client DB v24.
+
+### Fixed
+- A flaky transcription-service test that measured machine load instead of
+  its seam (500 ms wall-clock ceiling raised).
+
 ## 1.23.1 — 2026-09-27
 
 ### Fixed
