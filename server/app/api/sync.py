@@ -308,6 +308,105 @@ def _apply_folder(conn: sqlite3.Connection, change: SyncChange, now: int) -> Non
     )
 
 
+def _iso_instant(value: Any, field: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"todo {field} must be an ISO instant")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(f"todo {field} must be an ISO instant") from exc
+    if parsed.tzinfo is None:
+        raise ValueError(f"todo {field} must include a timezone")
+    return value
+
+
+def _instant_value(value: str) -> datetime:
+    """Normalize equivalent ISO spellings/offsets before comparing instants."""
+    return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(UTC)
+
+
+def _apply_todo(
+    conn: sqlite3.Connection, change: SyncChange, now: int
+) -> tuple[bool, dict[str, Any] | None]:
+    """Apply one todo, preserving omitted nullable fields and dropping stale writes."""
+    existing = conn.execute(
+        "SELECT * FROM todos WHERE id = ?", (change.entity_id,)
+    ).fetchone()
+    p: dict[str, Any] = change.payload or {}
+
+    if change.op == "delete":
+        incoming_updated = p.get("updated_at", datetime.fromtimestamp(now, tz=UTC).isoformat())
+        incoming_updated = _iso_instant(incoming_updated, "updated_at")
+        if existing is not None and _instant_value(incoming_updated) <= _instant_value(
+            existing["updated_at"]
+        ):
+            return False, None
+        if existing is not None:
+            deleted_at = p.get("deleted_at", incoming_updated)
+            _iso_instant(deleted_at, "deleted_at")
+            conn.execute(
+                "UPDATE todos SET updated_at = ?, deleted_at = ? WHERE id = ?",
+                (incoming_updated, deleted_at, change.entity_id),
+            )
+        return True, None
+
+    if change.payload is None:
+        raise ValueError("todo upsert requires a payload")
+    for field in ("text", "created_at", "updated_at"):
+        if field not in p:
+            raise ValueError(f"todo upsert requires {field}")
+    if not isinstance(p["text"], str) or not p["text"].strip():
+        raise ValueError("todo text must be a non-empty string")
+    created_at = _iso_instant(p["created_at"], "created_at")
+    updated_at = _iso_instant(p["updated_at"], "updated_at")
+    if existing is not None and _instant_value(updated_at) <= _instant_value(
+        existing["updated_at"]
+    ):
+        return False, None
+
+    def nullable(field: str) -> str | None:
+        value = p[field] if field in p else (existing[field] if existing is not None else None)
+        if value is not None and not isinstance(value, str):
+            raise ValueError(f"todo {field} must be a string or null")
+        return value
+
+    done_at = nullable("done_at")
+    if done_at is not None:
+        _iso_instant(done_at, "done_at")
+    due_date = nullable("due_date")
+    if due_date is not None:
+        try:
+            if datetime.strptime(due_date, "%Y-%m-%d").strftime("%Y-%m-%d") != due_date:
+                raise ValueError
+        except ValueError as exc:
+            raise ValueError("todo due_date must be YYYY-MM-DD or null") from exc
+    source_ref = nullable("source_ref")
+    deleted_at = nullable("deleted_at")
+    if deleted_at is not None:
+        _iso_instant(deleted_at, "deleted_at")
+    source = p.get("source", existing["source"] if existing is not None else "manual")
+    if not isinstance(source, str) or not source:
+        raise ValueError("todo source must be a non-empty string")
+
+    conn.execute(
+        """
+        INSERT INTO todos
+            (id, text, done_at, due_date, source, source_ref, created_at,
+             updated_at, deleted_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            text = excluded.text, done_at = excluded.done_at,
+            due_date = excluded.due_date, source = excluded.source,
+            source_ref = excluded.source_ref, updated_at = excluded.updated_at,
+            deleted_at = excluded.deleted_at
+        """,
+        (change.entity_id, p["text"], done_at, due_date, source, source_ref,
+         created_at, updated_at, deleted_at),
+    )
+    stored = conn.execute("SELECT * FROM todos WHERE id = ?", (change.entity_id,)).fetchone()
+    return True, dict(stored)
+
+
 def _apply_document(
     conn: sqlite3.Connection,
     table: str,
@@ -467,6 +566,18 @@ def sync_push(
                 reindex_ids.append(change.entity_id)
             elif change.entity_type == "folder":
                 _apply_folder(db, change, now)
+            elif change.entity_type == "todo":
+                changed, publish_payload = _apply_todo(db, change, now)
+                if not changed:
+                    results.append(
+                        SyncPushResult(
+                            entity_id=change.entity_id,
+                            entity_type=change.entity_type,
+                            seq=0,
+                            status="applied",
+                        )
+                    )
+                    continue
             else:
                 _apply_document(db, "notes", change, now)
 

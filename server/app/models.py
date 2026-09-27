@@ -218,7 +218,7 @@ class SyncChange(BaseModel):
     opaque 422 that would strand the rest of the batch).
     """
 
-    entity_type: Literal["dump", "notebook", "note", "folder", "ink_index"]
+    entity_type: Literal["dump", "notebook", "note", "folder", "ink_index", "todo"]
     entity_id: str = Field(min_length=1, max_length=64)
     op: Literal["upsert", "delete"]
     payload: dict[str, Any] | None = None
