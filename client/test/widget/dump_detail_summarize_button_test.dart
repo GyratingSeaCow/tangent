@@ -542,7 +542,13 @@ void main() {
     final Finder elapsed = find.byKey(
       const ValueKey<String>('ai-summary-pending-elapsed-btn-7'),
     );
-    final DateTime start = DateTime.now();
+    // Anchor on the row's OWN requested-at second, not DateTime.now(): the
+    // 202 stamped whole seconds a moment ago, so 'now + 42 s' straddles a
+    // tick boundary under load and read 0:43 in a full-suite run.
+    final int requestedAt =
+        (await db.getDump('btn-7'))!.summaryRequestedAt!;
+    final DateTime start =
+        DateTime.fromMillisecondsSinceEpoch(requestedAt * 1000, isUtc: true);
     addTearDown(() => summaryPendingClock = DateTime.now);
     expect(tester.widget<Text>(elapsed).data, startsWith('Elapsed 0:0'));
     summaryPendingClock = () => start.add(const Duration(seconds: 42));
