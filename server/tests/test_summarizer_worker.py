@@ -170,9 +170,11 @@ class TestSummarizeDump:
 
         assert ok is False
         assert _dump_row(db, "d-fail")["summary"] is None
-        assert _dump_changes(db, "d-fail") == [], (
-            "a failed summarize must not announce anything"
-        )
+        changes = _dump_changes(db, "d-fail")
+        assert len(changes) == 1
+        payload = json.loads(changes[0]["payload"])
+        assert payload["summary_status"] == "failed"
+        assert payload["summary_error"] == "RuntimeError: model exploded"
         events = [e for e, _ in fake_log.warnings]
         assert "summarizer_worker.summarize_failed" in events
 

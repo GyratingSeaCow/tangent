@@ -258,7 +258,7 @@ def summarize_dump(
         # The worker reads on another connection. Persist both the selection
         # and its sync event before making the queue entry visible.
         db.commit()
-    summarizer_worker.enqueue(dump_id)
+    summarizer_worker.enqueue(dump_id, db)
     summarizer_worker.start_worker_if_installed()
     log.info("summaries.regenerate_requested", dump_id=dump_id, template=selected)
     return SummarizeAccepted(dump_id=dump_id)

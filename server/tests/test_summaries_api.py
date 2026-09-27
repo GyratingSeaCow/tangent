@@ -369,7 +369,7 @@ class TestRegenerate:
         _insert_dump(data_dir, "d-template", "Sam: hi")
         observed: dict[str, object] = {}
 
-        def inspect_enqueue(dump_id: str) -> None:
+        def inspect_enqueue(dump_id: str, db=None) -> None:
             conn = _open_db(data_dir)
             try:
                 row = conn.execute(

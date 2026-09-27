@@ -87,7 +87,7 @@ def enqueue_job(
     return job_id, True
 
 
-def run_job_inline(job_id: str, audio_path: str) -> None:
+def run_job_inline(job_id: str, audio_path: str, translate: bool = False) -> None:
     """Execute a job synchronously. Updates job status as it progresses.
 
     Intended to be called from a FastAPI BackgroundTasks hook.
@@ -139,7 +139,10 @@ def run_job_inline(job_id: str, audio_path: str) -> None:
             service = get_transcription_service()
             # Resolve at RUN time, not enqueue time: queued jobs use the most
             # recently saved global vocabulary.
-            result = service.transcribe(audio_path, hotwords=vocabulary.load_hotwords(db))
+            transcribe_kwargs = {"hotwords": vocabulary.load_hotwords(db)}
+            if translate:
+                transcribe_kwargs["translate"] = True
+            result = service.transcribe(audio_path, **transcribe_kwargs)
             transcript = result.text
             # Segment timings describe the raw audio, so they are stored as
             # transcribed and are NOT rewritten by mode-specific formatting.
@@ -180,9 +183,9 @@ def run_job_inline(job_id: str, audio_path: str) -> None:
             # Also update the dump's transcript if not already set or if server transcript is better
             db.execute(
                 "UPDATE dumps SET transcript = ?, transcript_timings = ?, "
-                "timings_version = 1, updated_at = ? "
+                "timings_version = 1, language = ?, translated = ?, updated_at = ? "
                 "WHERE id = (SELECT dump_id FROM jobs WHERE id = ?)",
-                (transcript, timings_json, _now_ts(), job_id),
+                (transcript, timings_json, result.language, int(translate), _now_ts(), job_id),
             )
             # Publish to the sync feed so other devices receive the finished
             # transcript. Attributed to the server: no device pushed this.

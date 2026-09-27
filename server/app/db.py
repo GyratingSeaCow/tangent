@@ -38,6 +38,11 @@ CREATE TABLE IF NOT EXISTS dumps (
     summarized_at INTEGER,
     summary_template TEXT,
     speaker_names TEXT,
+    language TEXT,
+    translated INTEGER NOT NULL DEFAULT 0,
+    summary_status TEXT CHECK (summary_status IN ('queued', 'running', 'failed')),
+    summary_error TEXT,
+    summary_queue_position INTEGER,
     transcript_timings TEXT,
     timings_version INTEGER,
     audio_kept INTEGER NOT NULL DEFAULT 0,
@@ -311,6 +316,11 @@ def _backfill_dump_change_feed(conn: sqlite3.Connection) -> None:
                 "summarized_at": row["summarized_at"],
                 "summary_template": row["summary_template"],
                 "speaker_names": row["speaker_names"],
+                "language": row["language"],
+                "translated": bool(row["translated"]),
+                "summary_status": row["summary_status"],
+                "summary_error": row["summary_error"],
+                "summary_queue_position": row["summary_queue_position"],
                 "transcript_timings": row["transcript_timings"],
                 "timings_version": row["timings_version"],
                 "duration_seconds": row["duration_seconds"],
@@ -380,6 +390,46 @@ def _migrate_dumps_speaker_names(conn: sqlite3.Connection) -> list[str]:
     if "speaker_names" in cols:
         return []
     conn.execute("ALTER TABLE dumps ADD COLUMN speaker_names TEXT")
+    return [
+        row[0]
+        for row in conn.execute("SELECT id FROM dumps WHERE deleted_at IS NULL")
+    ]
+
+
+def _migrate_dumps_language(conn: sqlite3.Connection) -> list[str]:
+    """Add server-authored translation metadata and republish once."""
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(dumps)")}
+    added = False
+    if "language" not in cols:
+        conn.execute("ALTER TABLE dumps ADD COLUMN language TEXT")
+        added = True
+    if "translated" not in cols:
+        conn.execute(
+            "ALTER TABLE dumps ADD COLUMN translated INTEGER NOT NULL DEFAULT 0"
+        )
+        added = True
+    if not added:
+        return []
+    return [
+        row[0]
+        for row in conn.execute("SELECT id FROM dumps WHERE deleted_at IS NULL")
+    ]
+
+
+def _migrate_dumps_summary_status(conn: sqlite3.Connection) -> list[str]:
+    """Add server-authored summary state and republish once."""
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(dumps)")}
+    added = False
+    for name, declaration in (
+        ("summary_status", "TEXT"),
+        ("summary_error", "TEXT"),
+        ("summary_queue_position", "INTEGER"),
+    ):
+        if name not in cols:
+            conn.execute(f"ALTER TABLE dumps ADD COLUMN {name} {declaration}")
+            added = True
+    if not added:
+        return []
     return [
         row[0]
         for row in conn.execute("SELECT id FROM dumps WHERE deleted_at IS NULL")
@@ -694,6 +744,8 @@ def init_db(data_dir: str) -> None:
         _migrate_dumps_summary(conn)
         template_backfills = _migrate_dumps_summary_template(conn)
         speaker_name_backfills = _migrate_dumps_speaker_names(conn)
+        language_backfills = _migrate_dumps_language(conn)
+        summary_status_backfills = _migrate_dumps_summary_status(conn)
         timing_backfills = _migrate_dumps_transcript_timings(conn)
         _migrate_notebooks_folder_id(conn)
         _migrate_change_log_folder_entity(conn)
@@ -704,6 +756,8 @@ def init_db(data_dir: str) -> None:
         dump_backfills = (
             set(template_backfills)
             | set(speaker_name_backfills)
+            | set(language_backfills)
+            | set(summary_status_backfills)
             | set(timing_backfills)
         )
         if dump_backfills:
