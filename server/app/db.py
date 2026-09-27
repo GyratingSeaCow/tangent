@@ -223,10 +223,37 @@ CREATE TABLE IF NOT EXISTS todos (
     folder_id TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    deleted_at TEXT
+    deleted_at TEXT,
+    -- Google bookkeeping is server-only. It is deliberately absent from
+    -- device sync payloads and from _apply_todo's upsert column list.
+    google_task_id TEXT,
+    google_updated TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_todos_updated_at ON todos(updated_at DESC);
+
+-- One household-wide Google Tasks connection. Credentials and tokens never
+-- enter the device sync feed; authenticated APIs expose only status metadata.
+CREATE TABLE IF NOT EXISTS google_tasks_link (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    client_id TEXT,
+    client_secret TEXT,
+    refresh_token TEXT,
+    access_token TEXT,
+    access_expires_at INTEGER,
+    google_email TEXT,
+    tasklist_id TEXT,
+    last_pull_updated_min TEXT,
+    status TEXT NOT NULL DEFAULT 'disconnected'
+        CHECK (status IN
+               ('disconnected', 'pending', 'connected', 'reauth_required', 'error')),
+    last_error TEXT,
+    last_sync_at TEXT,
+    last_pushed INTEGER NOT NULL DEFAULT 0,
+    last_pulled INTEGER NOT NULL DEFAULT 0,
+    oauth_state TEXT,
+    oauth_state_expires_at INTEGER
+);
 
 -- Server-side persisted settings (key/value). First user: the AI-summaries
 -- toggle — it gates a SERVER worker, so it must live where the worker can
@@ -558,6 +585,15 @@ def _migrate_todos_folder_id(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE todos ADD COLUMN folder_id TEXT")
 
 
+def _migrate_todos_google_columns(conn: sqlite3.Connection) -> None:
+    """Add opaque Google mapping metadata to pre-v1.25 todo tables."""
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(todos)")}
+    if "google_task_id" not in columns:
+        conn.execute("ALTER TABLE todos ADD COLUMN google_task_id TEXT")
+    if "google_updated" not in columns:
+        conn.execute("ALTER TABLE todos ADD COLUMN google_updated TEXT")
+
+
 def _migrate_change_log_folder_entity(conn: sqlite3.Connection) -> None:
     """Rebuild change_log so its CHECK admits entity_type 'folder'.
 
@@ -810,6 +846,7 @@ def init_db(data_dir: str) -> None:
         timing_backfills = _migrate_dumps_transcript_timings(conn)
         _migrate_notebooks_folder_id(conn)
         _migrate_todos_folder_id(conn)
+        _migrate_todos_google_columns(conn)
         _migrate_change_log_folder_entity(conn)
         _migrate_change_log_ink_index_entity(conn)
         _migrate_change_log_todo_entity(conn)

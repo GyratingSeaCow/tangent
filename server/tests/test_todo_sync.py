@@ -259,3 +259,66 @@ def test_todo_migration_preserves_change_log_count_max_and_exact_seqs(temp_data_
     )
     assert conn.execute("SELECT MAX(seq) FROM change_log").fetchone()[0] > 9
     conn.close()
+
+
+def test_google_tasks_migration_adds_server_only_todo_columns_once(temp_data_dir):
+    db_file = temp_data_dir / "tangent.db"
+    conn = sqlite3.connect(db_file)
+    conn.execute("""
+        CREATE TABLE todos (
+            id TEXT PRIMARY KEY, text TEXT NOT NULL, done_at TEXT,
+            due_date TEXT, source TEXT NOT NULL DEFAULT 'manual', source_ref TEXT,
+            folder_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+            deleted_at TEXT
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+    init_db(str(temp_data_dir))
+    init_db(str(temp_data_dir))
+
+    conn = sqlite3.connect(db_file)
+    columns = [row[1] for row in conn.execute("PRAGMA table_info(todos)")]
+    assert columns.count("google_task_id") == 1
+    assert columns.count("google_updated") == 1
+    link_columns = {
+        row[1] for row in conn.execute("PRAGMA table_info(google_tasks_link)")
+    }
+    assert {
+        "client_id", "client_secret", "refresh_token", "tasklist_id",
+        "oauth_state", "oauth_state_expires_at",
+    }.issubset(link_columns)
+    conn.close()
+
+
+def test_device_upsert_preserves_google_mapping_and_omits_it_from_feed(todo_api):
+    client, token, db = todo_api
+    _push(client, token, [{
+        "entity_type": "todo", "entity_id": "mapped", "op": "upsert",
+        "payload": _todo(),
+    }])
+    db.execute(
+        "UPDATE todos SET google_task_id = ?, google_updated = ? WHERE id = ?",
+        ("google-123", "2026-09-27T12:00:01Z", "mapped"),
+    )
+    db.commit()
+
+    result = _push(client, token, [{
+        "entity_type": "todo", "entity_id": "mapped", "op": "upsert",
+        "payload": _todo("device edit", "2026-09-27T12:02:00Z"),
+    }]).json()["results"][0]
+    assert result["status"] == "applied"
+    row = db.execute(
+        "SELECT google_task_id, google_updated FROM todos WHERE id = 'mapped'"
+    ).fetchone()
+    assert tuple(row) == ("google-123", "2026-09-27T12:00:01Z")
+
+    feed = client.get(
+        "/v1/sync/pull",
+        params={"device_id": "device-bbbb-2", "since_seq": 1},
+        headers=_headers(token),
+    ).json()["changes"]
+    payload = next(change["payload"] for change in feed if change["entity_id"] == "mapped")
+    assert "google_task_id" not in payload
+    assert "google_updated" not in payload
