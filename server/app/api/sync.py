@@ -381,6 +381,7 @@ def _apply_todo(
         except ValueError as exc:
             raise ValueError("todo due_date must be YYYY-MM-DD or null") from exc
     source_ref = nullable("source_ref")
+    folder_id = nullable("folder_id")
     deleted_at = nullable("deleted_at")
     if deleted_at is not None:
         _iso_instant(deleted_at, "deleted_at")
@@ -391,17 +392,18 @@ def _apply_todo(
     conn.execute(
         """
         INSERT INTO todos
-            (id, text, done_at, due_date, source, source_ref, created_at,
-             updated_at, deleted_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (id, text, done_at, due_date, source, source_ref, folder_id,
+             created_at, updated_at, deleted_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             text = excluded.text, done_at = excluded.done_at,
             due_date = excluded.due_date, source = excluded.source,
-            source_ref = excluded.source_ref, updated_at = excluded.updated_at,
+            source_ref = excluded.source_ref, folder_id = excluded.folder_id,
+            updated_at = excluded.updated_at,
             deleted_at = excluded.deleted_at
         """,
         (change.entity_id, p["text"], done_at, due_date, source, source_ref,
-         created_at, updated_at, deleted_at),
+         folder_id, created_at, updated_at, deleted_at),
     )
     stored = conn.execute("SELECT * FROM todos WHERE id = ?", (change.entity_id,)).fetchone()
     return True, dict(stored)

@@ -76,7 +76,74 @@ def test_push_stores_and_pull_fans_todo_without_opt_in(todo_api):
         headers=_headers(token),
     ).json()
     change = next(c for c in pulled["changes"] if c["entity_type"] == "todo")
-    assert change["payload"] == {"id": "todo-1", **_todo()}
+    assert change["payload"] == {"id": "todo-1", **_todo(), "folder_id": None}
+
+
+def test_todo_folder_id_round_trips(todo_api):
+    client, token, db = todo_api
+    payload = {**_todo(), "folder_id": "folder-shop"}
+    response = _push(client, token, [{
+        "entity_type": "todo", "entity_id": "todo-folder", "op": "upsert",
+        "payload": payload,
+    }])
+    assert response.json()["results"][0]["status"] == "applied"
+    assert db.execute(
+        "SELECT folder_id FROM todos WHERE id = 'todo-folder'"
+    ).fetchone()[0] == "folder-shop"
+    pulled = client.get(
+        "/v1/sync/pull",
+        params={"device_id": "device-bbbb-2", "since_seq": 0},
+        headers=_headers(token),
+    ).json()
+    change = next(c for c in pulled["changes"] if c["entity_id"] == "todo-folder")
+    assert change["payload"]["folder_id"] == "folder-shop"
+
+
+def test_absent_todo_folder_id_preserves_existing(todo_api):
+    client, token, db = todo_api
+    first = {**_todo(), "folder_id": "folder-shop"}
+    _push(client, token, [{
+        "entity_type": "todo", "entity_id": "todo-folder", "op": "upsert",
+        "payload": first,
+    }])
+    narrower = _todo("renamed", "2026-09-27T12:01:00Z")
+    _push(client, token, [{
+        "entity_type": "todo", "entity_id": "todo-folder", "op": "upsert",
+        "payload": narrower,
+    }])
+    assert db.execute(
+        "SELECT folder_id FROM todos WHERE id = 'todo-folder'"
+    ).fetchone()[0] == "folder-shop"
+
+
+def test_explicit_null_todo_folder_id_clears_existing(todo_api):
+    client, token, db = todo_api
+    first = {**_todo(), "folder_id": "folder-shop"}
+    _push(client, token, [{
+        "entity_type": "todo", "entity_id": "todo-folder", "op": "upsert",
+        "payload": first,
+    }])
+    cleared = {**_todo("renamed", "2026-09-27T12:01:00Z"), "folder_id": None}
+    _push(client, token, [{
+        "entity_type": "todo", "entity_id": "todo-folder", "op": "upsert",
+        "payload": cleared,
+    }])
+    assert db.execute(
+        "SELECT folder_id FROM todos WHERE id = 'todo-folder'"
+    ).fetchone()[0] is None
+
+
+def test_unknown_todo_folder_id_is_accepted(todo_api):
+    client, token, db = todo_api
+    payload = {**_todo(), "folder_id": "folder-that-does-not-exist"}
+    result = _push(client, token, [{
+        "entity_type": "todo", "entity_id": "todo-orphan", "op": "upsert",
+        "payload": payload,
+    }]).json()["results"][0]
+    assert result["status"] == "applied"
+    assert db.execute(
+        "SELECT folder_id FROM todos WHERE id = 'todo-orphan'"
+    ).fetchone()[0] == "folder-that-does-not-exist"
 
 
 def test_stale_todo_update_is_dropped(todo_api):
@@ -135,6 +202,29 @@ def test_soft_delete_is_stored_and_fans_out(todo_api):
         headers=_headers(token),
     ).json()
     assert ("todo", "delete") in [(c["entity_type"], c["op"]) for c in pulled["changes"]]
+
+
+def test_todo_folder_migration_adds_column_exactly_once(temp_data_dir):
+    db_file = temp_data_dir / "tangent.db"
+    conn = sqlite3.connect(db_file)
+    conn.execute("""
+        CREATE TABLE todos (
+            id TEXT PRIMARY KEY, text TEXT NOT NULL, done_at TEXT,
+            due_date TEXT, source TEXT NOT NULL DEFAULT 'manual',
+            source_ref TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+            deleted_at TEXT
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+    init_db(str(temp_data_dir))
+    init_db(str(temp_data_dir))
+
+    conn = sqlite3.connect(db_file)
+    columns = [row[1] for row in conn.execute("PRAGMA table_info(todos)")]
+    assert columns.count("folder_id") == 1
+    conn.close()
 
 
 def test_todo_migration_preserves_change_log_count_max_and_exact_seqs(temp_data_dir):
