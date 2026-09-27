@@ -16,6 +16,7 @@ import '../dump/dump_detail_screen.dart';
 import '../dump/dumps_list_screen.dart';
 import '../note/note_compose_screen.dart';
 import '../notebook/notebook_list_screen.dart';
+import '../todo/todo_list_screen.dart';
 import '../recording/recording_controller.dart';
 import '../recording/recording_waveform.dart';
 import '../settings/settings_screen.dart';
@@ -250,6 +251,16 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             onPressed: () => Navigator.of(context).push<void>(
               MaterialPageRoute<void>(
                 builder: (_) => const NotebookListScreen(),
+              ),
+            ),
+          ),
+          IconButton(
+            key: const Key('home-todo-button'),
+            icon: const Icon(Icons.checklist),
+            tooltip: 'To Do',
+            onPressed: () => Navigator.of(context).push<void>(
+              MaterialPageRoute<void>(
+                builder: (_) => const TodoListScreen(),
               ),
             ),
           ),

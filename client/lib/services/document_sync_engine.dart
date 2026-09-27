@@ -208,6 +208,10 @@ class DocumentSyncEngine extends ChangeNotifier {
       await _applyRemoteDump(change);
       return false;
     }
+    if (change.entityType == 'todo') {
+      await _applyRemoteTodo(change);
+      return false;
+    }
     if (change.entityType == 'folder') {
       if (change.op == SyncOp.delete) {
         await _db.applyRemoteFolderDeletion(change.entityId);
@@ -368,6 +372,75 @@ class DocumentSyncEngine extends ChangeNotifier {
     );
   }
 
+  /// Applies one incoming todo change.
+  ///
+  /// Todos follow the DUMP rules, not the notebook ones: the synced fields
+  /// are short flat data, so a conflict never forks. A local edit still
+  /// pending push WINS and stays dirty (own-echo protection — our push
+  /// carries it up and the peer converges next cycle); otherwise newer
+  /// `updated_at` wins, compared as ISO instant strings, which collate
+  /// chronologically. Deletion is soft and rides the same upsert as a
+  /// `deleted_at` value, so there is no separate delete path to keep in
+  /// step — but a peer's op:delete is honoured anyway for forward compat.
+  Future<void> _applyRemoteTodo(RemoteChange change) async {
+    final Map<String, dynamic> payload = change.payload ?? const {};
+    final TodoRow? local = await _db.getTodoRow(change.entityId);
+    if (local != null && local.syncDirty == true) {
+      // This device has an unpushed edit. Keep it; our push will carry it
+      // up and the peer converges on the next cycle.
+      return;
+    }
+    if (change.op == SyncOp.delete) {
+      // Defensive: Phase 1 peers send deletion as a deleted_at upsert, but
+      // an explicit delete op must still land as the soft delete it means.
+      if (local != null && local.deletedAt == null) {
+        await _db.applyRemoteTodo(
+          id: local.id,
+          text: local.body,
+          createdAt: local.createdAt,
+          updatedAt: local.updatedAt,
+          deletedAt: DateTime.now().toUtc().toIso8601String(),
+          seq: change.seq,
+        );
+      }
+      return;
+    }
+
+    final String remoteUpdatedAt = payload['updated_at'] as String? ?? '';
+    if (local != null &&
+        remoteUpdatedAt.isNotEmpty &&
+        local.updatedAt.compareTo(remoteUpdatedAt) > 0) {
+      // Our copy is newer than what the peer sent; nothing to learn.
+      return;
+    }
+
+    final String fallbackStamp = DateTime.now().toUtc().toIso8601String();
+    await _db.applyRemoteTodo(
+      id: change.entityId,
+      text: payload['text'] as String? ?? local?.body ?? '',
+      createdAt: payload['created_at'] as String? ?? fallbackStamp,
+      updatedAt:
+          remoteUpdatedAt.isEmpty ? fallbackStamp : remoteUpdatedAt,
+      source: payload['source'] as String?,
+      // Absent-vs-null discipline (the summary-field rule): a payload
+      // missing a key keeps the local value; a PRESENT null is
+      // authoritative (unchecked / undated / live / no provenance).
+      doneAt: payload.containsKey('done_at')
+          ? payload['done_at'] as String?
+          : LocalDb.absentTodoField,
+      dueDate: payload.containsKey('due_date')
+          ? payload['due_date'] as String?
+          : LocalDb.absentTodoField,
+      sourceRef: payload.containsKey('source_ref')
+          ? payload['source_ref'] as String?
+          : LocalDb.absentTodoField,
+      deletedAt: payload.containsKey('deleted_at')
+          ? payload['deleted_at'] as String?
+          : LocalDb.absentTodoField,
+      seq: change.seq,
+    );
+  }
+
   /// Canonical JSON text for a timings payload value: the server sends the
   /// stored column verbatim (a JSON string), but a structured value is
   /// accepted too. Null stays null (authoritative "no timings").
@@ -474,10 +547,12 @@ class DocumentSyncEngine extends ChangeNotifier {
     final List<NotebookRow> dirty = await _db.notebooksNeedingPush();
     final List<DumpRow> dirtyDumps = await _db.dumpsNeedingMetadataPush();
     final List<Folder> dirtyFolders = await _db.foldersNeedingPush();
+    final List<TodoRow> dirtyTodos = await _db.todosNeedingPush();
     final List<SyncTombstoneRow> tombstones = await _db.pendingTombstones();
     if (dirty.isEmpty &&
         dirtyDumps.isEmpty &&
         dirtyFolders.isEmpty &&
+        dirtyTodos.isEmpty &&
         tombstones.isEmpty) {
       return 0;
     }
@@ -538,6 +613,25 @@ class DocumentSyncEngine extends ChangeNotifier {
             // server-authored, and summary_error_dismissed_at is local-only.
           },
         },
+      for (final TodoRow row in dirtyTodos)
+        <String, dynamic>{
+          'entity_type': 'todo',
+          'entity_id': row.id,
+          'op': 'upsert',
+          // Every field travels on every push, nulls included: for todos a
+          // null is always meaningful (unchecked / undated / live), and a
+          // soft delete IS the deleted_at value riding an ordinary upsert.
+          'payload': <String, dynamic>{
+            'text': row.body,
+            'done_at': row.doneAt,
+            'due_date': row.dueDate,
+            'source': row.source,
+            'source_ref': row.sourceRef,
+            'created_at': row.createdAt,
+            'updated_at': row.updatedAt,
+            'deleted_at': row.deletedAt,
+          },
+        },
       for (final SyncTombstoneRow stone in tombstones)
         <String, dynamic>{
           'entity_type': stone.entityType,
@@ -559,6 +653,9 @@ class DocumentSyncEngine extends ChangeNotifier {
     };
     final Set<String> pushedFolderIds = <String>{
       for (final Folder row in dirtyFolders) row.id,
+    };
+    final Map<String, String> pushedTodoUpdatedAt = <String, String>{
+      for (final TodoRow row in dirtyTodos) row.id: row.updatedAt,
     };
 
     int accepted = 0;
@@ -593,6 +690,21 @@ class DocumentSyncEngine extends ChangeNotifier {
           await _db.clearTombstone(
             entityType: result.entityType,
             entityId: result.entityId,
+          );
+        }
+        continue;
+      }
+      if (result.entityType == 'todo') {
+        // Todos never write tombstones (soft delete travels as an upsert),
+        // so an accepted todo is always a dirty-row confirmation. Guarded
+        // on updated_at like the others: an edit made while the push was
+        // in flight must stay dirty.
+        final String? wasTodo = pushedTodoUpdatedAt[result.entityId];
+        if (wasTodo != null) {
+          await _db.markTodoSynced(
+            result.entityId,
+            seq: result.seq,
+            pushedUpdatedAt: wasTodo,
           );
         }
         continue;

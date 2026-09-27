@@ -10,12 +10,12 @@ import 'package:tangent/data/storage/storage_contract.dart';
 import 'package:tangent/data/storage/storage_providers.dart';
 import 'package:tangent/screens/dump/dumps_providers.dart';
 import 'package:tangent/screens/home/home_screen.dart';
-import 'package:tangent/screens/notebook/notebook_list_screen.dart';
 import 'package:tangent/screens/recording/recording_controller.dart';
 import 'package:tangent/screens/server/server_connection_screen.dart'
     show transcriptionClientProvider;
 import 'package:tangent/screens/settings/settings_screen.dart'
     show settingsStoreProvider;
+import 'package:tangent/screens/todo/todo_list_screen.dart';
 import 'package:tangent/services/recording_service.dart';
 import 'package:tangent/services/screen_awake.dart';
 import 'package:tangent/services/transcription_client.dart';
@@ -23,9 +23,9 @@ import 'package:tangent/services/transcription_client.dart';
 import '../support/fake_notebook_repository.dart';
 import '../support/widget_recording_coordinator.dart';
 
-/// T4 (home side): the app bar gains a Notebooks entry point that opens the
-/// notebook LIST, sitting between the dumps list and settings and leaving the
-/// existing sync / dumps / settings plumbing untouched.
+/// To Do arc Phase 1 (home side): the app bar gains a checklist entry
+/// point (key `home-todo-button`) that opens the To Do screen, leaving
+/// the existing sync / dumps / notebooks / settings plumbing untouched.
 
 class _StubClient extends TranscriptionClient {
   _StubClient() : super(baseUrl: 'http://test');
@@ -85,59 +85,52 @@ void main() {
     await db.close();
   }
 
-  testWidgets(
-      'app bar exposes a Notebooks action between dumps and settings',
-      (tester) async {
+  testWidgets('the app bar exposes the To Do checklist action', (tester) async {
     final LocalDb db = await mountHome(tester);
 
-    expect(find.byIcon(Icons.menu_book), findsOneWidget);
+    expect(find.byKey(const Key('home-todo-button')), findsOneWidget);
+    expect(find.byIcon(Icons.checklist), findsOneWidget);
     expect(
       tester
-          .widgetList<IconButton>(
-            find.descendant(
-              of: find.byType(AppBar),
-              matching: find.byType(IconButton),
-            ),
-          )
-          .map((IconButton button) => button.tooltip)
-          .toList(),
-      <String>['Sync now', 'View dumps', 'Notebooks', 'To Do', 'Settings'],
+          .widget<IconButton>(find.byKey(const Key('home-todo-button')))
+          .tooltip,
+      'To Do',
     );
     expect(tester.takeException(), isNull);
 
     await unmountHome(tester, db);
   });
 
-  testWidgets('tapping Notebooks pushes the notebook list', (tester) async {
+  testWidgets('tapping the checklist opens the To Do screen', (tester) async {
     final LocalDb db = await mountHome(tester);
 
-    await tester.tap(find.byIcon(Icons.menu_book));
+    await tester.tap(find.byKey(const Key('home-todo-button')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     await tester.pump(const Duration(milliseconds: 100));
 
-    expect(find.byType(NotebookListScreen), findsOneWidget);
-    expect(find.text('Notebooks'), findsWidgets);
+    expect(find.byType(TodoListScreen), findsOneWidget);
+    expect(find.text('To Do'), findsWidgets);
     expect(tester.takeException(), isNull);
 
     await unmountHome(tester, db);
   });
 
-  testWidgets('opening Notebooks never disturbs the dumps entry point',
+  testWidgets('opening To Do never disturbs the other entry points',
       (tester) async {
     final LocalDb db = await mountHome(tester);
 
-    await tester.tap(find.byIcon(Icons.menu_book));
+    await tester.tap(find.byKey(const Key('home-todo-button')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
-    Navigator.of(tester.element(find.byType(NotebookListScreen))).pop();
+    Navigator.of(tester.element(find.byType(TodoListScreen))).pop();
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
 
     expect(find.byIcon(Icons.list), findsOneWidget);
     expect(find.byIcon(Icons.cloud_sync), findsOneWidget);
+    expect(find.byIcon(Icons.menu_book), findsOneWidget);
     expect(find.byIcon(Icons.settings), findsOneWidget);
-    expect(notebooks.createCalls, 0);
     expect(tester.takeException(), isNull);
 
     await unmountHome(tester, db);
