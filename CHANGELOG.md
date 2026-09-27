@@ -5,6 +5,18 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.20.0 — 2026-09-27
+
+### Added
+- **Transcript → notebook.** ⋮ → *Send to notebook…* on any recording (list, multi-select, detail): pick a notebook or create one, choose a shape, done — no need to open the editor first; the snackbar's *Open* jumps to the new block.
+- Text imports now read like the Markdown export: `[mm:ss] Jeff: …` per speaker turn with names from the speaker map, `h:mm:ss` once a recording passes an hour, no timestamps faked when the recording has none.
+- Timestamps on the page are live: tap one to play the recording from that moment on the audio card beside it, or open the recording at that point when there is no card. Editing the text quietly drops any stamp the edit broke.
+- Import shape sheet: *Include audio bubble* switch (default on, remembered).
+
+### Fixed
+- *Regenerate notes* now visibly does something: the button spins and disables while it runs and a snackbar confirms when it finishes — before, the on-device extractor finished in milliseconds with (often) identical output, so the tap looked ignored.
+- Multi-select toolbar no longer overflows at 280 px.
+
 ## [1.19.0] - 2026-09-27
 
 ### Added

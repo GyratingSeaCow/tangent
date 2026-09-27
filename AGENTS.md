@@ -50,13 +50,26 @@ ADH2/
 
 ## Status
 
-Shipping — **v1.19.0** (see CHANGELOG.md). Client and server are both
+Shipping — **v1.20.0** (see CHANGELOG.md). Client and server are both
 implemented and tested (2141
 Flutter tests, 539 server tests, 100 Kotlin tests). The client runs
 natively on Linux AND Windows (tray icon, global record hotkey,
 close-to-tray, single instance, right-click = long-press; AppImage and
 Inno Setup installer under `packaging/`) — verified on CachyOS/KDE
 Plasma Wayland and Windows 11; see the README's Desktop sections.
+
+v1.20.0 adds **transcript → notebook** (client-only): ⋮ → 'Send to
+notebook…' on a recording (list, multi-select, detail) picks a notebook
+(or creates one) and a shape without opening the editor; the Text shape
+now inserts the v1.16-style rendering (`[mm:ss] Name:` per turn, names
+from the map, hour promotion, never a faked time) with `stamps` on the
+text block (JSON key `stamps`, items {o,l,s,d}; older builds ignore it).
+At rest the stamps are tappable spans that seek the same recording's
+audio card on the page, or open the detail at that moment; editing the
+block reconciles stamps (`reconcileStamps`). One import path
+(`importDumpsIntoNotebook`) serves both the ⋮ action and the editor's
+Import; the shape sheet gained 'Include audio bubble' (default on,
+remembered). See `docs/design/2026-09-27-transcript-to-notebook.md`.
 
 v1.19.0 adds **per-recording translation** and **server-driven summary
 status**. Translation: faster-whisper's detected `language` and a
