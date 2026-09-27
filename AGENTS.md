@@ -50,13 +50,26 @@ ADH2/
 
 ## Status
 
-Shipping — **v1.26.0** (see CHANGELOG.md). Client and server are both
-implemented and tested (2382
+Shipping — **v1.27.0** (see CHANGELOG.md). Client and server are both
+implemented and tested (2420
 Flutter tests, 586 server tests, 100 Kotlin tests). The client runs
 natively on Linux AND Windows (tray icon, global record hotkey,
 close-to-tray, single instance, right-click = long-press; AppImage and
 Inno Setup installer under `packaging/`) — verified on CachyOS/KDE
 Plasma Wayland and Windows 11; see the README's Desktop sections.
+
+v1.27.0 (client-only) lifts v1.26.0's two limits: **relative dates**
+(today, tomorrow, day after tomorrow, weekday names + short forms,
+this/next <weekday>, in N days/weeks with digits or number words, next
+week = next Monday, next month = the 1st, end of the week/month) and
+**per-item dates** at an item's END or START ("call mom on Sunday";
+"tomorrow buy milk"). Rules: a weekday said on that weekday is NEXT
+week's (R1); an item's own date beats the sentence date (R2); a phrase
+in the MIDDLE of an item is text; a phrase that is the whole item keeps
+the text, no date. Ambiguity guards: may/sun/mon/todays/`in days` stay
+text. `VoiceTodoParse.entries` (`VoiceTodoItem{text, dueDate}`); `items`/
+`dueDate` remain as getters. See
+`docs/design/2026-09-27-voice-todo-relative-dates.md`.
 
 v1.26.0 (client-only) adds **voice to-do due dates**: ONE date phrase
 directly after the trigger ("…to-do list for September 30th to go to

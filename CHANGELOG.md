@@ -5,6 +5,17 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.27.0 — 2026-09-27
+
+### Added
+- **Say it like you mean it.** Voice to-dos now understand *tomorrow*,
+  *Friday*, *next week*, *in three days*, *end of the month*, and friends
+  — and each item can carry its own date: "for Friday: buy milk, and call
+  mom on Sunday" files milk under Fri and mom under Sun. A weekday said on
+  that same weekday means next week's; "next week" is Monday; "next
+  month" is the 1st. Words that merely look like dates (*sun* screen,
+  *may* call, *mon* ami) are left alone.
+- Client-only; version kept uniform.
 ## 1.26.0 — 2026-09-27
 
 ### Added
