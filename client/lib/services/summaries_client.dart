@@ -208,7 +208,11 @@ class GoogleTasksStatus {
       lastError: json['last_error'] as String?,
       pushed: (json['pushed'] as num?)?.toInt() ?? 0,
       pulled: (json['pulled'] as num?)?.toInt() ?? 0,
-      hasCredentials: json['has_credentials'] as bool? ?? false,
+      // The server names this `credentials_configured`; `has_credentials`
+      // is kept for the spec's original wording.
+      hasCredentials: (json['credentials_configured'] as bool?) ??
+          (json['has_credentials'] as bool?) ??
+          false,
     );
   }
 

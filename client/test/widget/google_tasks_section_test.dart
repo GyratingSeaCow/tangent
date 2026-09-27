@@ -118,7 +118,7 @@ Map<String, dynamic> _disconnected({bool hasCredentials = false}) =>
       'last_error': null,
       'pushed': 0,
       'pulled': 0,
-      'has_credentials': hasCredentials,
+      'credentials_configured': hasCredentials,
     };
 
 Map<String, dynamic> _connected({int pushed = 3, int pulled = 1}) =>
@@ -129,7 +129,7 @@ Map<String, dynamic> _connected({int pushed = 3, int pulled = 1}) =>
       'last_error': null,
       'pushed': pushed,
       'pulled': pulled,
-      'has_credentials': true,
+      'credentials_configured': true,
     };
 
 Map<String, dynamic> _reauth() => <String, dynamic>{
