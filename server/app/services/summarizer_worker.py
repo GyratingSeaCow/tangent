@@ -285,6 +285,24 @@ Infer = Callable[[str, str, str], str]
 # --- summarizing one dump -----------------------------------------------------
 
 
+def _failure_reason(exc: Exception) -> str:
+    first_line = str(exc).splitlines()[0] if str(exc) else ""
+    return f"{type(exc).__name__}: {first_line}"[:200]
+
+
+def _mark_failed(db: sqlite3.Connection, dump_id: str, reason: str) -> None:
+    """Persist and publish one terminal summary failure atomically."""
+    db.execute(
+        "UPDATE dumps SET summary_status = 'failed', summary_error = ?, "
+        "summary_queue_position = NULL WHERE id = ?",
+        (reason[:200], dump_id),
+    )
+    from app.api.dumps import _publish_dump_change
+
+    _publish_dump_change(db, dump_id, None)
+    db.commit()
+
+
 def summarize_dump(
     db: sqlite3.Connection,
     dump_id: str,
@@ -315,6 +333,7 @@ def summarize_dump(
     transcript = row["transcript"]
     if not transcript or not transcript.strip():
         log.warning("summarizer_worker.no_transcript", dump_id=dump_id)
+        _mark_failed(db, dump_id, "Dump has no transcript to summarize")
         return False
 
     template_id = row["summary_template"] or default_template_id(row["mode"])
@@ -332,17 +351,20 @@ def summarize_dump(
             dump_id=dump_id,
             error=str(exc),
         )
+        _mark_failed(db, dump_id, _failure_reason(exc))
         return False
     if not summary:
         # A summary that postprocessed to nothing is a model failure, not a
         # result — storing '' would render an empty block on every device.
         log.warning("summarizer_worker.empty_summary", dump_id=dump_id)
+        _mark_failed(db, dump_id, "Summarizer returned an empty summary")
         return False
 
     try:
         db.execute(
             "UPDATE dumps SET summary = ?, summary_model = ?, "
-            "summarized_at = ?, updated_at = ? WHERE id = ?",
+            "summarized_at = ?, summary_status = NULL, summary_error = NULL, "
+            "summary_queue_position = NULL, updated_at = ? WHERE id = ?",
             (summary, MODEL_STEM, now, now, dump_id),
         )
         # Announce to the sync feed IN THE SAME TRANSACTION as the column
@@ -370,12 +392,32 @@ _stop = threading.Event()
 _thread: threading.Thread | None = None
 
 
-def enqueue(dump_id: str) -> None:
-    """Queue a dump for summarization. Deduplicates while pending."""
+def enqueue(dump_id: str, db: sqlite3.Connection | None = None) -> None:
+    """Queue a dump and publish 1-based positions for every queued dump."""
+    if db is not None:
+        row = db.execute(
+            "SELECT summary_status FROM dumps WHERE id = ?", (dump_id,)
+        ).fetchone()
+        if row is not None and row["summary_status"] == "running":
+            return
+    added = False
     with _lock:
         if dump_id not in _queued:
             _queue.append(dump_id)
             _queued.add(dump_id)
+            added = True
+        queued = list(_queue)
+    if added and db is not None:
+        from app.api.dumps import _publish_dump_change
+
+        for position, queued_id in enumerate(queued, start=1):
+            db.execute(
+                "UPDATE dumps SET summary_status = 'queued', summary_error = NULL, "
+                "summary_queue_position = ? WHERE id = ?",
+                (position, queued_id),
+            )
+            _publish_dump_change(db, queued_id, None)
+        db.commit()
     _wake.set()
 
 
@@ -412,9 +454,31 @@ def maybe_enqueue_auto(db: sqlite3.Connection, dump_id: str, mode: str) -> bool:
         return False
     if not summaries_enabled(db):
         return False
-    enqueue(dump_id)
+    enqueue(dump_id, db)
     start_worker_if_installed()
     return True
+
+
+def _mark_dequeued(db: sqlite3.Connection, dump_id: str) -> None:
+    """Publish running state and close queue-position gaps after a pop."""
+    from app.api.dumps import _publish_dump_change
+
+    db.execute(
+        "UPDATE dumps SET summary_status = 'running', "
+        "summary_queue_position = NULL WHERE id = ?",
+        (dump_id,),
+    )
+    _publish_dump_change(db, dump_id, None)
+    with _lock:
+        remaining = list(_queue)
+    for position, queued_id in enumerate(remaining, start=1):
+        db.execute(
+            "UPDATE dumps SET summary_status = 'queued', "
+            "summary_queue_position = ? WHERE id = ?",
+            (position, queued_id),
+        )
+        _publish_dump_change(db, queued_id, None)
+    db.commit()
 
 
 def _worker_loop() -> None:
@@ -430,6 +494,7 @@ def _worker_loop() -> None:
         gen = get_db()
         db = next(gen)
         try:
+            _mark_dequeued(db, dump_id)
             summarize_dump(db, dump_id)
         except Exception:
             # One bad dump must not kill the worker thread.

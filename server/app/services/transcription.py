@@ -113,6 +113,7 @@ class TranscriptionResult:
     text: str
     segments: list[dict[str, Any]] = field(default_factory=list)
     peaks: list[float] = field(default_factory=list)
+    language: str | None = None
 
 
 def resolve_configured_model() -> str:
@@ -184,7 +185,7 @@ class TranscriptionService:
         log.info("transcription.model_loaded", model=target, device=device)
 
     def transcribe(
-        self, audio_path: str, *, hotwords: str | None = None
+        self, audio_path: str, *, hotwords: str | None = None, translate: bool = False
     ) -> TranscriptionResult:
         """Transcribe an audio file.
 
@@ -213,6 +214,7 @@ class TranscriptionService:
             word_timestamps=True,
             language=None,  # auto-detect
             hotwords=hotwords,
+            task="translate" if translate else "transcribe",
         )
         log.info("transcription.detected_language", language=info.language)
 
@@ -259,7 +261,9 @@ class TranscriptionService:
             segments=len(collected),
             characters=len(joined),
         )
-        return TranscriptionResult(text=joined, segments=collected, peaks=peaks)
+        return TranscriptionResult(
+            text=joined, segments=collected, peaks=peaks, language=info.language
+        )
 
 
 # Module-level singleton

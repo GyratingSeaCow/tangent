@@ -71,6 +71,8 @@ def _row_to_job(row: sqlite3.Row) -> JobResponse:
         started_at=_to_iso(row["started_at"]),
         completed_at=_to_iso(row["completed_at"]),
         result_transcript=row["result_transcript"],
+        language=_column(row, "language"),
+        translated=bool(_column(row, "translated") or False),
         segments=_decode_segments(_column(row, "result_segments")),
         error=row["error"],
     )
@@ -128,7 +130,11 @@ def enqueue_transcription(
         except RequestIdConflict as exc:
             raise HTTPException(status_code=409, detail="request_id conflict") from exc
         response.status_code = status.HTTP_200_OK
-        row = db.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        row = db.execute(
+            "SELECT jobs.*, dumps.language, dumps.translated FROM jobs "
+            "JOIN dumps ON dumps.id = jobs.dump_id WHERE jobs.id = ?",
+            (job_id,),
+        ).fetchone()
         return _row_to_job(row)
 
     from app.api.dumps import get_audio_path_for_dump
@@ -151,9 +157,16 @@ def enqueue_transcription(
 
     response.status_code = status.HTTP_201_CREATED if created else status.HTTP_200_OK
     if created:
-        background_tasks.add_task(run_job_inline, job_id, audio_path)
+        if payload.translate:
+            background_tasks.add_task(run_job_inline, job_id, audio_path, True)
+        else:
+            background_tasks.add_task(run_job_inline, job_id, audio_path)
 
-    row = db.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+    row = db.execute(
+        "SELECT jobs.*, dumps.language, dumps.translated FROM jobs "
+        "JOIN dumps ON dumps.id = jobs.dump_id WHERE jobs.id = ?",
+        (job_id,),
+    ).fetchone()
     return _row_to_job(row)
 
 
@@ -164,7 +177,11 @@ def get_job(
     _user: Annotated[str, Depends(require_auth)],
 ) -> JobResponse:
     """Poll one transcription job: status (queued/running/done/failed), progress, and the dump it belongs to. For push instead of polling, use GET /v1/jobs/{job_id}/stream."""
-    row = db.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+    row = db.execute(
+        "SELECT jobs.*, dumps.language, dumps.translated FROM jobs "
+        "JOIN dumps ON dumps.id = jobs.dump_id WHERE jobs.id = ?",
+        (job_id,),
+    ).fetchone()
     if row is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

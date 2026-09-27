@@ -63,6 +63,11 @@ class DumpResponse(BaseModel):
     duration_seconds: int
     created_at: datetime
     updated_at: datetime
+    language: str | None = None
+    translated: bool = False
+    summary_status: Literal["queued", "running", "failed"] | None = None
+    summary_error: str | None = None
+    summary_queue_position: int | None = None
 
 
 class DumpListResponse(BaseModel):
@@ -98,6 +103,7 @@ class JobCreate(BaseModel):
 
     model: str | None = Field(default=None, min_length=1, max_length=50)
     request_id: str = Field(min_length=8, max_length=128)
+    translate: bool = False
 
 
 class JobResponse(BaseModel):
@@ -111,6 +117,8 @@ class JobResponse(BaseModel):
     result_transcript: str | None
     segments: list[TranscriptSegment] | None = None
     error: str | None
+    language: str | None = None
+    translated: bool = False
 
 
 class ServerInfo(BaseModel):
