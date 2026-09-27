@@ -664,4 +664,26 @@ void main() {
       await unmount(tester);
     });
   });
+
+  group('google chip', () {
+    testWidgets('a "G" chip marks ONLY rows whose source is google',
+        (tester) async {
+      final TodoRepository repo = await mount(tester);
+      final TodoRow manual = await repo.add('Buy milk');
+      final TodoRow voice =
+          await repo.add('Call Sam', source: 'voice', sourceRef: 'dump-1');
+      final TodoRow google =
+          await repo.add('Renew passport', source: 'google', sourceRef: 'gt-1');
+      await settle(tester);
+
+      expect(find.byKey(Key('todo-row-${manual.id}')), findsOneWidget);
+      expect(find.byKey(Key('todo-row-${voice.id}')), findsOneWidget);
+      expect(find.byKey(Key('todo-row-${google.id}')), findsOneWidget);
+
+      expect(find.byKey(Key('todo-google-chip-${google.id}')), findsOneWidget);
+      expect(find.byKey(Key('todo-google-chip-${manual.id}')), findsNothing);
+      expect(find.byKey(Key('todo-google-chip-${voice.id}')), findsNothing);
+      await unmount(tester);
+    });
+  });
 }

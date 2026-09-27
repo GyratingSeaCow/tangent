@@ -539,10 +539,22 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
     final bool selected = _selected.contains(todo.id);
     final TodoRepository repo = ref.read(todoRepositoryProvider);
     final ({String label, bool overdue})? chip = _chipFor(todo, now);
-    final Widget text = Text(
+    final Widget body = Text(
       todo.body,
       style: done ? const TextStyle(decoration: TextDecoration.lineThrough) : null,
     );
+    // v1.25.0: a to-do the server pulled from Google Tasks wears a tiny "G"
+    // so its origin is visible; 'manual' and 'voice' rows are unchanged.
+    final Widget text = todo.source == 'google'
+        ? Row(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Flexible(child: body),
+              const SizedBox(width: 6),
+              _GoogleChip(key: Key('todo-google-chip-${todo.id}')),
+            ],
+          )
+        : body;
     return ListTile(
       key: Key('todo-row-${todo.id}'),
       selected: selected,
@@ -596,6 +608,34 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
               tooltip: 'More',
               onPressed: () => _showRowMenu(todo),
             ),
+    );
+  }
+}
+
+/// The "G" origin chip on Google-sourced to-do rows.
+class _GoogleChip extends StatelessWidget {
+  const _GoogleChip({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final Color color = Theme.of(context).colorScheme.outline;
+    return Tooltip(
+      message: 'From Google Tasks',
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+        decoration: BoxDecoration(
+          border: Border.all(color: color),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Text(
+          'G',
+          style: TextStyle(
+            fontSize: 10,
+            fontWeight: FontWeight.bold,
+            color: color,
+          ),
+        ),
+      ),
     );
   }
 }

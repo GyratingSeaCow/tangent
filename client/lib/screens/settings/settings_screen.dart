@@ -13,6 +13,7 @@ import 'diagnostics_section.dart';
 import 'obsidian_export_section.dart';
 import 'handwriting_search_section.dart';
 import 'ai_summaries_section.dart';
+import 'google_tasks_section.dart';
 import 'input_device_section.dart';
 import 'mic_gain_section.dart';
 import 'storage_settings_section.dart';
@@ -220,6 +221,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           const HandwritingSearchSection(),
           const Divider(),
           const AiSummariesSection(),
+          const Divider(),
+          const GoogleTasksSection(),
           const Divider(),
           const Padding(
             padding: EdgeInsets.fromLTRB(16, 16, 16, 8),

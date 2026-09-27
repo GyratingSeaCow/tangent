@@ -549,5 +549,94 @@ void main() {
 
       expect(built.authorizationHeader, isNull);
     });
+    // Google Tasks: each verb hits ITS OWN path. The widget tests stub the
+    // client, so only this file notices if Disconnect posts to sync-now.
+    group('SummariesClient google tasks verbs', () {
+      late _MockDio dio;
+      late SummariesClient client;
+
+      setUp(() {
+        dio = _MockDio();
+        client = SummariesClient.forTesting(dio: dio);
+      });
+
+      Response<dynamic> ok(String path, [Object? data]) => Response<dynamic>(
+            data: data,
+            requestOptions: RequestOptions(path: path),
+            statusCode: 200,
+          );
+
+      test('status GETs /v1/google-tasks/status', () async {
+        when(() => dio.get<dynamic>('/v1/google-tasks/status')).thenAnswer(
+          (_) async => ok('/v1/google-tasks/status', <String, dynamic>{
+            'status': 'connected',
+            'google_email': 'jeff@example.com',
+          }),
+        );
+        final GoogleTasksStatus s = await client.getGoogleTasksStatus();
+        expect(s.status, GoogleTasksLinkStatus.connected);
+        expect(s.googleEmail, 'jeff@example.com');
+      });
+
+      test('credentials POSTs id+secret to /v1/google-tasks/credentials',
+          () async {
+        when(
+          () => dio.post<dynamic>(
+            '/v1/google-tasks/credentials',
+            data: any(named: 'data'),
+          ),
+        ).thenAnswer((_) async => ok('/v1/google-tasks/credentials'));
+        await client.saveGoogleTasksCredentials(
+          clientId: 'fake-id',
+          clientSecret: 'fake-secret',
+        );
+        verify(
+          () => dio.post<dynamic>(
+            '/v1/google-tasks/credentials',
+            data: <String, dynamic>{
+              'client_id': 'fake-id',
+              'client_secret': 'fake-secret',
+            },
+          ),
+        ).called(1);
+      });
+
+      test('connect POSTs /v1/google-tasks/connect and returns auth_url',
+          () async {
+        when(() => dio.post<dynamic>('/v1/google-tasks/connect')).thenAnswer(
+          (_) async => ok('/v1/google-tasks/connect', <String, dynamic>{
+            'auth_url': 'https://accounts.google.com/o/oauth2/v2/auth?x=1',
+          }),
+        );
+        final Uri u = await client.connectGoogleTasks();
+        expect(u.host, 'accounts.google.com');
+        verifyNever(() => dio.post<dynamic>('/v1/google-tasks/sync-now'));
+      });
+
+      test('disconnect POSTs /v1/google-tasks/disconnect and nothing else',
+          () async {
+        when(() => dio.post<dynamic>('/v1/google-tasks/disconnect'))
+            .thenAnswer((_) async => ok('/v1/google-tasks/disconnect'));
+        await client.disconnectGoogleTasks();
+        verify(() => dio.post<dynamic>('/v1/google-tasks/disconnect'))
+            .called(1);
+        verifyNever(() => dio.post<dynamic>('/v1/google-tasks/sync-now'));
+      });
+
+      test('sync-now POSTs /v1/google-tasks/sync-now and parses counts',
+          () async {
+        when(() => dio.post<dynamic>('/v1/google-tasks/sync-now')).thenAnswer(
+          (_) async => ok('/v1/google-tasks/sync-now', <String, dynamic>{
+            'status': 'connected',
+            'pushed': 3,
+            'pulled': 1,
+          }),
+        );
+        final GoogleTasksStatus s = await client.syncGoogleTasksNow();
+        expect(s.pushed, 3);
+        expect(s.pulled, 1);
+        verifyNever(() => dio.post<dynamic>('/v1/google-tasks/disconnect'));
+      });
+    });
   });
 }
