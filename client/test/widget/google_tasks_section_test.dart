@@ -7,6 +7,7 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
@@ -230,6 +231,40 @@ void main() {
       );
     });
 
+    testWidgets('Copy sign-in link fetches the auth URL onto the clipboard '
+        'instead of opening a browser (loopback redirect must finish on the '
+        'server machine)', (tester) async {
+      final List<String> copied = <String>[];
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (MethodCall call) async {
+          if (call.method == 'Clipboard.setData') {
+            copied.add((call.arguments as Map)['text'] as String);
+          }
+          return null;
+        },
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger
+            .setMockMethodCallHandler(SystemChannels.platform, null),
+      );
+      final _FakeClient client = await _mount(
+        tester,
+        <Map<String, dynamic>>[_disconnected(hasCredentials: true)],
+      );
+
+      expect(_k('google-tasks-copy-link'), findsOneWidget);
+      await tester.tap(_k('google-tasks-copy-link'));
+      await tester.pump();
+      await tester.pump();
+
+      expect(client.connectCalls, 1);
+      expect(copied, hasLength(1));
+      expect(copied.single, startsWith('https://accounts.google.com/'));
+      expect(launcher.launched, isEmpty);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(const Duration(seconds: 6));
+    });
     testWidgets('connected: email, last-sync summary, Sync now, Disconnect',
         (tester) async {
       await _mount(tester, <Map<String, dynamic>>[_connected()]);

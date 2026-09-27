@@ -21,6 +21,7 @@ library;
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -34,7 +35,9 @@ DateTime Function() googleTasksClock = DateTime.now;
 /// Four-line help under the credential fields (design: "Free. …").
 const String kGoogleTasksHelpText =
     'Free. Create a Google Cloud project, enable the Tasks API, add an OAuth '
-    'client (Desktop app), paste both here. While the consent screen is in '
+    'client (Desktop app), paste both here. Google only lets the sign-in '
+    'finish on the computer that runs your Tangent server: use Copy sign-in '
+    'link and paste it into a browser there. While the consent screen is in '
     'Testing, Google expires the sign-in weekly — move it to In production '
     '(unverified is fine for one household) to stop that.';
 
@@ -184,6 +187,28 @@ class _GoogleTasksSectionState extends ConsumerState<GoogleTasksSection> {
     });
   }
 
+  /// Google only accepts a loopback redirect for Desktop-app OAuth clients,
+  /// so the consent page has to be finished in a browser ON the server
+  /// machine. This puts the sign-in URL on the clipboard for pasting there
+  /// (the phone's own browser would end at 127.0.0.1 and fail).
+  Future<void> _copyConnectLink() async {
+    await _run((client) async {
+      final Uri url = await client.connectGoogleTasks();
+      await Clipboard.setData(ClipboardData(text: url.toString()));
+      if (!mounted) return;
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Sign-in link copied. Paste it into a browser on the computer '
+            'that runs your Tangent server, then sign in there.',
+          ),
+          duration: Duration(seconds: 6),
+        ),
+      );
+      setState(() => _awaitingConnect = true);
+      _startPolling(client);
+    });
+  }
   Future<void> _syncNow() async {
     await _run((client) async => _adopt(await client.syncGoogleTasksNow()));
   }
@@ -313,6 +338,12 @@ class _GoogleTasksSectionState extends ConsumerState<GoogleTasksSection> {
                 onPressed: _busy ? null : _connect,
                 icon: const Icon(Icons.login),
                 label: const Text('Connect Google'),
+              ),
+              OutlinedButton.icon(
+                key: const ValueKey<String>('google-tasks-copy-link'),
+                onPressed: _busy ? null : _copyConnectLink,
+                icon: const Icon(Icons.link),
+                label: const Text('Copy sign-in link'),
               ),
               if (!_editingCredentials)
                 TextButton(
