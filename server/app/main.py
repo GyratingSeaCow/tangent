@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.api.dumps import router as dumps_router
+from app.api.google_tasks import router as google_tasks_router
 from app.api.jobs import router as jobs_router
 from app.api.models import router as models_router
 from app.api.ocr import router as ocr_router
@@ -126,6 +127,7 @@ def create_app() -> FastAPI:
     app.include_router(ocr_router)    # /v1/ocr/*
     app.include_router(summaries_router)  # /v1/summaries/*, /v1/dumps/{id}/summarize
     app.include_router(transcription_models_router)  # /v1/transcription/model(s)
+    app.include_router(google_tasks_router)  # /v1/google-tasks/*
 
     register_exception_handlers(app)
     return app
