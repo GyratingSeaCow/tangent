@@ -5,6 +5,26 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.23.0 — 2026-09-27
+
+### Added
+- **To Do list.** A new checked-box icon in the top-right of the home screen
+  opens your To Do list: type an item and press enter to add it (the
+  keyboard stays up so you can rattle off several), tap the calendar chip
+  first to give the next item a due date, check items off, tap to edit,
+  and delete with a five-second Undo. Items sort into Overdue, Today,
+  Upcoming, Someday, and a collapsed Done section. To-dos sync across all
+  your devices like recordings and notebooks do.
+- **Say it and it's on the list.** Record a brain dump and say "add to my
+  to do list" (or "add to my todo list", "add that to my list", "remind me
+  to", "put on my to do list") — everything after the phrase becomes
+  to-do items, split on commas and "and". The recording shows an
+  "Added to your To Do list" card naming what was captured, with Undo.
+  Undo is permanent for that recording: re-syncing or re-transcribing
+  never brings the items back.
+- Server: synced `todo` entity (`todos` table; `change_log` accepts
+  `entity_type = 'todo'`). No new REST endpoints — sync is the API.
+
 ## 1.22.1 — 2026-09-27
 
 ### Fixed
