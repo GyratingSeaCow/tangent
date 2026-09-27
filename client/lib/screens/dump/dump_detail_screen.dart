@@ -92,6 +92,10 @@ MarkdownStyleSheet _summaryStyleSheet(ThemeData theme) {
   );
 }
 
+/// Minimum time the 'Regenerate notes' button shows its spinner.
+/// @visibleForTesting so widget tests can shrink it.
+Duration kNotesBusyMinimum = const Duration(milliseconds: 600);
+
 class DumpDetailScreen extends ConsumerStatefulWidget {
   final String dumpId;
   final String audioPath;
@@ -145,6 +149,13 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
   bool _playbackOpening = true;
   bool _canRetryPlayback = false;
   bool _deleteBusy = false;
+
+  /// 'Regenerate notes' runs the on-device extractor, which finishes in
+  /// milliseconds and usually produces the SAME notes for the same
+  /// transcript - so nothing visibly changes and the tap feels ignored.
+  /// Show a spinner on the button for a beat and a snackbar when done,
+  /// so the answer is unambiguous even when the text is identical.
+  bool _notesBusy = false;
   int _deletionPreviewGeneration = 0;
   String? _deletionPreviewError;
   final _deletionRecovery = LocalDeletionRecoveryState();
@@ -811,7 +822,10 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
     final db = ref.read(localDbProvider);
     final access = ref.read(recordingAccessProvider);
 
+    if (_notesBusy) return;
+    final DateTime started = DateTime.now();
     setState(() {
+      _notesBusy = true;
       _statusError = null;
       _statusMessage = 'Generating meeting notes…';
     });
@@ -834,9 +848,21 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
         );
         await _writeLatestMetadata(db, key, access);
       });
+      // Keep the spinner up for at least a beat so a sub-100 ms run still
+      // reads as 'it did something'.
+      final Duration elapsed = DateTime.now().difference(started);
+      if (mounted && elapsed < kNotesBusyMinimum) {
+        await Future<void>.delayed(kNotesBusyMinimum - elapsed);
+      }
       if (mounted) {
         ref.invalidate(dumpByIdProvider(widget.dumpId));
         setState(() => _statusMessage = 'Meeting notes updated');
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            key: ValueKey<String>('notes-regenerated-snack'),
+            content: Text('Meeting notes regenerated from the transcript'),
+          ),
+        );
       }
     } catch (e) {
       if (mounted) {
@@ -845,6 +871,8 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
           _statusMessage = null;
         });
       }
+    } finally {
+      if (mounted) setState(() => _notesBusy = false);
     }
   }
 
@@ -1237,9 +1265,18 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
               alignment: Alignment.centerLeft,
               child: OutlinedButton.icon(
                 key: ValueKey('regenerate-notes-${widget.dumpId}'),
-                icon: const Icon(Icons.refresh),
-                label: const Text('Regenerate notes'),
-                onPressed: () => _regenerateMeetingNotes(displayTranscript),
+                icon: _notesBusy
+                    ? const SizedBox(
+                        key: ValueKey<String>('regenerate-notes-busy'),
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.refresh),
+                label: Text(_notesBusy ? 'Regenerating…' : 'Regenerate notes'),
+                onPressed: _notesBusy
+                    ? null
+                    : () => _regenerateMeetingNotes(displayTranscript),
               ),
             ),
           const SizedBox(height: 16),

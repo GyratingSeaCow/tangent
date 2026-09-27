@@ -1612,6 +1612,8 @@ void main() {
     await tester.pump();
     expect(find.text('Saved'), findsOneWidget);
 
+    kNotesBusyMinimum = const Duration(milliseconds: 150);
+    addTearDown(() => kNotesBusyMinimum = const Duration(milliseconds: 600));
     final notesButton = tester.widget<OutlinedButton>(
       find.byKey(const ValueKey('regenerate-notes-meeting-detail')),
     );
@@ -1620,6 +1622,25 @@ void main() {
     await tester.runAsync(() async {
       notesButton.onPressed!();
     });
+    // Jeff's report: the extractor is so fast, and its output so often
+    // identical, that a tap looked ignored. The button must visibly go
+    // busy for at least kNotesBusyMinimum and end with a snackbar.
+    await tester.pump();
+    expect(
+      find.byKey(const ValueKey('regenerate-notes-busy')),
+      findsOneWidget,
+      reason: 'spinner while regenerating',
+    );
+    expect(find.text('Regenerating…'), findsOneWidget);
+    expect(
+      tester
+          .widget<OutlinedButton>(
+            find.byKey(const ValueKey('regenerate-notes-meeting-detail')),
+          )
+          .onPressed,
+      isNull,
+      reason: 'no double taps while busy',
+    );
     await _pumpRealUntil(tester, () {
       if (DateTime.now().isAfter(notesDeadline)) {
         fail('meeting-notes sidecar did not finish');
@@ -1627,6 +1648,12 @@ void main() {
       // A new, distinct success emitted after awaited publication/settlement.
       return find.text('Meeting notes updated').evaluate().isNotEmpty;
     });
+    expect(find.byKey(const ValueKey('regenerate-notes-busy')), findsNothing);
+    expect(
+      find.byKey(const ValueKey('notes-regenerated-snack')),
+      findsOneWidget,
+      reason: 'the answer is unambiguous even if the notes are identical',
+    );
     final notesMetadata = await tester.runAsync(
       () => storage.metaPathFor('meeting-detail').readAsString(),
     );
