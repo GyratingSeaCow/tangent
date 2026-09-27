@@ -50,13 +50,36 @@ ADH2/
 
 ## Status
 
-Shipping — **v1.20.0** (see CHANGELOG.md). Client and server are both
-implemented and tested (2141
-Flutter tests, 539 server tests, 100 Kotlin tests). The client runs
+Shipping — **v1.22.0** (see CHANGELOG.md). Client and server are both
+implemented and tested (2227
+Flutter tests, 548 server tests, 100 Kotlin tests). The client runs
 natively on Linux AND Windows (tray icon, global record hotkey,
 close-to-tray, single instance, right-click = long-press; AppImage and
 Inno Setup installer under `packaging/`) — verified on CachyOS/KDE
 Plasma Wayland and Windows 11; see the README's Desktop sections.
+
+v1.22.0 is client-only: **page backgrounds** and a **vocabulary
+cleanup**. `NotebookRuling` gains `graph` (5 mm quad grid) and `dots`
+(dot grid at the same 32 px spacing), wire values `graph`/`dots`; the
+page style moved out of the insert (+) menu's cycle into a new
+top-right editor menu (`notebook-menu`) → *Page background*, a sheet
+that previews each of the five styles with the real painter
+(`page_background_sheet.dart`). Unknown wire values still fall back to
+blank without clobbering the stored value. Separately, every
+user-visible "dump" string is now "recording" (identifiers, DB tables,
+`/v1/dumps`, and the `Brain Dump` MODE name are unchanged), and
+**meeting capture was removed** from the home picker and the list's
+create menu — `DumpMode.meeting` survives for existing recordings,
+which still render and filter normally. See
+`docs/design/2026-09-27-page-backgrounds.md` and
+`docs/design/2026-09-27-recordings-rename-meeting-removal.md`.
+
+v1.21.0 adds **ink to text** and pinned playback controls: lasso
+handwriting → *Convert to text* posts the lassoed strokes to the new
+`POST /v1/ocr/recognize` (TrOCR, same worker as handwriting search) and
+swaps the ink for a typed block at the same spot in one undoable step;
+the playback panel and Listen-mode waveform are now pinned above the
+scrolling transcript. See `docs/design/2026-09-27-ink-to-text.md`.
 
 v1.20.0 adds **transcript → notebook** (client-only): ⋮ → 'Send to
 notebook…' on a recording (list, multi-select, detail) picks a notebook

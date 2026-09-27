@@ -18,6 +18,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The page style moved out of the bottom-left insert (+) menu into the new
   top-right notebook menu, and it is now a picker: tapping no longer cycles
   blank → small → medium.
+- **"Dumps" is now "Recordings"** everywhere you see it — the list title,
+  search box, empty state, home tooltip, the notebook insert item, and the
+  settings/export copy. The *Brain Dump* capture mode keeps its name.
+
+### Removed
+- **Meeting capture.** The home screen's mode picker and the recordings
+  list's create menu no longer offer Meeting — summaries, action items, and
+  speaker naming are reachable on any recording from the transcript. Existing
+  meeting recordings are untouched: they keep their notes, still open
+  normally, and the Mode filter still lists Meeting so you can find them.
 
 ## 1.21.0 — 2026-09-27
 
