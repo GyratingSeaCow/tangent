@@ -5,6 +5,7 @@ import 'dart:ui' show Offset;
 import 'package:flutter/foundation.dart' show immutable, listEquals;
 
 import 'notebook_ruling.dart';
+import 'text_stamp.dart';
 
 /// Typed view of one notebook row, its document and its ink layer.
 ///
@@ -135,6 +136,7 @@ sealed class NotebookBlock {
           text: text,
           x: (x as num?)?.toDouble(),
           y: (y as num?)?.toDouble(),
+          stamps: _decodeStamps(raw['stamps']),
         );
       case 'checkbox':
         final text = raw['text'];
@@ -197,6 +199,17 @@ sealed class NotebookBlock {
   }
 }
 
+/// Tolerant `stamps` reader: a missing, mistyped, or partly garbage list
+/// degrades to whatever entries are well-formed — never to an unknown
+/// block. Losing a tappable time is recoverable; losing the text is not.
+List<TextStamp> _decodeStamps(Object? raw) {
+  if (raw is! List) return const <TextStamp>[];
+  return List<TextStamp>.unmodifiable(<TextStamp>[
+    for (final Object? entry in raw)
+      if (TextStamp.tryFromJson(entry) case final TextStamp stamp) stamp,
+  ]);
+}
+
 /// Free typed text.
 class NotebookTextBlock extends NotebookBlock {
   const NotebookTextBlock({
@@ -204,6 +217,7 @@ class NotebookTextBlock extends NotebookBlock {
     required this.text,
     this.x,
     this.y,
+    this.stamps = const <TextStamp>[],
   });
 
   @override
@@ -217,12 +231,23 @@ class NotebookTextBlock extends NotebookBlock {
   final double? x;
   final double? y;
 
-  NotebookTextBlock copyWith({String? text, double? x, double? y}) =>
+  /// Live `[mm:ss]` ranges inside [text] (v1.20.0). Empty for ordinary
+  /// typed blocks. Callers that change [text] must pass reconciled stamps
+  /// (see `reconcileStamps`); [copyWith] does not re-map them itself.
+  final List<TextStamp> stamps;
+
+  NotebookTextBlock copyWith({
+    String? text,
+    double? x,
+    double? y,
+    List<TextStamp>? stamps,
+  }) =>
       NotebookTextBlock(
         id: id,
         text: text ?? this.text,
         x: x ?? this.x,
         y: y ?? this.y,
+        stamps: stamps ?? this.stamps,
       );
 
   @override
@@ -232,6 +257,10 @@ class NotebookTextBlock extends NotebookBlock {
         'text': text,
         if (x != null) 'x': x,
         if (y != null) 'y': y,
+        // Written only when present: an unstamped block re-encodes
+        // byte-identical to what every earlier build wrote.
+        if (stamps.isNotEmpty)
+          'stamps': stamps.map((s) => s.toJson()).toList(growable: false),
       };
 }
 
