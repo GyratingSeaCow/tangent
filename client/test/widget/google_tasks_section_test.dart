@@ -189,7 +189,8 @@ void main() {
   });
 
   group('five states', () {
-    testWidgets('disconnected without credentials: fields + Save + help, '
+    testWidgets(
+        'disconnected without credentials: fields + Save + help, '
         'no Connect', (tester) async {
       await _mount(tester, <Map<String, dynamic>>[_disconnected()]);
 
@@ -197,14 +198,18 @@ void main() {
       expect(_k('google-tasks-client-secret'), findsOneWidget);
       expect(_k('google-tasks-save'), findsOneWidget);
       expect(_k('google-tasks-help'), findsOneWidget);
-      expect(find.textContaining('Free. Create a Google Cloud project'),
-          findsOneWidget);
+      expect(
+        find.textContaining('Free. Create a Google Cloud project'),
+        findsOneWidget,
+      );
       expect(_k('google-tasks-connect'), findsNothing);
       expect(_k('google-tasks-sync-now'), findsNothing);
       expect(_k('google-tasks-disconnect'), findsNothing);
       expect(_k('google-tasks-reconnect'), findsNothing);
-      expect(tester.widget<Text>(_k('google-tasks-status')).data,
-          'Not connected');
+      expect(
+        tester.widget<Text>(_k('google-tasks-status')).data,
+        'Not connected',
+      );
     });
 
     testWidgets('disconnected with credentials: Connect Google, fields hidden',
@@ -219,18 +224,24 @@ void main() {
       expect(_k('google-tasks-save'), findsNothing);
       expect(_k('google-tasks-sync-now'), findsNothing);
       expect(_k('google-tasks-reconnect'), findsNothing);
-      expect(tester.widget<Text>(_k('google-tasks-status')).data,
-          'Not connected — credentials saved');
+      expect(
+        tester.widget<Text>(_k('google-tasks-status')).data,
+        'Not connected — credentials saved',
+      );
     });
 
     testWidgets('connected: email, last-sync summary, Sync now, Disconnect',
         (tester) async {
       await _mount(tester, <Map<String, dynamic>>[_connected()]);
 
-      expect(tester.widget<Text>(_k('google-tasks-status')).data,
-          'Connected as jeff@example.invalid');
-      expect(tester.widget<Text>(_k('google-tasks-summary')).data,
-          'Last sync 2 min ago · 3 pushed · 1 pulled');
+      expect(
+        tester.widget<Text>(_k('google-tasks-status')).data,
+        'Connected as jeff@example.invalid',
+      );
+      expect(
+        tester.widget<Text>(_k('google-tasks-summary')).data,
+        'Last sync 2 min ago · 3 pushed · 1 pulled',
+      );
       expect(_k('google-tasks-sync-now'), findsOneWidget);
       expect(_k('google-tasks-disconnect'), findsOneWidget);
       expect(_k('google-tasks-connect'), findsNothing);
@@ -261,7 +272,8 @@ void main() {
   });
 
   group('verbs', () {
-    testWidgets('Save posts both credentials, clears the fields, and moves '
+    testWidgets(
+        'Save posts both credentials, clears the fields, and moves '
         'to the Connect state', (tester) async {
       final _FakeClient client =
           await _mount(tester, <Map<String, dynamic>>[_disconnected()]);
@@ -294,7 +306,8 @@ void main() {
       expect(_k('google-tasks-error'), findsOneWidget);
     });
 
-    testWidgets('Connect launches the server auth_url in the browser and the '
+    testWidgets(
+        'Connect launches the server auth_url in the browser and the '
         'poll flips the section to connected', (tester) async {
       final _FakeClient client = await _mount(
         tester,
@@ -307,10 +320,15 @@ void main() {
 
       expect(client.connectCalls, 1);
       expect(launcher.launched, hasLength(1));
-      expect(launcher.launched.single, startsWith('https://accounts.google.com/'));
+      expect(
+        launcher.launched.single,
+        startsWith('https://accounts.google.com/'),
+      );
       expect(launcher.launched.single, contains('state=fake-state-nonce'));
-      expect(tester.widget<Text>(_k('google-tasks-status')).data,
-          'Waiting for Google sign-in…');
+      expect(
+        tester.widget<Text>(_k('google-tasks-status')).data,
+        'Waiting for Google sign-in…',
+      );
 
       // Google's consent page finished in the browser: the next poll sees
       // connected and the section re-renders; polling then stops.
@@ -323,8 +341,11 @@ void main() {
       expect(_k('google-tasks-connect'), findsNothing);
 
       await tester.pump(kGoogleTasksConnectPoll * 3);
-      expect(client.statusCalls, callsBefore + 1,
-          reason: 'the poll must stop once connected');
+      expect(
+        client.statusCalls,
+        callsBefore + 1,
+        reason: 'the poll must stop once connected',
+      );
     });
 
     testWidgets('a browser that refuses to open is an error, not a poll',
@@ -368,8 +389,10 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(client.syncNowCalls, 1);
-      expect(tester.widget<Text>(_k('google-tasks-summary')).data,
-          'Last sync 2 min ago · 5 pushed · 2 pulled');
+      expect(
+        tester.widget<Text>(_k('google-tasks-summary')).data,
+        'Last sync 2 min ago · 5 pushed · 2 pulled',
+      );
     });
 
     testWidgets('Retry in the error state is a sync-now', (tester) async {
@@ -397,7 +420,8 @@ void main() {
       expect(_k('google-tasks-client-id'), findsNothing);
     });
 
-    testWidgets('an unreachable server shows the failure with a Retry that '
+    testWidgets(
+        'an unreachable server shows the failure with a Retry that '
         're-reads status', (tester) async {
       final _FakeClient client = await _mount(
         tester,
@@ -419,19 +443,31 @@ void main() {
 
   group('status model', () {
     test('parses every wire status and defaults unknown to disconnected', () {
-      expect(GoogleTasksLinkStatus.parse('pending'),
-          GoogleTasksLinkStatus.pending);
-      expect(GoogleTasksLinkStatus.parse('connected'),
-          GoogleTasksLinkStatus.connected);
-      expect(GoogleTasksLinkStatus.parse('reauth_required'),
-          GoogleTasksLinkStatus.reauthRequired);
+      expect(
+        GoogleTasksLinkStatus.parse('pending'),
+        GoogleTasksLinkStatus.pending,
+      );
+      expect(
+        GoogleTasksLinkStatus.parse('connected'),
+        GoogleTasksLinkStatus.connected,
+      );
+      expect(
+        GoogleTasksLinkStatus.parse('reauth_required'),
+        GoogleTasksLinkStatus.reauthRequired,
+      );
       expect(GoogleTasksLinkStatus.parse('error'), GoogleTasksLinkStatus.error);
-      expect(GoogleTasksLinkStatus.parse('disconnected'),
-          GoogleTasksLinkStatus.disconnected);
-      expect(GoogleTasksLinkStatus.parse('bogus'),
-          GoogleTasksLinkStatus.disconnected);
-      expect(GoogleTasksLinkStatus.parse(null),
-          GoogleTasksLinkStatus.disconnected);
+      expect(
+        GoogleTasksLinkStatus.parse('disconnected'),
+        GoogleTasksLinkStatus.disconnected,
+      );
+      expect(
+        GoogleTasksLinkStatus.parse('bogus'),
+        GoogleTasksLinkStatus.disconnected,
+      );
+      expect(
+        GoogleTasksLinkStatus.parse(null),
+        GoogleTasksLinkStatus.disconnected,
+      );
     });
 
     test('fromJson tolerates a bare payload', () {
@@ -445,14 +481,22 @@ void main() {
 
     test('formatSyncAgo buckets', () {
       final DateTime now = DateTime.utc(2026, 9, 27, 12);
-      expect(formatSyncAgo(now.subtract(const Duration(seconds: 20)), now),
-          'just now');
-      expect(formatSyncAgo(now.subtract(const Duration(minutes: 2)), now),
-          '2 min ago');
-      expect(formatSyncAgo(now.subtract(const Duration(hours: 3)), now),
-          '3 h ago');
-      expect(formatSyncAgo(now.subtract(const Duration(days: 4)), now),
-          '4 d ago');
+      expect(
+        formatSyncAgo(now.subtract(const Duration(seconds: 20)), now),
+        'just now',
+      );
+      expect(
+        formatSyncAgo(now.subtract(const Duration(minutes: 2)), now),
+        '2 min ago',
+      );
+      expect(
+        formatSyncAgo(now.subtract(const Duration(hours: 3)), now),
+        '3 h ago',
+      );
+      expect(
+        formatSyncAgo(now.subtract(const Duration(days: 4)), now),
+        '4 d ago',
+      );
     });
   });
 }
