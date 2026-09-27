@@ -5,6 +5,20 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.22.0 — 2026-09-27
+
+### Added
+- **Page backgrounds.** Two new notebook page styles join Blank and the two
+  lined rules: **Graph** (5 mm squares) and **Dot grid** (dots at the grid
+  points). Pick them from the new top-right notebook menu → *Page background*
+  — a sheet previews each style with the page's real painter and shows the
+  current choice; the pick saves per notebook and syncs like before.
+
+### Changed
+- The page style moved out of the bottom-left insert (+) menu into the new
+  top-right notebook menu, and it is now a picker: tapping no longer cycles
+  blank → small → medium.
+
 ## 1.21.0 — 2026-09-27
 
 ### Added

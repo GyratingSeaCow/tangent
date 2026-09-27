@@ -59,6 +59,28 @@ void main() {
     );
   });
 
+  test('saveNotebook persists the new page backgrounds (graph, dots)',
+      () async {
+    // The historical hole: a Companion write path that forgets `ruling`
+    // fails exactly here — now with the values this arc adds.
+    for (final NotebookRuling ruling in <NotebookRuling>[
+      NotebookRuling.graph,
+      NotebookRuling.dots,
+    ]) {
+      final Notebook created =
+          await repository.createNotebook(title: ruling.label);
+      await repository.saveNotebook(created.copyWith(ruling: ruling));
+
+      final Notebook? reread = await repository.getNotebook(created.id);
+      expect(
+        reread?.ruling,
+        ruling,
+        reason: 'a picked page background must survive the genuine SQL '
+            'save/reopen round trip',
+      );
+    }
+  });
+
   test('a notebook that never recorded a nib rereads as null', () async {
     final Notebook created = await repository.createNotebook(title: 'Fresh');
     await repository.saveNotebook(created);

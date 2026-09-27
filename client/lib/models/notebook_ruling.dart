@@ -7,6 +7,7 @@
 ///
 ///   narrow ruled  6.35 mm -> 40 logical px  ("small")
 ///   college ruled 7.1  mm -> 45 logical px  ("medium")
+///   quad ruled    5    mm -> 32 logical px  ("graph", "dots")
 ///
 /// The page is a fixed-scale vertical roll with no pinch/zoom, so a rule line
 /// is a fixed device-pixel spacing and never a zoom-relative one.
@@ -26,7 +27,13 @@ enum NotebookRuling {
   small,
 
   /// College ruled, 7.1 mm.
-  medium;
+  medium,
+
+  /// Quad ruled, 5 mm: vertical and horizontal lines forming squares.
+  graph,
+
+  /// Dot grid, 5 mm: a dot at each grid intersection, nothing between.
+  dots;
 
   /// Round-trips through the database. Stored as text rather than an index so
   /// reordering this enum can never silently re-rule existing notebooks.
@@ -44,7 +51,7 @@ enum NotebookRuling {
     return NotebookRuling.blank;
   }
 
-  /// Gap between rule lines, in logical pixels.
+  /// Gap between rule lines — or grid lines, or dots — in logical pixels.
   ///
   /// Zero for [blank], which is what makes "is this page ruled?" a single
   /// question rather than a second flag that can disagree with this one.
@@ -52,6 +59,8 @@ enum NotebookRuling {
         NotebookRuling.blank => 0,
         NotebookRuling.small => 40,
         NotebookRuling.medium => 45,
+        NotebookRuling.graph => 32,
+        NotebookRuling.dots => 32,
       };
 
   /// What the picker shows.
@@ -59,6 +68,8 @@ enum NotebookRuling {
         NotebookRuling.blank => 'Blank',
         NotebookRuling.small => 'Lined (small)',
         NotebookRuling.medium => 'Lined (medium)',
+        NotebookRuling.graph => 'Graph',
+        NotebookRuling.dots => 'Dot grid',
       };
 }
 
@@ -77,6 +88,10 @@ class NotebookRulingPainter extends CustomPainter {
   /// colour, which means "live or selected" everywhere else in this app.
   static const Color lineColor = TangentColors.edge;
 
+  /// Dot-grid dots: just visible at arm's length without ever reading as
+  /// punctuation someone wrote.
+  static const double dotRadius = 1.5;
+
   @override
   void paint(Canvas canvas, Size size) {
     final double spacing = ruling.lineSpacing;
@@ -88,10 +103,33 @@ class NotebookRulingPainter extends CustomPainter {
       ..color = lineColor
       ..strokeWidth = 1;
 
-    // Start one full gap down so the first line is not flush against the top
-    // edge, where it would read as a border rather than as ruling.
-    for (double y = spacing; y < size.height; y += spacing) {
-      canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
+    switch (ruling) {
+      case NotebookRuling.blank:
+        return; // Unreachable: blank's zero spacing already returned above.
+      case NotebookRuling.small:
+      case NotebookRuling.medium:
+        // Start one full gap down so the first line is not flush against the
+        // top edge, where it would read as a border rather than as ruling.
+        for (double y = spacing; y < size.height; y += spacing) {
+          canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
+        }
+      case NotebookRuling.graph:
+        // The same one-gap inset in both directions, so the squares start
+        // where lined pages start their lines.
+        for (double y = spacing; y < size.height; y += spacing) {
+          canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
+        }
+        for (double x = spacing; x < size.width; x += spacing) {
+          canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
+        }
+      case NotebookRuling.dots:
+        // Filled circles at the intersections; fill is the Paint default, so
+        // the dots are solid rather than 1 px rings.
+        for (double y = spacing; y < size.height; y += spacing) {
+          for (double x = spacing; x < size.width; x += spacing) {
+            canvas.drawCircle(Offset(x, y), dotRadius, paint);
+          }
+        }
     }
   }
 
