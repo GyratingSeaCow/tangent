@@ -3,8 +3,28 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 import '../models/dump.dart';
+import '../services/recording_playback.dart';
 import '../services/summary_page_text.dart';
 import '../models/dump_mode.dart';
+
+/// A card's opened player plus the way to give it back.
+typedef NotebookCardPlayback = ({
+  RecordingPlaybackController controller,
+  Future<void> Function() close,
+});
+
+/// Opens playback for a dump id; null when nothing local is playable.
+typedef NotebookCardPlaybackOpener = Future<NotebookCardPlayback?> Function(
+  String dumpId,
+);
+
+/// What the editor can ask of a mounted card (transcript-to-notebook spec
+/// §C): a tapped `[mm:ss]` stamp seeks the bubble already on the page.
+abstract interface class NotebookDumpCardController {
+  /// Opens the player if needed, seeks to [target] and makes sure audio is
+  /// playing. A card with nothing local to play does nothing.
+  Future<void> seekAndPlay(Duration target);
+}
 
 /// Material icon representing a dump's capture mode.
 IconData dumpModeIcon(DumpMode mode) => switch (mode) {
@@ -41,6 +61,8 @@ class NotebookDumpCard extends StatefulWidget {
     this.onTap,
     this.onRemove,
     this.onDragActive,
+    this.controllers,
+    this.openPlayback,
   });
 
   /// The embedded dump, or null when the referenced dump no longer exists.
@@ -66,6 +88,13 @@ class NotebookDumpCard extends StatefulWidget {
   /// otherwise win mostly-vertical drags and move the page instead of the
   /// card.
   final ValueChanged<bool>? onDragActive;
+
+  /// Editor-owned registry the card joins (keyed by dump id) while mounted,
+  /// so a stamp tap can find the bubble for its recording.
+  final Map<String, NotebookDumpCardController>? controllers;
+
+  /// How the card gets a player. Omit for a card that only opens the dump.
+  final NotebookCardPlaybackOpener? openPlayback;
 
   /// Widest the floating card ever gets, so it stays a "little box".
   static const double maxCardWidth = 220;
@@ -123,7 +152,97 @@ class _CardPanRecognizer extends PanGestureRecognizer {
   }
 }
 
-class _NotebookDumpCardState extends State<NotebookDumpCard> {
+class _NotebookDumpCardState extends State<NotebookDumpCard>
+    implements NotebookDumpCardController {
+  NotebookCardPlayback? _playback;
+  Future<NotebookCardPlayback?>? _opening;
+
+  @override
+  void initState() {
+    super.initState();
+    _register();
+  }
+
+  @override
+  void didUpdateWidget(NotebookDumpCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.dump?.id != widget.dump?.id ||
+        !identical(oldWidget.controllers, widget.controllers)) {
+      _unregister(oldWidget);
+      _register();
+    }
+  }
+
+  @override
+  void dispose() {
+    _unregister(widget);
+    final NotebookCardPlayback? open = _playback;
+    _playback = null;
+    if (open != null) {
+      open.controller.removeListener(_onPlaybackChanged);
+      // Fire-and-forget: a torn-down card cannot await its lease.
+      // ignore: discarded_futures
+      open.close();
+    }
+    super.dispose();
+  }
+
+  void _register() {
+    final String? id = widget.dump?.id;
+    if (id != null) widget.controllers?[id] = this;
+  }
+
+  void _unregister(NotebookDumpCard of) {
+    final String? id = of.dump?.id;
+    if (id != null && identical(of.controllers?[id], this)) {
+      of.controllers?.remove(id);
+    }
+  }
+
+  void _onPlaybackChanged() {
+    if (mounted) setState(() {});
+  }
+
+  Future<RecordingPlaybackController?> _ensurePlayback() async {
+    if (_playback != null) return _playback!.controller;
+    final NotebookCardPlaybackOpener? open = widget.openPlayback;
+    final Dump? dump = widget.dump;
+    if (open == null || dump == null) return null;
+    final Future<NotebookCardPlayback?> pending = _opening ??= open(dump.id);
+    final NotebookCardPlayback? opened = await pending;
+    if (identical(_opening, pending)) _opening = null;
+    if (_playback != null) {
+      // A concurrent open won the race; this one is surplus.
+      if (opened != null && !identical(opened, _playback)) {
+        await opened.close();
+      }
+      return _playback!.controller;
+    }
+    if (opened == null) return null;
+    if (!mounted) {
+      await opened.close();
+      return null;
+    }
+    _playback = opened;
+    opened.controller.addListener(_onPlaybackChanged);
+    setState(() {});
+    return opened.controller;
+  }
+
+  @override
+  Future<void> seekAndPlay(Duration target) async {
+    final RecordingPlaybackController? c = await _ensurePlayback();
+    if (c == null) return;
+    await c.seek(target);
+    if (!c.state.playing) await c.togglePlayback();
+  }
+
+  Future<void> _togglePlay() async {
+    final RecordingPlaybackController? c = await _ensurePlayback();
+    if (c == null) return;
+    await c.togglePlayback();
+  }
+
   /// Where the card sat when the current drag began. Null when not dragging.
   ///
   /// The card tracks its own drag rather than reading back [widget.position]
@@ -234,7 +353,15 @@ class _NotebookDumpCardState extends State<NotebookDumpCard> {
                   padding: const EdgeInsets.fromLTRB(10, 8, 4, 8),
                   child: missing
                       ? _MissingBody(onRemove: widget.onRemove)
-                      : _DumpBody(dump: dump, onRemove: widget.onRemove),
+                      : _DumpBody(
+                          dump: dump,
+                          onRemove: widget.onRemove,
+                          playing: _playback?.controller.state.playing ?? false,
+                          onTogglePlay: widget.openPlayback == null ||
+                                  dump.mode == DumpMode.textNote
+                              ? null
+                              : _togglePlay,
+                        ),
                 ),
               ),
             ),
@@ -246,10 +373,22 @@ class _NotebookDumpCardState extends State<NotebookDumpCard> {
 }
 
 class _DumpBody extends StatelessWidget {
-  const _DumpBody({required this.dump, this.onRemove});
+  const _DumpBody({
+    required this.dump,
+    this.onRemove,
+    this.playing = false,
+    this.onTogglePlay,
+  });
 
   final Dump dump;
   final VoidCallback? onRemove;
+
+  /// Whether the card's own player is running (drives the play/pause icon).
+  final bool playing;
+
+  /// Plays or pauses in place. Null hides the control (no player wired, or
+  /// a text note with no audio).
+  final Future<void> Function()? onTogglePlay;
 
   @override
   Widget build(BuildContext context) {
@@ -287,11 +426,30 @@ class _DumpBody extends StatelessWidget {
           const SizedBox(height: 4),
           Padding(
             padding: const EdgeInsets.only(left: 24),
-            child: Text(
-              formatDumpDuration(dump.durationSeconds),
-              style: theme.textTheme.labelSmall?.copyWith(
-                color: colors.onSurfaceVariant,
-              ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  formatDumpDuration(dump.durationSeconds),
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: colors.onSurfaceVariant,
+                  ),
+                ),
+                if (onTogglePlay != null) ...[
+                  const SizedBox(width: 4),
+                  IconButton(
+                    key: ValueKey<String>('dump-card-play-${dump.id}'),
+                    icon: Icon(playing ? Icons.pause : Icons.play_arrow),
+                    iconSize: 18,
+                    tooltip: playing ? 'Pause' : 'Play here',
+                    visualDensity: VisualDensity.compact,
+                    constraints:
+                        const BoxConstraints.tightFor(width: 28, height: 28),
+                    padding: EdgeInsets.zero,
+                    onPressed: () => onTogglePlay!(),
+                  ),
+                ],
+              ],
             ),
           ),
         ],

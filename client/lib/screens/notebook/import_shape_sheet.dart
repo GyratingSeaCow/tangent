@@ -28,8 +28,9 @@ class ImportShapeChoice {
 /// Asks whether the import lands as audio bubbles or transcript text — plus,
 /// when [offerSummary], the summary alone or summary-and-transcript. The
 /// "Include audio bubble" switch starts at [initialIncludeAudioCard] and
-/// applies to the text shapes only. Dismissing returns null and nothing
-/// inserts.
+/// belongs to the text shapes only: it sits under them, after a divider, and
+/// the Audio bubble row above the divider is unaffected by it. Dismissing
+/// returns null and nothing inserts.
 Future<ImportShapeChoice?> askImportShape(
   BuildContext context, {
   required bool offerSummary,
@@ -104,6 +105,7 @@ class _ImportShapeSheetState extends State<_ImportShapeSheet> {
               subtitle: const Text('A playable card you can drag around'),
               onTap: () => _pick(ImportShape.audio),
             ),
+            const Divider(height: 1),
             ListTile(
               key: const ValueKey<String>('import-as-text'),
               leading: const Icon(Icons.notes),
@@ -131,15 +133,15 @@ class _ImportShapeSheetState extends State<_ImportShapeSheet> {
                 onTap: () => _pick(ImportShape.both),
               ),
             ],
-            const Divider(height: 1),
-            // Applies to the text shapes: the card gives the [mm:ss] stamps
-            // a player to seek in place. The Audio bubble row is the card.
+            // Applies to the text shapes above it: the card gives the
+            // [mm:ss] stamps a player to seek in place. The Audio bubble row
+            // IS the card, so it sits on the other side of the divider.
             SwitchListTile(
               key: const ValueKey<String>('import-include-audio'),
               secondary: const Icon(Icons.graphic_eq),
               title: const Text('Include audio bubble'),
               subtitle: const Text(
-                'Also add a playable card next to the text',
+                'Also add a playable card next to the text shapes',
               ),
               value: _includeAudioCard,
               onChanged: (bool value) =>

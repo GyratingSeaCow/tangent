@@ -2997,6 +2997,10 @@ void main() {
       );
 
       await importDump(tester, 'dump-pick-d1');
+      // The shared sheet's "Include audio bubble" switch defaults ON (spec
+      // §C); this case is the text-only import, so switch it off first.
+      await tester.tap(find.byKey(const ValueKey('import-include-audio')));
+      await tester.pump();
       await tester.tap(find.byKey(const ValueKey('import-as-text')));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
@@ -3019,6 +3023,37 @@ void main() {
       expect(texts, hasLength(1));
       expect(texts.single.text, 'remember to buy solder and flux');
       expect(tester.takeException(), isNull);
+
+      await unmount(tester);
+    });
+
+    testWidgets(
+        'Text with "Include audio bubble" left on lands the text AND a card',
+        (tester) async {
+      await mountEditor(
+        tester,
+        notebook: testNotebook(id: 'nb-1'),
+        dumps: <DumpRow>[
+          _dumpRow('d1', 'Morning ideas', transcript: 'solder and flux'),
+        ],
+      );
+
+      await importDump(tester, 'dump-pick-d1');
+      expect(
+        tester
+            .widget<SwitchListTile>(
+              find.byKey(const ValueKey('import-include-audio')),
+            )
+            .value,
+        isTrue,
+        reason: 'the switch defaults on (SettingsStore default)',
+      );
+      await tester.tap(find.byKey(const ValueKey('import-as-text')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(find.byType(NotebookDumpCard), findsOneWidget);
+      expect(find.text('solder and flux'), findsOneWidget);
 
       await unmount(tester);
     });

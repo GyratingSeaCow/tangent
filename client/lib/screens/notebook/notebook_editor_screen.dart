@@ -23,16 +23,21 @@ import 'package:uuid/uuid.dart';
 
 import '../../data/local_db.dart';
 import '../../data/notebook_repository.dart';
+import '../../data/storage/storage_contract.dart';
+import '../../data/storage/storage_providers.dart';
 import '../../models/dump.dart';
 import '../../models/dump_mode.dart';
 import '../../models/notebook.dart';
 import '../../models/notebook_ruling.dart';
 import '../../models/speaker_names.dart';
 import '../../models/sync_status.dart';
+import '../../models/text_stamp.dart';
 import '../../services/image_file_picker.dart';
 import '../../services/ink_search.dart';
 import '../../services/notebook_import.dart';
 import '../../services/notebook_persistence.dart';
+import '../../services/recording_playback.dart';
+import '../../services/stamp_reconcile.dart';
 import '../../services/transcript_timings.dart';
 import '../../widgets/dump_picker_sheet.dart';
 import '../../widgets/ink_palette_popup.dart';
@@ -41,10 +46,54 @@ import '../../widgets/notebook_image_block.dart';
 import '../../widgets/notebook_ink_canvas.dart';
 import '../dump/dump_detail_screen.dart';
 import '../dump/dumps_providers.dart';
+import '../home/home_providers.dart' show recordingPlaybackEngineFactoryProvider;
+import '../home/home_screen.dart' show localDbProvider;
 import '../settings/ai_summaries_section.dart' show summariesEnabledProvider;
 import '../settings/handwriting_search_section.dart'
     show handwritingSearchEnabledProvider;
+import 'import_shape_sheet.dart';
 import 'notebook_find_bar.dart';
+
+/// Opens a card's player the way the detail screen does: the recording's
+/// binding → a playback lease → a controller loaded with the source. Null
+/// (never a throw) when there is nothing local to play. Tests override this
+/// to hand the card a fake engine.
+final Provider<NotebookCardPlaybackOpener> notebookCardPlaybackProvider =
+    Provider<NotebookCardPlaybackOpener>((Ref ref) {
+  return (String dumpId) async {
+    final RecordingPlaybackEngine raw =
+        ref.read(recordingPlaybackEngineFactoryProvider)();
+    final RecordingAccess access = ref.read(recordingAccessProvider);
+    try {
+      final BoundRecording? binding =
+          await ref.read(localDbProvider).boundRecording(dumpId);
+      if (binding == null) {
+        await raw.dispose();
+        return null;
+      }
+      final Outcome<PlaybackLease> opened =
+          await access.openPlayback(binding.key, raw);
+      final PlaybackLease lease = switch (opened) {
+        Ok<PlaybackLease>(:final PlaybackLease value) => value,
+        Fail<PlaybackLease>(:final StorageProblem problem) =>
+          throw StorageFault(problem),
+      };
+      final RecordingPlaybackController controller =
+          RecordingPlaybackController(engine: lease.engine);
+      await controller.initialize(lease.source);
+      return (
+        controller: controller,
+        close: () async {
+          controller.dispose();
+          await lease.close();
+        },
+      );
+    } catch (_) {
+      await raw.dispose();
+      return null;
+    }
+  };
+});
 
 /// The footprint the lasso tests [block] against, in canonical page px.
 ///
@@ -130,9 +179,15 @@ class NotebookEditorScreen extends ConsumerStatefulWidget {
     super.key,
     required this.notebookId,
     this.initialFindQuery,
+    this.scrollToBlockId,
   });
 
   final String notebookId;
+
+  /// Deep link from "Send to notebook…" (spec §A): once the page is laid
+  /// out, scroll so this block is on screen. Best effort — an id that is not
+  /// on the page (or a card, which has no measured row) just opens at the top.
+  final String? scrollToBlockId;
 
   /// Deep link from the home screen's search: opens the editor with the find
   /// bar populated with this query and the FIRST match current (spec: a tap
@@ -294,6 +349,11 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
       if (notebook != null && _findOpen) {
         unawaited(_runFind(_findQuery.text));
       }
+      if (notebook != null && widget.scrollToBlockId != null) {
+        WidgetsBinding.instance.addPostFrameCallback(
+          (_) => _revealBlock(widget.scrollToBlockId!),
+        );
+      }
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -338,6 +398,21 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
         return controller;
       });
 
+  /// Scrolls the laid-out row for [blockId] into view. Silently does nothing
+  /// when the block has no measured row yet (or at all).
+  void _revealBlock(String blockId) {
+    if (!mounted) return;
+    final BuildContext? target = _blockMeasureKeys[blockId]?.currentContext;
+    if (target == null) return;
+    unawaited(
+      Scrollable.ensureVisible(
+        target,
+        alignment: 0.1,
+        duration: const Duration(milliseconds: 250),
+      ),
+    );
+  }
+
   /// Focus nodes live beside the controllers so a newly inserted list item
   /// can take the caret immediately. Created lazily and disposed with the
   /// block, exactly like its controller.
@@ -349,6 +424,11 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
         // by which point the menu has taken focus away from the field.
         node.addListener(() {
           if (node.hasFocus) _lastFocusedBlockId = id;
+          // A stamped text block swaps between tappable spans (blurred) and
+          // a plain field (focused): rebuild on every focus change, and fold
+          // the edit back into the block on the way out (spec §C).
+          if (!node.hasFocus) _commitTextEdit(id);
+          if (mounted) setState(() {});
         });
         return node;
       });
@@ -653,10 +733,13 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
       for (final String id in added)
         if (dumpsById[id] != null) dumpsById[id]!,
     ];
-    final ImportShape? shape = await _askImportShape(
+    final ImportShapeChoice? choice = await askImportShapeRemembered(
+      context,
+      ref,
       offerSummary: _summaryShapesApply(pickedDumps),
     );
-    if (shape == null || !mounted) return;
+    if (choice == null || !mounted) return;
+    final ImportShape shape = choice.shape;
 
     // The rows carry what the renderer needs (timings, name map) and the
     // picker's `Dump`s do not; the same rows fed the picker, so a picked id
@@ -674,9 +757,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
           ...importBlocksForDump(
             dump: row,
             shape: shape,
-            // The shape sheet's "Include audio bubble" switch (spec §C) is
-            // not wired in this editor yet; until it is, Text stays text.
-            includeAudioCard: false,
+            includeAudioCard: choice.includeAudioCard,
             timings: TranscriptTimings.parse(row.transcriptTimings),
             speakerNames: SpeakerNames.decode(row.speakerNames),
             newId: _uuid.v4,
@@ -707,55 +788,6 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
       ref.read(summariesEnabledProvider) ||
       picked.any(
         (Dump dump) => (dump.summary ?? '').trim().isNotEmpty,
-      );
-
-  /// Asks whether the import lands as audio bubbles or transcript text —
-  /// plus, when [offerSummary], the summary alone or summary-and-transcript.
-  Future<ImportShape?> _askImportShape({required bool offerSummary}) =>
-      showModalBottomSheet<ImportShape>(
-        context: context,
-        builder: (BuildContext sheetContext) => SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              ListTile(
-                key: const ValueKey<String>('import-as-card'),
-                leading: const Icon(Icons.graphic_eq),
-                title: const Text('Audio bubble'),
-                subtitle: const Text('A playable card you can drag around'),
-                onTap: () => Navigator.of(sheetContext).pop(ImportShape.audio),
-              ),
-              ListTile(
-                key: const ValueKey<String>('import-as-text'),
-                leading: const Icon(Icons.notes),
-                title: const Text('Text'),
-                subtitle: const Text('The transcript, in an editable text box'),
-                onTap: () => Navigator.of(sheetContext).pop(ImportShape.text),
-              ),
-              if (offerSummary) ...<Widget>[
-                ListTile(
-                  key: const ValueKey<String>('import-as-summary'),
-                  leading: const Icon(Icons.auto_awesome_outlined),
-                  title: const Text('Summary'),
-                  subtitle: const Text(
-                    'Key points and action items, in an editable text box',
-                  ),
-                  onTap: () =>
-                      Navigator.of(sheetContext).pop(ImportShape.summary),
-                ),
-                ListTile(
-                  key: const ValueKey<String>('import-as-both'),
-                  leading: const Icon(Icons.library_books),
-                  title: const Text('Transcript + summary'),
-                  subtitle: const Text(
-                    'Both, as two text boxes — summary first',
-                  ),
-                  onTap: () => Navigator.of(sheetContext).pop(ImportShape.both),
-                ),
-              ],
-            ],
-          ),
-        ),
       );
 
   /// Imports one picture from the system picker onto the page.
@@ -844,13 +876,36 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
   List<NotebookBlock> _composeBlocks() => <NotebookBlock>[
         for (final NotebookBlock block in _blocks)
           switch (block) {
-            NotebookTextBlock t =>
-              t.copyWith(text: _controllers[t.id]?.text ?? t.text),
+            NotebookTextBlock t => _withEditedText(t),
             NotebookCheckboxBlock c =>
               c.copyWith(text: _controllers[c.id]?.text ?? c.text),
             NotebookBlock() => block,
           },
       ];
+
+  /// [t] with the controller's current text and its stamps reconciled
+  /// against that edit — a stamp whose `[mm:ss]` the edit broke is dropped
+  /// (spec §C), never left pointing at the wrong characters.
+  NotebookTextBlock _withEditedText(NotebookTextBlock t) {
+    final String edited = _controllers[t.id]?.text ?? t.text;
+    if (edited == t.text) return t;
+    return t.copyWith(
+      text: edited,
+      stamps: reconcileStamps(t.text, edited, t.stamps),
+    );
+  }
+
+  /// Folds a finished edit of text block [id] back into [_blocks] so the
+  /// blurred rendering (and any later save) sees reconciled stamps.
+  void _commitTextEdit(String id) {
+    final int index = _blocks.indexWhere((NotebookBlock b) => b.id == id);
+    if (index < 0) return;
+    final NotebookBlock block = _blocks[index];
+    if (block is! NotebookTextBlock) return;
+    final NotebookTextBlock edited = _withEditedText(block);
+    if (identical(edited, block)) return;
+    _blocks = <NotebookBlock>[..._blocks]..[index] = edited;
+  }
 
   Future<void> _save() async {
     final Notebook? current = _notebook;
@@ -957,14 +1012,16 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                 NotebookTextBlock t => _BackspaceDeletes(
                     controller: _controllerFor(t.id, t.text),
                     onDeleteLine: () => _removeBlock(t.id),
-                    child: TextField(
-                      key: ValueKey<String>('notebook-text-block-${t.id}'),
-                      controller: _controllerFor(t.id, t.text),
-                      maxLines: null,
-                      style: _pageTextStyle,
-                      cursorColor: NotebookInkCanvas.inkColor,
-                      decoration: _pageInput('Write something…'),
-                    ),
+                    child: _stampedBlockAtRest(t) ??
+                        TextField(
+                          key: ValueKey<String>('notebook-text-block-${t.id}'),
+                          controller: _controllerFor(t.id, t.text),
+                          focusNode: _focusFor(t.id),
+                          maxLines: null,
+                          style: _pageTextStyle,
+                          cursorColor: NotebookInkCanvas.inkColor,
+                          decoration: _pageInput('Write something…'),
+                        ),
                   ),
                 NotebookCheckboxBlock c => Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -1315,7 +1372,95 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
         isDense: true,
       );
 
-  void _openDump(DumpRow row) {
+  /// The at-rest rendering of a stamped text block (spec §C): its `[mm:ss]`
+  /// stamps are tappable spans. Null while the block is being edited, or
+  /// when it carries no stamps — then the ordinary [TextField] renders.
+  Widget? _stampedBlockAtRest(NotebookTextBlock stored) {
+    if (_focusFor(stored.id).hasFocus) return null;
+    final NotebookTextBlock t = _withEditedText(stored);
+    if (t.stamps.isEmpty) return null;
+    final Color accent = Theme.of(context).colorScheme.primary;
+    final TextStyle stampStyle = _pageTextStyle.copyWith(
+      color: accent,
+      decoration: TextDecoration.underline,
+      decorationColor: accent,
+      decorationStyle: TextDecorationStyle.dotted,
+    );
+    final List<InlineSpan> spans = <InlineSpan>[];
+    int cursor = 0;
+    final List<TextStamp> ordered = <TextStamp>[...t.stamps]
+      ..sort((TextStamp a, TextStamp b) => a.offset.compareTo(b.offset));
+    for (int i = 0; i < ordered.length; i++) {
+      final TextStamp stamp = ordered[i];
+      final int end = stamp.offset + stamp.length;
+      if (stamp.offset < cursor || end > t.text.length) continue;
+      if (stamp.offset > cursor) {
+        spans.add(TextSpan(text: t.text.substring(cursor, stamp.offset)));
+      }
+      spans.add(
+        WidgetSpan(
+          alignment: PlaceholderAlignment.baseline,
+          baseline: TextBaseline.alphabetic,
+          child: GestureDetector(
+            key: ValueKey<String>('stamp-${t.id}-$i'),
+            behavior: HitTestBehavior.opaque,
+            onTap: () => unawaited(_onStampTap(stamp)),
+            child: Text(
+              t.text.substring(stamp.offset, end),
+              style: stampStyle,
+            ),
+          ),
+        ),
+      );
+      cursor = end;
+    }
+    if (cursor < t.text.length) {
+      spans.add(TextSpan(text: t.text.substring(cursor)));
+    }
+    return GestureDetector(
+      key: ValueKey<String>('notebook-text-block-at-rest-${t.id}'),
+      behavior: HitTestBehavior.opaque,
+      // A tap anywhere else is "edit this": the field takes over, stamps
+      // go quiet, and the caret lands where the field decides.
+      onTap: () => _focusFor(t.id).requestFocus(),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Text.rich(
+          TextSpan(style: _pageTextStyle, children: spans),
+        ),
+      ),
+    );
+  }
+
+  /// Mounted cards' players, keyed by dump id, so a stamp tap can seek the
+  /// bubble already on the page instead of leaving it (spec §C rule 1).
+  final Map<String, NotebookDumpCardController> _cardControllers =
+      <String, NotebookDumpCardController>{};
+
+  /// Spec §C tap order: a same-recording card on the page with local audio
+  /// plays in place; otherwise the detail screen opens at that moment (and
+  /// says so itself when the audio is still on the server).
+  Future<void> _onStampTap(TextStamp stamp) async {
+    final Duration at = Duration(milliseconds: (stamp.seconds * 1000).round());
+    final DumpRow? row = _rowFor(stamp.dumpId);
+    final NotebookDumpCardController? card = _cardControllers[stamp.dumpId];
+    if (card != null && row != null && !dumpNeedsAudioDownload(row)) {
+      await card.seekAndPlay(at);
+      return;
+    }
+    if (row == null) return;
+    _openDump(row, seekSeconds: stamp.seconds);
+  }
+
+  DumpRow? _rowFor(String dumpId) {
+    for (final DumpRow row
+        in ref.read(dumpsProvider).valueOrNull ?? const <DumpRow>[]) {
+      if (row.id == dumpId) return row;
+    }
+    return null;
+  }
+
+  void _openDump(DumpRow row, {double? seekSeconds}) {
     unawaited(
       Navigator.of(context).push<void>(
         MaterialPageRoute<void>(
@@ -1323,6 +1468,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
             dumpId: row.id,
             audioPath: row.audioPath,
             durationSeconds: row.durationSeconds,
+            initialSeekSeconds: seekSeconds,
           ),
         ),
       ),
@@ -1875,6 +2021,8 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                           onTap: rowsById[block.dumpId] == null
                               ? null
                               : () => _openDump(rowsById[block.dumpId]!),
+                          controllers: _cardControllers,
+                          openPlayback: ref.read(notebookCardPlaybackProvider),
                           onRemove: () => _removeBlock(block.id),
                           onDragActive: (bool dragging) {
                             if (_draggingCard == dragging) return;
