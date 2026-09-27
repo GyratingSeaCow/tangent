@@ -58,6 +58,37 @@ import 'notebook_find_bar.dart';
 /// binding → a playback lease → a controller loaded with the source. Null
 /// (never a throw) when there is nothing local to play. Tests override this
 /// to hand the card a fake engine.
+/// How the editor opens a recording's detail screen (a card tap, or a
+/// stamp tap with no card on the page). Tests override it to record the
+/// request instead of mounting the real detail and its provider graph.
+typedef NotebookDumpOpener = void Function(
+  BuildContext context,
+  DumpRow row, {
+  double? seekSeconds,
+});
+
+final Provider<NotebookDumpOpener> notebookDumpOpenerProvider =
+    Provider<NotebookDumpOpener>((Ref ref) {
+  return (BuildContext context, DumpRow row, {double? seekSeconds}) {
+    unawaited(
+      Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          settings: RouteSettings(
+            name: '/dump',
+            arguments: (dumpId: row.id, seekSeconds: seekSeconds),
+          ),
+          builder: (_) => DumpDetailScreen(
+            dumpId: row.id,
+            audioPath: row.audioPath,
+            durationSeconds: row.durationSeconds,
+            initialSeekSeconds: seekSeconds,
+          ),
+        ),
+      ),
+    );
+  };
+});
+
 final Provider<NotebookCardPlaybackOpener> notebookCardPlaybackProvider =
     Provider<NotebookCardPlaybackOpener>((Ref ref) {
   return (String dumpId) async {
@@ -418,6 +449,19 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
   /// block, exactly like its controller.
   final Map<String, FocusNode> _focusNodes = <String, FocusNode>{};
 
+  /// Stamped blocks the user tapped into. At rest a stamped block renders
+  /// as spans and its [TextField] is NOT mounted, so its focus node is
+  /// detached and `requestFocus()` alone is a no-op: first mount the field
+  /// (this set), then ask for focus on the next frame. Blur clears it.
+  final Set<String> _editingStamped = <String>{};
+
+  void _beginEditingStamped(String id) {
+    setState(() => _editingStamped.add(id));
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _focusFor(id).requestFocus();
+    });
+  }
+
   FocusNode _focusFor(String id) => _focusNodes.putIfAbsent(id, () {
         final FocusNode node = FocusNode();
         // Remember the last block that held the caret. Read at insert time,
@@ -427,7 +471,10 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
           // A stamped text block swaps between tappable spans (blurred) and
           // a plain field (focused): rebuild on every focus change, and fold
           // the edit back into the block on the way out (spec §C).
-          if (!node.hasFocus) _commitTextEdit(id);
+          if (!node.hasFocus) {
+            _editingStamped.remove(id);
+            _commitTextEdit(id);
+          }
           if (mounted) setState(() {});
         });
         return node;
@@ -1376,7 +1423,9 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
   /// stamps are tappable spans. Null while the block is being edited, or
   /// when it carries no stamps — then the ordinary [TextField] renders.
   Widget? _stampedBlockAtRest(NotebookTextBlock stored) {
-    if (_focusFor(stored.id).hasFocus) return null;
+    if (_editingStamped.contains(stored.id) || _focusFor(stored.id).hasFocus) {
+      return null;
+    }
     final NotebookTextBlock t = _withEditedText(stored);
     if (t.stamps.isEmpty) return null;
     final Color accent = Theme.of(context).colorScheme.primary;
@@ -1422,7 +1471,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
       behavior: HitTestBehavior.opaque,
       // A tap anywhere else is "edit this": the field takes over, stamps
       // go quiet, and the caret lands where the field decides.
-      onTap: () => _focusFor(t.id).requestFocus(),
+      onTap: () => _beginEditingStamped(t.id),
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 4),
         child: Text.rich(
@@ -1460,20 +1509,8 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
     return null;
   }
 
-  void _openDump(DumpRow row, {double? seekSeconds}) {
-    unawaited(
-      Navigator.of(context).push<void>(
-        MaterialPageRoute<void>(
-          builder: (_) => DumpDetailScreen(
-            dumpId: row.id,
-            audioPath: row.audioPath,
-            durationSeconds: row.durationSeconds,
-            initialSeekSeconds: seekSeconds,
-          ),
-        ),
-      ),
-    );
-  }
+  void _openDump(DumpRow row, {double? seekSeconds}) =>
+      ref.read(notebookDumpOpenerProvider)(context, row, seekSeconds: seekSeconds);
 
   @override
   Widget build(BuildContext context) {

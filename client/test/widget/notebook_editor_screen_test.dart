@@ -3492,6 +3492,7 @@ void main() {
         tester,
         notebook: stampedNotebook(),
         dumps: <DumpRow>[_dumpRow('d1', 'Bench notes')],
+        extraOverrides: <Override>[fakePlayback(_RecordingEngine())],
       );
 
       expect(find.byKey(const ValueKey('stamp-t1-0')), findsOneWidget);
@@ -3547,22 +3548,29 @@ void main() {
     testWidgets('tap with no card pushes the detail at that moment',
         (tester) async {
       final _RecordingEngine engine = _RecordingEngine();
+      final List<({String dumpId, double? seekSeconds})> opened =
+          <({String dumpId, double? seekSeconds})>[];
       await mountEditor(
         tester,
         notebook: stampedNotebook(withCard: false),
         dumps: <DumpRow>[_dumpRow('d1', 'Bench notes')],
-        extraOverrides: <Override>[fakePlayback(engine)],
+        extraOverrides: <Override>[
+          fakePlayback(engine),
+          notebookDumpOpenerProvider.overrideWithValue(
+            (BuildContext _, DumpRow row, {double? seekSeconds}) =>
+                opened.add((dumpId: row.id, seekSeconds: seekSeconds)),
+          ),
+        ],
       );
 
       await tester.tap(find.byKey(const ValueKey('stamp-t1-0')));
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 400));
 
-      final DumpDetailScreen detail = tester.widget<DumpDetailScreen>(
-        find.byType(DumpDetailScreen),
-      );
-      expect(detail.dumpId, 'd1');
-      expect(detail.initialSeekSeconds, 42);
+      // The detail screen is covered by its own tests; pin WHAT the editor
+      // asked to open, and that it did not try to seek a card that isn't there.
+      expect(opened, <({String dumpId, double? seekSeconds})>[
+        (dumpId: 'd1', seekSeconds: 42.0),
+      ]);
       expect(engine.seeks, isEmpty, reason: 'no card, nothing to seek');
       await unmount(tester);
     });
