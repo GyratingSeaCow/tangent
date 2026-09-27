@@ -23,7 +23,7 @@ import 'package:tangent/services/transcription_client.dart';
 import '../support/fake_notebook_repository.dart';
 import '../support/widget_recording_coordinator.dart';
 
-/// To Do arc Phase 1 (home side): the app bar gains a checklist entry
+/// To Do arc Phase 1/2 (home side): the app bar gains a checked-checkbox entry
 /// point (key `home-todo-button`) that opens the To Do screen, leaving
 /// the existing sync / dumps / notebooks / settings plumbing untouched.
 
@@ -85,11 +85,28 @@ void main() {
     await db.close();
   }
 
-  testWidgets('the app bar exposes the To Do checklist action', (tester) async {
+  testWidgets('the app bar exposes the To Do checkbox action', (tester) async {
     final LocalDb db = await mountHome(tester);
 
     expect(find.byKey(const Key('home-todo-button')), findsOneWidget);
-    expect(find.byIcon(Icons.checklist), findsOneWidget);
+    // Phase 2 (I1): the ICON is the assertion, not just the key — the key
+    // passed happily with phase 1's wrong `Icons.checklist`. Read it off the
+    // keyed button so an unrelated check_box elsewhere cannot satisfy this.
+    expect(
+      (tester
+              .widget<IconButton>(find.byKey(const Key('home-todo-button')))
+              .icon! as Icon)
+          .icon,
+      Icons.check_box,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('home-todo-button')),
+        matching: find.byIcon(Icons.check_box),
+      ),
+      findsOneWidget,
+    );
+    expect(find.byIcon(Icons.checklist), findsNothing);
     expect(
       tester
           .widget<IconButton>(find.byKey(const Key('home-todo-button')))
@@ -101,7 +118,7 @@ void main() {
     await unmountHome(tester, db);
   });
 
-  testWidgets('tapping the checklist opens the To Do screen', (tester) async {
+  testWidgets('tapping the checkbox opens the To Do screen', (tester) async {
     final LocalDb db = await mountHome(tester);
 
     await tester.tap(find.byKey(const Key('home-todo-button')));

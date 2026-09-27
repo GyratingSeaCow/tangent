@@ -256,7 +256,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           ),
           IconButton(
             key: const Key('home-todo-button'),
-            icon: const Icon(Icons.checklist),
+            // Phase 2 (I1): a CHECKED checkbox, not a checklist glyph.
+            icon: const Icon(Icons.check_box),
             tooltip: 'To Do',
             onPressed: () => Navigator.of(context).push<void>(
               MaterialPageRoute<void>(
