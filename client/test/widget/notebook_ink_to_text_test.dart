@@ -7,6 +7,8 @@
 // single undoable step — one undo restores the ink AND removes the block,
 // one redo re-applies both. Every failure path (transport error, 409
 // not-installed, empty recognition) leaves the page exactly as it was.
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -396,5 +398,50 @@ void main() {
       isNull,
       reason: 'typed blocks are already text: nothing to convert',
     );
+  });
+
+  testWidgets('back-save during a pending recognize neither crashes nor '
+      'mutates the page', (WidgetTester tester) async {
+    // A recognize that answers only when the test says so, so the back-save
+    // can land while the request is mid-flight.
+    final Completer<List<OcrRecognizedLine>> pending =
+        Completer<List<OcrRecognizedLine>>();
+    final _FakeOcrClient ocr = _FakeOcrClient((_) => pending.future);
+    await mountEditor(tester, notebook: inkNotebook(), ocr: ocr);
+    await enterLasso(tester);
+    await lassoAroundInk(tester);
+    await tester.tap(convertButton());
+    await tester.pump();
+    expect(ocr.posted, hasLength(1), reason: 'the request is in flight');
+
+    // Back saves (Jeff's contract: back persists, never discards) while the
+    // recognize is still pending. Nothing has mutated yet, so a skipped
+    // save (not-dirty) and an identical save are both correct — what is
+    // forbidden is a crash or a block leaking into persistence.
+    await tester.binding.handlePopRoute();
+    await tester.pump();
+    for (final Notebook saved in repository.saved) {
+      expect(
+        <String>[for (final InkStroke s in saved.ink.strokes) s.id],
+        <String>['ink-a', 'ink-b'],
+        reason: 'the pending conversion must not leak into the back-save',
+      );
+      expect(saved.document.blocks, isEmpty);
+    }
+
+    // The late answer arrives after the screen has gone: the mounted guard
+    // must swallow it without throwing or resurrecting a block.
+    pending.complete(const <OcrRecognizedLine>[
+      OcrRecognizedLine(
+        text: 'too late',
+        strokeIds: <String>['ink-a', 'ink-b'],
+        bbox: Rect.fromLTRB(100, 100, 120, 119),
+      ),
+    ]);
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    for (final Notebook saved in repository.saved) {
+      expect(saved.document.blocks, isEmpty);
+    }
   });
 }
