@@ -380,6 +380,7 @@ class DocumentSyncEngine extends ChangeNotifier {
       db: _db,
       dumpId: change.entityId,
       transcript: payload['transcript'] as String?,
+      recordedOn: _tsToDate(payload['created_at']),
     );
   }
 

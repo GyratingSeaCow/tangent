@@ -16,23 +16,39 @@ import 'todo_voice_parser.dart';
 /// rows is soft-deleted. That is what makes Undo permanent — the spec's
 /// "re-sync can't resurrect them".
 ///
-/// Spec: docs/design/2026-09-27-todo-voice-capture.md.
+/// [recordedOn] is the dump's `created_at` — the day the words were spoken,
+/// which anchors "September 30th" (v1.26.0, D2). Never `DateTime.now()`: a
+/// recording transcribed days later still means the date it was said on.
+/// Every item from the transcript gets the same due date (D1).
+///
+/// Spec: docs/design/2026-09-27-todo-voice-capture.md and
+/// docs/design/2026-09-27-voice-todo-due-dates.md.
 Future<List<TodoRow>> captureVoiceTodos({
   required LocalDb db,
   required String dumpId,
   required String? transcript,
+  required DateTime recordedOn,
   TodoRepository? repository,
 }) async {
   final TodoRepository repo = repository ?? TodoRepository(db: db);
   // Ask BEFORE parsing: the answer is cheap and it short-circuits every
   // repeat arrival for the overwhelmingly common already-captured dump.
   if (await repo.hasTodosFromSource(dumpId)) return const <TodoRow>[];
-  final List<String> items = TodoVoiceParser.parse(transcript);
-  if (items.isEmpty) return const <TodoRow>[];
+  // The recording DAY is a local-calendar notion; sync hands us UTC stamps.
+  final VoiceTodoParse parse = TodoVoiceParser.parseWithDate(
+    transcript,
+    recordedOn: recordedOn.toLocal(),
+  );
+  if (parse.items.isEmpty) return const <TodoRow>[];
   final List<TodoRow> created = <TodoRow>[];
-  for (final String item in items) {
+  for (final String item in parse.items) {
     created.add(
-      await repo.add(item, source: voiceTodoSource, sourceRef: dumpId),
+      await repo.add(
+        item,
+        dueDate: parse.dueDate,
+        source: voiceTodoSource,
+        sourceRef: dumpId,
+      ),
     );
   }
   return created;
@@ -50,9 +66,15 @@ Future<void> captureVoiceTodosQuietly({
   required LocalDb db,
   required String dumpId,
   required String? transcript,
+  required DateTime recordedOn,
 }) async {
   try {
-    await captureVoiceTodos(db: db, dumpId: dumpId, transcript: transcript);
+    await captureVoiceTodos(
+      db: db,
+      dumpId: dumpId,
+      transcript: transcript,
+      recordedOn: recordedOn,
+    );
   } catch (_) {
     // Deliberately ignored; see above.
   }

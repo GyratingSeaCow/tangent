@@ -743,6 +743,7 @@ class ServerTranscriptionService extends ChangeNotifier {
       db: _db,
       dumpId: row.id,
       transcript: transcript,
+      recordedOn: row.createdAt,
     );
     _throwIfDisposed();
     final committed = await _db.getDump(row.id);
@@ -1116,6 +1117,7 @@ class ServerTranscriptionService extends ChangeNotifier {
         db: _db,
         dumpId: row.id,
         transcript: stored,
+        recordedOn: row.createdAt,
       );
       _throwIfDisposed();
       await _awaitSidecarWrite(
