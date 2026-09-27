@@ -25,6 +25,7 @@ import '../../data/local_db.dart';
 import '../../data/notebook_repository.dart';
 import '../../data/storage/storage_contract.dart';
 import '../../data/storage/storage_providers.dart';
+import '../../models/api_exception.dart';
 import '../../models/dump.dart';
 import '../../models/dump_mode.dart';
 import '../../models/notebook.dart';
@@ -36,6 +37,7 @@ import '../../services/image_file_picker.dart';
 import '../../services/ink_search.dart';
 import '../../services/notebook_import.dart';
 import '../../services/notebook_persistence.dart';
+import '../../services/ocr_settings_client.dart';
 import '../../services/recording_playback.dart';
 import '../../services/stamp_reconcile.dart';
 import '../../services/transcript_timings.dart';
@@ -50,7 +52,7 @@ import '../home/home_providers.dart' show recordingPlaybackEngineFactoryProvider
 import '../home/home_screen.dart' show localDbProvider;
 import '../settings/ai_summaries_section.dart' show summariesEnabledProvider;
 import '../settings/handwriting_search_section.dart'
-    show handwritingSearchEnabledProvider;
+    show handwritingSearchEnabledProvider, ocrSettingsClientProvider;
 import 'import_shape_sheet.dart';
 import 'notebook_find_bar.dart';
 
@@ -282,6 +284,11 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
   /// Ids of blocks (text, checkbox, recording cards) caught by the last
   /// lasso loop. They move and delete together with the selected ink.
   final Set<String> _lassoBlockIds = <String>{};
+
+  /// True while a Convert-to-text recognize call is in flight. Drives the
+  /// action's progress indicator and blocks a second post underneath it;
+  /// the lasso selection stays live until the server answers.
+  bool _convertingInk = false;
 
   /// The image whose move/resize chrome is showing, or null. One at a time:
   /// the chrome is modal enough that two selected images would fight over
@@ -1282,6 +1289,102 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
     _canvasKey.currentState?.clearSelection();
   }
 
+  /// Re-inserts the text block a conversion produced, for redo. The
+  /// controller was disposed by the undo's [_removeBlock], so it is
+  /// recreated with the block's text before the block renders again.
+  void _reinsertConvertedBlock(NotebookTextBlock block) {
+    _controllerFor(block.id, block.text);
+    setState(() {
+      _blocks = <NotebookBlock>[..._blocks, block];
+      _dirty = true;
+    });
+  }
+
+  /// Converts the lassoed ink to a typed text block (K1: replace in place).
+  ///
+  /// Posts the selected strokes to the server's recognizer, and ONLY on a
+  /// successful non-empty response removes the strokes and inserts one
+  /// [NotebookTextBlock] at the recognized ink's union-bbox top-left — as a
+  /// single undoable step (undo restores the ink AND removes the block;
+  /// redo re-applies both). Every failure path leaves the page untouched.
+  Future<void> _convertLassoSelectionToText() async {
+    final NotebookInkCanvasState? canvas = _canvasKey.currentState;
+    if (canvas == null || _convertingInk) return;
+    // Snapshot BEFORE the await: the selection must be what the user saw
+    // when they tapped, even if it changes while the server thinks.
+    final List<InkStroke> selected = canvas.selectedStrokes;
+    if (selected.isEmpty) return;
+    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+    setState(() => _convertingInk = true);
+    final List<OcrRecognizedLine> lines;
+    try {
+      final OcrSettingsClient client =
+          await ref.read(ocrSettingsClientProvider.future);
+      lines = await client.recognize(<Map<String, dynamic>>[
+        for (final InkStroke s in selected) s.toJson(),
+      ]);
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() => _convertingInk = false);
+      // A 409 is the not-installed refusal; its detail is the server's own
+      // wording, which is exactly what the user needs to see (the same
+      // routing every /v1/ocr/* 409 gets — never rewritten client-side).
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            e.statusCode == 409 ? e.message : 'Could not convert ink: $e',
+          ),
+        ),
+      );
+      return;
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _convertingInk = false);
+      messenger.showSnackBar(
+        SnackBar(content: Text('Could not convert ink: $e')),
+      );
+      return;
+    }
+    if (!mounted) return;
+    if (lines.isEmpty) {
+      setState(() => _convertingInk = false);
+      messenger.showSnackBar(
+        const SnackBar(content: Text('No text recognized')),
+      );
+      return;
+    }
+    // Success: one block, one undoable step.
+    final String text =
+        lines.map((OcrRecognizedLine l) => l.text).join('\n');
+    Rect union = lines.first.bbox;
+    for (final OcrRecognizedLine l in lines.skip(1)) {
+      union = union.expandToInclude(l.bbox);
+    }
+    final NotebookTextBlock block = NotebookTextBlock(
+      id: _uuid.v4(),
+      text: text,
+      x: union.left,
+      y: union.top,
+      stamps: const <TextStamp>[],
+    );
+    _controllerFor(block.id, text);
+    setState(() {
+      _convertingInk = false;
+      // The canvas half first: ONE history entry carrying the editor's
+      // reversal, so undo restores the strokes AND removes the block.
+      canvas.removeSelectedStrokes(
+        onExternalUndo: () => _removeBlock(block.id),
+        onExternalRedo: () => _reinsertConvertedBlock(block),
+      );
+      _blocks = <NotebookBlock>[..._blocks, block];
+      _lassoBlockIds.clear();
+      _dirty = true;
+    });
+    // Both selection halves end with the conversion (the canvas's removal
+    // already reported the ink half dead; this clears any external count).
+    canvas.clearSelection();
+  }
+
   /// Moves a typed block by [delta], resolving its first position from where
   /// it was actually laid out so an unplaced block does not jump.
   void _onBlockMoved(String id, Offset delta) {
@@ -1721,6 +1824,30 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                       // delete button reads as broken, a live one with
                       // nothing selected would surprise.
                       onPressed: _lassoSelection ? _deleteLassoSelection : null,
+                    ),
+                  if (_lassoing)
+                    IconButton(
+                      key: const ValueKey('notebook-lasso-convert'),
+                      // Progress rides in the button itself: the selection
+                      // stays live and the toolbar stays put while the
+                      // server recognizes.
+                      icon: _convertingInk
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.translate),
+                      tooltip: 'Convert to text',
+                      visualDensity: VisualDensity.compact,
+                      // Ink only: a blocks-only catch is already typed
+                      // content, so the action greys out (visible but dead —
+                      // hidden controls read as missing features).
+                      onPressed: !_convertingInk &&
+                              _lassoSelection &&
+                              (_canvasKey.currentState?.selectedCount ?? 0) > 0
+                          ? _convertLassoSelectionToText
+                          : null,
                     ),
                   IconButton(
                     icon: const Icon(Icons.undo),

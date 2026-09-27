@@ -8,6 +8,8 @@
 /// down again (which also deletes the search index).
 library;
 
+import 'dart:ui' show Rect;
+
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 
@@ -67,6 +69,43 @@ final class OcrInstallProgress {
   final String detail;
 }
 
+/// One recognized line from POST /v1/ocr/recognize, in reading order.
+@immutable
+final class OcrRecognizedLine {
+  const OcrRecognizedLine({
+    required this.text,
+    required this.strokeIds,
+    required this.bbox,
+  });
+
+  factory OcrRecognizedLine.fromJson(Map<String, dynamic> json) {
+    final List<dynamic> box = json['bbox'] as List<dynamic>? ?? const [];
+    return OcrRecognizedLine(
+      text: json['text'] as String? ?? '',
+      strokeIds: <String>[
+        for (final Object? id
+            in (json['stroke_ids'] as List<dynamic>? ?? const []))
+          if (id is String) id,
+      ],
+      bbox: box.length == 4
+          ? Rect.fromLTRB(
+              (box[0] as num?)?.toDouble() ?? 0,
+              (box[1] as num?)?.toDouble() ?? 0,
+              (box[2] as num?)?.toDouble() ?? 0,
+              (box[3] as num?)?.toDouble() ?? 0,
+            )
+          : Rect.zero,
+    );
+  }
+
+  final String text;
+  final List<String> strokeIds;
+
+  /// Union of the line's word bboxes, in the same page coordinates the
+  /// strokes were posted in.
+  final Rect bbox;
+}
+
 /// Talks to /v1/ocr/* with the same Dio conventions as [TranscriptionClient]:
 /// bearer token, sub-500 statuses surfaced as [ApiException] via _checkStatus.
 class OcrSettingsClient {
@@ -108,6 +147,28 @@ class OcrSettingsClient {
     return OcrCapability.fromJson(
       (resp.data as Map<String, dynamic>?) ?? const {},
     );
+  }
+
+  /// POST /v1/ocr/recognize — run the lassoed strokes through the server's
+  /// handwriting recognizer (same TrOCR engine as handwriting search).
+  ///
+  /// [strokes] is the same stroke JSON shape the notebook document syncs.
+  /// Lines come back in reading order; an all-empty page is `[]`. A 409
+  /// ([ApiException]) means the OCR environment is not installed.
+  Future<List<OcrRecognizedLine>> recognize(
+    List<Map<String, dynamic>> strokes,
+  ) async {
+    final resp = await _dio.post<dynamic>(
+      '/v1/ocr/recognize',
+      data: <String, dynamic>{'strokes': strokes},
+    );
+    _checkStatus(resp);
+    final Map<String, dynamic> body =
+        (resp.data as Map<String, dynamic>?) ?? const {};
+    return <OcrRecognizedLine>[
+      for (final Object? line in (body['lines'] as List<dynamic>? ?? const []))
+        if (line is Map<String, dynamic>) OcrRecognizedLine.fromJson(line),
+    ];
   }
 
   /// POST /v1/ocr/install — a 202 means the background install started.

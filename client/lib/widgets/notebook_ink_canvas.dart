@@ -162,6 +162,23 @@ class NotebookInkCanvas extends StatefulWidget {
   State<NotebookInkCanvas> createState() => NotebookInkCanvasState();
 }
 
+/// One undoable canvas action: the ink as it stood BEFORE the action, plus
+/// optional external callbacks for actions that span the editor too (ink →
+/// text conversion removes strokes here AND inserts a block up there; one
+/// undo must reverse both).
+class _InkHistoryEntry {
+  const _InkHistoryEntry(this.strokes, {this.onUndo, this.onRedo});
+
+  final List<InkStroke> strokes;
+
+  /// Invoked when undo restores [strokes] — the editor's chance to reverse
+  /// its half of the action (e.g. remove the inserted text block).
+  final VoidCallback? onUndo;
+
+  /// Invoked when redo re-applies the action (e.g. re-insert the block).
+  final VoidCallback? onRedo;
+}
+
 class NotebookInkCanvasState extends State<NotebookInkCanvas> {
   static const Uuid _uuid = Uuid();
 
@@ -171,12 +188,12 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
   /// action (stroke, erase sweep, lasso move, lasso delete). Bounded by
   /// [_historyLimit]; entries are lists of immutable strokes, so a snapshot
   /// costs one list of references, not a deep copy.
-  final List<List<InkStroke>> _undoStack = <List<InkStroke>>[];
+  final List<_InkHistoryEntry> _undoStack = <_InkHistoryEntry>[];
 
   /// Redo history: states that undo stepped away from, newest last. Any new
   /// mutation clears it — redoing an old future into rewritten history
   /// would interleave two timelines.
-  final List<List<InkStroke>> _redoStack = <List<InkStroke>>[];
+  final List<_InkHistoryEntry> _redoStack = <_InkHistoryEntry>[];
 
   /// One hundred actions of history is beyond any realistic backtrack while
   /// keeping the worst case (100 x one list of pointers) trivial.
@@ -309,8 +326,35 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
       if (_externalSelected > 0) clearSelection();
       return false;
     }
-    // One history entry: a single undo restores the whole deletion.
-    _pushHistory(List<InkStroke>.of(_strokes));
+    return removeSelectedStrokes();
+  }
+
+  /// The currently selected strokes, in page order. Empty outside a live
+  /// lasso catch. Snapshot these BEFORE mutating: the ids are what a
+  /// conversion posts, and the selection dies with the removal.
+  List<InkStroke> get selectedStrokes => List<InkStroke>.unmodifiable(
+        <InkStroke>[
+          for (final InkStroke s in _strokes)
+            if (_selected.contains(s.id)) s,
+        ],
+      );
+
+  /// Removes every selected stroke as ONE undoable action, optionally
+  /// coupling the entry to an editor-side half via [onExternalUndo] /
+  /// [onExternalRedo] (ink → text: undo restores the strokes AND removes the
+  /// inserted block; redo re-applies both). Returns false when no ink was
+  /// selected — then nothing mutates and no callbacks are recorded.
+  bool removeSelectedStrokes({
+    VoidCallback? onExternalUndo,
+    VoidCallback? onExternalRedo,
+  }) {
+    if (_selected.isEmpty) return false;
+    // One history entry: a single undo restores the whole removal.
+    _pushHistory(
+      List<InkStroke>.of(_strokes),
+      onExternalUndo: onExternalUndo,
+      onExternalRedo: onExternalRedo,
+    );
     setState(() {
       _strokes.removeWhere((InkStroke s) => _selected.contains(s.id));
       _externalSelected = 0;
@@ -474,8 +518,19 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
 
   /// Records [before] as one undoable action and invalidates redo. Every
   /// committed mutation funnels through here so history stays consistent.
-  void _pushHistory(List<InkStroke> before) {
-    _undoStack.add(before);
+  ///
+  /// [onExternalUndo]/[onExternalRedo] let an action that spans the editor
+  /// (ink → text conversion) hang its other half on this entry: undo restores
+  /// [before] AND calls [onExternalUndo]; redo re-applies and calls
+  /// [onExternalRedo].
+  void _pushHistory(
+    List<InkStroke> before, {
+    VoidCallback? onExternalUndo,
+    VoidCallback? onExternalRedo,
+  }) {
+    _undoStack.add(
+      _InkHistoryEntry(before, onUndo: onExternalUndo, onRedo: onExternalRedo),
+    );
     if (_undoStack.length > _historyLimit) _undoStack.removeAt(0);
     _redoStack.clear();
   }
@@ -490,21 +545,32 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
       // removing the last stroke so undo never reads as broken.
       if (_strokes.isEmpty) return false;
       setState(() {
-        _redoStack.add(List<InkStroke>.of(_strokes));
+        _redoStack.add(_InkHistoryEntry(List<InkStroke>.of(_strokes)));
         _strokes.removeLast();
         _revision++;
       });
       _notify();
       return true;
     }
-    final List<InkStroke> previous = _undoStack.removeLast();
+    final _InkHistoryEntry previous = _undoStack.removeLast();
     setState(() {
-      _redoStack.add(List<InkStroke>.of(_strokes));
+      // The redo entry keeps the action's external callbacks, so redoing it
+      // re-applies BOTH halves and re-arms undo with them intact.
+      _redoStack.add(
+        _InkHistoryEntry(
+          List<InkStroke>.of(_strokes),
+          onUndo: previous.onUndo,
+          onRedo: previous.onRedo,
+        ),
+      );
       _strokes
         ..clear()
-        ..addAll(previous);
+        ..addAll(previous.strokes);
       _revision++;
     });
+    // After the ink is back: the editor's half (e.g. remove the text block
+    // the conversion inserted) reverses in the same user-visible step.
+    previous.onUndo?.call();
     _notify();
     return true;
   }
@@ -513,17 +579,26 @@ class NotebookInkCanvasState extends State<NotebookInkCanvas> {
   /// nothing to redo. Any new mutation empties the redo history.
   bool redo() {
     if (_redoStack.isEmpty) return false;
-    final List<InkStroke> next = _redoStack.removeLast();
+    final _InkHistoryEntry next = _redoStack.removeLast();
     setState(() {
       // Straight onto the undo stack WITHOUT _pushHistory: pushing through
-      // it would clear the very redo steps we are walking.
-      _undoStack.add(List<InkStroke>.of(_strokes));
+      // it would clear the very redo steps we are walking. The external
+      // callbacks ride along so the NEXT undo reverses both halves again.
+      _undoStack.add(
+        _InkHistoryEntry(
+          List<InkStroke>.of(_strokes),
+          onUndo: next.onUndo,
+          onRedo: next.onRedo,
+        ),
+      );
       if (_undoStack.length > _historyLimit) _undoStack.removeAt(0);
       _strokes
         ..clear()
-        ..addAll(next);
+        ..addAll(next.strokes);
       _revision++;
     });
+    // Re-apply the editor's half (e.g. re-insert the converted text block).
+    next.onRedo?.call();
     _notify();
     return true;
   }
