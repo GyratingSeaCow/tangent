@@ -38,6 +38,7 @@ import '../../services/transcription_notifications.dart'
     show describedWhisperModel;
 import 'local_deletion_presentation.dart';
 import 'sync_status_presentation.dart';
+import '../../widgets/voice_todos_card.dart';
 import '../home/home_screen.dart' show localDbProvider;
 import '../notebook/send_to_notebook.dart';
 import '../settings/settings_screen.dart' show settingsStoreProvider;
@@ -1427,6 +1428,10 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
           ),
         ],
         const SizedBox(height: 16),
+        // To Do phase 2 (V3): what voice capture took from this recording,
+        // with Undo. Renders nothing when there was no trigger or the user
+        // already Undid it — it watches the live rows.
+        VoiceTodosCard(dumpId: widget.dumpId),
         // Task 4: the server-generated AI summary, BELOW the transcript per
         // the spec. Server-owned, arrives via normal dump sync; absent-safe —
         // a null/blank summary renders nothing at all. The subtle header

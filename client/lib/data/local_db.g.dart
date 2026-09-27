@@ -6724,6 +6724,567 @@ class LocalSettingsCompanion extends UpdateCompanion<LocalSettingRow> {
   }
 }
 
+class $TodosTable extends Todos with TableInfo<$TodosTable, TodoRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $TodosTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<String> id = GeneratedColumn<String>(
+      'id', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _bodyMeta = const VerificationMeta('body');
+  @override
+  late final GeneratedColumn<String> body = GeneratedColumn<String>(
+      'text', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _doneAtMeta = const VerificationMeta('doneAt');
+  @override
+  late final GeneratedColumn<String> doneAt = GeneratedColumn<String>(
+      'done_at', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _dueDateMeta =
+      const VerificationMeta('dueDate');
+  @override
+  late final GeneratedColumn<String> dueDate = GeneratedColumn<String>(
+      'due_date', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _sourceMeta = const VerificationMeta('source');
+  @override
+  late final GeneratedColumn<String> source = GeneratedColumn<String>(
+      'source', aliasedName, false,
+      type: DriftSqlType.string,
+      requiredDuringInsert: false,
+      defaultValue: const Constant('manual'));
+  static const VerificationMeta _sourceRefMeta =
+      const VerificationMeta('sourceRef');
+  @override
+  late final GeneratedColumn<String> sourceRef = GeneratedColumn<String>(
+      'source_ref', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _createdAtMeta =
+      const VerificationMeta('createdAt');
+  @override
+  late final GeneratedColumn<String> createdAt = GeneratedColumn<String>(
+      'created_at', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _updatedAtMeta =
+      const VerificationMeta('updatedAt');
+  @override
+  late final GeneratedColumn<String> updatedAt = GeneratedColumn<String>(
+      'updated_at', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _deletedAtMeta =
+      const VerificationMeta('deletedAt');
+  @override
+  late final GeneratedColumn<String> deletedAt = GeneratedColumn<String>(
+      'deleted_at', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _syncDirtyMeta =
+      const VerificationMeta('syncDirty');
+  @override
+  late final GeneratedColumn<bool> syncDirty = GeneratedColumn<bool>(
+      'sync_dirty', aliasedName, false,
+      type: DriftSqlType.bool,
+      requiredDuringInsert: false,
+      defaultConstraints:
+          GeneratedColumn.constraintIsAlways('CHECK ("sync_dirty" IN (0, 1))'),
+      defaultValue: const Constant(true));
+  static const VerificationMeta _syncedSeqMeta =
+      const VerificationMeta('syncedSeq');
+  @override
+  late final GeneratedColumn<int> syncedSeq = GeneratedColumn<int>(
+      'synced_seq', aliasedName, true,
+      type: DriftSqlType.int, requiredDuringInsert: false);
+  @override
+  List<GeneratedColumn> get $columns => [
+        id,
+        body,
+        doneAt,
+        dueDate,
+        source,
+        sourceRef,
+        createdAt,
+        updatedAt,
+        deletedAt,
+        syncDirty,
+        syncedSeq
+      ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'todos';
+  @override
+  VerificationContext validateIntegrity(Insertable<TodoRow> instance,
+      {bool isInserting = false}) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    } else if (isInserting) {
+      context.missing(_idMeta);
+    }
+    if (data.containsKey('text')) {
+      context.handle(
+          _bodyMeta, body.isAcceptableOrUnknown(data['text']!, _bodyMeta));
+    } else if (isInserting) {
+      context.missing(_bodyMeta);
+    }
+    if (data.containsKey('done_at')) {
+      context.handle(_doneAtMeta,
+          doneAt.isAcceptableOrUnknown(data['done_at']!, _doneAtMeta));
+    }
+    if (data.containsKey('due_date')) {
+      context.handle(_dueDateMeta,
+          dueDate.isAcceptableOrUnknown(data['due_date']!, _dueDateMeta));
+    }
+    if (data.containsKey('source')) {
+      context.handle(_sourceMeta,
+          source.isAcceptableOrUnknown(data['source']!, _sourceMeta));
+    }
+    if (data.containsKey('source_ref')) {
+      context.handle(_sourceRefMeta,
+          sourceRef.isAcceptableOrUnknown(data['source_ref']!, _sourceRefMeta));
+    }
+    if (data.containsKey('created_at')) {
+      context.handle(_createdAtMeta,
+          createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta));
+    } else if (isInserting) {
+      context.missing(_createdAtMeta);
+    }
+    if (data.containsKey('updated_at')) {
+      context.handle(_updatedAtMeta,
+          updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta));
+    } else if (isInserting) {
+      context.missing(_updatedAtMeta);
+    }
+    if (data.containsKey('deleted_at')) {
+      context.handle(_deletedAtMeta,
+          deletedAt.isAcceptableOrUnknown(data['deleted_at']!, _deletedAtMeta));
+    }
+    if (data.containsKey('sync_dirty')) {
+      context.handle(_syncDirtyMeta,
+          syncDirty.isAcceptableOrUnknown(data['sync_dirty']!, _syncDirtyMeta));
+    }
+    if (data.containsKey('synced_seq')) {
+      context.handle(_syncedSeqMeta,
+          syncedSeq.isAcceptableOrUnknown(data['synced_seq']!, _syncedSeqMeta));
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  TodoRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return TodoRow(
+      id: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}id'])!,
+      body: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}text'])!,
+      doneAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}done_at']),
+      dueDate: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}due_date']),
+      source: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}source'])!,
+      sourceRef: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}source_ref']),
+      createdAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}created_at'])!,
+      updatedAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}updated_at'])!,
+      deletedAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}deleted_at']),
+      syncDirty: attachedDatabase.typeMapping
+          .read(DriftSqlType.bool, data['${effectivePrefix}sync_dirty'])!,
+      syncedSeq: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}synced_seq']),
+    );
+  }
+
+  @override
+  $TodosTable createAlias(String alias) {
+    return $TodosTable(attachedDatabase, alias);
+  }
+}
+
+class TodoRow extends DataClass implements Insertable<TodoRow> {
+  final String id;
+
+  /// The item text. Named explicitly: a getter called `text` would shadow
+  /// the Drift column builder of the same name.
+  final String body;
+
+  /// ISO instant when the item was checked off; null = open. Unchecking
+  /// clears it. Nothing ever auto-deletes based on this.
+  final String? doneAt;
+
+  /// ISO date `YYYY-MM-DD`, no time. Null = Someday (undated).
+  final String? dueDate;
+
+  /// 'manual' now; 'voice', 'summary', 'notebook' reserved for Phases 2-3.
+  final String source;
+
+  /// Reserved provenance link (dump id / notebook id + block id).
+  final String? sourceRef;
+  final String createdAt;
+  final String updatedAt;
+
+  /// ISO instant of the soft delete; null = live. Soft, not a tombstone
+  /// row: the deletion travels as an ordinary upsert carrying this field,
+  /// and the 5-second undo snackbar restores by clearing it.
+  final String? deletedAt;
+
+  /// Same contract as notebooks: true until the server confirms a push.
+  final bool syncDirty;
+  final int? syncedSeq;
+  const TodoRow(
+      {required this.id,
+      required this.body,
+      this.doneAt,
+      this.dueDate,
+      required this.source,
+      this.sourceRef,
+      required this.createdAt,
+      required this.updatedAt,
+      this.deletedAt,
+      required this.syncDirty,
+      this.syncedSeq});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<String>(id);
+    map['text'] = Variable<String>(body);
+    if (!nullToAbsent || doneAt != null) {
+      map['done_at'] = Variable<String>(doneAt);
+    }
+    if (!nullToAbsent || dueDate != null) {
+      map['due_date'] = Variable<String>(dueDate);
+    }
+    map['source'] = Variable<String>(source);
+    if (!nullToAbsent || sourceRef != null) {
+      map['source_ref'] = Variable<String>(sourceRef);
+    }
+    map['created_at'] = Variable<String>(createdAt);
+    map['updated_at'] = Variable<String>(updatedAt);
+    if (!nullToAbsent || deletedAt != null) {
+      map['deleted_at'] = Variable<String>(deletedAt);
+    }
+    map['sync_dirty'] = Variable<bool>(syncDirty);
+    if (!nullToAbsent || syncedSeq != null) {
+      map['synced_seq'] = Variable<int>(syncedSeq);
+    }
+    return map;
+  }
+
+  TodosCompanion toCompanion(bool nullToAbsent) {
+    return TodosCompanion(
+      id: Value(id),
+      body: Value(body),
+      doneAt:
+          doneAt == null && nullToAbsent ? const Value.absent() : Value(doneAt),
+      dueDate: dueDate == null && nullToAbsent
+          ? const Value.absent()
+          : Value(dueDate),
+      source: Value(source),
+      sourceRef: sourceRef == null && nullToAbsent
+          ? const Value.absent()
+          : Value(sourceRef),
+      createdAt: Value(createdAt),
+      updatedAt: Value(updatedAt),
+      deletedAt: deletedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(deletedAt),
+      syncDirty: Value(syncDirty),
+      syncedSeq: syncedSeq == null && nullToAbsent
+          ? const Value.absent()
+          : Value(syncedSeq),
+    );
+  }
+
+  factory TodoRow.fromJson(Map<String, dynamic> json,
+      {ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return TodoRow(
+      id: serializer.fromJson<String>(json['id']),
+      body: serializer.fromJson<String>(json['body']),
+      doneAt: serializer.fromJson<String?>(json['doneAt']),
+      dueDate: serializer.fromJson<String?>(json['dueDate']),
+      source: serializer.fromJson<String>(json['source']),
+      sourceRef: serializer.fromJson<String?>(json['sourceRef']),
+      createdAt: serializer.fromJson<String>(json['createdAt']),
+      updatedAt: serializer.fromJson<String>(json['updatedAt']),
+      deletedAt: serializer.fromJson<String?>(json['deletedAt']),
+      syncDirty: serializer.fromJson<bool>(json['syncDirty']),
+      syncedSeq: serializer.fromJson<int?>(json['syncedSeq']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<String>(id),
+      'body': serializer.toJson<String>(body),
+      'doneAt': serializer.toJson<String?>(doneAt),
+      'dueDate': serializer.toJson<String?>(dueDate),
+      'source': serializer.toJson<String>(source),
+      'sourceRef': serializer.toJson<String?>(sourceRef),
+      'createdAt': serializer.toJson<String>(createdAt),
+      'updatedAt': serializer.toJson<String>(updatedAt),
+      'deletedAt': serializer.toJson<String?>(deletedAt),
+      'syncDirty': serializer.toJson<bool>(syncDirty),
+      'syncedSeq': serializer.toJson<int?>(syncedSeq),
+    };
+  }
+
+  TodoRow copyWith(
+          {String? id,
+          String? body,
+          Value<String?> doneAt = const Value.absent(),
+          Value<String?> dueDate = const Value.absent(),
+          String? source,
+          Value<String?> sourceRef = const Value.absent(),
+          String? createdAt,
+          String? updatedAt,
+          Value<String?> deletedAt = const Value.absent(),
+          bool? syncDirty,
+          Value<int?> syncedSeq = const Value.absent()}) =>
+      TodoRow(
+        id: id ?? this.id,
+        body: body ?? this.body,
+        doneAt: doneAt.present ? doneAt.value : this.doneAt,
+        dueDate: dueDate.present ? dueDate.value : this.dueDate,
+        source: source ?? this.source,
+        sourceRef: sourceRef.present ? sourceRef.value : this.sourceRef,
+        createdAt: createdAt ?? this.createdAt,
+        updatedAt: updatedAt ?? this.updatedAt,
+        deletedAt: deletedAt.present ? deletedAt.value : this.deletedAt,
+        syncDirty: syncDirty ?? this.syncDirty,
+        syncedSeq: syncedSeq.present ? syncedSeq.value : this.syncedSeq,
+      );
+  TodoRow copyWithCompanion(TodosCompanion data) {
+    return TodoRow(
+      id: data.id.present ? data.id.value : this.id,
+      body: data.body.present ? data.body.value : this.body,
+      doneAt: data.doneAt.present ? data.doneAt.value : this.doneAt,
+      dueDate: data.dueDate.present ? data.dueDate.value : this.dueDate,
+      source: data.source.present ? data.source.value : this.source,
+      sourceRef: data.sourceRef.present ? data.sourceRef.value : this.sourceRef,
+      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+      deletedAt: data.deletedAt.present ? data.deletedAt.value : this.deletedAt,
+      syncDirty: data.syncDirty.present ? data.syncDirty.value : this.syncDirty,
+      syncedSeq: data.syncedSeq.present ? data.syncedSeq.value : this.syncedSeq,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('TodoRow(')
+          ..write('id: $id, ')
+          ..write('body: $body, ')
+          ..write('doneAt: $doneAt, ')
+          ..write('dueDate: $dueDate, ')
+          ..write('source: $source, ')
+          ..write('sourceRef: $sourceRef, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('deletedAt: $deletedAt, ')
+          ..write('syncDirty: $syncDirty, ')
+          ..write('syncedSeq: $syncedSeq')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(id, body, doneAt, dueDate, source, sourceRef,
+      createdAt, updatedAt, deletedAt, syncDirty, syncedSeq);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is TodoRow &&
+          other.id == this.id &&
+          other.body == this.body &&
+          other.doneAt == this.doneAt &&
+          other.dueDate == this.dueDate &&
+          other.source == this.source &&
+          other.sourceRef == this.sourceRef &&
+          other.createdAt == this.createdAt &&
+          other.updatedAt == this.updatedAt &&
+          other.deletedAt == this.deletedAt &&
+          other.syncDirty == this.syncDirty &&
+          other.syncedSeq == this.syncedSeq);
+}
+
+class TodosCompanion extends UpdateCompanion<TodoRow> {
+  final Value<String> id;
+  final Value<String> body;
+  final Value<String?> doneAt;
+  final Value<String?> dueDate;
+  final Value<String> source;
+  final Value<String?> sourceRef;
+  final Value<String> createdAt;
+  final Value<String> updatedAt;
+  final Value<String?> deletedAt;
+  final Value<bool> syncDirty;
+  final Value<int?> syncedSeq;
+  final Value<int> rowid;
+  const TodosCompanion({
+    this.id = const Value.absent(),
+    this.body = const Value.absent(),
+    this.doneAt = const Value.absent(),
+    this.dueDate = const Value.absent(),
+    this.source = const Value.absent(),
+    this.sourceRef = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+    this.deletedAt = const Value.absent(),
+    this.syncDirty = const Value.absent(),
+    this.syncedSeq = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  TodosCompanion.insert({
+    required String id,
+    required String body,
+    this.doneAt = const Value.absent(),
+    this.dueDate = const Value.absent(),
+    this.source = const Value.absent(),
+    this.sourceRef = const Value.absent(),
+    required String createdAt,
+    required String updatedAt,
+    this.deletedAt = const Value.absent(),
+    this.syncDirty = const Value.absent(),
+    this.syncedSeq = const Value.absent(),
+    this.rowid = const Value.absent(),
+  })  : id = Value(id),
+        body = Value(body),
+        createdAt = Value(createdAt),
+        updatedAt = Value(updatedAt);
+  static Insertable<TodoRow> custom({
+    Expression<String>? id,
+    Expression<String>? body,
+    Expression<String>? doneAt,
+    Expression<String>? dueDate,
+    Expression<String>? source,
+    Expression<String>? sourceRef,
+    Expression<String>? createdAt,
+    Expression<String>? updatedAt,
+    Expression<String>? deletedAt,
+    Expression<bool>? syncDirty,
+    Expression<int>? syncedSeq,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (body != null) 'text': body,
+      if (doneAt != null) 'done_at': doneAt,
+      if (dueDate != null) 'due_date': dueDate,
+      if (source != null) 'source': source,
+      if (sourceRef != null) 'source_ref': sourceRef,
+      if (createdAt != null) 'created_at': createdAt,
+      if (updatedAt != null) 'updated_at': updatedAt,
+      if (deletedAt != null) 'deleted_at': deletedAt,
+      if (syncDirty != null) 'sync_dirty': syncDirty,
+      if (syncedSeq != null) 'synced_seq': syncedSeq,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  TodosCompanion copyWith(
+      {Value<String>? id,
+      Value<String>? body,
+      Value<String?>? doneAt,
+      Value<String?>? dueDate,
+      Value<String>? source,
+      Value<String?>? sourceRef,
+      Value<String>? createdAt,
+      Value<String>? updatedAt,
+      Value<String?>? deletedAt,
+      Value<bool>? syncDirty,
+      Value<int?>? syncedSeq,
+      Value<int>? rowid}) {
+    return TodosCompanion(
+      id: id ?? this.id,
+      body: body ?? this.body,
+      doneAt: doneAt ?? this.doneAt,
+      dueDate: dueDate ?? this.dueDate,
+      source: source ?? this.source,
+      sourceRef: sourceRef ?? this.sourceRef,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+      deletedAt: deletedAt ?? this.deletedAt,
+      syncDirty: syncDirty ?? this.syncDirty,
+      syncedSeq: syncedSeq ?? this.syncedSeq,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<String>(id.value);
+    }
+    if (body.present) {
+      map['text'] = Variable<String>(body.value);
+    }
+    if (doneAt.present) {
+      map['done_at'] = Variable<String>(doneAt.value);
+    }
+    if (dueDate.present) {
+      map['due_date'] = Variable<String>(dueDate.value);
+    }
+    if (source.present) {
+      map['source'] = Variable<String>(source.value);
+    }
+    if (sourceRef.present) {
+      map['source_ref'] = Variable<String>(sourceRef.value);
+    }
+    if (createdAt.present) {
+      map['created_at'] = Variable<String>(createdAt.value);
+    }
+    if (updatedAt.present) {
+      map['updated_at'] = Variable<String>(updatedAt.value);
+    }
+    if (deletedAt.present) {
+      map['deleted_at'] = Variable<String>(deletedAt.value);
+    }
+    if (syncDirty.present) {
+      map['sync_dirty'] = Variable<bool>(syncDirty.value);
+    }
+    if (syncedSeq.present) {
+      map['synced_seq'] = Variable<int>(syncedSeq.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('TodosCompanion(')
+          ..write('id: $id, ')
+          ..write('body: $body, ')
+          ..write('doneAt: $doneAt, ')
+          ..write('dueDate: $dueDate, ')
+          ..write('source: $source, ')
+          ..write('sourceRef: $sourceRef, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('deletedAt: $deletedAt, ')
+          ..write('syncDirty: $syncDirty, ')
+          ..write('syncedSeq: $syncedSeq, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$LocalDb extends GeneratedDatabase {
   _$LocalDb(QueryExecutor e) : super(e);
   $LocalDbManager get managers => $LocalDbManager(this);
@@ -6748,6 +7309,7 @@ abstract class _$LocalDb extends GeneratedDatabase {
   late final $InkIndexEntriesTable inkIndexEntries =
       $InkIndexEntriesTable(this);
   late final $LocalSettingsTable localSettings = $LocalSettingsTable(this);
+  late final $TodosTable todos = $TodosTable(this);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -6766,7 +7328,8 @@ abstract class _$LocalDb extends GeneratedDatabase {
         syncTombstones,
         syncStates,
         inkIndexEntries,
-        localSettings
+        localSettings,
+        todos
       ];
   @override
   StreamQueryUpdateRules get streamUpdateRules => const StreamQueryUpdateRules(
@@ -10141,6 +10704,258 @@ typedef $$LocalSettingsTableProcessedTableManager = ProcessedTableManager<
     ),
     LocalSettingRow,
     PrefetchHooks Function()>;
+typedef $$TodosTableCreateCompanionBuilder = TodosCompanion Function({
+  required String id,
+  required String body,
+  Value<String?> doneAt,
+  Value<String?> dueDate,
+  Value<String> source,
+  Value<String?> sourceRef,
+  required String createdAt,
+  required String updatedAt,
+  Value<String?> deletedAt,
+  Value<bool> syncDirty,
+  Value<int?> syncedSeq,
+  Value<int> rowid,
+});
+typedef $$TodosTableUpdateCompanionBuilder = TodosCompanion Function({
+  Value<String> id,
+  Value<String> body,
+  Value<String?> doneAt,
+  Value<String?> dueDate,
+  Value<String> source,
+  Value<String?> sourceRef,
+  Value<String> createdAt,
+  Value<String> updatedAt,
+  Value<String?> deletedAt,
+  Value<bool> syncDirty,
+  Value<int?> syncedSeq,
+  Value<int> rowid,
+});
+
+class $$TodosTableFilterComposer extends Composer<_$LocalDb, $TodosTable> {
+  $$TodosTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get id => $composableBuilder(
+      column: $table.id, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get body => $composableBuilder(
+      column: $table.body, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get doneAt => $composableBuilder(
+      column: $table.doneAt, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get dueDate => $composableBuilder(
+      column: $table.dueDate, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get source => $composableBuilder(
+      column: $table.source, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get sourceRef => $composableBuilder(
+      column: $table.sourceRef, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get createdAt => $composableBuilder(
+      column: $table.createdAt, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get updatedAt => $composableBuilder(
+      column: $table.updatedAt, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get deletedAt => $composableBuilder(
+      column: $table.deletedAt, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<bool> get syncDirty => $composableBuilder(
+      column: $table.syncDirty, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get syncedSeq => $composableBuilder(
+      column: $table.syncedSeq, builder: (column) => ColumnFilters(column));
+}
+
+class $$TodosTableOrderingComposer extends Composer<_$LocalDb, $TodosTable> {
+  $$TodosTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get id => $composableBuilder(
+      column: $table.id, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get body => $composableBuilder(
+      column: $table.body, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get doneAt => $composableBuilder(
+      column: $table.doneAt, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get dueDate => $composableBuilder(
+      column: $table.dueDate, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get source => $composableBuilder(
+      column: $table.source, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get sourceRef => $composableBuilder(
+      column: $table.sourceRef, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get createdAt => $composableBuilder(
+      column: $table.createdAt, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get updatedAt => $composableBuilder(
+      column: $table.updatedAt, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get deletedAt => $composableBuilder(
+      column: $table.deletedAt, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<bool> get syncDirty => $composableBuilder(
+      column: $table.syncDirty, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get syncedSeq => $composableBuilder(
+      column: $table.syncedSeq, builder: (column) => ColumnOrderings(column));
+}
+
+class $$TodosTableAnnotationComposer extends Composer<_$LocalDb, $TodosTable> {
+  $$TodosTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<String> get body =>
+      $composableBuilder(column: $table.body, builder: (column) => column);
+
+  GeneratedColumn<String> get doneAt =>
+      $composableBuilder(column: $table.doneAt, builder: (column) => column);
+
+  GeneratedColumn<String> get dueDate =>
+      $composableBuilder(column: $table.dueDate, builder: (column) => column);
+
+  GeneratedColumn<String> get source =>
+      $composableBuilder(column: $table.source, builder: (column) => column);
+
+  GeneratedColumn<String> get sourceRef =>
+      $composableBuilder(column: $table.sourceRef, builder: (column) => column);
+
+  GeneratedColumn<String> get createdAt =>
+      $composableBuilder(column: $table.createdAt, builder: (column) => column);
+
+  GeneratedColumn<String> get updatedAt =>
+      $composableBuilder(column: $table.updatedAt, builder: (column) => column);
+
+  GeneratedColumn<String> get deletedAt =>
+      $composableBuilder(column: $table.deletedAt, builder: (column) => column);
+
+  GeneratedColumn<bool> get syncDirty =>
+      $composableBuilder(column: $table.syncDirty, builder: (column) => column);
+
+  GeneratedColumn<int> get syncedSeq =>
+      $composableBuilder(column: $table.syncedSeq, builder: (column) => column);
+}
+
+class $$TodosTableTableManager extends RootTableManager<
+    _$LocalDb,
+    $TodosTable,
+    TodoRow,
+    $$TodosTableFilterComposer,
+    $$TodosTableOrderingComposer,
+    $$TodosTableAnnotationComposer,
+    $$TodosTableCreateCompanionBuilder,
+    $$TodosTableUpdateCompanionBuilder,
+    (TodoRow, BaseReferences<_$LocalDb, $TodosTable, TodoRow>),
+    TodoRow,
+    PrefetchHooks Function()> {
+  $$TodosTableTableManager(_$LocalDb db, $TodosTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$TodosTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$TodosTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$TodosTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback: ({
+            Value<String> id = const Value.absent(),
+            Value<String> body = const Value.absent(),
+            Value<String?> doneAt = const Value.absent(),
+            Value<String?> dueDate = const Value.absent(),
+            Value<String> source = const Value.absent(),
+            Value<String?> sourceRef = const Value.absent(),
+            Value<String> createdAt = const Value.absent(),
+            Value<String> updatedAt = const Value.absent(),
+            Value<String?> deletedAt = const Value.absent(),
+            Value<bool> syncDirty = const Value.absent(),
+            Value<int?> syncedSeq = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              TodosCompanion(
+            id: id,
+            body: body,
+            doneAt: doneAt,
+            dueDate: dueDate,
+            source: source,
+            sourceRef: sourceRef,
+            createdAt: createdAt,
+            updatedAt: updatedAt,
+            deletedAt: deletedAt,
+            syncDirty: syncDirty,
+            syncedSeq: syncedSeq,
+            rowid: rowid,
+          ),
+          createCompanionCallback: ({
+            required String id,
+            required String body,
+            Value<String?> doneAt = const Value.absent(),
+            Value<String?> dueDate = const Value.absent(),
+            Value<String> source = const Value.absent(),
+            Value<String?> sourceRef = const Value.absent(),
+            required String createdAt,
+            required String updatedAt,
+            Value<String?> deletedAt = const Value.absent(),
+            Value<bool> syncDirty = const Value.absent(),
+            Value<int?> syncedSeq = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              TodosCompanion.insert(
+            id: id,
+            body: body,
+            doneAt: doneAt,
+            dueDate: dueDate,
+            source: source,
+            sourceRef: sourceRef,
+            createdAt: createdAt,
+            updatedAt: updatedAt,
+            deletedAt: deletedAt,
+            syncDirty: syncDirty,
+            syncedSeq: syncedSeq,
+            rowid: rowid,
+          ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ));
+}
+
+typedef $$TodosTableProcessedTableManager = ProcessedTableManager<
+    _$LocalDb,
+    $TodosTable,
+    TodoRow,
+    $$TodosTableFilterComposer,
+    $$TodosTableOrderingComposer,
+    $$TodosTableAnnotationComposer,
+    $$TodosTableCreateCompanionBuilder,
+    $$TodosTableUpdateCompanionBuilder,
+    (TodoRow, BaseReferences<_$LocalDb, $TodosTable, TodoRow>),
+    TodoRow,
+    PrefetchHooks Function()>;
 
 class $LocalDbManager {
   final _$LocalDb _db;
@@ -10173,4 +10988,6 @@ class $LocalDbManager {
       $$InkIndexEntriesTableTableManager(_db, _db.inkIndexEntries);
   $$LocalSettingsTableTableManager get localSettings =>
       $$LocalSettingsTableTableManager(_db, _db.localSettings);
+  $$TodosTableTableManager get todos =>
+      $$TodosTableTableManager(_db, _db.todos);
 }

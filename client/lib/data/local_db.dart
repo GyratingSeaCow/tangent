@@ -320,6 +320,52 @@ class InkIndexEntries extends Table {
   Set<Column> get primaryKey => {id};
 }
 
+/// To-do items (v23, Phase 1 of the To Do arc): a first-class synced
+/// entity, device-authored like notebooks, newer-wins on `updated_at`,
+/// soft-deleted so a delete can fan out (and be undone) instead of
+/// vanishing.
+///
+/// Timestamps are ISO-8601 TEXT — the wire format verbatim — rather than
+/// epoch integers, so a payload field and its column read identically and
+/// no conversion can drift between push and pull. `due_date` is a bare
+/// `YYYY-MM-DD`: due dates have no time component by design.
+@DataClassName('TodoRow')
+class Todos extends Table {
+  @override
+  String get tableName => 'todos';
+  TextColumn get id => text()();
+
+  /// The item text. Named explicitly: a getter called `text` would shadow
+  /// the Drift column builder of the same name.
+  TextColumn get body => text().named('text')();
+
+  /// ISO instant when the item was checked off; null = open. Unchecking
+  /// clears it. Nothing ever auto-deletes based on this.
+  TextColumn get doneAt => text().nullable()();
+
+  /// ISO date `YYYY-MM-DD`, no time. Null = Someday (undated).
+  TextColumn get dueDate => text().nullable()();
+
+  /// 'manual' now; 'voice', 'summary', 'notebook' reserved for Phases 2-3.
+  TextColumn get source => text().withDefault(const Constant('manual'))();
+
+  /// Reserved provenance link (dump id / notebook id + block id).
+  TextColumn get sourceRef => text().nullable()();
+  TextColumn get createdAt => text()();
+  TextColumn get updatedAt => text()();
+
+  /// ISO instant of the soft delete; null = live. Soft, not a tombstone
+  /// row: the deletion travels as an ordinary upsert carrying this field,
+  /// and the 5-second undo snackbar restores by clearing it.
+  TextColumn get deletedAt => text().nullable()();
+
+  /// Same contract as notebooks: true until the server confirms a push.
+  BoolColumn get syncDirty => boolean().withDefault(const Constant(true))();
+  IntColumn get syncedSeq => integer().nullable()();
+  @override
+  Set<Column> get primaryKey => {id};
+}
+
 @DriftDatabase(
   tables: [
     Dumps,
@@ -336,6 +382,7 @@ class InkIndexEntries extends Table {
     SyncStates,
     InkIndexEntries,
     LocalSettings,
+    Todos,
   ],
 )
 class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
@@ -344,7 +391,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   LocalDb.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 22;
+  int get schemaVersion => 23;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -805,6 +852,18 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
               if (!dumpCols.contains('summary_error_dismissed_at')) {
                 await m.addColumn(dumps, dumps.summaryErrorDismissedAt);
               }
+            }
+          }
+          if (from < 23) {
+            // v1.23.0: the todos table (To Do arc Phase 1). Ask-the-database
+            // guard like v15/v20: a fresh install's onCreate already built
+            // it, and createTable on an existing table is a hard failure.
+            final List<QueryRow> todosTable = await customSelect(
+              "SELECT name FROM sqlite_master WHERE type='table' "
+              "AND name='todos'",
+            ).get();
+            if (todosTable.isEmpty) {
+              await m.createTable(todos);
             }
           }
         },
@@ -1499,6 +1558,78 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
       NotebooksCompanion(
         deletedAt: Value(DateTime.now().millisecondsSinceEpoch),
       ),
+    );
+  }
+
+  // ---- todos (To Do arc Phase 1) -----------------------------------------
+
+  /// Sentinel distinguishing "the payload did not carry the key" from "the
+  /// payload explicitly sent null" for [applyRemoteTodo]'s nullable fields.
+  /// Same discipline as [absentSummaryField]: an older client whose payload
+  /// is missing a key must not erase what this device already holds, while
+  /// a present null is authoritative (an undated todo, an unchecked todo).
+  static const Object absentTodoField = Object();
+
+  /// One todo row, or null. Used by merge to see what is already here.
+  Future<TodoRow?> getTodoRow(String id) =>
+      (select(todos)..where((t) => t.id.equals(id))).getSingleOrNull();
+
+  /// Todos with local edits the server has not confirmed. Soft-deleted rows
+  /// stay IN: unlike notebooks the deletion is a field on the row, not a
+  /// tombstone, so the delete itself has to travel as a dirty upsert.
+  Future<List<TodoRow>> todosNeedingPush() =>
+      (select(todos)..where((t) => t.syncDirty.equals(true))).get();
+
+  /// Marks a todo as accepted by the server at [seq]. Guarded on
+  /// `updated_at` exactly like [markNotebookSynced]: an edit that landed
+  /// while the push was in flight must stay dirty.
+  Future<void> markTodoSynced(
+    String id, {
+    required int seq,
+    required String pushedUpdatedAt,
+  }) async {
+    await (update(todos)
+          ..where((t) => t.id.equals(id) & t.updatedAt.equals(pushedUpdatedAt)))
+        .write(
+      TodosCompanion(syncDirty: const Value(false), syncedSeq: Value(seq)),
+    );
+  }
+
+  /// Applies a todo the server sent us.
+  ///
+  /// Marked clean, not dirty: this content CAME from the server, so pushing
+  /// it back would echo forever between devices. Absent nullable fields
+  /// keep whatever this device already holds (see [absentTodoField]).
+  Future<void> applyRemoteTodo({
+    required String id,
+    required String text,
+    required String createdAt,
+    required String updatedAt,
+    required int seq,
+    String? source,
+    Object? doneAt = absentTodoField,
+    Object? dueDate = absentTodoField,
+    Object? sourceRef = absentTodoField,
+    Object? deletedAt = absentTodoField,
+  }) async {
+    final TodoRow? existing = await getTodoRow(id);
+    String? resolve(Object? incoming, String? held) =>
+        identical(incoming, absentTodoField) ? held : incoming as String?;
+    await into(todos).insert(
+      TodosCompanion.insert(
+        id: id,
+        body: text,
+        createdAt: createdAt,
+        updatedAt: updatedAt,
+        source: Value(source ?? existing?.source ?? 'manual'),
+        doneAt: Value(resolve(doneAt, existing?.doneAt)),
+        dueDate: Value(resolve(dueDate, existing?.dueDate)),
+        sourceRef: Value(resolve(sourceRef, existing?.sourceRef)),
+        deletedAt: Value(resolve(deletedAt, existing?.deletedAt)),
+        syncDirty: const Value(false),
+        syncedSeq: Value(seq),
+      ),
+      mode: InsertMode.insertOrReplace,
     );
   }
 
