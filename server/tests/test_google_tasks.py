@@ -120,6 +120,8 @@ def test_disconnected_connect_callback_connected_status(google_api, monkeypatch)
         "last_error": None,
         "pushed": 0,
         "pulled": 0,
+        "lists": [],
+        "last_cycle": {"pushed": 0, "pulled": 0, "moved": 0},
     }
     state = _save_and_start(client, token)
     pending = client.get("/v1/google-tasks/status", headers=_headers(token)).json()
@@ -406,9 +408,9 @@ def test_pull_lww_google_newer_wins_local_newer_kept_equal_skipped(
             monkeypatch,
             lambda method, url, kwargs: FakeResponse(200, {"items": remote}),
         )
-        pulled, updated_min = google_tasks_worker._pull(db, "list-1", "access", None)
-        assert pulled == 1
-        assert updated_min == "2026-09-27T14:59:59.000Z"
+        result = google_tasks_worker._pull(db, "list-1", "access", None)
+        assert result.pulled == 1
+        assert result.next_updated_min == "2026-09-27T14:59:59.000Z"
         assert db.execute("SELECT text FROM todos WHERE id='google-wins'").fetchone()[0] == "google"
         assert db.execute("SELECT text FROM todos WHERE id='local-wins'").fetchone()[0] == "local"
         assert db.execute("SELECT text FROM todos WHERE id='equal'").fetchone()[0] == "equal-local"

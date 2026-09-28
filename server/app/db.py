@@ -257,6 +257,7 @@ CREATE TABLE IF NOT EXISTS google_tasks_link (
     last_sync_at TEXT,
     last_pushed INTEGER NOT NULL DEFAULT 0,
     last_pulled INTEGER NOT NULL DEFAULT 0,
+    last_moved INTEGER NOT NULL DEFAULT 0,
     oauth_state TEXT,
     oauth_state_expires_at INTEGER
 );
@@ -627,6 +628,11 @@ def _migrate_google_lists(conn: sqlite3.Connection) -> None:
     todo_columns = {row[1] for row in conn.execute("PRAGMA table_info(todos)")}
     if "google_tasklist_id" not in todo_columns:
         conn.execute("ALTER TABLE todos ADD COLUMN google_tasklist_id TEXT")
+    link_columns = {row[1] for row in conn.execute("PRAGMA table_info(google_tasks_link)")}
+    if "last_moved" not in link_columns:
+        conn.execute(
+            "ALTER TABLE google_tasks_link ADD COLUMN last_moved INTEGER NOT NULL DEFAULT 0"
+        )
     link = conn.execute(
         "SELECT tasklist_id, last_pull_updated_min FROM google_tasks_link WHERE id = 1"
     ).fetchone()
