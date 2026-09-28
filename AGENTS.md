@@ -50,13 +50,28 @@ ADH2/
 
 ## Status
 
-Shipping — **v1.30.0** (see CHANGELOG.md). Client and server are both
-implemented and tested (2535
-Flutter tests, 612 server tests, 100 Kotlin tests). The client runs
+Shipping — **v1.31.0** (see CHANGELOG.md). Client and server are both
+implemented and tested (2546
+Flutter tests, 612 server tests, 123 Kotlin tests). The client runs
 natively on Linux AND Windows (tray icon, global record hotkey,
 close-to-tray, single instance, right-click = long-press; AppImage and
 Inno Setup installer under `packaging/`) — verified on CachyOS/KDE
 Plasma Wayland and Windows 11; see the README's Desktop sections.
+
+v1.31.0 (client-only, Android) **hands-free record**. One spine, two
+triggers: the VIEW deep link `tangent://record` lands the app already
+recording (H1 instant; H2 a second trigger STOPS; H3 shows over the lock
+screen only for that intent — `WidgetLaunchIntents.showOverLockScreen`,
+never for a plain launch; H4 always a Brain Dump). Cold start stashes a
+read-once command (`LaunchRouter`, `takeLaunchCommand`), warm start pushes
+method `command`; Dart holds it on `captureReadyProvider` and applies it
+ONCE through the same `toggle-record` path as the desktop hotkey. Trigger
+1: App Actions `custom.actions.intent.START_RECORDING_TANGENT` (the name
+MUST NOT start with `actions.intent`) + a static 'Record' shortcut —
+'Hey Google, start recording in Tangent'; Assistant indexes it after a
+launch or two. Trigger 2: 1x1 `RecordWidgetProvider` widget, red #FF3B30
+disc + white mic (`ic_widget_mic`), PendingIntent to the same URI. See
+docs/design/2026-09-28-hands-free-record.md.
 
 v1.30.0 **folders ↔ Google lists** (server) + **To Do ↻ pushes to Google**
 (client). Each live folder owns a Google list named exactly like it

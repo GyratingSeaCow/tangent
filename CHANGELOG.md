@@ -5,6 +5,16 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.31.0 — 2026-09-28
+
+### Added
+- **Record without opening the app.** A 1×1 home-screen widget (the red
+  mic from the main screen) starts a brain dump the moment you tap it;
+  tap again to stop. Works from the lock screen. Long-press the app icon
+  for the same 'Record' shortcut.
+- **"Hey Google, start recording in Tangent."** Google Assistant can start
+  (and stop) a recording. Give it a launch or two after installing to
+  learn the phrase.
 ## 1.30.0 — 2026-09-28
 
 ### Added
