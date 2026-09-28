@@ -50,13 +50,30 @@ ADH2/
 
 ## Status
 
-Shipping — **v1.32.0** (see CHANGELOG.md). Client and server are both
-implemented and tested (2586
-Flutter tests, 612 server tests, 123 Kotlin tests). The client runs
+Shipping — **v1.33.0** (see CHANGELOG.md). Client and server are both
+implemented and tested (2606
+Flutter tests, 612 server tests, 129 Kotlin tests). The client runs
 natively on Linux AND Windows (tray icon, global record hotkey,
 close-to-tray, single instance, right-click = long-press; AppImage and
 Inno Setup installer under `packaging/`) — verified on CachyOS/KDE
 Plasma Wayland and Windows 11; see the README's Desktop sections.
+
+v1.33.0 (client-only) **completion notifications**, spec
+docs/design/2026-09-28-completion-notifications.md. Pure `CompletionNotifier`
+(`services/completion_notifications.dart`), fixed ids 1002 transcribed/failed
+and 1003 notes-ready, replace-not-stack; Android port on channel `completion`
+(payload `dump:<id>`), desktop via local_notifier. N4 sources fire where the
+fact is learned: `ServerTranscriptionService` outcome hook (only when THIS
+device's status write won) and `DocumentSyncEngine._reportSummaryLanded`
+(only when the row's `summaryRequestedAt` was set — this device asked — and
+the text is new or the marker was spent; exactly once). N3: `currentDumpIdProvider`
+set by `DumpDetailScreen` post-frame and cleared on dispose through a
+controller captured while alive — never `ref` in dispose, and both writes
+deferred a microtask so a mid-build dispose cannot trip Riverpod (114 tests
+failed on the first cut). N2: `tangent://dump/<id>` VIEW route through
+`LaunchRouter` (`takeDump` cold read-once, `openDump` warm push, held without
+channel) → `WidgetLaunch.dumpOpens` → `openDumpFromLaunch`. N6:
+`completionNotificationsEnabled` (default true) under Settings → Reminders.
 
 v1.32.0 (client-only) **leftovers sweep** L1-L5, spec
 docs/design/2026-09-28-leftovers-sweep.md. L1 'Regenerate notes' asks the

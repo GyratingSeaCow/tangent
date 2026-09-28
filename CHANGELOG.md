@@ -5,6 +5,12 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.33.0 — 2026-09-28
+
+### Added
+- **Completion notifications.** The shade now announces the result, not just the work: `Transcribed · <title>` when a transcription finishes (or `Transcription failed · <title>`), and `Notes ready · <title>` when the AI summary this device asked for lands. One slot each (ids 1002/1003) — a burst of recordings replaces the notice rather than stacking ten. Tapping opens that recording (`tangent://dump/<id>`, cold or warm), and the notice is skipped when you are already looking at it. Desktop gets the same via the reminder toast path.
+- Settings → Reminders: **Completion notifications** switch (default on).
+
 ## 1.32.0 — 2026-09-28
 
 ### Added
