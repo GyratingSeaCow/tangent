@@ -105,9 +105,10 @@ class _ObsidianExportSectionState extends ConsumerState<ObsidianExportSection> {
     // L4: the word switch exists only when some recording has word-level
     // timings — otherwise it could change nothing, and a control that
     // silently does nothing reads as broken. While the lookup is still
-    // running (or failed) the switch is absent, not disabled.
+    // running (or failed — `value` would rethrow, `valueOrNull` does not)
+    // the switch is absent, not disabled.
     final bool wordTimingsExist =
-        ref.watch(obsidianWordTimingsAvailableProvider).value ?? false;
+        ref.watch(obsidianWordTimingsAvailableProvider).valueOrNull ?? false;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
