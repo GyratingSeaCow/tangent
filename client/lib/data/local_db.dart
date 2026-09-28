@@ -912,6 +912,11 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   /// Key of the settings row recording what [_backfillSpeakerNames] did.
   static const String speakerNamesBackfillKey = 'speaker_names_backfill';
 
+  /// Key of the settings row listing the dump ids [_backfillSpeakerNames]
+  /// REFUSED to convert (ambiguous pairing, spec L5): a JSON list, local
+  /// only. Home shows it once as a banner; dismissing deletes the row.
+  static const String speakerBackfillSkippedKey = 'speaker_backfill_skipped';
+
   /// One-time conversion of the v1.15.0 rewrite-in-place (spec §2).
   ///
   /// For every dump whose transcript carries a user speaker heading
@@ -928,13 +933,19 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
       "WHERE transcript IS NOT NULL AND transcript LIKE '%## %'",
     ).get();
     final Map<String, dynamic> record = <String, dynamic>{};
+    final List<String> skipped = <String>[];
     final int now = DateTime.now().toUtc().millisecondsSinceEpoch ~/ 1000;
     for (final QueryRow row in rows) {
       final String id = row.data['id'] as String;
       final String transcript = row.data['transcript'] as String;
       final SpeakerNamesBackfillPlan? plan =
           planSpeakerNamesBackfill(transcript);
-      if (plan == null) continue;
+      if (plan == null) {
+        // Refused (ambiguous pairing) is recorded so Home can say so once;
+        // a transcript with nothing to convert is simply not a skip.
+        if (speakerNamesBackfillRefused(transcript)) skipped.add(id);
+        continue;
+      }
       await customUpdate(
         'UPDATE dumps SET transcript = ?, speaker_names = ?, '
         'updated_at = ?, sync_dirty = 1 WHERE id = ?',
@@ -948,6 +959,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
       );
       record[id] = plan.toJson();
     }
+    await _recordSpeakerBackfillSkipped(skipped);
     if (record.isEmpty) return;
     final List<QueryRow> prior = await customSelect(
       'SELECT value FROM settings WHERE key = ?',
@@ -967,6 +979,40 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
       'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)',
       <Object>[speakerNamesBackfillKey, jsonEncode(record)],
     );
+  }
+
+  /// Unions [skipped] into the `speaker_backfill_skipped` row (spec L5).
+  /// Writes nothing when there is nothing to add, so a re-run of the v20
+  /// step never resurrects a list the user already dismissed.
+  Future<void> _recordSpeakerBackfillSkipped(List<String> skipped) async {
+    if (skipped.isEmpty) return;
+    final List<String> ids = await speakerBackfillSkippedIds();
+    for (final String id in skipped) {
+      if (!ids.contains(id)) ids.add(id);
+    }
+    await customStatement(
+      'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)',
+      <Object>[speakerBackfillSkippedKey, jsonEncode(ids)],
+    );
+  }
+
+  /// Dump ids the back-fill refused, oldest first; empty when none or
+  /// after [clearSpeakerBackfillSkipped].
+  Future<List<String>> speakerBackfillSkippedIds() async {
+    final LocalSettingRow? row = await (select(localSettings)
+          ..where((s) => s.key.equals(speakerBackfillSkippedKey)))
+        .getSingleOrNull();
+    if (row == null) return <String>[];
+    final Object? decoded = jsonDecode(row.value);
+    if (decoded is! List) return <String>[];
+    return decoded.whereType<String>().toList();
+  }
+
+  /// Deletes the skipped list: the banner was dismissed.
+  Future<void> clearSpeakerBackfillSkipped() async {
+    await (delete(localSettings)
+          ..where((s) => s.key.equals(speakerBackfillSkippedKey)))
+        .go();
   }
 
   /// The back-fill record, or null when no dump was ever converted.
