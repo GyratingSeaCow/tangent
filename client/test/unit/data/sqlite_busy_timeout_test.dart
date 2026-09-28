@@ -11,6 +11,7 @@
 library;
 
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqlite3/sqlite3.dart';
@@ -32,51 +33,51 @@ void main() {
     final Database a = sqlite3.open(path)
       ..execute('CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)');
     configureSqlite(a);
+    a.dispose();
+
+    // Another ISOLATE holds a write transaction for [holdMs] — exactly the
+    // shape of the bug (a WorkManager isolate mid-write while the app
+    // records). It must be a separate isolate: this one blocks inside
+    // `b.execute` below, so a same-isolate holder could never release.
+    //
+    // Why the hold is SHORT (25 ms, not seconds): SQLite's default busy
+    // handler sleeps in ~1-100 ms steps and counts the PLANNED sleep, not
+    // wall time. Under flutter_tester (Dart JIT, sampling profiler on) on
+    // Linux, SIGPROF interrupts every nanosleep after ~1 ms, so a 5000 ms
+    // busy_timeout is exhausted after ~59 retries ≈ 60 ms of real time
+    // (CI saw 64-310 ms; strace: `clock_nanosleep = ERESTART_RESTARTBLOCK`).
+    // Windows Sleep() is not interruptible and release builds have no
+    // profiler, so the app is fine — but the test may only rely on the
+    // handler RETRYING, never on how long it keeps retrying.
+    final ReceivePort held = ReceivePort();
+    final ReceivePort done = ReceivePort();
+    final Isolate holder = await Isolate.spawn(
+      _holdWriteLock,
+      _HoldArgs(path, held.sendPort, done.sendPort, holdMs: 25),
+    );
+    addTearDown(holder.kill);
+    await held.first;
+
     final Database b = sqlite3.open(path);
     configureSqlite(b);
-    addTearDown(() {
-      a.dispose();
-      b.dispose();
-    });
-
-    // Connection A holds a write transaction for 300 ms; B tries to write
-    // meanwhile. Without a busy handler B throws code 5 immediately.
-    a.execute('BEGIN IMMEDIATE');
-    a.execute("INSERT INTO t (v) VALUES ('from a')");
+    addTearDown(b.dispose);
     final Stopwatch clock = Stopwatch()..start();
-    final Future<void> release = Future<void>.delayed(
-      const Duration(milliseconds: 300),
-      () => a.execute('COMMIT'),
-    );
+    // Without a busy handler this throws code 5 in well under a millisecond.
+    b.execute("INSERT INTO t (v) VALUES ('from b')");
+    clock.stop();
+    await done.first;
 
-    // sqlite3's busy handler sleeps synchronously inside this call; the
-    // COMMIT above runs from the event loop after it returns, so B's wait
-    // must be bounded by busy_timeout, not by A's release, for this to be
-    // a real test of the handler: assert B blocked (did not throw) and that
-    // once A releases, B's write lands.
-    Object? error;
-    try {
-      b.execute("INSERT INTO t (v) VALUES ('from b')");
-    } catch (e) {
-      error = e;
-    }
-    await release;
-    if (error != null) {
-      // B gave up only if it waited at least the configured timeout.
-      expect(
-        clock.elapsedMilliseconds,
-        greaterThanOrEqualTo(4900),
-        reason: 'a busy handler must wait, not fail instantly: $error',
-      );
-      b.execute("INSERT INTO t (v) VALUES ('from b')");
-    }
+    expect(
+      clock.elapsedMilliseconds,
+      greaterThanOrEqualTo(20),
+      reason: 'B must have blocked on the held lock, not slipped past it',
+    );
     expect(
       b.select('SELECT count(*) AS n FROM t').first['n'],
       2,
       reason: 'both writers landed',
     );
   });
-
   test('configureSqlite turns on WAL and a 5 s busy timeout', () {
     final Database db = sqlite3.open(path);
     addTearDown(db.dispose);
@@ -84,4 +85,26 @@ void main() {
     expect(db.select('PRAGMA journal_mode').first.values.first, 'wal');
     expect(db.select('PRAGMA busy_timeout').first.values.first, 5000);
   });
+}
+
+class _HoldArgs {
+  const _HoldArgs(this.path, this.held, this.done, {required this.holdMs});
+  final String path;
+  final SendPort held;
+  final SendPort done;
+  final int holdMs;
+}
+
+/// Opens its own connection, takes the write lock, signals [held], keeps it
+/// for [holdMs], commits, signals [done].
+Future<void> _holdWriteLock(_HoldArgs args) async {
+  final Database a = sqlite3.open(args.path);
+  configureSqlite(a);
+  a.execute('BEGIN IMMEDIATE');
+  a.execute("INSERT INTO t (v) VALUES ('from a')");
+  args.held.send(null);
+  await Future<void>.delayed(Duration(milliseconds: args.holdMs));
+  a.execute('COMMIT');
+  a.dispose();
+  args.done.send(null);
 }
