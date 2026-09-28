@@ -23,24 +23,32 @@ class _FakeRecorder implements InputAwareAudioRecorder {
   /// How long after start() the fake begins reporting real amplitude.
   final Duration? evidenceAfter;
 
-  DateTime? startedAt;
+  /// Monotonic, like the test's own Stopwatch. Measuring the fake with
+  /// `DateTime.now()` while the assertion reads a `Stopwatch` lets the two
+  /// clocks disagree by one wall-clock tick (~15.6 ms on Windows), which
+  /// is larger than the assertion's slack — CI saw 137.5 ms against a
+  /// 150 ms fake. Same clock on both sides makes the ordering exact.
+  final Stopwatch _since = Stopwatch();
   int amplitudePolls = 0;
 
   double get _amplitudeNow {
-    final at = startedAt;
     final after = evidenceAfter;
-    if (at == null || after == null) return -160.0;
-    return DateTime.now().difference(at) >= after ? -42.0 : -160.0;
+    if (!_since.isRunning || after == null) return -160.0;
+    return _since.elapsed >= after ? -42.0 : -160.0;
   }
 
   @override
   Future<void> start(RecordConfig config, {required String path}) async {
-    startedAt = DateTime.now();
+    _since
+      ..reset()
+      ..start();
   }
 
   @override
   Future<Stream<Uint8List>> startStream(RecordConfig config) async {
-    startedAt = DateTime.now();
+    _since
+      ..reset()
+      ..start();
     return const Stream<Uint8List>.empty();
   }
 

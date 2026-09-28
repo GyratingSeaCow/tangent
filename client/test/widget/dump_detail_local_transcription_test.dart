@@ -2115,11 +2115,18 @@ String _editorText(WidgetTester tester, String dumpId) => tester
     .controller!
     .text;
 
+/// Deadlock guard for the real-I/O waits below (SQLite + sidecar writes on
+/// the test's own disk). It is not an assertion — the `expect`s after each
+/// wait are. 5 s lost the race on the windows-2022 release runner under
+/// full-suite load ("Timed out waiting for metadata edit-save"); budget in
+/// tens of seconds so a slow runner cannot fail working code.
+const Duration kDeadlockGuard = Duration(seconds: 30);
+
 Future<void> _waitForRealCondition(
   FutureOr<bool> Function() predicate, {
   required String description,
 }) async {
-  final deadline = DateTime.now().add(const Duration(seconds: 5));
+  final deadline = DateTime.now().add(kDeadlockGuard);
   while (!await predicate()) {
     if (DateTime.now().isAfter(deadline)) {
       fail('Timed out waiting for $description');
