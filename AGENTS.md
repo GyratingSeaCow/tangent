@@ -50,13 +50,31 @@ ADH2/
 
 ## Status
 
-Shipping — **v1.27.0** (see CHANGELOG.md). Client and server are both
-implemented and tested (2420
+Shipping — **v1.28.0** (see CHANGELOG.md). Client and server are both
+implemented and tested (2466
 Flutter tests, 586 server tests, 100 Kotlin tests). The client runs
 natively on Linux AND Windows (tray icon, global record hotkey,
 close-to-tray, single instance, right-click = long-press; AppImage and
 Inno Setup installer under `packaging/`) — verified on CachyOS/KDE
 Plasma Wayland and Windows 11; see the README's Desktop sections.
+
+v1.28.0 (client-only) ships two halves. **Re-transcription duplicate
+guard**: voice capture is keyed by (recording, SHA-1 of the parsed
+result) in the LOCAL-ONLY column todos.capture_fingerprint (client DB
+v25; never pushed, never read from pull). Same fingerprint = no-op; a
+changed transcript adds new-text items, keeps same-text rows (enriching
+due_date only when missing), never deletes stale rows, never resurrects
+an Undo. Pull-time dedupe: an incoming voice todo matching a local live
+voice row on source_ref+text keeps the OLDER created_at and soft-deletes
+the other (heals cross-device duplicates without a server change).
+**Daily due-date reminder** (Android only, OFF by default): Settings →
+Reminders — one digest notification ('Due today: a, b · N overdue'; none
+when nothing is due) at a chosen time (default 07:00), exact alarm with
+inexact fallback, body built at FIRE time by a workmanager one-off
+(tangent.dueReminder.daily), survives reboot, tap opens To Do.
+notification_plugin_init.dart guards FlutterLocalNotificationsPlugin.
+initialize(), which REPLACES the tap callback on every call. See
+docs/design/2026-09-27-retranscribe-guard-and-due-reminders.md.
 
 v1.27.0 (client-only) lifts v1.26.0's two limits: **relative dates**
 (today, tomorrow, day after tomorrow, weekday names + short forms,

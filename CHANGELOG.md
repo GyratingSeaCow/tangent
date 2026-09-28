@@ -5,6 +5,21 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.28.0 — 2026-09-27
+
+### Added
+- **Morning reminder** (Android). Settings → Reminders: one notification
+  at the time you pick (7:00 am by default) listing what's due today and
+  how many items are overdue; nothing is sent on a clear day. Tap it to
+  open To Do. Off until you turn it on.
+
+### Fixed
+- **Re-transcribing a recording no longer loses or doubles its to-dos.** A
+  changed transcript adds the new items and keeps the ones you already
+  have (and anything you edited); an item you deleted stays deleted.
+- **Duplicate voice to-dos from two devices heal themselves** on the next
+  sync — the older copy wins, the other is removed.
+- Client-only; version kept uniform.
 ## 1.27.0 — 2026-09-27
 
 ### Added
