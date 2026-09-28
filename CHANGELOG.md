@@ -5,6 +5,19 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.29.0 — 2026-09-27
+
+### Added
+- **Morning reminder on the desktop** (Linux and Windows). Same digest as
+  the phone, as a system notification; click it to open To Do. If the PC
+  was off at the time, the first launch that day shows it marked
+  *Missed 7:00*.
+- **More ways to say when.** "call mom tomorrow at 3 pm" keeps the time in
+  the item and files it under tomorrow; "this weekend" is Saturday; "on
+  the 15th" is the next 15th; "a week from Friday"; "tonight" and "this
+  afternoon" mean today.
+- **Sync button on the To Do page**, same as Recordings and Notebooks.
+- Client-only; version kept uniform.
 ## 1.28.1 — 2026-09-27
 
 ### Fixed

@@ -50,13 +50,32 @@ ADH2/
 
 ## Status
 
-Shipping — **v1.28.1** (see CHANGELOG.md). Client and server are both
-implemented and tested (2467
+Shipping — **v1.29.0** (see CHANGELOG.md). Client and server are both
+implemented and tested (2515
 Flutter tests, 586 server tests, 100 Kotlin tests). The client runs
 natively on Linux AND Windows (tray icon, global record hotkey,
 close-to-tray, single instance, right-click = long-press; AppImage and
 Inno Setup installer under `packaging/`) — verified on CachyOS/KDE
 Plasma Wayland and Windows 11; see the README's Desktop sections.
+
+v1.29.0 (client-only). **Desktop reminders** (Linux + Windows via
+local_notifier behind a DesktopNotifier seam): in-process Timer, digest
+built LIVE at fire time, click raises the window and opens To Do; K1
+catch-up on app start — if the chosen time passed today and
+SettingsStore.lastReminderShownDay != today, post once with the title
+prefix 'Missed H:MM · '. Gate is remindersSupportedProvider
+(Android||Linux||Windows). Windows release build needs
+CL=/D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS (pre-existing).
+**Voice-date follow-ups** V1-V5: times of day stay in the text and the
+adjacent date is taken ('call mom tomorrow at 3 pm' → 'call mom at 3 pm'
+due tomorrow, either order; a time alone is never a date); 'this
+weekend' = coming Saturday, 'next weekend' the one after; bare ordinal
+day-of-month ('on the 15th', suffix required) → next such day, skipping
+short months; 'a week from <phrase>' = inner + 7N; tonight / this
+morning|afternoon|evening / end of the day → today with the word KEPT
+inside an item but STRIPPED at the sentence head. **To Do page gets the
+shared SyncButton** (same engine as Recordings/Notebooks). See
+docs/design/2026-09-27-desktop-reminders-and-date-followups.md.
 
 v1.28.0 (client-only) ships two halves. **Re-transcription duplicate
 guard**: voice capture is keyed by (recording, SHA-1 of the parsed
