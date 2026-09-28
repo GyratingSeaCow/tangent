@@ -288,6 +288,15 @@ Wayland):
 Build from source (must be on a Linux host — Flutter doesn't
 cross-compile desktop; Windows builds below):
 
+Build dependencies (Debian/Ubuntu names; the same packages the release
+workflow installs — Arch: the matching `-dev`-less packages):
+
+```bash
+sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev \
+  liblzma-dev libmpv-dev libsecret-1-dev libjsoncpp-dev \
+  libayatana-appindicator3-dev libkeybinder-3.0-dev libnotify-dev
+```
+
 ```bash
 cd client
 flutter build linux
