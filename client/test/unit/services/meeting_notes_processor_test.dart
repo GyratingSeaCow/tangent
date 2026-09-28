@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import 'package:flutter_test/flutter_test.dart';
+import 'package:tangent/models/speaker_names.dart';
 import 'package:tangent/services/meeting_notes_processor.dart';
+import 'package:tangent/services/render_speaker_names.dart';
 
 void main() {
   const processor = MeetingNotesProcessor();
@@ -175,6 +177,48 @@ void main() {
 
     expect(notes, contains('## Summary\n\nNone stated'));
     expect(_section(notes, 'Open Questions'), contains('- Anything else?'));
+  });
+
+  // Leftovers sweep L3: the digest is built from the transcript rendered
+  // through the dump's speaker-name map (the same renderSpeakerNames every
+  // other surface uses), so extracted lines carry the name the user gave.
+  group('speaker names (L3)', () {
+    const raw = '## Speaker 1\n'
+        'Speaker 1: We decided to launch the beta on Friday.\n'
+        '\n'
+        '## Speaker 2\n'
+        'Speaker 2: Anything else?\n';
+
+    test('map {Speaker 1: Jeff} → notes say Jeff, never Speaker 1', () {
+      final names = SpeakerNames({'Speaker 1': 'Jeff', 'Speaker 2': 'Ana'});
+      final notes = processor.process(
+        title: 'Named',
+        transcript: renderSpeakerNames(raw, names),
+      );
+
+      expect(notes, contains('Jeff'));
+      expect(notes, isNot(contains('Speaker 1')));
+      expect(notes, isNot(contains('Speaker 2')));
+      // The extractor keeps heading lines inside the sentence it quotes
+      // (pre-existing shape); what L3 changes is the label in it.
+      expect(
+        _section(notes, 'Decisions'),
+        contains('Jeff: We decided to launch the beta on Friday.'),
+      );
+      expect(_section(notes, 'Open Questions'), contains('Ana: Anything else?'));
+    });
+
+    test('empty map → output identical to processing the raw transcript', () {
+      final unrendered = processor.process(title: 'Named', transcript: raw);
+      final rendered = processor.process(
+        title: 'Named',
+        transcript: renderSpeakerNames(raw, const SpeakerNames.empty()),
+      );
+
+      expect(rendered, unrendered);
+      expect(rendered, contains('Speaker 1'));
+      expect(rendered, isNot(contains('Jeff')));
+    });
   });
 }
 
