@@ -7,9 +7,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/local_db.dart';
 
 import '../../data/storage/storage_contract.dart';
+import '../../data/storage/storage_providers.dart' show captureReadyProvider;
 import '../../models/dump_mode.dart';
 import '../../services/document_sync_engine.dart';
 import '../../services/instance_commands.dart';
+import '../../services/widget_launch.dart';
 import '../../widgets/sync_button.dart' show syncMessageFor;
 
 import '../dump/dump_detail_screen.dart';
@@ -39,6 +41,11 @@ class HomeScreen extends ConsumerStatefulWidget {
   /// The record/stop key itself.
   static const Key recordButtonKey = Key('home-record-button');
 
+  /// The one command every trigger collapses to: the desktop hotkey sends
+  /// it verbatim; the Android hands-free spine (tangent://record from the
+  /// 1x1 widget, the launcher shortcut, Assistant) is translated to it.
+  static const String toggleRecordCommand = 'toggle-record';
+
   @override
   ConsumerState<HomeScreen> createState() => _HomeScreenState();
 }
@@ -48,28 +55,73 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   bool _importing = false;
   DumpMode _mode = DumpMode.brainDump;
   StreamSubscription<String>? _instanceCommands;
+  StreamSubscription<String>? _launchCommands;
+
+  /// Resolves once the recording controller can actually start: DB init,
+  /// storage bootstrap, fence restore — the same future the controller
+  /// itself awaits. Hands-free commands queue behind it (see
+  /// [_onLaunchCommand]); it never rejects, a failed bootstrap surfaces as
+  /// the controller's own "Recording failed" rather than a dropped intent.
+  Future<void>? _readyForCommands;
 
   @override
   void initState() {
     super.initState();
     // Desktop hotkey path: `tangent --record` from another process arrives
     // here as 'toggle-record'. Same entry point as the on-screen button so
-    // the two can never diverge. Text Note mode is voice-less; the hotkey
-    // is about capturing a thought at the speed of speech, so it records a
-    // brain dump rather than opening a compose screen nobody asked for.
-    _instanceCommands = ref.read(instanceCommandsProvider).listen((command) {
-      if (command != 'toggle-record' || !mounted) return;
-      if (_mode == DumpMode.textNote) {
-        setState(() => _mode = DumpMode.brainDump);
-      }
-      unawaited(_toggleRecording());
-    });
+    // the two can never diverge.
+    _instanceCommands = ref.read(instanceCommandsProvider).listen(_onCommand);
+    // Android hands-free spine (spec 2026-09-28): tangent://record from the
+    // 1x1 mic widget, the launcher "Record" shortcut or Assistant. Cold
+    // start hands the command over once (read-once on the native side, so
+    // a hot restart cannot replay it); warm arrivals ride the stream. Both
+    // funnel into the SAME toggle path as the hotkey and the button.
+    final WidgetLaunch launch = ref.read(widgetLaunchProvider);
+    _launchCommands = launch.commands.listen(_onLaunchCommand);
+    unawaited(
+      launch.takeInitialCommand().then((String? command) {
+        if (command != null && mounted) _onLaunchCommand(command);
+      }),
+    );
   }
 
   @override
   void dispose() {
     unawaited(_instanceCommands?.cancel());
+    unawaited(_launchCommands?.cancel());
     super.dispose();
+  }
+
+  /// The single command handler. Text Note mode is voice-less; a trigger
+  /// is about capturing a thought at the speed of speech, so it records a
+  /// brain dump (H4) rather than opening a compose screen nobody asked for
+  /// — then toggles exactly as a tap on the centre button would (H1
+  /// start, H2 stop).
+  void _onCommand(String command) {
+    if (command != HomeScreen.toggleRecordCommand || !mounted) return;
+    if (_mode == DumpMode.textNote) {
+      setState(() => _mode = DumpMode.brainDump);
+    }
+    unawaited(_toggleRecording());
+  }
+
+  /// A hands-free 'record' is held until the controller is ready, then
+  /// applied exactly once through [_onCommand]. A cold start can deliver
+  /// the intent before permissions and the DB bootstrap have run; acting
+  /// early would flip the screen busy on a controller that cannot start
+  /// yet, and dropping it would make the widget tap silently do nothing.
+  /// RECORD_AUDIO is requested inside the controller's start (the recorder
+  /// prompts when not yet granted and proceeds on grant), so a first-ever
+  /// tap still ends in a running recording rather than a lost intent.
+  void _onLaunchCommand(String command) {
+    if (command != widgetLaunchRecordCommand || !mounted) return;
+    final Future<void> ready = _readyForCommands ??=
+        ref.read(captureReadyProvider.future).catchError((Object _) {});
+    unawaited(
+      ready.then((_) {
+        if (mounted) _onCommand(HomeScreen.toggleRecordCommand);
+      }),
+    );
   }
 
   /// Reads the elapsed-seconds counter. Wrapped in a method so the build()
@@ -89,6 +141,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       if (state == RecordingState.recording) {
         final row = await controller.stop();
         if (row == null) throw StateError('Recorder returned no audio');
+        // H3: a session started over the lock screen may stop there, but
+        // review needs the unlock. No-op when the phone is not locked and
+        // on platforms without the channel.
+        unawaited(ref.read(widgetLaunchProvider).dismissKeyguard());
         if (mounted) {
           await Navigator.of(context).push<void>(
             MaterialPageRoute<void>(

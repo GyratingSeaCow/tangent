@@ -29,6 +29,7 @@ import dev.tangent.tangent.storage.StorageChannel
 import dev.tangent.tangent.storage.CandidatePicker
 import dev.tangent.tangent.storage.StorageMethodRouter
 import dev.tangent.tangent.storage.StorageReply
+import dev.tangent.tangent.widget.LaunchRouter
 import dev.tangent.tangent.widget.WidgetLaunchIntents
 
 class MainActivity : FlutterActivity() {
@@ -36,9 +37,10 @@ class MainActivity : FlutterActivity() {
     private val audioChannelName = "dev.tangent.tangent/audio"
     private val launchChannelName = "dev.tangent.tangent/launch"
 
-    /** Widget-tap notebook waiting for the Dart side to ask (cold start),
-     *  and the channel to push through when the app is already alive. */
-    private var pendingLaunchNotebook: String? = null
+    /** Widget-tap notebook / launch command waiting for the Dart side to
+     *  ask (cold start), and the channel to push through when the app is
+     *  already alive. The routing itself lives in LaunchRouter (unit-tested). */
+    private val launchRouter = LaunchRouter()
     private var launchChannel: MethodChannel? = null
     private val requestTree = 7301
     private val requestAudioFile = 7302
@@ -103,24 +105,85 @@ class MainActivity : FlutterActivity() {
 
     override fun onCreate(savedInstanceState: android.os.Bundle?) {
         super.onCreate(savedInstanceState)
-        // A widget tap that cold-starts the app: the id waits here until
-        // Dart calls takeLaunchNotebook (the engine isn't up yet).
-        pendingLaunchNotebook =
-            WidgetLaunchIntents.notebookId(intent?.action, intent?.dataString)
+        // A widget tap that cold-starts the app: the id / command waits in
+        // the router until Dart calls takeLaunch* (the engine isn't up yet).
+        launchRouter.onCold(intent?.action, intent?.dataString)
+        applyLockScreenPolicy(intent)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         // Warm tap: the activity is singleTop, so the running instance
-        // gets the intent; push straight to Dart.
-        val id = WidgetLaunchIntents.notebookId(intent.action, intent.dataString)
-        if (id != null) {
-            val channel = launchChannel
-            if (channel != null) {
-                channel.invokeMethod("openNotebook", id)
-            } else {
-                pendingLaunchNotebook = id
-            }
+        // gets the intent; push straight to Dart when the channel is up.
+        val channel = launchChannel
+        launchRouter.onWarm(
+            intent.action,
+            intent.dataString,
+            if (channel == null) null else { method, argument ->
+                channel.invokeMethod(method, argument, object : MethodChannel.Result {
+                    override fun success(result: Any?) {}
+                    override fun error(code: String, message: String?, details: Any?) {}
+                    // Dart has not registered its handler yet (engine still
+                    // booting): keep the payload for the read-once take*.
+                    override fun notImplemented() = launchRouter.stash(method, argument)
+                })
+            },
+        )
+        applyLockScreenPolicy(intent)
+    }
+
+    /** H3 (spec 2026-09-28): show over the lock screen ONLY for a launch
+     *  carrying tangent://record — a locked phone must be able to start and
+     *  stop a brain dump, and nothing else. Every other intent clears the
+     *  flags again so the app never becomes a keyguard bypass. The decision
+     *  is WidgetLaunchIntents.showOverLockScreen (pure, unit-tested). */
+    /** H3, the other half: a recording started over the lock screen has
+     *  stopped and the app is about to show review. Ask for the unlock and
+     *  drop the show-when-locked grant either way, so cancelling the prompt
+     *  leaves the app behind the keyguard rather than reviewable on it. */
+    private fun dismissKeyguard() {
+        if (android.os.Build.VERSION.SDK_INT < 27) {
+            @Suppress("DEPRECATION")
+            window.clearFlags(
+                WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                    WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON,
+            )
+            return
+        }
+        val keyguard = getSystemService(android.content.Context.KEYGUARD_SERVICE)
+            as android.app.KeyguardManager
+        if (!keyguard.isKeyguardLocked) {
+            setShowWhenLocked(false)
+            setTurnScreenOn(false)
+            return
+        }
+        keyguard.requestDismissKeyguard(
+            this,
+            object : android.app.KeyguardManager.KeyguardDismissCallback() {
+                override fun onDismissSucceeded() = clearLockScreenGrant()
+                override fun onDismissCancelled() = clearLockScreenGrant()
+                override fun onDismissError() = clearLockScreenGrant()
+            },
+        )
+    }
+
+    private fun clearLockScreenGrant() {
+        if (android.os.Build.VERSION.SDK_INT >= 27) {
+            setShowWhenLocked(false)
+            setTurnScreenOn(false)
+        }
+    }
+
+    private fun applyLockScreenPolicy(intent: Intent?) {
+        val show = WidgetLaunchIntents.showOverLockScreen(intent?.action, intent?.dataString)
+        if (android.os.Build.VERSION.SDK_INT >= 27) {
+            setShowWhenLocked(show)
+            setTurnScreenOn(show)
+        } else {
+            @Suppress("DEPRECATION")
+            val flags = WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+            if (show) window.addFlags(flags) else window.clearFlags(flags)
         }
     }
 
@@ -131,10 +194,13 @@ class MainActivity : FlutterActivity() {
                 .also { channel ->
                     channel.setMethodCallHandler { call, result ->
                         when (call.method) {
-                            "takeLaunchNotebook" -> {
-                                // Read-once: a hot restart must not reopen it.
-                                result.success(pendingLaunchNotebook)
-                                pendingLaunchNotebook = null
+                            // Both read-once: a hot restart must not reopen
+                            // the notebook or start a second recording.
+                            "takeLaunchNotebook" -> result.success(launchRouter.takeNotebook())
+                            "takeLaunchCommand" -> result.success(launchRouter.takeCommand())
+                            "dismissKeyguard" -> {
+                                dismissKeyguard()
+                                result.success(null)
                             }
                             else -> result.notImplemented()
                         }

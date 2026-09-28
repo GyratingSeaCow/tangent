@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Same disc and glyph as values/: the record button does not restyle
+         itself with the system theme. -->
+    <color name="widget_record_disc">#FF3B30</color>
+    <color name="widget_record_glyph">#FFFFFF</color>
+</resources>
