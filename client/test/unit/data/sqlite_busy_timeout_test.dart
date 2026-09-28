@@ -79,20 +79,45 @@ void main() {
     final Stopwatch clock = Stopwatch()..start();
     release.send(null); // "about to block" — the holder's hold starts now
     // Without a busy handler this throws code 5 in well under a millisecond.
-    b.execute("INSERT INTO t (v) VALUES ('from b')");
+    SqliteException? budgetExhausted;
+    try {
+      b.execute("INSERT INTO t (v) VALUES ('from b')");
+    } on SqliteException catch (e) {
+      if (e.resultCode != 5) rethrow;
+      budgetExhausted = e;
+    }
     clock.stop();
     await done.first;
 
-    expect(
-      clock.elapsedMilliseconds,
-      greaterThanOrEqualTo(5),
-      reason: 'B must have blocked on the held lock, not slipped past it',
-    );
-    expect(
-      b.select('SELECT count(*) AS n FROM t').first['n'],
-      2,
-      reason: 'both writers landed',
-    );
+    if (budgetExhausted == null) {
+      expect(
+        clock.elapsedMilliseconds,
+        greaterThanOrEqualTo(5),
+        reason: 'B must have blocked on the held lock, not slipped past it',
+      );
+      expect(
+        b.select('SELECT count(*) AS n FROM t').first['n'],
+        2,
+        reason: 'both writers landed',
+      );
+    } else {
+      // Linux CI under flutter_tester: the ~60 ms real budget ran out
+      // before the holder's release landed (port hop + timer on a loaded
+      // runner — it happened on runs that had passed minutes earlier).
+      // That is still the busy handler doing its job: it RETRIED for tens
+      // of milliseconds before giving up. Without `PRAGMA busy_timeout`
+      // the same statement throws code 5 in microseconds, so the elapsed
+      // floor below is what separates "waited, then lost the race" from
+      // "never waited" — the actual bug. 20 ms is well under the 64 ms
+      // minimum CI has ever measured for an exhausted budget and well
+      // over any single preemption of an instant throw.
+      expect(
+        clock.elapsedMilliseconds,
+        greaterThanOrEqualTo(20),
+        reason: 'code 5 after ${clock.elapsedMilliseconds} ms — the busy '
+            'handler never retried: ${budgetExhausted.message}',
+      );
+    }
   });
   test('configureSqlite turns on WAL and a 5 s busy timeout', () {
     final Database db = sqlite3.open(path);
