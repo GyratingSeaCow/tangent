@@ -5,6 +5,18 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.30.0 — 2026-09-28
+
+### Added
+- **Folders are Google lists.** Every Tangent folder now has its own list
+  in Google Tasks with the same name; unfiled to-dos stay in "Tangent".
+  Move a task in Tangent and it moves in Google; drag it between lists in
+  Google and it changes folders in Tangent. Deleting a folder empties and
+  removes its Google list. Lists you create in Google stay Google-only.
+- **Sync button on To Do pushes to Google right away** — the snackbar
+  says *Synced · Google updated* instead of waiting for the five-minute
+  worker.
+- Settings → Google Tasks shows which lists are mapped.
 ## 1.29.1 — 2026-09-27
 
 ### Fixed

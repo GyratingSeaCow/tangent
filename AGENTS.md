@@ -50,13 +50,32 @@ ADH2/
 
 ## Status
 
-Shipping — **v1.29.1** (see CHANGELOG.md). Client and server are both
-implemented and tested (2517
-Flutter tests, 586 server tests, 100 Kotlin tests). The client runs
+Shipping — **v1.30.0** (see CHANGELOG.md). Client and server are both
+implemented and tested (2535
+Flutter tests, 612 server tests, 100 Kotlin tests). The client runs
 natively on Linux AND Windows (tray icon, global record hotkey,
 close-to-tray, single instance, right-click = long-press; AppImage and
 Inno Setup installer under `packaging/`) — verified on CachyOS/KDE
 Plasma Wayland and Windows 11; see the README's Desktop sections.
+
+v1.30.0 **folders ↔ Google lists** (server) + **To Do ↻ pushes to Google**
+(client). Each live folder owns a Google list named exactly like it
+(`folders.google_tasklist_id`, server-only, projected out of the feed and
+preserved across device upserts); "Tangent" remains the list for unfiled
+to-dos. Push targets the folder's list and uses `tasks.move` with
+`destinationTasklist` when the recorded list (`todos.google_tasklist_id`)
+differs — the task KEEPS its id, never delete+insert. Pull walks every
+managed list with per-list cursors (`google_list_cursor`); a task seen in
+another managed list follows the move (folder_id, change_log entry, LWW
+gate respected — a blocked move is pushed back next cycle); a task gone
+to an unmanaged list is unfiled and moved back. Deleting a folder moves
+its tasks to the unfiled list then deletes the Google list (404 = done).
+Lists created in Google are NOT imported as folders. Upgrade back-fills
+`google_tasklist_id` = unfiled for already-mapped todos so the first push
+MOVES rather than duplicates. Status gains `lists[]` + `last_cycle`.
+Client: `SyncButton.afterSync` hook runs AFTER a successful device sync;
+To Do's hook runs one Google cycle when connected → 'Synced · Google
+updated'. See docs/design/2026-09-28-folders-google-lists.md.
 
 v1.29.0 (client-only). **Desktop reminders** (Linux + Windows via
 local_notifier behind a DesktopNotifier seam): in-process Timer, digest
