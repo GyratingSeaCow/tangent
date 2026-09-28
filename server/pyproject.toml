@@ -22,7 +22,7 @@ dependencies = [
     # part of the on-demand OCR venv (that env has its own pillow); the base
     # server needs it just to import.
     "pillow>=10",
-    "structlog>=24.4.0,<25",
+    "structlog>=24.4.0,<27",
     "python-dotenv>=1.0.1,<2",
     "sse-starlette>=2.1.3,<3",
     "google-auth>=2.35.0,<3",
