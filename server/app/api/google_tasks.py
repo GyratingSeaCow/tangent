@@ -33,6 +33,20 @@ GoogleLinkStatus = Literal[
 ]
 
 
+class GoogleListMapping(BaseModel):
+    """One Tangent-managed Google list; the unfiled list has folder_id null."""
+
+    name: str
+    tasklist_id: str
+    folder_id: str | None = None
+
+
+class GoogleCycleCounts(BaseModel):
+    pushed: int = 0
+    pulled: int = 0
+    moved: int = 0
+
+
 class GoogleTasksStatus(BaseModel):
     status: GoogleLinkStatus
     credentials_configured: bool
@@ -41,6 +55,8 @@ class GoogleTasksStatus(BaseModel):
     last_error: str | None = None
     pushed: int = 0
     pulled: int = 0
+    lists: list[GoogleListMapping] = Field(default_factory=list)
+    last_cycle: GoogleCycleCounts = Field(default_factory=GoogleCycleCounts)
 
 
 class GoogleCredentials(BaseModel):
@@ -56,6 +72,30 @@ def _link(db: sqlite3.Connection) -> sqlite3.Row | None:
     return db.execute("SELECT * FROM google_tasks_link WHERE id = 1").fetchone()
 
 
+def _lists(db: sqlite3.Connection, row: sqlite3.Row) -> list[GoogleListMapping]:
+    """Managed lists (spec 2026-09-28 Endpoint change): unfiled first, then
+    each live mapped folder in creation order. Only ids and names — never
+    tokens."""
+    lists: list[GoogleListMapping] = []
+    if row["tasklist_id"]:
+        lists.append(GoogleListMapping(
+            name=google_tasks_worker.UNFILED_LIST_TITLE,
+            tasklist_id=str(row["tasklist_id"]),
+            folder_id=None,
+        ))
+    for folder in db.execute(
+        "SELECT id, name, google_tasklist_id FROM folders "
+        "WHERE deleted_at IS NULL AND google_tasklist_id IS NOT NULL "
+        "ORDER BY created_at, id"
+    ):
+        lists.append(GoogleListMapping(
+            name=str(folder["name"]),
+            tasklist_id=str(folder["google_tasklist_id"]),
+            folder_id=folder["id"],
+        ))
+    return lists
+
+
 def _status(db: sqlite3.Connection) -> GoogleTasksStatus:
     row = _link(db)
     if row is None:
@@ -68,6 +108,12 @@ def _status(db: sqlite3.Connection) -> GoogleTasksStatus:
         last_error=row["last_error"],
         pushed=row["last_pushed"],
         pulled=row["last_pulled"],
+        lists=_lists(db, row),
+        last_cycle=GoogleCycleCounts(
+            pushed=row["last_pushed"],
+            pulled=row["last_pulled"],
+            moved=row["last_moved"],
+        ),
     )
 
 
@@ -150,6 +196,7 @@ def save_credentials(
             last_sync_at = NULL,
             last_pushed = 0,
             last_pulled = 0,
+            last_moved = 0,
             oauth_state = NULL,
             oauth_state_expires_at = NULL
         """,
@@ -305,7 +352,7 @@ def disconnect(
                 tasklist_id = NULL, last_pull_updated_min = NULL,
                 status = 'disconnected', last_error = NULL,
                 last_sync_at = NULL, last_pushed = 0, last_pulled = 0,
-                oauth_state = NULL, oauth_state_expires_at = NULL
+                last_moved = 0, oauth_state = NULL, oauth_state_expires_at = NULL
             WHERE id = 1
             """
         )

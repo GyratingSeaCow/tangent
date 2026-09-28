@@ -44,6 +44,10 @@ log = get_logger(__name__)
 #: pages rather than building one enormous response in memory.
 PULL_LIMIT = 500
 
+#: Folder columns that exist only on the server (v1.30 Google list mapping).
+#: Never written from a device payload, never republished in the feed.
+FOLDER_SERVER_ONLY_FIELDS = frozenset({"google_tasklist_id"})
+
 
 def _now_ts() -> int:
     return int(time.time())
@@ -280,7 +284,10 @@ def _apply_folder(conn: sqlite3.Connection, change: SyncChange, now: int) -> Non
     """Folders sync by ID only: same-named folders stay separate (user
     decision). Delete tombstones rather than removes, like every entity —
     and filing REMAINS on each notebook row, so a folder deletion arriving
-    on a device simply reveals its notebooks as unfiled there."""
+    on a device simply reveals its notebooks as unfiled there.
+
+    ``google_tasklist_id`` is deliberately absent from the upsert column
+    list: a device re-sending a folder must not clear its Google list."""
     if change.op == "delete":
         conn.execute(
             "UPDATE folders SET deleted_at = ?, updated_at = ? WHERE id = ?",
@@ -584,6 +591,15 @@ def sync_push(
                 reindex_ids.append(change.entity_id)
             elif change.entity_type == "folder":
                 _apply_folder(db, change, now)
+                # v1.30: folders.google_tasklist_id is server-only (spec
+                # 2026-09-28 Data model). The upsert's column list never
+                # writes it, and the published payload must never carry it
+                # — even if a device echoes one back.
+                if change.op != "delete" and change.payload is not None:
+                    publish_payload = {
+                        k: v for k, v in change.payload.items()
+                        if k not in FOLDER_SERVER_ONLY_FIELDS
+                    }
             elif change.entity_type == "todo":
                 changed, publish_payload = _apply_todo(db, change, now)
                 if not changed:

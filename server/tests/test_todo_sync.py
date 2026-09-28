@@ -282,6 +282,9 @@ def test_google_tasks_migration_adds_server_only_todo_columns_once(temp_data_dir
     columns = [row[1] for row in conn.execute("PRAGMA table_info(todos)")]
     assert columns.count("google_task_id") == 1
     assert columns.count("google_updated") == 1
+    assert columns.count("google_tasklist_id") == 1
+    folder_columns = [row[1] for row in conn.execute("PRAGMA table_info(folders)")]
+    assert folder_columns.count("google_tasklist_id") == 1
     link_columns = {
         row[1] for row in conn.execute("PRAGMA table_info(google_tasks_link)")
     }
@@ -289,6 +292,51 @@ def test_google_tasks_migration_adds_server_only_todo_columns_once(temp_data_dir
         "client_id", "client_secret", "refresh_token", "tasklist_id",
         "oauth_state", "oauth_state_expires_at",
     }.issubset(link_columns)
+    cursor_columns = {
+        row[1] for row in conn.execute("PRAGMA table_info(google_list_cursor)")
+    }
+    assert cursor_columns == {"tasklist_id", "updated_min"}
+    conn.close()
+
+
+def test_google_lists_migration_moves_link_cursor_to_unfiled_list_once(temp_data_dir):
+    """v1.30 rule 5: the single link cursor becomes the unfiled list's cursor,
+    and already-mapped todos are recorded as living in that list. A second
+    init_db (or a later worker advance) must not reset either."""
+    db_file = temp_data_dir / "tangent.db"
+    init_db(str(temp_data_dir))
+    conn = sqlite3.connect(db_file)
+    conn.execute(
+        "INSERT INTO google_tasks_link (id, tasklist_id, last_pull_updated_min, status) "
+        "VALUES (1, 'list-unfiled', '2026-09-27T12:00:00.000Z', 'connected')"
+    )
+    conn.execute(
+        "INSERT INTO todos (id, text, created_at, updated_at, google_task_id) "
+        "VALUES ('mapped', 'x', '2026-09-27T11:00:00Z', '2026-09-27T11:00:00Z', 'g-1'), "
+        "('unmapped', 'y', '2026-09-27T11:00:00Z', '2026-09-27T11:00:00Z', NULL)"
+    )
+    conn.commit()
+    conn.close()
+
+    init_db(str(temp_data_dir))
+    conn = sqlite3.connect(db_file)
+    assert conn.execute("SELECT * FROM google_list_cursor").fetchall() == [
+        ("list-unfiled", "2026-09-27T12:00:00.000Z")
+    ]
+    assert conn.execute(
+        "SELECT id, google_tasklist_id FROM todos ORDER BY id"
+    ).fetchall() == [("mapped", "list-unfiled"), ("unmapped", None)]
+    conn.execute(
+        "UPDATE google_list_cursor SET updated_min = '2026-09-28T00:00:00.000Z'"
+    )
+    conn.commit()
+    conn.close()
+
+    init_db(str(temp_data_dir))
+    conn = sqlite3.connect(db_file)
+    assert conn.execute("SELECT updated_min FROM google_list_cursor").fetchone() == (
+        "2026-09-28T00:00:00.000Z",
+    )
     conn.close()
 
 
@@ -299,8 +347,9 @@ def test_device_upsert_preserves_google_mapping_and_omits_it_from_feed(todo_api)
         "payload": _todo(),
     }])
     db.execute(
-        "UPDATE todos SET google_task_id = ?, google_updated = ? WHERE id = ?",
-        ("google-123", "2026-09-27T12:00:01Z", "mapped"),
+        "UPDATE todos SET google_task_id = ?, google_updated = ?, google_tasklist_id = ? "
+        "WHERE id = ?",
+        ("google-123", "2026-09-27T12:00:01Z", "list-personal", "mapped"),
     )
     db.commit()
 
@@ -310,9 +359,10 @@ def test_device_upsert_preserves_google_mapping_and_omits_it_from_feed(todo_api)
     }]).json()["results"][0]
     assert result["status"] == "applied"
     row = db.execute(
-        "SELECT google_task_id, google_updated FROM todos WHERE id = 'mapped'"
+        "SELECT google_task_id, google_updated, google_tasklist_id FROM todos "
+        "WHERE id = 'mapped'"
     ).fetchone()
-    assert tuple(row) == ("google-123", "2026-09-27T12:00:01Z")
+    assert tuple(row) == ("google-123", "2026-09-27T12:00:01Z", "list-personal")
 
     feed = client.get(
         "/v1/sync/pull",
@@ -322,3 +372,44 @@ def test_device_upsert_preserves_google_mapping_and_omits_it_from_feed(todo_api)
     payload = next(change["payload"] for change in feed if change["entity_id"] == "mapped")
     assert "google_task_id" not in payload
     assert "google_updated" not in payload
+    assert "google_tasklist_id" not in payload
+
+
+def test_device_upsert_of_folder_preserves_google_list_and_omits_it_from_feed(todo_api):
+    """v1.30 Data model: folders.google_tasklist_id is server-only. A device
+    re-sending the folder (rename) keeps the mapping, and the feed never
+    carries it — not even when a device echoes a forged one back."""
+    client, token, db = todo_api
+    _push(client, token, [{
+        "entity_type": "folder", "entity_id": "folder-1", "op": "upsert",
+        "payload": {"name": "Personal", "created_at": 1789759637},
+    }])
+    db.execute(
+        "UPDATE folders SET google_tasklist_id = ? WHERE id = ?",
+        ("list-personal", "folder-1"),
+    )
+    db.commit()
+
+    result = _push(client, token, [{
+        "entity_type": "folder", "entity_id": "folder-1", "op": "upsert",
+        "payload": {
+            "name": "Personal stuff", "created_at": 1789759637,
+            "google_tasklist_id": "forged",
+        },
+    }]).json()["results"][0]
+    assert result["status"] == "applied"
+    row = db.execute(
+        "SELECT name, google_tasklist_id FROM folders WHERE id = 'folder-1'"
+    ).fetchone()
+    assert tuple(row) == ("Personal stuff", "list-personal")
+
+    feed = client.get(
+        "/v1/sync/pull",
+        params={"device_id": "device-bbbb-2", "since_seq": 0},
+        headers=_headers(token),
+    ).json()["changes"]
+    payloads = [c["payload"] for c in feed if c["entity_id"] == "folder-1"]
+    assert len(payloads) == 2
+    for payload in payloads:
+        assert "google_tasklist_id" not in payload
+    assert payloads[-1]["name"] == "Personal stuff"

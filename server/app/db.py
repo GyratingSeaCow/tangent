@@ -210,7 +210,10 @@ CREATE TABLE IF NOT EXISTS folders (
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
     deleted_at INTEGER,
-    origin_device_id TEXT
+    origin_device_id TEXT,
+    -- v1.30: the Google task list mirroring this folder. Server-only —
+    -- never in a sync payload, preserved across device upserts.
+    google_tasklist_id TEXT
 );
 
 CREATE TABLE IF NOT EXISTS todos (
@@ -227,7 +230,10 @@ CREATE TABLE IF NOT EXISTS todos (
     -- Google bookkeeping is server-only. It is deliberately absent from
     -- device sync payloads and from _apply_todo's upsert column list.
     google_task_id TEXT,
-    google_updated TEXT
+    google_updated TEXT,
+    -- v1.30: the list the task currently lives in ON GOOGLE (source list
+    -- for tasks.move). Server-only, same projection rule.
+    google_tasklist_id TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_todos_updated_at ON todos(updated_at DESC);
@@ -251,8 +257,18 @@ CREATE TABLE IF NOT EXISTS google_tasks_link (
     last_sync_at TEXT,
     last_pushed INTEGER NOT NULL DEFAULT 0,
     last_pulled INTEGER NOT NULL DEFAULT 0,
+    last_moved INTEGER NOT NULL DEFAULT 0,
     oauth_state TEXT,
     oauth_state_expires_at INTEGER
+);
+
+-- v1.30 folders <-> Google lists: one pull cursor (updatedMin) per managed
+-- Google task list — the unfiled "Tangent" list plus one list per live
+-- folder. The pre-v1.30 single cursor on google_tasks_link migrates in as
+-- the unfiled list's row (see _migrate_google_lists).
+CREATE TABLE IF NOT EXISTS google_list_cursor (
+    tasklist_id TEXT PRIMARY KEY,
+    updated_min TEXT
 );
 
 -- Server-side persisted settings (key/value). First user: the AI-summaries
@@ -594,6 +610,46 @@ def _migrate_todos_google_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE todos ADD COLUMN google_updated TEXT")
 
 
+def _migrate_google_lists(conn: sqlite3.Connection) -> None:
+    """v1.30 folders <-> Google lists (spec 2026-09-28, Data model).
+
+    Guarded ALTERs for ``folders.google_tasklist_id`` and
+    ``todos.google_tasklist_id`` (both server-only, projected out of the
+    sync feed). Then seed ``google_list_cursor`` from the pre-v1.30 single
+    ``last_pull_updated_min`` on the link row: that cursor belonged to the
+    unfiled "Tangent" list, so it becomes that list's row (rule 5). Existing
+    tasks were all pushed into the unfiled list, so their recorded list is
+    back-filled to it — otherwise the first v1.30 push would ``move`` every
+    mapped task from an unknown source list. Idempotent.
+    """
+    folder_columns = {row[1] for row in conn.execute("PRAGMA table_info(folders)")}
+    if "google_tasklist_id" not in folder_columns:
+        conn.execute("ALTER TABLE folders ADD COLUMN google_tasklist_id TEXT")
+    todo_columns = {row[1] for row in conn.execute("PRAGMA table_info(todos)")}
+    if "google_tasklist_id" not in todo_columns:
+        conn.execute("ALTER TABLE todos ADD COLUMN google_tasklist_id TEXT")
+    link_columns = {row[1] for row in conn.execute("PRAGMA table_info(google_tasks_link)")}
+    if "last_moved" not in link_columns:
+        conn.execute(
+            "ALTER TABLE google_tasks_link ADD COLUMN last_moved INTEGER NOT NULL DEFAULT 0"
+        )
+    link = conn.execute(
+        "SELECT tasklist_id, last_pull_updated_min FROM google_tasks_link WHERE id = 1"
+    ).fetchone()
+    if link is None or not link[0]:
+        return
+    unfiled_list = str(link[0])
+    conn.execute(
+        "INSERT OR IGNORE INTO google_list_cursor (tasklist_id, updated_min) VALUES (?, ?)",
+        (unfiled_list, link[1]),
+    )
+    conn.execute(
+        "UPDATE todos SET google_tasklist_id = ? "
+        "WHERE google_task_id IS NOT NULL AND google_tasklist_id IS NULL",
+        (unfiled_list,),
+    )
+
+
 def _migrate_change_log_folder_entity(conn: sqlite3.Connection) -> None:
     """Rebuild change_log so its CHECK admits entity_type 'folder'.
 
@@ -847,6 +903,7 @@ def init_db(data_dir: str) -> None:
         _migrate_notebooks_folder_id(conn)
         _migrate_todos_folder_id(conn)
         _migrate_todos_google_columns(conn)
+        _migrate_google_lists(conn)
         _migrate_change_log_folder_entity(conn)
         _migrate_change_log_ink_index_entity(conn)
         _migrate_change_log_todo_entity(conn)
