@@ -1,4 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import 'package:tangent/models/sync_change.dart';
+import 'package:tangent/services/connectivity_service.dart';
+import 'package:tangent/services/document_sync_engine.dart';
+import 'package:tangent/services/transcription_client.dart';
+import 'package:tangent/screens/home/home_providers.dart'
+    show documentSyncEngineProvider;
 import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -21,6 +27,8 @@ import 'package:tangent/widgets/item_action_sheet.dart';
 /// header it produces is what Notebooks would show. The sectioning clock is
 /// pinned so "today" never shifts under a slow test runner.
 void main() {
+  syncButtonTests();
+
   TestWidgetsFlutterBinding.ensureInitialized();
 
   final DateTime fixedNow = DateTime(2026, 9, 26, 15, 30);
@@ -104,7 +112,8 @@ void main() {
       tester.getTopLeft(find.byKey(key)).dy;
 
   group('quick-add', () {
-    testWidgets('submit adds the item, clears the field, and KEEPS the '
+    testWidgets(
+        'submit adds the item, clears the field, and KEEPS the '
         'keyboard for chained entry', (tester) async {
       await mount(tester);
 
@@ -140,7 +149,8 @@ void main() {
       await unmount(tester);
     });
 
-    testWidgets('an armed date chip dates the NEXT item only, and a new item '
+    testWidgets(
+        'an armed date chip dates the NEXT item only, and a new item '
         'lands unfiled', (tester) async {
       final TodoRepository repo = await mount(tester);
 
@@ -191,7 +201,8 @@ void main() {
     });
   });
 
-  testWidgets('checking an item strikes it and moves it to Done in the '
+  testWidgets(
+      'checking an item strikes it and moves it to Done in the '
       'same frame', (tester) async {
     final TodoRepository repo = await mount(tester);
     final TodoRow added = await repo.add('do the thing');
@@ -248,7 +259,8 @@ void main() {
     await unmount(tester);
   });
 
-  testWidgets('⋮ → Delete is soft with a 5 s undo snackbar, and Undo '
+  testWidgets(
+      '⋮ → Delete is soft with a 5 s undo snackbar, and Undo '
       'restores the item', (tester) async {
     final TodoRepository repo = await mount(tester);
     final TodoRow added = await repo.add('nearly lost');
@@ -286,11 +298,13 @@ void main() {
     await unmount(tester);
   });
 
-  testWidgets('with no folders the list is flat, in due-date order, with a '
+  testWidgets(
+      'with no folders the list is flat, in due-date order, with a '
       'time chip per row (Overdue red / Today / date)', (tester) async {
     final TodoRepository repo = await mount(tester);
     final TodoRow someday = await repo.add('someday item');
-    final TodoRow overdue = await repo.add('overdue item', dueDate: '2026-09-20');
+    final TodoRow overdue =
+        await repo.add('overdue item', dueDate: '2026-09-20');
     final TodoRow later = await repo.add('later item', dueDate: '2026-10-03');
     final TodoRow today =
         await repo.add('today item', dueDate: todoDateKey(fixedNow));
@@ -353,7 +367,8 @@ void main() {
     await unmount(tester);
   });
 
-  testWidgets('long-pressing the date chip clears the due date (still a '
+  testWidgets(
+      'long-pressing the date chip clears the due date (still a '
       'chip gesture, not selection)', (tester) async {
     final TodoRepository repo = await mount(tester);
     final TodoRow added =
@@ -374,7 +389,8 @@ void main() {
   });
 
   group('folders', () {
-    testWidgets('folder sections: alphabetical headers with counts, empty '
+    testWidgets(
+        'folder sections: alphabetical headers with counts, empty '
         'folders shown, No folder last, one Done at the bottom; headers '
         'collapse on tap', (tester) async {
       final TodoRepository repo = await mount(tester);
@@ -412,7 +428,8 @@ void main() {
       await unmount(tester);
     });
 
-    testWidgets('⋮ → Move → picker files the row under the chosen folder, '
+    testWidgets(
+        '⋮ → Move → picker files the row under the chosen folder, '
         'and New folder creates a SHARED folder row', (tester) async {
       final TodoRepository repo = await mount(tester);
       final String shop = await db.createFolder(name: 'Shop');
@@ -459,7 +476,8 @@ void main() {
       await unmount(tester);
     });
 
-    testWidgets('folder header long-press opens the shared rename/delete '
+    testWidgets(
+        'folder header long-press opens the shared rename/delete '
         'sheet — never selection; No folder and Done have no actions',
         (tester) async {
       final TodoRepository repo = await mount(tester);
@@ -501,7 +519,8 @@ void main() {
   });
 
   group('multi-select', () {
-    testWidgets('row long-press enters selection: toolbar with count, ⋮ '
+    testWidgets(
+        'row long-press enters selection: toolbar with count, ⋮ '
         'hidden, tap toggles, × cancels', (tester) async {
       final TodoRepository repo = await mount(tester);
       final TodoRow a = await repo.add('alpha');
@@ -588,7 +607,8 @@ void main() {
       await unmount(tester);
     });
 
-    testWidgets('bulk Delete confirms ONCE, soft-deletes the set, and one '
+    testWidgets(
+        'bulk Delete confirms ONCE, soft-deletes the set, and one '
         'Undo restores all of them', (tester) async {
       final TodoRepository repo = await mount(tester);
       final TodoRow a = await repo.add('alpha');
@@ -684,6 +704,112 @@ void main() {
       expect(find.byKey(Key('todo-google-chip-${manual.id}')), findsNothing);
       expect(find.byKey(Key('todo-google-chip-${voice.id}')), findsNothing);
       await unmount(tester);
+    });
+  });
+}
+
+// --- v1.29.0: manual sync on the To Do page ---------------------------------
+
+/// A client that records what the engine asked it to do, so the test can
+/// prove the To Do button drives a REAL sync cycle (pull, then push of the
+/// dirty to-do) and not just an icon.
+class _RecordingSyncClient implements TranscriptionClient {
+  int pulls = 0;
+  List<Map<String, dynamic>> pushed = <Map<String, dynamic>>[];
+
+  @override
+  Future<void> registerDevice({
+    required String deviceId,
+    required String displayName,
+    required String platform,
+  }) async {}
+
+  @override
+  Future<SyncPullPage> pullChanges({
+    required String deviceId,
+    required int sinceSeq,
+  }) async {
+    pulls++;
+    return SyncPullPage(changes: const [], headSeq: sinceSeq, hasMore: false);
+  }
+
+  @override
+  Future<List<PushResult>> pushChanges({
+    required String deviceId,
+    required List<Map<String, dynamic>> changes,
+  }) async {
+    pushed.addAll(changes);
+    return <PushResult>[
+      for (final Map<String, dynamic> c in changes)
+        PushResult(
+          entityType: c['entity_type'] as String,
+          entityId: c['entity_id'] as String,
+          applied: true,
+          seq: 1,
+        ),
+    ];
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw UnimplementedError('unexpected call: ${invocation.memberName}');
+}
+
+class _WifiConnectivity implements ConnectivityService {
+  @override
+  Future<ConnectivityStatus> currentStatus() async => ConnectivityStatus.wifi;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw UnimplementedError('unexpected call: ${invocation.memberName}');
+}
+
+void syncButtonTests() {
+  group('To Do sync button (v1.29.0)', () {
+    testWidgets(
+        'the app bar has the shared sync button and a tap pulls, '
+        'then pushes the dirty to-do', (tester) async {
+      final LocalDb db = LocalDb.forTesting(NativeDatabase.memory());
+      addTearDown(db.close);
+      final _RecordingSyncClient client = _RecordingSyncClient();
+      final DocumentSyncEngine engine = DocumentSyncEngine(
+        db: () => db,
+        client: () => client,
+        connectivity: _WifiConnectivity(),
+        deviceLabel: () async => 'test-device',
+        newDeviceId: 'device-1',
+      );
+      addTearDown(engine.dispose);
+      await TodoRepository(db: db).add('buy thermal paste');
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: <Override>[
+            localDbProvider.overrideWithValue(db),
+            documentSyncEngineProvider.overrideWithValue(engine),
+          ],
+          child: const MaterialApp(home: TodoListScreen()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final Finder button = find.byKey(const ValueKey<String>('sync-button'));
+      expect(button, findsOneWidget, reason: 'To Do must own a sync button');
+      expect(client.pulls, 0, reason: 'nothing runs until the tap');
+
+      await tester.tap(button);
+      await tester.pumpAndSettle();
+
+      expect(client.pulls, 1);
+      expect(
+        client.pushed.map((c) => c['entity_type']),
+        contains('todo'),
+        reason: 'the dirty to-do travels in the same press',
+      );
+      expect(find.text('Synced: sent 1'), findsOneWidget);
+      // The snackbar's dismiss timer outlives the test otherwise.
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(const Duration(milliseconds: 1));
     });
   });
 }

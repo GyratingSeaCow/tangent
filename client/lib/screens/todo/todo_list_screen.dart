@@ -9,6 +9,8 @@ import '../../services/todo_sections.dart';
 import '../../widgets/folder_header_actions.dart';
 import '../../widgets/folder_picker.dart';
 import '../../widgets/item_action_sheet.dart';
+import '../../widgets/sync_button.dart';
+import '../home/home_providers.dart' show documentSyncEngineProvider;
 import '../home/home_screen.dart' show localDbProvider;
 import 'todo_grouping.dart';
 
@@ -364,7 +366,15 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
       child: Scaffold(
         appBar: _selecting
             ? _buildSelectionBar(context, rows)
-            : AppBar(title: const Text('To Do')),
+            : AppBar(
+                title: const Text('To Do'),
+                // Same shared button as Recordings and Notebooks: to-dos
+                // ride the document sync, and a list that can only be
+                // synced from ANOTHER screen hides its own staleness.
+                actions: <Widget>[
+                  SyncButton(engineProvider: documentSyncEngineProvider),
+                ],
+              ),
         body: Column(
           children: [
             _buildQuickAdd(context),
