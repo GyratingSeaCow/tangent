@@ -284,6 +284,42 @@ void main() {
       expect(_k('google-tasks-client-id'), findsNothing);
     });
 
+    testWidgets('connected with lists (v1.30.0): the mapping is shown, '
+        'unfiled last and labelled', (tester) async {
+      await _mount(tester, <Map<String, dynamic>>[
+        <String, dynamic>{
+          ..._connected(),
+          'lists': <Map<String, dynamic>>[
+            <String, dynamic>{
+              'name': 'Tangent',
+              'tasklist_id': 'a',
+              'folder_id': null,
+            },
+            <String, dynamic>{
+              'name': 'Personal',
+              'tasklist_id': 'b',
+              'folder_id': 'f1',
+            },
+            <String, dynamic>{
+              'name': 'Shop',
+              'tasklist_id': 'c',
+              'folder_id': 'f2',
+            },
+          ],
+        },
+      ]);
+      expect(
+        tester.widget<Text>(_k('google-tasks-lists')).data,
+        'Lists: Personal · Shop · Tangent (unfiled)',
+      );
+    });
+
+    testWidgets('connected against an older server (no lists): no lists line',
+        (tester) async {
+      await _mount(tester, <Map<String, dynamic>>[_connected()]);
+      expect(_k('google-tasks-lists'), findsNothing);
+    });
+
     testWidgets('reauth_required: amber banner + Reconnect', (tester) async {
       await _mount(tester, <Map<String, dynamic>>[_reauth()]);
 
@@ -512,6 +548,58 @@ void main() {
       expect(s.hasCredentials, isFalse);
       expect(s.pushed, 0);
       expect(s.lastSyncAt, isNull);
+      expect(s.lists, isEmpty, reason: 'v1.30.0 field absent on old servers');
+    });
+
+    test('fromJson parses `lists` (v1.30.0): name, tasklist_id, folder_id',
+        () {
+      final GoogleTasksStatus s = GoogleTasksStatus.fromJson(<String, dynamic>{
+        ..._connected(),
+        'lists': <Map<String, dynamic>>[
+          <String, dynamic>{
+            'name': 'Tangent',
+            'tasklist_id': 'MTIz',
+            'folder_id': null,
+          },
+          <String, dynamic>{
+            'name': 'Shop',
+            'tasklist_id': 'NDU2',
+            'folder_id': 'folder-shop',
+          },
+        ],
+      });
+      expect(s.lists, hasLength(2));
+      expect(s.lists[0].name, 'Tangent');
+      expect(s.lists[0].tasklistId, 'MTIz');
+      expect(s.lists[0].folderId, isNull);
+      expect(s.lists[0].isUnfiled, isTrue);
+      expect(s.lists[1].name, 'Shop');
+      expect(s.lists[1].tasklistId, 'NDU2');
+      expect(s.lists[1].folderId, 'folder-shop');
+      expect(s.lists[1].isUnfiled, isFalse);
+    });
+
+    test('fromJson: `lists` null, wrong type, or junk entries → empty/skipped',
+        () {
+      expect(
+        GoogleTasksStatus.fromJson(<String, dynamic>{'lists': null}).lists,
+        isEmpty,
+      );
+      expect(
+        GoogleTasksStatus.fromJson(<String, dynamic>{'lists': 'nope'}).lists,
+        isEmpty,
+      );
+      // A dynamic-typed inner map (what jsonDecode actually yields) is fine;
+      // a non-map entry is dropped rather than crashing the whole status.
+      final GoogleTasksStatus s = GoogleTasksStatus.fromJson(<String, dynamic>{
+        'lists': <Object?>[
+          <dynamic, dynamic>{'name': 'Work', 'tasklist_id': 'w'},
+          42,
+        ],
+      });
+      expect(s.lists, hasLength(1));
+      expect(s.lists.single.name, 'Work');
+      expect(s.lists.single.isUnfiled, isTrue);
     });
 
     test('formatSyncAgo buckets', () {

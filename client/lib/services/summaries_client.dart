@@ -197,6 +197,7 @@ class GoogleTasksStatus {
     this.pushed = 0,
     this.pulled = 0,
     this.hasCredentials = false,
+    this.lists = const <GoogleTaskListMapping>[],
   });
 
   factory GoogleTasksStatus.fromJson(Map<String, dynamic> json) {
@@ -213,6 +214,7 @@ class GoogleTasksStatus {
       hasCredentials: (json['credentials_configured'] as bool?) ??
           (json['has_credentials'] as bool?) ??
           false,
+      lists: GoogleTaskListMapping.listFromJson(json['lists']),
     );
   }
 
@@ -234,6 +236,48 @@ class GoogleTasksStatus {
   /// A client id + secret are stored server-side, so Connect is possible.
   /// The secret itself is never returned.
   final bool hasCredentials;
+
+  /// The Google lists the server manages, one per folder plus the unfiled
+  /// "Tangent" list (v1.30.0). Empty against a server that predates the
+  /// field — the section simply shows no mapping then.
+  final List<GoogleTaskListMapping> lists;
+}
+
+/// One folder ↔ Google list pairing from `GoogleTasksStatus.lists`.
+class GoogleTaskListMapping {
+  const GoogleTaskListMapping({
+    required this.name,
+    required this.tasklistId,
+    this.folderId,
+  });
+
+  factory GoogleTaskListMapping.fromJson(Map<String, dynamic> json) =>
+      GoogleTaskListMapping(
+        name: (json['name'] as String?) ?? '',
+        tasklistId: (json['tasklist_id'] as String?) ?? '',
+        folderId: json['folder_id'] as String?,
+      );
+
+  /// Tolerant of an absent, null, or malformed `lists`: a status payload
+  /// from the current server has no such key and must still parse.
+  static List<GoogleTaskListMapping> listFromJson(Object? raw) {
+    if (raw is! List) return const <GoogleTaskListMapping>[];
+    return <GoogleTaskListMapping>[
+      for (final Object? item in raw)
+        if (item is Map<String, dynamic>) GoogleTaskListMapping.fromJson(item)
+        else if (item is Map)
+          GoogleTaskListMapping.fromJson(Map<String, dynamic>.from(item)),
+    ];
+  }
+
+  /// The list title on Google — the folder's name, or "Tangent" for unfiled.
+  final String name;
+  final String tasklistId;
+
+  /// The Tangent folder this list mirrors; null for the unfiled list.
+  final String? folderId;
+
+  bool get isUnfiled => folderId == null;
 }
 
 /// Talks to /v1/summaries/* with the same Dio conventions as
