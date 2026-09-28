@@ -262,9 +262,11 @@ class TodoVoiceParser {
           date.namedGroup('m2') == null && date.namedGroup('m3') == null;
       if (resolved != null && !keepAsText) {
         dueDate = resolved;
-        // V5 words ("tonight") stay in the text; every other phrase is
-        // removed.
-        if (!_keepsText(date)) span = span.substring(date.end);
+        // At the sentence HEAD there is no item for a V5 word to belong
+        // to ("…to-do list tonight, call mom" must not yield an item
+        // called "tonight"), so every head phrase is removed; V5's
+        // keep-the-word rule applies inside items only (see _entry).
+        span = span.substring(date.end);
       }
     }
     if (span.trim().isEmpty) {

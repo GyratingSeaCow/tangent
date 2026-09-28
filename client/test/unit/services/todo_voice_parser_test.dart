@@ -1179,17 +1179,21 @@ void main() {
       ]);
     });
 
-    test('V5 at the item start and the sentence head keeps the word too', () {
-      expect(parse('add to my to do list tonight call mom').entries, [
-        const VoiceTodoItem('tonight call mom', dueDate: '2026-09-27'),
-      ]);
-      final VoiceTodoParse head = parse('add to my to do list tonight, call mom and buy milk');
+    test(
+        'V5 at the sentence HEAD is stripped like any head date (no item may '
+        'be called "tonight"); the sentence date covers every item', () {
+      final VoiceTodoParse head =
+          parse('add to my to do list tonight, call mom and buy milk');
+      // The sentence date is reported on the parse; capture applies it to
+      // every item without its own (`entry.dueDate ?? parse.dueDate`).
       expect(head.dueDate, '2026-09-27');
       expect(head.entries, [
-        const VoiceTodoItem('tonight', dueDate: '2026-09-27'),
         const VoiceTodoItem('call mom'),
         const VoiceTodoItem('buy milk'),
       ]);
+      final VoiceTodoParse one = parse('add to my to do list tonight call mom');
+      expect(one.dueDate, '2026-09-27');
+      expect(one.entries, [const VoiceTodoItem('call mom')]);
     });
 
     test('V5 "end of the week/month" unchanged, "tonights" is text', () {
