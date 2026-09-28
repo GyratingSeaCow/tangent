@@ -146,10 +146,16 @@ class NullCompletionNotificationPort implements CompletionNotificationPort {
 
 /// Decides whether a finished piece of work reaches the shade.
 ///
-/// Three rules, each from the spec: the switch (N6, [enabled]) gates
-/// everything; a recording the user is already looking at is never
-/// announced (N3, [suppressFor]); opening a recording by any path wipes
-/// its notices (N3, [clearFor]).
+/// Two rules: the switch (N6, [enabled]) gates everything, and opening a
+/// recording by any path wipes its notices (N3, [clearFor]).
+///
+/// There is deliberately NO "already looking at it" suppression. The spec's
+/// N3 had one, and Jeff's first live run hit it: he was sitting on the
+/// recording while it transcribed, saw the text arrive, and reported the
+/// notification as missing. A result the screen shows and the shade also
+/// pings is unambiguous; a result the shade skips because of where the
+/// user happened to be looks like a broken feature. His call: post it
+/// anyway.
 class CompletionNotifier {
   CompletionNotifier({
     required CompletionNotificationPort port,
@@ -160,7 +166,6 @@ class CompletionNotifier {
   final CompletionNotificationPort _port;
   final bool Function() _enabled;
 
-  String? _suppressedDumpId;
   bool _disposed = false;
 
   /// Serialises platform calls, for the same reason the progress notifier
@@ -175,23 +180,11 @@ class CompletionNotifier {
   @visibleForTesting
   final List<CompletionNotice> shown = <CompletionNotice>[];
 
-  /// The recording whose detail screen is on screen, or null.
-  @visibleForTesting
-  String? get suppressedDumpId => _suppressedDumpId;
-
-  /// N3: the user is on this recording's detail screen (null = left it).
-  void suppressFor(String? dumpId) {
-    _suppressedDumpId = dumpId;
-  }
-
-  /// N1/N3/N6: shows [notice] unless the switch is off or the user is
-  /// already looking at that recording. Returns whether it was posted.
+  /// N1/N6: shows [notice] unless the switch is off — even when the user
+  /// is looking at that recording. Returns whether it was posted.
   Future<bool> announce(CompletionNotice notice) async {
     if (_disposed) return false;
     if (!_enabled()) return false;
-    if (_suppressedDumpId != null && _suppressedDumpId == notice.dumpId) {
-      return false;
-    }
     shown.add(notice);
     _shownDumpIds[notice.notificationId] = notice.dumpId;
     _pending = _pending.then(

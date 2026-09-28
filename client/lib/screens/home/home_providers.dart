@@ -110,8 +110,9 @@ final serverTranscriptionServiceProvider =
 });
 
 /// N3: the recording whose detail screen is on top, or null. Set and
-/// cleared by DumpDetailScreen; the completion notifier suppresses notices
-/// for it and wipes any it already posted the moment it is opened.
+/// cleared by DumpDetailScreen; the completion notifier wipes any notices
+/// it already posted for it the moment it is opened (no suppression of
+/// new ones — see CompletionNotifier).
 final currentDumpIdProvider = StateProvider<String?>((ref) => null);
 
 /// The platform sink for the completion notices (spec 2026-09-28 N1/N5).
@@ -132,9 +133,10 @@ final completionNotificationPortProvider =
 
 /// The one [CompletionNotifier] of the session. Both N4 sources (the
 /// transcription service and the document sync engine) announce through
-/// it; DumpDetailScreen's presence (N3) and the Settings switch (N6) gate
-/// what reaches the port. Read at startup by main() so the suppression
-/// listener is live before the first outcome, and lazily by either source.
+/// it; the Settings switch (N6) gates what reaches the port, and opening a
+/// recording (N3) clears its notices. Read at startup by main() so the
+/// clear-on-open listener is live before the first outcome, and lazily by
+/// either source.
 final completionNotifierProvider = Provider<CompletionNotifier>((ref) {
   final CompletionNotifier notifier = CompletionNotifier(
     port: ref.watch(completionNotificationPortProvider),
@@ -144,8 +146,9 @@ final completionNotifierProvider = Provider<CompletionNotifier>((ref) {
   ref.listen<String?>(
     currentDumpIdProvider,
     (_, String? dumpId) {
-      notifier.suppressFor(dumpId);
       // Opened by any path — the tap, the list, a deep link — answers it.
+      // (No suppression while it is open: a result that lands while the
+      // user watches still pings; Jeff read the silent case as a bug.)
       if (dumpId != null) unawaited(notifier.clearFor(dumpId));
     },
     fireImmediately: true,

@@ -56,3 +56,7 @@ test fails.
 analyze zero; full flutter test (baseline +2586 ~2); Kotlin 123+; device
 proof on the Fold: queue a transcription, lock the phone, get the notice,
 tap → recording opens; then Regenerate notes → "Notes ready".
+
+## Amendment (1.33.1, Jeff's first live run)
+
+N3's *suppress while on that recording* is REMOVED. Jeff was on the recording's screen while it transcribed, the shade stayed silent, and he reported the notification missing. His pick: post it anyway — the screen shows the text, the shade pings. `suppressFor` is gone from `CompletionNotifier`; `clearFor` on open stays.

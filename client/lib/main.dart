@@ -570,8 +570,8 @@ class _TranscriptionLifecycleHostState
     try {
       ref.read(transcriptionNotificationOwnerProvider);
       // Completion notices (spec 2026-09-28): constructing the notifier here
-      // is what subscribes the N3 suppression listener; without this read
-      // the first outcome could announce a recording already on screen.
+      // is what subscribes the N3 clear-on-open listener; without this read
+      // a tapped notice would not be wiped when its recording opens.
       ref.read(completionNotifierProvider);
     } catch (e, stack) {
       debugPrint('tangent.notifications disabled this session: $e');

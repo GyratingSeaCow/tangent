@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /// Completion notifications (spec 2026-09-28), the pure layer: what the
 /// shade says for each outcome, which fixed id it replaces, the
-/// summaryRequestedAt gate (N4), suppression while on that recording (N3),
+/// summaryRequestedAt gate (N4), no suppression while on that recording,
 /// clearFor on open (N3), and the Settings switch (N6).
 library;
 
@@ -135,13 +135,15 @@ void main() {
       expect(port.shown, <CompletionNotice>[transcribed]);
     });
 
-    test('suppressed while on that dump; other dumps still announced',
+    test('announced even while the user is on that dump (no suppression)',
         () async {
+      // Jeff's first live run: on the recording's screen while it
+      // transcribed, the shade stayed silent and he reported the feature
+      // missing. The pure layer must not know or care where the user is.
       final _RecordingPort port = _RecordingPort();
-      final CompletionNotifier notifier = CompletionNotifier(port: port)
-        ..suppressFor('d1');
-      expect(await notifier.announce(transcribed), isFalse);
-      expect(port.shown, isEmpty, reason: 'the user is looking at it');
+      final CompletionNotifier notifier = CompletionNotifier(port: port);
+      expect(await notifier.announce(transcribed), isTrue);
+      expect(port.shown, <CompletionNotice>[transcribed]);
 
       final CompletionNotice other = transcriptionCompletionNotice(
         dumpId: 'd9',
@@ -149,10 +151,7 @@ void main() {
         failed: false,
       );
       expect(await notifier.announce(other), isTrue);
-      expect(port.shown, <CompletionNotice>[other]);
-
-      notifier.suppressFor(null);
-      expect(await notifier.announce(transcribed), isTrue);
+      expect(port.shown, <CompletionNotice>[transcribed, other]);
     });
 
     test('clearFor cancels both ids', () async {
