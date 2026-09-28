@@ -172,6 +172,11 @@ class DocumentSyncEngine extends ChangeNotifier {
         more = page.hasMore;
       }
 
+      // Twins that were BOTH already here before v1.28.0 never re-arrive,
+      // so the per-change dedupe above cannot see them; sweep before the
+      // push so the soft-deletes travel in this same cycle.
+      if (!_disposed) await _sweepVoiceTodoDuplicates();
+
       // --- push ---
       if (!_disposed) {
         pushed = await _pushLocal(client, state.deviceId);
@@ -488,7 +493,40 @@ class DocumentSyncEngine extends ChangeNotifier {
           ))
         .get();
     if (twins.isEmpty) return;
-    final List<TodoRow> all = <TodoRow>[applied, ...twins]
+    await _resolveTwins(<TodoRow>[applied, ...twins]);
+  }
+
+  /// Same rule as [_dedupeVoiceTodo], applied to every live voice twin
+  /// group already in the local DB — the pre-v1.28.0 duplicates that both
+  /// devices pulled long ago. Runs once per sync cycle; a clean DB is one
+  /// query and no writes.
+  Future<int> _sweepVoiceTodoDuplicates() async {
+    final List<TodoRow> live = await (_db.select(_db.todos)
+          ..where(
+            (t) =>
+                t.source.equals(voiceTodoSource) &
+                t.sourceRef.isNotNull() &
+                t.deletedAt.isNull(),
+          ))
+        .get();
+    final Map<String, List<TodoRow>> groups = <String, List<TodoRow>>{};
+    for (final TodoRow row in live) {
+      groups
+          .putIfAbsent('${row.sourceRef}\u0000${row.body}', () => <TodoRow>[])
+          .add(row);
+    }
+    int removed = 0;
+    for (final List<TodoRow> twins in groups.values) {
+      if (twins.length < 2) continue;
+      removed += await _resolveTwins(twins);
+    }
+    return removed;
+  }
+
+  /// The OLDER `created_at` stays; every other row is soft-deleted as an
+  /// ordinary dirty edit. Returns the number soft-deleted.
+  Future<int> _resolveTwins(List<TodoRow> twins) async {
+    final List<TodoRow> all = <TodoRow>[...twins]
       ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
     final String stamp = DateTime.now().toUtc().toIso8601String();
     for (final TodoRow loser in all.skip(1)) {
@@ -500,6 +538,7 @@ class DocumentSyncEngine extends ChangeNotifier {
         ),
       );
     }
+    return all.length - 1;
   }
 
   /// Canonical JSON text for a timings payload value: the server sends the

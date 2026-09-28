@@ -123,7 +123,8 @@ void main() {
         'deleted_at': deletedAt,
       };
 
-  test('a dirty local todo pushes as entity_type todo with every field, '
+  test(
+      'a dirty local todo pushes as entity_type todo with every field, '
       'and a confirmed push marks it clean', () async {
     final TodoRow added = await repo.add('pick up thermal paste');
     client.pushResults = <PushResult>[
@@ -156,7 +157,8 @@ void main() {
   });
 
   group('folders (v1.24.0)', () {
-    test('folder_id round-trips: a moved todo pushes its folder with a '
+    test(
+        'folder_id round-trips: a moved todo pushes its folder with a '
         'FRESH updated_at, and a pulled folder_id lands on the row', () async {
       // The row arrived from a peer at T0; the local move must stamp later
       // than T0 or the server's newer-wins rule drops the move as stale.
@@ -184,7 +186,7 @@ void main() {
       await build().syncNow();
 
       final Map<String, dynamic> payload = client.pushedChanges!
-          .singleWhere((chg) => chg['entity_type'] == 'todo')['payload']
+              .singleWhere((chg) => chg['entity_type'] == 'todo')['payload']
           as Map<String, dynamic>;
       expect(payload['folder_id'], 'folder-shop', reason: 'push carries it');
       expect(
@@ -218,7 +220,8 @@ void main() {
       expect((await db.getTodoRow('remote-1'))!.folderId, 'folder-workshop');
     });
 
-    test('a payload WITHOUT folder_id keeps the local filing; a present '
+    test(
+        'a payload WITHOUT folder_id keeps the local filing; a present '
         'null unfiles', () async {
       await db.applyRemoteTodo(
         id: 'remote-1',
@@ -281,8 +284,16 @@ void main() {
       await r.add('one');
       await r.add('two');
       await r.add('three');
-      await db.markTodoSynced('id-0', seq: 1, pushedUpdatedAt: t0.toIso8601String());
-      await db.markTodoSynced('id-1', seq: 1, pushedUpdatedAt: t0.toIso8601String());
+      await db.markTodoSynced(
+        'id-0',
+        seq: 1,
+        pushedUpdatedAt: t0.toIso8601String(),
+      );
+      await db.markTodoSynced(
+        'id-1',
+        seq: 1,
+        pushedUpdatedAt: t0.toIso8601String(),
+      );
 
       clock = t1;
       await r.moveManyToFolder(<String>['id-0', 'id-1'], 'folder-shop');
@@ -301,7 +312,11 @@ void main() {
       final String shop = await db.createFolder(name: 'Shop');
       final TodoRow a = await repo.add('in shop');
       await repo.moveToFolder(a.id, shop);
-      await db.markTodoSynced(a.id, seq: 3, pushedUpdatedAt: (await db.getTodoRow(a.id))!.updatedAt);
+      await db.markTodoSynced(
+        a.id,
+        seq: 3,
+        pushedUpdatedAt: (await db.getTodoRow(a.id))!.updatedAt,
+      );
 
       await db.deleteFolder(shop);
 
@@ -412,6 +427,37 @@ void main() {
       ];
       return build().syncNow();
     }
+
+    // Both twins ALREADY local before the upgrade (the live-server case:
+    // seven pairs pulled long ago, nothing new arrives) — the per-change
+    // hook never fires, so a sync must sweep them.
+    test('pre-existing twins are swept on a sync with an EMPTY pull', () async {
+      await localVoiceRow(id: 'older', createdAt: '2026-09-27T09:00:00.000Z');
+      await localVoiceRow(id: 'newer', createdAt: '2026-09-27T09:05:00.000Z');
+      await localVoiceRow(
+        id: 'other-recording',
+        sourceRef: 'dump-2',
+        createdAt: '2026-09-27T09:06:00.000Z',
+      );
+      client.pullPages = <SyncPullPage>[
+        const SyncPullPage(
+          changes: <RemoteChange>[],
+          headSeq: 1,
+          hasMore: false,
+        ),
+      ];
+
+      await build().syncNow();
+
+      expect((await db.getTodoRow('older'))!.deletedAt, isNull);
+      expect((await db.getTodoRow('newer'))!.deletedAt, isNotNull);
+      expect((await db.getTodoRow('newer'))!.syncDirty, isTrue);
+      expect(
+        (await db.getTodoRow('other-recording'))!.deletedAt,
+        isNull,
+        reason: 'same text, different recording — not a twin',
+      );
+    });
 
     test(
         'a NEWER remote duplicate is applied then soft-deleted; the local '
@@ -755,8 +801,7 @@ void main() {
       updatedAt: '2026-09-27T09:00:00.000Z',
       seq: 1,
     );
-    await (db.update(db.todos)
-          ..where((t) => t.id.equals('remote-1')))
+    await (db.update(db.todos)..where((t) => t.id.equals('remote-1')))
         .write(const TodosCompanion(syncDirty: Value(false)));
 
     await build().syncNow();
