@@ -31,14 +31,19 @@ env:
   # True whenever there is a release to attach to.
   IS_RELEASE: ${{ startsWith(github.ref, 'refs/tags/v') || startsWith(inputs.tag, 'v') }}
 
+# Least privilege: the workflow-level token is read-only; each job raises
+# ONLY the scope its attach/publish step needs. A compromised build step
+# (a malicious pub/npm/pip package, a poisoned action) then cannot push
+# packages from a client job or rewrite the repo from the image job.
 permissions:
-  contents: write
-  packages: write
+  contents: read
 
 jobs:
   apk:
     name: Build + attach release APK
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # attach the APK to the GitHub Release
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -133,6 +138,8 @@ jobs:
   appimage:
     name: Build + attach Linux AppImage
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # attach the AppImage to the GitHub Release
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -279,6 +286,8 @@ jobs:
     # windows-2022 is GitHub's documented image for VS 2022. Revisit when
     # Flutter is upgraded past the version that learned VS 2026.
     runs-on: windows-2022
+    permissions:
+      contents: write # attach the installer to the GitHub Release
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -361,6 +370,9 @@ jobs:
   server-image:
     name: Publish server image to GHCR
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # push ghcr.io/<owner>/tangent-server
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:

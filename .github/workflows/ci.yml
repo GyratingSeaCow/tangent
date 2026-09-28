@@ -12,6 +12,11 @@ on:
   pull_request:
     branches: ["main"]
 
+# CI only reads the checkout. Pin it in the file so a repo-settings change
+# can never silently hand test jobs a write-capable token.
+permissions:
+  contents: read
+
 jobs:
   client:
     name: Flutter analyze + test
