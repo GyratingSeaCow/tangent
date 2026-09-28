@@ -124,6 +124,7 @@ Future<_MemoryStore> _mount(
   WidgetTester tester, {
   required _FakePairing pairing,
   List<DiscoveredServer> servers = const <DiscoveredServer>[_homelab],
+  String? localAddress = '10.0.0.5',
 }) async {
   final _MemoryStore store = _MemoryStore();
   await tester.pumpWidget(
@@ -138,7 +139,7 @@ Future<_MemoryStore> _mount(
         home: ServerConnectionScreen(
           discoveryFactory: () => _FakeDiscovery(servers),
           pairingFactory: (_) => pairing,
-          localAddress: () async => '10.0.0.5',
+          localAddress: () async => localAddress,
           clientFactory: (_, __) => _FakeClient(),
         ),
       ),
@@ -176,6 +177,47 @@ void main() {
       find.textContaining('No servers found on 10.0.0.x'),
       findsOneWidget,
     );
+  });
+
+  // Which address the user pairs with decides whether the app works away
+  // from home. That fact used to live only in the README; a LAN pairing on
+  // cellular then spun forever. The screen must say it, in three places.
+  testWidgets('the screen says a found (Wi-Fi) address is home-only and '
+      'names the Tailscale shape that works everywhere', (tester) async {
+    await _mount(tester, pairing: _FakePairing(correctCode: '123456'));
+
+    final Finder hint =
+        find.byKey(const ValueKey<String>('address-scope-hint'));
+    expect(hint, findsOneWidget, reason: 'shown before any scan, always');
+    final String text = tester.widget<Text>(hint).data!;
+    expect(text, contains('only works on this network'));
+    expect(text, contains('Tailscale address (http://100.x.x.x:8765)'));
+
+    // The URL field's hint shows both shapes, labelled.
+    final TextField url = tester.widget<TextField>(
+      find.widgetWithText(TextField, 'Server URL'),
+    );
+    expect(url.decoration!.hintText, contains('100.x.x.x:8765 (Tailscale)'));
+    expect(url.decoration!.hintText, contains('192.168.x.x:8765 (Wi-Fi only)'));
+  });
+
+  testWidgets('on cellular (no LAN address) the scan error names the fix',
+      (tester) async {
+    await _mount(
+      tester,
+      pairing: _FakePairing(correctCode: '123456'),
+      localAddress: null,
+    );
+
+    await tester.tap(find.byKey(const ValueKey<String>('discover-servers')));
+    await tester.pumpAndSettle();
+
+    final Finder error = find.textContaining('No local network to scan');
+    expect(error, findsOneWidget);
+    final String text = tester.widget<Text>(error).data!;
+    expect(text, contains('cellular'));
+    expect(text, contains('http://100.x.x.x:8765'));
+    expect(text, contains('works from anywhere'));
   });
 
   testWidgets('correct code pairs, stores the token, and lands home',
