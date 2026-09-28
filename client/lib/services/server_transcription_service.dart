@@ -63,6 +63,15 @@ final class _OwnedJobEventStream {
   }
 }
 
+/// Told that [dumpId]'s transcription reached a terminal status. [title]
+/// is the row's title at that moment; [failed] distinguishes the two
+/// outcomes. Must never throw — it runs inside the persistence path.
+typedef TranscriptionOutcomeHook = void Function({
+  required String dumpId,
+  required String title,
+  required bool failed,
+});
+
 class ServerTranscriptionService extends ChangeNotifier {
   ServerTranscriptionService({
     required TranscriptionClient client,
@@ -77,7 +86,9 @@ class ServerTranscriptionService extends ChangeNotifier {
     Duration sidecarWaitTimeout = const Duration(seconds: 30),
     Duration recoveryRetryBaseDelay = const Duration(seconds: 1),
     Duration recoveryRetryMaxDelay = const Duration(seconds: 30),
+    TranscriptionOutcomeHook? onOutcome,
   })  : _client = client,
+        _onOutcome = onOutcome,
         _db = db,
         _access = recordingAccess,
         _mutations = mutations,
@@ -104,6 +115,12 @@ class ServerTranscriptionService extends ChangeNotifier {
   final Duration _sidecarWaitTimeout;
   final Duration _recoveryRetryBaseDelay;
   final Duration _recoveryRetryMaxDelay;
+
+  /// Spec 2026-09-28 N4: told once per terminal write (completed / failed)
+  /// that WON — the same durable writes the row's status comes from, so
+  /// the shade can never announce an outcome the database does not hold.
+  /// Null when nobody listens (tests, hosts without a shade).
+  final TranscriptionOutcomeHook? _onOutcome;
 
   final List<_QueuedTranscription> _queue = [];
   final Map<String, DumpRow> _durableRows = {};
@@ -736,6 +753,7 @@ class ServerTranscriptionService extends ChangeNotifier {
     );
     _throwIfDisposed();
     if (!completed) return;
+    _announceOutcome(row, failed: false);
     // To Do phase 2: a transcript just became this dump's, so spoken to-dos
     // land now. Idempotent in captureVoiceTodos, and quiet on failure — a
     // to-do bug must not cost the user a transcript that just finished.
@@ -1110,6 +1128,7 @@ class ServerTranscriptionService extends ChangeNotifier {
       }
       _throwIfDisposed();
       if (!completionWon) throw const _StaleTranscriptionAttempt();
+      _announceOutcome(row, failed: false);
       // To Do phase 2, same hook on the normal completion path (the
       // recovered-completion path above is the other one). Both share
       // captureVoiceTodos, where the idempotency rule lives.
@@ -1306,7 +1325,24 @@ class ServerTranscriptionService extends ChangeNotifier {
       throw _TranscriptionPersistenceFailure(cause);
     }
     _throwIfDisposed();
+    if (updated && status == TranscriptionStatus.failed) {
+      _announceOutcome(attempt, failed: true);
+    }
     return updated;
+  }
+
+  /// N4: the fact is learned HERE, where the terminal status is written,
+  /// not from polling the row. Guarded so a notification bug can never
+  /// fail the persistence path it rides on.
+  void _announceOutcome(DumpRow row, {required bool failed}) {
+    final TranscriptionOutcomeHook? hook = _onOutcome;
+    if (hook == null || _disposed) return;
+    try {
+      hook(dumpId: row.id, title: row.title, failed: failed);
+    } catch (error, stack) {
+      debugPrint('tangent.notifications outcome hook failed: $error');
+      debugPrintStack(stackTrace: stack, label: 'tangent.notifications');
+    }
   }
 
   Future<DumpRow> _readCurrentAttempt(DumpRow attempt) async {

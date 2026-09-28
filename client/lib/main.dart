@@ -40,7 +40,11 @@ import 'package:window_manager/window_manager.dart';
 
 import 'package:device_info_plus/device_info_plus.dart';
 
+import 'screens/dump/dump_detail_screen.dart';
+import 'services/android_completion_notification_port.dart'
+    show dumpIdFromNotificationPayload;
 import 'services/android_due_reminder_port.dart';
+import 'services/desktop_completion_notification_port.dart';
 import 'services/desktop_due_reminder_port.dart';
 import 'services/due_digest.dart';
 import 'services/background_sync_scheduler.dart';
@@ -163,6 +167,36 @@ void _openTodoScreen() {
 
 void _onNotificationTap(NotificationResponse response) {
   if (response.payload == kDueReminderPayload) _openTodoScreen();
+  final String? dumpId = dumpIdFromNotificationPayload(response.payload);
+  if (dumpId != null) openDumpFromLaunch(dumpId);
+}
+
+/// A completion-notice tap (spec 2026-09-28 N2), any platform: opens that
+/// recording on top of whatever is showing. Reads the row for the route's
+/// audio path; a recording deleted since the notice was posted opens
+/// nothing rather than a broken screen. The navigator may not exist yet on
+/// a cold start; wait a frame and retry, like the reminder tap.
+void openDumpFromLaunch(String dumpId) {
+  final NavigatorState? nav = TangentApp.navigatorKey.currentState;
+  if (nav == null) {
+    WidgetsBinding.instance.addPostFrameCallback((_) => openDumpFromLaunch(dumpId));
+    return;
+  }
+  final ProviderContainer container = ProviderScope.containerOf(nav.context);
+  unawaited(
+    container.read(localDbProvider).getDump(dumpId).then((DumpRow? row) {
+      if (row == null) return;
+      nav.push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => DumpDetailScreen(
+            dumpId: row.id,
+            audioPath: row.audioPath,
+            durationSeconds: row.durationSeconds,
+          ),
+        ),
+      );
+    }),
+  );
 }
 
 Future<void> main(List<String> args) async {
@@ -275,6 +309,18 @@ Future<void> main(List<String> args) async {
     );
   }
   final DueReminderPort? reminderPort = androidReminderPort ?? desktopReminderPort;
+  // Completion notices on desktop (spec 2026-09-28 N5): the same
+  // local_notifier backend as the reminder; a click raises the window and
+  // opens the recording.
+  final DesktopCompletionNotificationPort? desktopCompletionPort = desktop
+      ? DesktopCompletionNotificationPort(
+          newNotifier: () => LocalNotifierDesktopNotifier(appName: 'Tangent'),
+          onClick: (String dumpId) {
+            unawaited(raiseAppWindow());
+            openDumpFromLaunch(dumpId);
+          },
+        )
+      : null;
   final backend =
       Platform.isAndroid ? SafStorageBackend() : FilesystemStorageBackend();
   final mutations = DefaultRecordingMutationCoordinator(db: db);
@@ -324,6 +370,9 @@ Future<void> main(List<String> args) async {
         settingsStoreProvider.overrideWithValue(settings),
         if (reminderPort != null)
           dueReminderPortProvider.overrideWithValue(reminderPort),
+        if (desktopCompletionPort != null)
+          completionNotificationPortProvider
+              .overrideWithValue(desktopCompletionPort),
         if (instance != null)
           instanceCommandsProvider.overrideWithValue(instance.commands),
       ],
@@ -380,6 +429,14 @@ Future<void> main(List<String> args) async {
     unawaited(
       port.launchedByReminderTap().then((bool tapped) {
         if (tapped) _openTodoScreen();
+      }),
+    );
+    // Same for a completion-notice tap (spec 2026-09-28 N2): the payload
+    // names the recording.
+    unawaited(
+      port.launchPayload().then((String? payload) {
+        final String? dumpId = dumpIdFromNotificationPayload(payload);
+        if (dumpId != null) openDumpFromLaunch(dumpId);
       }),
     );
   }
@@ -512,6 +569,10 @@ class _TranscriptionLifecycleHostState
     // are a convenience; sync is the product.
     try {
       ref.read(transcriptionNotificationOwnerProvider);
+      // Completion notices (spec 2026-09-28): constructing the notifier here
+      // is what subscribes the N3 suppression listener; without this read
+      // the first outcome could announce a recording already on screen.
+      ref.read(completionNotifierProvider);
     } catch (e, stack) {
       debugPrint('tangent.notifications disabled this session: $e');
       debugPrintStack(stackTrace: stack, label: 'tangent.notifications');
@@ -596,6 +657,7 @@ class _Router extends ConsumerStatefulWidget {
 
 class _RouterState extends ConsumerState<_Router> {
   StreamSubscription<String>? _widgetOpens;
+  StreamSubscription<String>? _dumpOpens;
 
   @override
   void initState() {
@@ -612,6 +674,14 @@ class _RouterState extends ConsumerState<_Router> {
     );
     // Warm taps while the app is already running.
     _widgetOpens = launch.opens.listen(_openNotebook);
+    // Completion-notice taps (spec 2026-09-28 N2): tangent://dump/<id>,
+    // cold (read-once) and warm, land on the recording's detail screen.
+    unawaited(
+      launch.initialDump().then((String? id) {
+        if (id != null && mounted) openDumpFromLaunch(id);
+      }),
+    );
+    _dumpOpens = launch.dumpOpens.listen(openDumpFromLaunch);
   }
 
   void _openNotebook(String id) {
@@ -627,6 +697,7 @@ class _RouterState extends ConsumerState<_Router> {
   @override
   void dispose() {
     _widgetOpens?.cancel();
+    _dumpOpens?.cancel();
     super.dispose();
   }
 

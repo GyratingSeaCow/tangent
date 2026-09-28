@@ -12,8 +12,10 @@ import '../../data/storage/storage_contract.dart';
 import '../../data/storage/storage_providers.dart';
 import '../../services/audio_file_picker.dart';
 import '../../services/audio_import.dart';
+import '../../services/android_completion_notification_port.dart';
 import '../../services/android_transcription_notification_port.dart';
 import '../../services/auto_sync_coordinator.dart';
+import '../../services/completion_notifications.dart';
 import '../../services/connectivity_service.dart';
 import '../../services/document_sync_engine.dart';
 import '../../services/note_persistence.dart';
@@ -89,9 +91,67 @@ final serverTranscriptionServiceProvider =
     db: ref.watch(localDbProvider),
     recordingAccess: ref.watch(recordingAccessProvider),
     mutations: ref.watch(recordingMutationsProvider),
+    // N4: the outcome notice fires from the terminal write itself. Read,
+    // not watched: the notifier never changes identity in a session.
+    onOutcome: ({required dumpId, required title, required failed}) {
+      unawaited(
+        ref.read(completionNotifierProvider).announce(
+              transcriptionCompletionNotice(
+                dumpId: dumpId,
+                title: title,
+                failed: failed,
+              ),
+            ),
+      );
+    },
   );
   unawaited(service.reconcilePending());
   return service;
+});
+
+/// N3: the recording whose detail screen is on top, or null. Set and
+/// cleared by DumpDetailScreen; the completion notifier suppresses notices
+/// for it and wipes any it already posted the moment it is opened.
+final currentDumpIdProvider = StateProvider<String?>((ref) => null);
+
+/// The platform sink for the completion notices (spec 2026-09-28 N1/N5).
+/// Android builds its port here, guarded like the progress port; main()
+/// overrides with the desktop port on Linux/Windows; tests override with a
+/// double; everywhere else delivers nothing.
+final completionNotificationPortProvider =
+    Provider<CompletionNotificationPort>((ref) {
+  if (!Platform.isAndroid) return const NullCompletionNotificationPort();
+  try {
+    return AndroidCompletionNotificationPort();
+  } catch (error, stack) {
+    debugPrint('tangent.notifications completion unavailable: $error');
+    debugPrintStack(stackTrace: stack, label: 'tangent.notifications');
+    return const NullCompletionNotificationPort();
+  }
+});
+
+/// The one [CompletionNotifier] of the session. Both N4 sources (the
+/// transcription service and the document sync engine) announce through
+/// it; DumpDetailScreen's presence (N3) and the Settings switch (N6) gate
+/// what reaches the port. Read at startup by main() so the suppression
+/// listener is live before the first outcome, and lazily by either source.
+final completionNotifierProvider = Provider<CompletionNotifier>((ref) {
+  final CompletionNotifier notifier = CompletionNotifier(
+    port: ref.watch(completionNotificationPortProvider),
+    enabled: () =>
+        ref.read(settingsStoreProvider).completionNotificationsEnabled,
+  );
+  ref.listen<String?>(
+    currentDumpIdProvider,
+    (_, String? dumpId) {
+      notifier.suppressFor(dumpId);
+      // Opened by any path — the tap, the list, a deep link — answers it.
+      if (dumpId != null) unawaited(notifier.clearFor(dumpId));
+    },
+    fireImmediately: true,
+  );
+  ref.onDispose(notifier.dispose);
+  return notifier;
 });
 
 /// The platform sink for the "Transcribing" notice. Overridden in tests with
@@ -135,6 +195,25 @@ final documentSyncEngineProvider = Provider<DocumentSyncEngine>((ref) {
     connectivity: ref.watch(connectivityServiceProvider),
     deviceLabel: _deviceLabel,
     newDeviceId: const Uuid().v4(),
+    // N4: "Notes ready" fires from the pull that lands the summary this
+    // device asked for; the pure layer turns the requestedAt gate into a
+    // notice or nothing.
+    onSummaryLanded: ({
+      required dumpId,
+      required title,
+      required template,
+      required requestedAt,
+    }) {
+      final CompletionNotice? notice = summaryCompletionNotice(
+        dumpId: dumpId,
+        title: title,
+        template: template,
+        requestedAt: requestedAt,
+      );
+      if (notice != null) {
+        unawaited(ref.read(completionNotifierProvider).announce(notice));
+      }
+    },
   );
   ref.onDispose(engine.dispose);
   return engine;

@@ -1,3 +1,4 @@
+import 'dart:async';
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // Contract for the home-screen widget deep link (Jeff, 2026-09-23:
@@ -182,6 +183,81 @@ void main() {
       () async {
     final WidgetLaunch launch = WidgetLaunch(channel: channel);
     await launch.dismissKeyguard();
+    launch.dispose();
+  });
+
+  // -----------------------------------------------------------------------
+  // Completion-notice tap (spec 2026-09-28 completion notifications N2):
+  // the THIRD payload on the channel. Cold: takeLaunchDump is read-once on
+  // the native side; warm: an 'openDump' call lands on the dumpOpens stream.
+  // -----------------------------------------------------------------------
+
+  test('initialDump returns the cold-start recording id', () async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (MethodCall call) async {
+      expect(call.method, 'takeLaunchDump');
+      return 'dump-notice-1';
+    });
+    final WidgetLaunch launch = WidgetLaunch(channel: channel);
+    expect(await launch.initialDump(), 'dump-notice-1');
+    launch.dispose();
+  });
+
+  test('initialDump maps null and empty to null, and no channel to null',
+      () async {
+    for (final String? raw in <String?>[null, '']) {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (MethodCall call) async => raw);
+      final WidgetLaunch launch = WidgetLaunch(channel: channel);
+      expect(await launch.initialDump(), isNull, reason: 'raw=$raw');
+      launch.dispose();
+    }
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, null);
+    final WidgetLaunch launch = WidgetLaunch(channel: channel);
+    expect(await launch.initialDump(), isNull);
+    launch.dispose();
+  });
+
+  test('a warm openDump call from native lands on the dumpOpens stream',
+      () async {
+    final WidgetLaunch launch = WidgetLaunch(channel: channel);
+    final Future<String> first = launch.dumpOpens.first;
+    final ByteData message = const StandardMethodCodec()
+        .encodeMethodCall(const MethodCall('openDump', 'dump-notice-2'));
+    await TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .handlePlatformMessage(widgetLaunchChannelName, message, (_) {});
+    expect(await first, 'dump-notice-2');
+    launch.dispose();
+  });
+
+  test('openDump never crosses into the notebook or command streams',
+      () async {
+    final WidgetLaunch launch = WidgetLaunch(channel: channel);
+    final List<String> notebooks = <String>[];
+    final List<String> commands = <String>[];
+    final List<String> dumps = <String>[];
+    final subs = <StreamSubscription<String>>[
+      launch.opens.listen(notebooks.add),
+      launch.commands.listen(commands.add),
+      launch.dumpOpens.listen(dumps.add),
+    ];
+    for (final MethodCall call in <MethodCall>[
+      const MethodCall('openDump', 'dump-x'),
+      const MethodCall('openDump', ''),
+    ]) {
+      final ByteData message =
+          const StandardMethodCodec().encodeMethodCall(call);
+      await TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .handlePlatformMessage(widgetLaunchChannelName, message, (_) {});
+    }
+    await Future<void>.delayed(Duration.zero);
+    expect(dumps, <String>['dump-x'], reason: 'empty ids are dropped');
+    expect(notebooks, isEmpty);
+    expect(commands, isEmpty);
+    for (final sub in subs) {
+      await sub.cancel();
+    }
     launch.dispose();
   });
 }

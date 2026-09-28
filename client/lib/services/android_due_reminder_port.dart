@@ -57,14 +57,21 @@ class AndroidDueReminderPort implements DueReminderPort {
   }
 
   /// Whether the app was cold-started by a reminder tap.
-  Future<bool> launchedByReminderTap() async {
+  Future<bool> launchedByReminderTap() async =>
+      await launchPayload() == kDueReminderPayload;
+
+  /// The payload of the notification that cold-started the app, or null
+  /// for a normal launch. The tap callback never fires for the launching
+  /// notification, so every feature that posts a tappable notice routes
+  /// its cold start through here.
+  Future<String?> launchPayload() async {
     try {
       final NotificationAppLaunchDetails? details =
           await _plugin.getNotificationAppLaunchDetails();
-      return details?.didNotificationLaunchApp == true &&
-          details?.notificationResponse?.payload == kDueReminderPayload;
+      if (details?.didNotificationLaunchApp != true) return null;
+      return details?.notificationResponse?.payload;
     } catch (_) {
-      return false;
+      return null;
     }
   }
 

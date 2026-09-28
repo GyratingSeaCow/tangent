@@ -40,6 +40,7 @@ class SettingsStore {
   static const _obsidianWordTimestampsKey = 'obsidian_export_word_timestamps';
   static const _notebookImportAudioCardKey = 'notebook-import-audio-card';
   static const _remindersEnabledKey = 'reminders_enabled';
+  static const _completionNotificationsKey = 'completion_notifications';
   static const _reminderMinuteOfDayKey = 'reminder_minute_of_day';
   static const _lastReminderShownDayKey = 'last_reminder_shown_day';
 
@@ -144,6 +145,12 @@ class SettingsStore {
   /// the missed digest once per day and never twice for the same day.
   String lastReminderShownDay;
 
+  /// "Notify when transcription and notes finish" (spec 2026-09-28 N6).
+  /// ON by default: the notices need no extra permission beyond the one
+  /// the progress notice already asks for, and their absence was the
+  /// defect report.
+  bool completionNotificationsEnabled;
+
   SettingsStore({
     this.wifiOnlySync = true,
     this.autoSync = true,
@@ -164,6 +171,7 @@ class SettingsStore {
     this.remindersEnabled = false,
     this.reminderMinuteOfDay = 420,
     this.lastReminderShownDay = '',
+    this.completionNotificationsEnabled = true,
     SharedPreferences? preferences,
   }) : _preferences = preferences;
 
@@ -205,6 +213,8 @@ class SettingsStore {
       ),
       lastReminderShownDay:
           preferences.getString(_lastReminderShownDayKey) ?? '',
+      completionNotificationsEnabled:
+          preferences.getBool(_completionNotificationsKey) ?? true,
     );
   }
 
@@ -295,6 +305,11 @@ class SettingsStore {
   Future<void> setLastReminderShownDay(String isoDay) async {
     lastReminderShownDay = isoDay;
     await _preferences?.setString(_lastReminderShownDayKey, isoDay);
+  }
+
+  Future<void> setCompletionNotificationsEnabled(bool value) async {
+    completionNotificationsEnabled = value;
+    await _preferences?.setBool(_completionNotificationsKey, value);
   }
 
   /// Minutes after midnight, kept inside one day; null → 07:00.
