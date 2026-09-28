@@ -25,6 +25,7 @@ import '../settings/settings_screen.dart';
 import '../../theme/tangent_tokens.dart';
 import 'home_providers.dart';
 import 'record_button_palette.dart';
+import 'speaker_backfill_banner.dart';
 
 final localDbProvider = Provider<LocalDb>((ref) {
   throw UnimplementedError('Override in main()');
@@ -335,6 +336,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
+            const SpeakerBackfillBanner(),
             if (!isNoteMode)
               Text(
                 timeLabel,

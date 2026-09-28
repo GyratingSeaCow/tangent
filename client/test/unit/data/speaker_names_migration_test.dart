@@ -273,6 +273,104 @@ void main() {
     expect(await db.speakerNamesBackfillRecord(), isNull);
   });
 
+  group('L5: refused pairings are recorded in speaker_backfill_skipped', () {
+    const String odd = '## Jeff\nJeff: a\n## Speaker 1\nSpeaker 1: b\n';
+
+    List<Object?> skippedRaw(sqlite3.Database raw) => jsonDecode(
+          raw
+              .select(
+                'SELECT value FROM settings '
+                "WHERE key = 'speaker_backfill_skipped'",
+              )
+              .single['value'] as String,
+        ) as List<Object?>;
+
+    test('one ambiguous transcript -> the key holds exactly that id', () async {
+      final sqlite3.Database raw = _v19Database();
+      _insert(raw, 'odd', odd);
+      _insert(raw, 'renamed', _renamed);
+      _insert(raw, 'raw', _rawDump);
+      _insert(raw, 'summary-only', _summaryOnly);
+      final LocalDb db = LocalDb.forTesting(NativeDatabase.opened(raw));
+      addTearDown(db.close);
+      await db.listDumps();
+
+      expect(skippedRaw(raw), <String>['odd'], reason: 'JSON list of ids');
+      expect(await db.speakerBackfillSkippedIds(), <String>['odd']);
+      // The converted row and the never-renamed rows are not skips.
+      final Map<String, dynamic>? record =
+          await db.speakerNamesBackfillRecord();
+      expect(record!.keys, <String>['renamed']);
+      expect((await db.getDump('odd'))!.transcript, odd, reason: 'untouched');
+    });
+
+    test('no skips -> no key', () async {
+      final sqlite3.Database raw = _v19Database();
+      _insert(raw, 'renamed', _renamed);
+      _insert(raw, 'raw', _rawDump);
+      _insert(raw, 'summary-only', _summaryOnly);
+      final LocalDb db = LocalDb.forTesting(NativeDatabase.opened(raw));
+      addTearDown(db.close);
+      await db.listDumps();
+
+      expect(
+        raw.select(
+          "SELECT value FROM settings WHERE key = 'speaker_backfill_skipped'",
+        ),
+        isEmpty,
+      );
+      expect(await db.speakerBackfillSkippedIds(), isEmpty);
+    });
+
+    test('clear deletes the key; a re-run does not resurrect a dismissed id',
+        () async {
+      final sqlite3.Database raw = _v19Database();
+      _insert(raw, 'odd', odd);
+      final LocalDb db = LocalDb.forTesting(NativeDatabase.opened(raw));
+      await db.listDumps();
+      expect(await db.speakerBackfillSkippedIds(), <String>['odd']);
+
+      await db.clearSpeakerBackfillSkipped();
+      expect(await db.speakerBackfillSkippedIds(), isEmpty);
+      expect(
+        raw.select(
+          "SELECT value FROM settings WHERE key = 'speaker_backfill_skipped'",
+        ),
+        isEmpty,
+        reason: 'dismiss removes the row, not just empties it',
+      );
+      // The unrelated back-fill record is left alone.
+      expect(
+        raw.select(
+          "SELECT value FROM settings WHERE key = 'speaker_names_backfill'",
+        ),
+        isEmpty,
+        reason: 'nothing was converted in this fixture',
+      );
+
+      // A crashed-between-back-fill-and-bump install re-runs v20: the
+      // transcript is still ambiguous, so the id is recorded again. This
+      // is the documented behaviour, pinned so a change is visible.
+      raw.execute('PRAGMA user_version = 19;');
+      final LocalDb again = LocalDb.forTesting(NativeDatabase.opened(raw));
+      addTearDown(again.close);
+      await again.listDumps();
+      expect(await again.speakerBackfillSkippedIds(), <String>['odd']);
+    });
+
+    test('a second run unions rather than duplicates', () async {
+      final sqlite3.Database raw = _v19Database();
+      _insert(raw, 'odd', odd);
+      final LocalDb db = LocalDb.forTesting(NativeDatabase.opened(raw));
+      await db.listDumps();
+      raw.execute('PRAGMA user_version = 19;');
+      final LocalDb again = LocalDb.forTesting(NativeDatabase.opened(raw));
+      addTearDown(again.close);
+      await again.listDumps();
+      expect(skippedRaw(raw), <String>['odd']);
+    });
+  });
+
   group('LocalDb.updateSpeakerNames', () {
     test('writes the map, bumps updated_at, marks dirty, leaves text alone',
         () async {

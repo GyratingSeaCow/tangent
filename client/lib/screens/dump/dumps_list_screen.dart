@@ -50,8 +50,14 @@ import '../home/home_screen.dart' show localDbProvider;
 enum DumpsCreateAction { textNote, brainDump }
 
 class DumpsListScreen extends ConsumerStatefulWidget {
-  const DumpsListScreen({super.key, this.onOpenDump});
+  const DumpsListScreen({super.key, this.onOpenDump, this.filterIds});
   final void Function(BuildContext, DumpRow)? onOpenDump;
+
+  /// When set, only rows with these ids are presented (search and the
+  /// mode/transcript filters still apply on top). The Home speaker
+  /// back-fill banner opens the list this way (spec L5); null is the
+  /// ordinary unrestricted list.
+  final Set<String>? filterIds;
 
   @override
   ConsumerState<DumpsListScreen> createState() => _DumpsListScreenState();
@@ -211,6 +217,21 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
     super.dispose();
   }
 
+  /// [widget.filterIds] applied to the presented rows; identity when unset.
+  PresentedDumpResults? _restrictToFilterIds(PresentedDumpResults? results) {
+    final Set<String>? ids = widget.filterIds;
+    if (results == null || ids == null) return results;
+    return (
+      scopeKey: results.scopeKey,
+      generation: results.generation,
+      settled: results.settled,
+      rows: List<DumpRow>.unmodifiable(
+        results.rows.where((DumpRow row) => ids.contains(row.id)),
+      ),
+      limit: results.limit
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final presented = ref.watch(presentedDumpsProvider);
@@ -226,7 +247,8 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
     ref.listen(searchQueryProvider, (_, __) => _selection.cancel());
     ref.listen(dumpModeFilterProvider, (_, __) => _selection.cancel());
     ref.listen(transcriptFilterProvider, (_, __) => _selection.cancel());
-    final results = presented.valueOrNull;
+    final PresentedDumpResults? results =
+        _restrictToFilterIds(presented.valueOrNull);
     if (results != null) {
       _selection.apply(
         (
@@ -463,7 +485,9 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
                               dumps: results.rows,
                               empty: showingSearch
                                   ? 'No matches'
-                                  : 'No recordings yet — record one!',
+                                  : widget.filterIds != null
+                                      ? 'Those recordings are no longer here'
+                                      : 'No recordings yet — record one!',
                               searchQuery: showingSearch ? query.trim() : '',
                               searchMatches: showingSearch
                                   ? ref

@@ -48,6 +48,15 @@ final RegExp _rawLabel = RegExp(r'^Speaker (\d+)$');
 /// when a raw heading sits at the wrong position or a label we would
 /// assign already heads a different section: rewriting there would merge
 /// two speakers, and leaving the text as it was is the safe failure.
+/// True when [transcript] carries user speaker headings the back-fill
+/// REFUSED to convert ([planSpeakerNamesBackfill] returned null for an
+/// ambiguous pairing, not for lack of anything to do). The migration
+/// records these dump ids so Home can surface them once (leftovers
+/// sweep L5); a raw or never-renamed transcript is not a skip.
+bool speakerNamesBackfillRefused(String transcript) =>
+    hasUserSpeakerNames(transcript) &&
+    planSpeakerNamesBackfill(transcript) == null;
+
 SpeakerNamesBackfillPlan? planSpeakerNamesBackfill(String transcript) {
   if (!hasUserSpeakerNames(transcript)) return null;
   final List<String> headings = speakerHeadings(transcript);
