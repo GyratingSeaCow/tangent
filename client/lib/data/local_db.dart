@@ -4,6 +4,7 @@ import 'dart:convert';
 
 import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
+import 'package:sqlite3/sqlite3.dart' show Database;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
@@ -2922,6 +2923,19 @@ LazyDatabase _openConnection() {
   return LazyDatabase(() async {
     final dir = await getApplicationDocumentsDirectory();
     final file = File(p.join(dir.path, 'tangent.sqlite'));
-    return NativeDatabase.createInBackground(file);
+    return NativeDatabase.createInBackground(file, setup: configureSqlite);
   });
+}
+
+/// Per-connection SQLite setup, shared by the app and every background
+/// isolate (WorkManager sync, the daily reminder) that opens the SAME
+/// file. Two connections with no busy handler fail INSTANTLY with
+/// `database is locked (code 5)` the moment their writes overlap — which
+/// is how a reminder task colliding with a sync push turned into
+/// "Recording failed" on the Fold (v1.29.0). `busy_timeout` makes the
+/// loser wait instead of throwing; WAL lets readers and the writer
+/// proceed together, so the wait is rare and short.
+void configureSqlite(Database db) {
+  db.execute('PRAGMA busy_timeout = 5000');
+  db.execute('PRAGMA journal_mode = WAL');
 }
