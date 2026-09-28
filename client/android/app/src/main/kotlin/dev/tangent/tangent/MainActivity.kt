@@ -198,6 +198,7 @@ class MainActivity : FlutterActivity() {
                             // the notebook or start a second recording.
                             "takeLaunchNotebook" -> result.success(launchRouter.takeNotebook())
                             "takeLaunchCommand" -> result.success(launchRouter.takeCommand())
+                            "takeLaunchDump" -> result.success(launchRouter.takeDump())
                             "dismissKeyguard" -> {
                                 dismissKeyguard()
                                 result.success(null)

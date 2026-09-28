@@ -112,6 +112,24 @@ class NullTranscriptionNotificationPort
   Future<void> cancel() async {}
 }
 
+/// Runs one platform notification call so that it can NEVER fail the caller.
+///
+/// Shared by every notifier that chains platform calls: a notification is a
+/// convenience, nothing it does may break transcription, sync, or startup,
+/// and a failed future inside a `.then` chain would silently kill the
+/// notification for the rest of the session.
+Future<void> deliverNotificationQuietly(
+  String operation,
+  Future<void> Function() call,
+) async {
+  try {
+    await call();
+  } catch (error, stack) {
+    debugPrint('tangent.notifications $operation failed: $error');
+    debugPrintStack(stackTrace: stack, label: 'tangent.notifications');
+  }
+}
+
 /// Keeps the shade in step with the transcription queue.
 ///
 /// The service notifies on every queue and stream event, which for a single
@@ -184,14 +202,8 @@ class TranscriptionNotifier {
   /// failed future in it propagates to every `.then` that follows, so a
   /// single transient platform error would silently kill the notification
   /// for the rest of the session.
-  Future<void> _deliver(String operation, Future<void> Function() call) async {
-    try {
-      await call();
-    } catch (error, stack) {
-      debugPrint('tangent.notifications $operation failed: $error');
-      debugPrintStack(stackTrace: stack, label: 'tangent.notifications');
-    }
-  }
+  Future<void> _deliver(String operation, Future<void> Function() call) =>
+      deliverNotificationQuietly(operation, call);
 
   /// Clears anything left in the shade by a previous process.
   ///

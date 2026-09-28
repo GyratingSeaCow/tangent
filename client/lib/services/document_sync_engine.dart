@@ -50,6 +50,17 @@ class SyncReport {
 /// Pull BEFORE push, always. Pushing first would send a local edit that the
 /// merge step might have forked, so the server would record a change the user
 /// never actually resolved.
+/// A summary this device requested has synced down onto [dumpId].
+/// [requestedAt] is the row's `summary_requested_at` at the moment the
+/// answer landed (unix seconds) — always non-null here, because a summary
+/// nobody on this device asked for is never reported. Must never throw.
+typedef SummaryLandedHook = void Function({
+  required String dumpId,
+  required String title,
+  required String? template,
+  required int requestedAt,
+});
+
 class DocumentSyncEngine extends ChangeNotifier {
   DocumentSyncEngine({
     required LocalDb Function() db,
@@ -57,11 +68,17 @@ class DocumentSyncEngine extends ChangeNotifier {
     required ConnectivityService connectivity,
     required Future<String> Function() deviceLabel,
     required String newDeviceId,
+    SummaryLandedHook? onSummaryLanded,
   })  : _dbFactory = db,
         _client = client,
         _connectivity = connectivity,
         _deviceLabel = deviceLabel,
-        _newDeviceId = newDeviceId;
+        _newDeviceId = newDeviceId,
+        _onSummaryLanded = onSummaryLanded;
+
+  /// Spec 2026-09-28 N4: told when a pull lands a summary THIS device asked
+  /// for. Null when nobody listens (tests, background isolate).
+  final SummaryLandedHook? _onSummaryLanded;
 
   /// Resolved on first use, not at construction. Building this engine must
   /// not open a database: it is created whenever a screen with a sync button
@@ -377,6 +394,7 @@ class DocumentSyncEngine extends ChangeNotifier {
           : LocalDb.absentSummaryField,
       seq: change.seq,
     );
+    await _reportSummaryLanded(change.entityId, local, payload);
     // To Do phase 2: the SERVER-synced transcript sink. A transcript made on
     // another device (or by the server job) lands here; the local
     // transcription sink is server_transcription_service's completion
@@ -388,6 +406,46 @@ class DocumentSyncEngine extends ChangeNotifier {
       transcript: payload['transcript'] as String?,
       recordedOn: _tsToDate(payload['created_at']),
     );
+  }
+
+  /// N4 (spec 2026-09-28): "Notes ready" fires from where the fact is
+  /// learned — right here, after the pull's write — and only for a summary
+  /// THIS device asked for: [before] must carry `summary_requested_at`, the
+  /// marker `recordRequestedSummaryTemplate` stamps on the summarize 202
+  /// (the summaryPending contract). A summary another device requested
+  /// lands on this row too, and must land silently.
+  ///
+  /// Exactly once: the write above spends the marker when the answer is at
+  /// least as new as the request, so the next pull of the same row finds no
+  /// marker; and a stale echo that leaves the marker (older summarized_at,
+  /// or no summarized_at at all) carries the same text this row already
+  /// holds, which is nothing new to announce.
+  Future<void> _reportSummaryLanded(
+    String dumpId,
+    DumpRow? before,
+    Map<String, dynamic> payload,
+  ) async {
+    final SummaryLandedHook? hook = _onSummaryLanded;
+    if (hook == null) return;
+    final int? requestedAt = before?.summaryRequestedAt;
+    if (requestedAt == null) return;
+    final String? summary = payload['summary'] as String?;
+    if (summary == null || summary.isEmpty) return;
+    final DumpRow? after = await _db.getDumpRow(dumpId);
+    if (after == null) return;
+    final bool answered = after.summaryRequestedAt == null;
+    if (!answered && summary == before!.summary) return;
+    try {
+      hook(
+        dumpId: dumpId,
+        title: after.title,
+        template: after.summaryTemplate,
+        requestedAt: requestedAt,
+      );
+    } catch (error, stack) {
+      debugPrint('tangent.notifications summary hook failed: $error');
+      debugPrintStack(stackTrace: stack, label: 'tangent.notifications');
+    }
   }
 
   /// Applies one incoming todo change.

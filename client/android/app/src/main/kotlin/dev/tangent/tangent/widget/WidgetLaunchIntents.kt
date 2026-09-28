@@ -11,6 +11,10 @@ object WidgetLaunchIntents {
     const val ACTION_VIEW = "android.intent.action.VIEW"
     private const val PREFIX = "tangent://notebook/"
 
+    /** Completion notifications (spec 2026-09-28 N2): a "Transcribed" or
+     *  "Notes ready" tap fires VIEW tangent://dump/<id>. */
+    private const val DUMP_PREFIX = "tangent://dump/"
+
     /** The hands-free record spine (spec 2026-09-28): Assistant, the 1x1
      *  mic widget and the launcher shortcut all fire exactly this URI. */
     const val RECORD_URI = "tangent://record"
@@ -24,6 +28,16 @@ object WidgetLaunchIntents {
         if (action != ACTION_VIEW) return null
         if (dataString == null || !dataString.startsWith(PREFIX)) return null
         val id = dataString.removePrefix(PREFIX).substringBefore('?')
+        return id.trim().ifEmpty { null }
+    }
+
+    /** The recording a VIEW tangent://dump/<id> intent names, or null for
+     *  every other intent. Same shape as [notebookId]; a different host is
+     *  never a recording. */
+    fun dumpId(action: String?, dataString: String?): String? {
+        if (action != ACTION_VIEW) return null
+        if (dataString == null || !dataString.startsWith(DUMP_PREFIX)) return null
+        val id = dataString.removePrefix(DUMP_PREFIX).substringBefore('?')
         return id.trim().ifEmpty { null }
     }
 

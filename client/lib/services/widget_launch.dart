@@ -14,6 +14,11 @@
 // COMMANDS ("record", from tangent://record — the 1x1 mic widget, the
 // launcher shortcut and the Assistant App Action). Same two shapes:
 // [takeInitialCommand] read-once for a cold start, [commands] for warm.
+//
+// Completion notifications (spec 2026-09-28 N2) add the third payload:
+// tangent://dump/<id> from a "Transcribed" / "Notes ready" tap opens that
+// recording. Same two shapes again: [initialDump] read-once for a cold
+// start, [dumpOpens] for warm.
 
 import 'dart:async';
 
@@ -38,6 +43,8 @@ class WidgetLaunch {
   final StreamController<String> _opens = StreamController<String>.broadcast();
   final StreamController<String> _commands =
       StreamController<String>.broadcast();
+  final StreamController<String> _dumpOpens =
+      StreamController<String>.broadcast();
 
   /// Notebook ids arriving while the app is already running (widget tap
   /// with a warm app). The editor push happens at the listener.
@@ -46,6 +53,11 @@ class WidgetLaunch {
   /// Launch commands arriving while the app is already running (mic widget
   /// tap, shortcut, Assistant with a warm app). Only known commands land.
   Stream<String> get commands => _commands.stream;
+
+  /// Recording ids arriving while the app is already running (a completion
+  /// notice tapped with a warm app). The detail push happens at the
+  /// listener.
+  Stream<String> get dumpOpens => _dumpOpens.stream;
 
   /// The notebook id the app was cold-started for, or null for a normal
   /// launch. The native side clears it on read: a launch intent must open
@@ -78,6 +90,19 @@ class WidgetLaunch {
     }
   }
 
+  /// The recording id the app was cold-started for (a completion notice
+  /// tap), or null for a normal launch. Read-once on the native side like
+  /// [initialNotebook]: a hot restart must not reopen the recording.
+  Future<String?> initialDump() async {
+    try {
+      final String? id = await _channel.invokeMethod<String>('takeLaunchDump');
+      if (id == null || id.isEmpty) return null;
+      return id;
+    } on MissingPluginException {
+      return null;
+    }
+  }
+
   static String? _known(String? command) =>
       command == widgetLaunchRecordCommand ? command : null;
 
@@ -101,6 +126,9 @@ class WidgetLaunch {
     } else if (call.method == 'command') {
       final String? command = _known(call.arguments as String?);
       if (command != null) _commands.add(command);
+    } else if (call.method == 'openDump') {
+      final String? id = call.arguments as String?;
+      if (id != null && id.isNotEmpty) _dumpOpens.add(id);
     }
     return null;
   }
@@ -108,6 +136,7 @@ class WidgetLaunch {
   void dispose() {
     _opens.close();
     _commands.close();
+    _dumpOpens.close();
   }
 }
 

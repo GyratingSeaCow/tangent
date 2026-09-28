@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../services/due_reminder_scheduler.dart';
+import 'completion_notifications_section.dart';
 import 'settings_screen.dart';
 
 /// Settings → Reminders (spec 2026-09-27 Half B, N4; Half A adds Linux +
@@ -182,6 +183,9 @@ class _RemindersSectionState extends ConsumerState<RemindersSection> {
               ),
             ),
           ),
+        // Spec 2026-09-28 N6: the completion switch sits under the same
+        // heading — it is the other thing the shade says.
+        const CompletionNotificationsSection(),
         const Divider(),
       ],
     );

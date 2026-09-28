@@ -47,6 +47,7 @@ import '../settings/ai_summaries_section.dart'
     show summariesClientProvider, summariesEnabledProvider;
 import '../home/home_providers.dart'
     show
+        currentDumpIdProvider,
         recordingPlaybackEngineFactoryProvider,
         serverTranscriptionServiceProvider;
 
@@ -239,6 +240,12 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
     if (_searchQuery != null) _transcriptExpanded = true;
     _playbackInitialization = _initializePlayback();
     unawaited(_discoverDeletion());
+    // N3 (spec 2026-09-28): while this screen is up, a completion notice
+    // for THIS recording would announce what the user is already looking
+    // at. Set after the frame: a provider write during build is refused.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) ref.read(currentDumpIdProvider.notifier).state = widget.dumpId;
+    });
     final db = ref.read(localDbProvider);
     // Async-load the existing title.
     Future.microtask(() async {
@@ -254,6 +261,11 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
   @override
   void dispose() {
     _closing = true;
+    // Only clear what this screen set: a second detail route pushed on top
+    // owns the marker now, and popping this one must not blank it.
+    final StateController<String?> current =
+        ref.read(currentDumpIdProvider.notifier);
+    if (current.state == widget.dumpId) current.state = null;
     final playback = _playbackController;
     if (playback != null) {
       playback.removeListener(_onPlaybackChanged);

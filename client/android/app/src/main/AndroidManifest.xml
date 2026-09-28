@@ -80,6 +80,15 @@
                 <category android:name="android.intent.category.DEFAULT"/>
                 <data android:scheme="tangent" android:host="record"/>
             </intent-filter>
+            <!-- Completion notifications (spec 2026-09-28 N2): a
+                 "Transcribed" / "Notes ready" tap opens the recording as
+                 VIEW tangent://dump/<id>. Same internal scheme, same
+                 LaunchRouter cold/warm handling as the notebook widget. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <data android:scheme="tangent" android:host="dump"/>
+            </intent-filter>
             <!-- Static launcher shortcut + App Actions capability. -->
             <meta-data
                 android:name="android.app.shortcuts"
