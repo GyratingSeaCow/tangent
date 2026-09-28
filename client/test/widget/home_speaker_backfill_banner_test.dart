@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import 'package:drift/drift.dart' show Variable;
 import 'package:drift/native.dart';
+import 'package:sqlite3/sqlite3.dart' as sqlite3;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -24,6 +25,7 @@ import 'package:tangent/services/transcription_client.dart';
 
 import '../support/dump_view_fixture.dart';
 import '../support/fake_notebook_repository.dart';
+import '../support/speaker_backfill_v19_fixture.dart';
 import '../support/widget_recording_coordinator.dart';
 
 /// Leftovers sweep L5: the v20 speaker back-fill records the dump ids it
@@ -32,9 +34,10 @@ import '../support/widget_recording_coordinator.dart';
 /// area; tapping it opens Recordings filtered to those ids; dismissing
 /// deletes the key so the banner never returns; no skips → no banner.
 ///
-/// The banner reads the REAL settings row through the real LocalDb (the
-/// same query the production provider runs), so a migration that stops
-/// writing the key fails here, not only in the migration unit test.
+/// The key is written by the REAL v20 migration: every test opens a
+/// [LocalDb] over a `user_version = 19` database whose rows carry the
+/// given transcripts, so a migration that stops writing the key fails
+/// HERE (no banner), not only in the migration unit test.
 
 class _StubClient extends TranscriptionClient {
   _StubClient() : super(baseUrl: 'http://test');
@@ -50,33 +53,23 @@ void main() {
 
   late FakeNotebookRepository notebooks;
 
-  /// Mounts Home over a real in-memory LocalDb whose skipped list holds
-  /// [skipped] (written through the migration's own INSERT shape) and
-  /// whose recordings list carries [rows].
+  /// Mounts Home over a real LocalDb opened on a v19 database holding
+  /// [transcripts] (id → transcript), so the v20 back-fill runs for real
+  /// and writes — or refuses — each row. [rows] feeds the Recordings list.
   Future<LocalDb> mountHome(
     WidgetTester tester, {
-    required List<String> skipped,
+    required Map<String, String?> transcripts,
     List<DumpRow> rows = const <DumpRow>[],
   }) async {
     tester.view.physicalSize = const Size(1080, 2340);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
-    final LocalDb db = LocalDb.forTesting(NativeDatabase.memory());
-    // Open real SQLite outside the widget fake clock (home_screen_test
-    // does the same) and seed the row the migration would have written.
-    await tester.runAsync(() async {
-      await db.listDumps();
-      if (skipped.isNotEmpty) {
-        await db.customStatement(
-          'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)',
-          <Object>[
-            LocalDb.speakerBackfillSkippedKey,
-            '[${skipped.map((String id) => '"$id"').join(',')}]',
-          ],
-        );
-      }
-    });
+    final sqlite3.Database raw = v19DatabaseWithDumps(transcripts);
+    final LocalDb db = LocalDb.forTesting(NativeDatabase.opened(raw));
+    // Run the migration on real SQLite outside the widget fake clock
+    // (home_screen_test does the same for its first query).
+    await tester.runAsync(() => db.listDumps());
     notebooks = FakeNotebookRepository();
     addTearDown(notebooks.dispose);
     await tester.pumpWidget(
@@ -123,7 +116,14 @@ void main() {
       );
 
   testWidgets('no skips -> no banner', (tester) async {
-    final LocalDb db = await mountHome(tester, skipped: const <String>[]);
+    final LocalDb db = await mountHome(
+      tester,
+      transcripts: <String, String?>{
+        'raw': rawSpeakerTranscript,
+        'plain': 'just words',
+        'none': null,
+      },
+    );
 
     expect(find.byKey(SpeakerBackfillBanner.bannerKey), findsNothing);
     expect(
@@ -138,8 +138,14 @@ void main() {
 
   testWidgets('two skips -> the banner shows the count, above the record key',
       (tester) async {
-    final LocalDb db =
-        await mountHome(tester, skipped: const <String>['odd-1', 'odd-2']);
+    final LocalDb db = await mountHome(
+      tester,
+      transcripts: <String, String?>{
+        'odd-1': ambiguousSpeakerTranscript,
+        'raw': rawSpeakerTranscript,
+        'odd-2': ambiguousSpeakerTranscript,
+      },
+    );
 
     expect(find.byKey(SpeakerBackfillBanner.bannerKey), findsOneWidget);
     expect(bannerText(2), findsOneWidget);
@@ -159,7 +165,10 @@ void main() {
   });
 
   testWidgets('one skip reads in the singular', (tester) async {
-    final LocalDb db = await mountHome(tester, skipped: const <String>['odd']);
+    final LocalDb db = await mountHome(
+      tester,
+      transcripts: <String, String?>{'odd': ambiguousSpeakerTranscript},
+    );
 
     expect(bannerText(1), findsOneWidget);
     expect(
@@ -173,8 +182,14 @@ void main() {
 
   testWidgets('dismiss -> key deleted -> banner gone, and stays gone',
       (tester) async {
-    final LocalDb db =
-        await mountHome(tester, skipped: const <String>['odd-1', 'odd-2']);
+    final LocalDb db = await mountHome(
+      tester,
+      transcripts: <String, String?>{
+        'odd-1': ambiguousSpeakerTranscript,
+        'raw': rawSpeakerTranscript,
+        'odd-2': ambiguousSpeakerTranscript,
+      },
+    );
     expect(bannerText(2), findsOneWidget);
 
     await tester.tap(find.byKey(SpeakerBackfillBanner.dismissKey));
@@ -220,7 +235,11 @@ void main() {
       (tester) async {
     final LocalDb db = await mountHome(
       tester,
-      skipped: const <String>['odd-1', 'odd-2'],
+      transcripts: <String, String?>{
+        'odd-1': ambiguousSpeakerTranscript,
+        'fine-a': rawSpeakerTranscript,
+        'odd-2': ambiguousSpeakerTranscript,
+      },
       rows: <DumpRow>[viewRow('fine-a'), viewRow('odd-1'), viewRow('odd-2')],
     );
 
