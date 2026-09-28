@@ -173,6 +173,7 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
   BulkDeletionResult? get _deletionResult => _deletionRecovery.latest;
   String? _playbackError;
   bool _closing = false;
+  StateController<String?>? _currentDumpMarker;
   bool _saving = false;
   bool _savingTranscript = false;
   bool _transcriptDirty = false;
@@ -244,7 +245,13 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
     // for THIS recording would announce what the user is already looking
     // at. Set after the frame: a provider write during build is refused.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) ref.read(currentDumpIdProvider.notifier).state = widget.dumpId;
+      if (!mounted) return;
+      // Kept for dispose(): `ref` is unusable once the element is defunct
+      // (framework assertion), so the controller is captured while alive.
+      final StateController<String?> current =
+          ref.read(currentDumpIdProvider.notifier);
+      _currentDumpMarker = current;
+      _setCurrentDump(current, widget.dumpId);
     });
     final db = ref.read(localDbProvider);
     // Async-load the existing title.
@@ -262,10 +269,10 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
   void dispose() {
     _closing = true;
     // Only clear what this screen set: a second detail route pushed on top
-    // owns the marker now, and popping this one must not blank it.
-    final StateController<String?> current =
-        ref.read(currentDumpIdProvider.notifier);
-    if (current.state == widget.dumpId) current.state = null;
+    // owns the marker now, and popping this one must not blank it. Never
+    // `ref.read` here — dispose runs after the element is defunct.
+    final StateController<String?>? current = _currentDumpMarker;
+    if (current != null) _clearCurrentDump(current, widget.dumpId);
     final playback = _playbackController;
     if (playback != null) {
       playback.removeListener(_onPlaybackChanged);
@@ -2475,4 +2482,29 @@ class _MatchHighlightController extends TextEditingController {
     }
     return TextSpan(style: style, children: children);
   }
+}
+
+/// N3 marker writes, off the widget lifecycle. Riverpod refuses a provider
+/// write during build, and a screen can be disposed mid-build (route popped
+/// while the tree rebuilds) or after its ProviderContainer is gone (widget
+/// tests tearing down), so both writes are deferred a microtask and a
+/// controller that was disposed meanwhile is simply left alone.
+void _setCurrentDump(StateController<String?> current, String dumpId) {
+  scheduleMicrotask(() {
+    try {
+      current.state = dumpId;
+    } on StateError {
+      // Container torn down before the frame settled: nothing to mark.
+    }
+  });
+}
+
+void _clearCurrentDump(StateController<String?> current, String dumpId) {
+  scheduleMicrotask(() {
+    try {
+      if (current.state == dumpId) current.state = null;
+    } on StateError {
+      // Already disposed with its container: the marker died with it.
+    }
+  });
 }

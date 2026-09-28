@@ -137,7 +137,7 @@ void main() {
           title: title,
           template: template,
           requestedAt: requestedAt,
-        )),
+        ),),
       );
 
   Future<void> seed(String id) async {
@@ -195,7 +195,7 @@ void main() {
     expect((await db.getDumpRow('d1'))!.summaryRequestedAt, isNull);
   });
 
-  test("a summary another device asked for lands silently", () async {
+  test('a summary another device asked for lands silently', () async {
     await seed('d2');
     // No recordRequestedSummaryTemplate: summaryRequestedAt is null.
     final DocumentSyncEngine engine = build(
