@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import 'package:tangent/models/api_exception.dart';
 import 'package:tangent/models/sync_change.dart';
 import 'package:tangent/services/connectivity_service.dart';
 import 'package:tangent/services/document_sync_engine.dart';
@@ -13,7 +14,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:tangent/data/local_db.dart';
 import 'package:tangent/data/todo_repository.dart';
 import 'package:tangent/screens/home/home_screen.dart' show localDbProvider;
+import 'package:tangent/screens/settings/ai_summaries_section.dart'
+    show summariesClientProvider;
 import 'package:tangent/screens/todo/todo_list_screen.dart';
+import 'package:tangent/services/summaries_client.dart';
 import 'package:tangent/services/todo_sections.dart';
 import 'package:tangent/widgets/folder_picker.dart';
 import 'package:tangent/widgets/item_action_sheet.dart';
@@ -713,6 +717,48 @@ void main() {
 /// A client that records what the engine asked it to do, so the test can
 /// prove the To Do button drives a REAL sync cycle (pull, then push of the
 /// dirty to-do) and not just an icon.
+/// Records the ORDER of every call across the device sync and the Google
+/// follow-up. Shared by the two fakes below so the ordering test can assert
+/// "push, then Google" in one list rather than two counters.
+final List<String> _callLog = <String>[];
+
+/// A [SummariesClient] whose Google Tasks verbs are scripted. It never opens
+/// a socket: `baseUrl` is a non-routable placeholder and every method the
+/// screen touches is overridden.
+class _FakeGoogleClient extends SummariesClient {
+  _FakeGoogleClient({
+    required this.status,
+    this.syncError,
+    this.syncNowThrows,
+  }) : super(baseUrl: 'http://unused.invalid');
+
+  final String status;
+  final String? syncError;
+  final Object? syncNowThrows;
+  int statusCalls = 0;
+  int syncNowCalls = 0;
+
+  @override
+  Future<GoogleTasksStatus> getGoogleTasksStatus() async {
+    statusCalls++;
+    _callLog.add('google-status');
+    return GoogleTasksStatus.fromJson(<String, dynamic>{'status': status});
+  }
+
+  @override
+  Future<GoogleTasksStatus> syncGoogleTasksNow() async {
+    syncNowCalls++;
+    _callLog.add('google-sync-now');
+    final Object? err = syncNowThrows;
+    if (err != null) throw err;
+    return GoogleTasksStatus.fromJson(<String, dynamic>{
+      'status': syncError == null ? 'connected' : 'error',
+      'last_error': syncError,
+      'pushed': 1,
+    });
+  }
+}
+
 class _RecordingSyncClient implements TranscriptionClient {
   int pulls = 0;
   List<Map<String, dynamic>> pushed = <Map<String, dynamic>>[];
@@ -730,6 +776,7 @@ class _RecordingSyncClient implements TranscriptionClient {
     required int sinceSeq,
   }) async {
     pulls++;
+    _callLog.add('device-pull');
     return SyncPullPage(changes: const [], headSeq: sinceSeq, hasMore: false);
   }
 
@@ -739,6 +786,7 @@ class _RecordingSyncClient implements TranscriptionClient {
     required List<Map<String, dynamic>> changes,
   }) async {
     pushed.addAll(changes);
+    _callLog.add('device-push');
     return <PushResult>[
       for (final Map<String, dynamic> c in changes)
         PushResult(
@@ -787,6 +835,13 @@ void syncButtonTests() {
           overrides: <Override>[
             localDbProvider.overrideWithValue(db),
             documentSyncEngineProvider.overrideWithValue(engine),
+            // Google not linked: the v1.30.0 follow-up must leave this
+            // message exactly as it was in v1.29.0.
+            summariesClientProvider.overrideWith(
+              (ref) => Future<SummariesClient>.value(
+                _FakeGoogleClient(status: 'disconnected'),
+              ),
+            ),
           ],
           child: const MaterialApp(home: TodoListScreen()),
         ),
@@ -810,6 +865,138 @@ void syncButtonTests() {
       // The snackbar's dismiss timer outlives the test otherwise.
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump(const Duration(milliseconds: 1));
+    });
+  });
+
+  group('To Do sync button → Google (v1.30.0, L4)', () {
+    /// Mounts To Do over a fake device-sync client and a scripted Google
+    /// client, taps ↻, and returns both fakes for assertions.
+    Future<(_RecordingSyncClient, _FakeGoogleClient)> tapSync(
+      WidgetTester tester, {
+      required _FakeGoogleClient google,
+    }) async {
+      _callLog.clear();
+      final LocalDb db = LocalDb.forTesting(NativeDatabase.memory());
+      addTearDown(db.close);
+      final _RecordingSyncClient client = _RecordingSyncClient();
+      final DocumentSyncEngine engine = DocumentSyncEngine(
+        db: () => db,
+        client: () => client,
+        connectivity: _WifiConnectivity(),
+        deviceLabel: () async => 'test-device',
+        newDeviceId: 'device-1',
+      );
+      addTearDown(engine.dispose);
+      await TodoRepository(db: db).add('buy thermal paste');
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: <Override>[
+            localDbProvider.overrideWithValue(db),
+            documentSyncEngineProvider.overrideWithValue(engine),
+            summariesClientProvider.overrideWith(
+              (ref) => Future<SummariesClient>.value(google),
+            ),
+          ],
+          child: const MaterialApp(home: TodoListScreen()),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(google.syncNowCalls, 0, reason: 'nothing runs until the tap');
+
+      await tester.tap(find.byKey(const ValueKey<String>('sync-button')));
+      await tester.pumpAndSettle();
+      return (client, google);
+    }
+
+    /// The snackbar's dismiss timer outlives the test otherwise; the widget
+    /// tree must be gone before the framework checks for pending timers, so
+    /// this runs INSIDE the body, not in a tearDown.
+    Future<void> unmount(WidgetTester tester) async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(const Duration(milliseconds: 1));
+    }
+
+    testWidgets(
+        'connected: one Google cycle runs AFTER the device push and the '
+        'snackbar says so', (tester) async {
+      final (_RecordingSyncClient client, _FakeGoogleClient google) =
+          await tapSync(tester, google: _FakeGoogleClient(status: 'connected'));
+
+      expect(client.pulls, 1);
+      expect(google.syncNowCalls, 1, reason: 'exactly one Google cycle');
+      // The whole point of L4: Google must receive the state the server has
+      // AFTER this press. A hook that ran first would forward the stale row.
+      expect(
+        _callLog,
+        <String>['device-pull', 'device-push', 'google-status', 'google-sync-now'],
+        reason: 'device sync completes before any Google call',
+      );
+      expect(find.text('Synced: sent 1 · Google updated'), findsOneWidget);
+      await unmount(tester);
+    });
+
+    testWidgets('not connected: no Google call, message unchanged',
+        (tester) async {
+      final (_, _FakeGoogleClient google) = await tapSync(
+        tester,
+        google: _FakeGoogleClient(status: 'disconnected'),
+      );
+
+      expect(google.statusCalls, 1, reason: 'the status IS consulted');
+      expect(google.syncNowCalls, 0, reason: 'but nothing is pushed');
+      expect(find.text('Synced: sent 1'), findsOneWidget);
+      expect(find.textContaining('Google'), findsNothing);
+      await unmount(tester);
+    });
+
+    testWidgets('reauth_required counts as not connected', (tester) async {
+      final (_, _FakeGoogleClient google) = await tapSync(
+        tester,
+        google: _FakeGoogleClient(status: 'reauth_required'),
+      );
+      expect(google.syncNowCalls, 0);
+      expect(find.text('Synced: sent 1'), findsOneWidget);
+      await unmount(tester);
+    });
+
+    testWidgets('the cycle ran but Google reported an error: named',
+        (tester) async {
+      await tapSync(
+        tester,
+        google: _FakeGoogleClient(
+          status: 'connected',
+          syncError: 'HTTP 503 from tasks.googleapis.com',
+        ),
+      );
+      expect(
+        find.text('Synced: sent 1 · Google: HTTP 503 from tasks.googleapis.com'),
+        findsOneWidget,
+      );
+      await unmount(tester);
+    });
+
+    testWidgets('the Google call throws: the device sync is still reported',
+        (tester) async {
+      await tapSync(
+        tester,
+        google: _FakeGoogleClient(
+          status: 'connected',
+          syncNowThrows: const ApiException(
+            statusCode: 502,
+            code: 'upstream',
+            message: 'Google unreachable',
+          ),
+        ),
+      );
+      // The device sync DID succeed; the follow-up's failure is appended,
+      // never allowed to swallow the sentence or crash the button.
+      expect(
+        find.text('Synced: sent 1 · Google: Google unreachable'),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+      await unmount(tester);
     });
   });
 }

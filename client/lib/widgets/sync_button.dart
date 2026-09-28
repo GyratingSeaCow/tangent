@@ -8,7 +8,33 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../models/api_exception.dart';
 import '../services/document_sync_engine.dart';
+
+/// Runs after a SUCCESSFUL device sync and may add to its snackbar message.
+///
+/// Returns the text to append (e.g. ` · Google updated`) or null to leave the
+/// message exactly as [syncMessageFor] wrote it. The To Do screen uses this
+/// to push the just-synced change on to Google Tasks in the same press.
+typedef AfterSyncHook = Future<String?> Function();
+
+/// The suffix shown when an [AfterSyncHook] throws instead of answering.
+///
+/// The device sync already succeeded, so its sentence stands; the hook's
+/// failure is appended rather than replacing it. Kept short: a snackbar is
+/// one line, and a Dio stack trace is not a message.
+String afterSyncErrorSuffix(Object error) {
+  final String text = switch (error) {
+    ApiException(:final String message) => message,
+    final Exception e =>
+      e.toString().replaceFirst(RegExp(r'^\w*Exception:\s*'), ''),
+    _ => error.toString(),
+  };
+  final String firstLine = text.split('\n').first.trim();
+  final String short =
+      firstLine.length > 80 ? '${firstLine.substring(0, 77)}…' : firstLine;
+  return ' · Google: ${short.isEmpty ? 'unknown error' : short}';
+}
 
 /// Turns a finished sync into the sentence shown to the user.
 ///
@@ -45,9 +71,19 @@ String syncMessageFor(SyncReport report) {
 
 /// An app-bar action that runs a sync and reports what happened.
 class SyncButton extends ConsumerWidget {
-  const SyncButton({required this.engineProvider, super.key});
+  const SyncButton({
+    required this.engineProvider,
+    this.afterSync,
+    super.key,
+  });
 
   final ProviderListenable<DocumentSyncEngine> engineProvider;
+
+  /// Optional follow-up that runs AFTER the device sync succeeds, so whatever
+  /// it forwards (Google Tasks, for To Do) is the state the server just
+  /// received — never the state from before the push. Screens with nothing
+  /// to forward pass nothing and their message is unchanged.
+  final AfterSyncHook? afterSync;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -74,11 +110,26 @@ class SyncButton extends ConsumerWidget {
                   final ScaffoldMessengerState messenger =
                       ScaffoldMessenger.of(context);
                   final SyncReport report = await engine.syncNow();
+                  String message = syncMessageFor(report);
+                  // Ordering is the contract: the hook must see the world
+                  // AFTER the push, or Google gets yesterday's to-do. And it
+                  // only runs when there was a sync to follow — forwarding
+                  // after an offline or failed cycle would claim a freshness
+                  // the server does not have.
+                  final AfterSyncHook? hook = afterSync;
+                  if (hook != null && report.outcome == SyncOutcome.success) {
+                    try {
+                      final String? suffix = await hook();
+                      if (suffix != null) message += suffix;
+                    } catch (e) {
+                      // The device sync DID succeed; say so, then say what
+                      // the follow-up could not do.
+                      message += afterSyncErrorSuffix(e);
+                    }
+                  }
                   // The screen can be gone by the time the server answers.
                   if (!context.mounted) return;
-                  messenger.showSnackBar(
-                    SnackBar(content: Text(syncMessageFor(report))),
-                  );
+                  messenger.showSnackBar(SnackBar(content: Text(message)));
                 },
           icon: busy
               ? const SizedBox(

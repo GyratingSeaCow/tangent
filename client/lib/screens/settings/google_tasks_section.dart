@@ -269,6 +269,19 @@ class _GoogleTasksSectionState extends ConsumerState<GoogleTasksSection> {
     };
   }
 
+  /// "Lists: Personal · Work · Tangent (unfiled)" — folder lists first in
+  /// the server's order, the unfiled list last and labelled, so the user can
+  /// check the names against the Google Tasks sidebar at a glance.
+  String _listsLine(GoogleTasksStatus s) {
+    final List<String> names = <String>[
+      for (final GoogleTaskListMapping m in s.lists)
+        if (!m.isUnfiled) m.name,
+      for (final GoogleTaskListMapping m in s.lists)
+        if (m.isUnfiled) '${m.name} (unfiled)',
+    ];
+    return 'Lists: ${names.join(' · ')}';
+  }
+
   String _summaryLine(GoogleTasksStatus s) {
     final DateTime? at = s.lastSyncAt;
     final String when = at == null
@@ -365,6 +378,18 @@ class _GoogleTasksSectionState extends ConsumerState<GoogleTasksSection> {
               style: const TextStyle(fontSize: 12, color: TangentColors.textDim),
             ),
           ),
+          // v1.30.0: which Google list each folder writes to. Absent on an
+          // older server (empty list) → nothing is drawn, no empty header.
+          if (s.lists.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+              child: Text(
+                _listsLine(s),
+                key: const ValueKey<String>('google-tasks-lists'),
+                style:
+                    const TextStyle(fontSize: 12, color: TangentColors.textDim),
+              ),
+            ),
           _buttonRow(<Widget>[
             FilledButton.tonal(
               key: const ValueKey<String>('google-tasks-sync-now'),

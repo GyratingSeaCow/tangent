@@ -9,9 +9,11 @@ import '../../services/todo_sections.dart';
 import '../../widgets/folder_header_actions.dart';
 import '../../widgets/folder_picker.dart';
 import '../../widgets/item_action_sheet.dart';
+import '../../services/summaries_client.dart';
 import '../../widgets/sync_button.dart';
 import '../home/home_providers.dart' show documentSyncEngineProvider;
 import '../home/home_screen.dart' show localDbProvider;
+import '../settings/ai_summaries_section.dart' show summariesClientProvider;
 import 'todo_grouping.dart';
 
 /// The To Do screen (v1.24.0, folders): quick-add pinned at top, then one
@@ -46,6 +48,25 @@ class TodoListScreen extends ConsumerStatefulWidget {
 
 class _TodoListScreenState extends ConsumerState<TodoListScreen> {
   final TextEditingController _quickAdd = TextEditingController();
+
+  /// The ↻ follow-up (spec L4): one Google Tasks cycle right after the
+  /// device push, so the to-do the user just ticked is what Google gets
+  /// instead of waiting up to five minutes for the server's timer.
+  ///
+  /// Returns the snackbar suffix, or null when Google is not connected so
+  /// the message reads exactly as on every other screen. Only a `connected`
+  /// link is pushed: `reauth_required` / `error` would fail again and
+  /// Settings already shows those states with the right verb.
+  Future<String?> _pushToGoogle() async {
+    final SummariesClient client =
+        await ref.read(summariesClientProvider.future);
+    final GoogleTasksStatus before = await client.getGoogleTasksStatus();
+    if (before.status != GoogleTasksLinkStatus.connected) return null;
+    final GoogleTasksStatus after = await client.syncGoogleTasksNow();
+    final String? error = after.lastError;
+    if (error != null && error.isNotEmpty) return ' · Google: $error';
+    return ' · Google updated';
+  }
 
   /// Keeps the keyboard up across submits: chained entry is the whole
   /// point of quick-add, and losing focus after every item would make the
@@ -372,7 +393,10 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
                 // ride the document sync, and a list that can only be
                 // synced from ANOTHER screen hides its own staleness.
                 actions: <Widget>[
-                  SyncButton(engineProvider: documentSyncEngineProvider),
+                  SyncButton(
+                    engineProvider: documentSyncEngineProvider,
+                    afterSync: _pushToGoogle,
+                  ),
                 ],
               ),
         body: Column(
