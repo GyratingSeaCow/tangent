@@ -49,19 +49,35 @@ void main() {
     // Windows Sleep() is not interruptible and release builds have no
     // profiler, so the app is fine — but the test may only rely on the
     // handler RETRYING, never on how long it keeps retrying.
+    //
+    // And the hold must be keyed to B ACTUALLY WAITING, not to a timer
+    // started when the holder took the lock: between `held` and B's
+    // `execute` sit an open + configureSqlite on B's side, and on a loaded
+    // runner the holder's 25 ms timer fired late enough that B's ~60 ms
+    // budget was already spent (v1.34.0's APK job: code 5 on a commit that
+    // had passed CI minutes earlier). So B says "waiting" right before it
+    // blocks, and only then does the holder start its short hold.
     final ReceivePort held = ReceivePort();
+    final ReceivePort waiting = ReceivePort();
     final ReceivePort done = ReceivePort();
     final Isolate holder = await Isolate.spawn(
       _holdWriteLock,
-      _HoldArgs(path, held.sendPort, done.sendPort, holdMs: 25),
+      _HoldArgs(
+        path,
+        held.sendPort,
+        waiting.sendPort,
+        done.sendPort,
+        holdMs: 10,
+      ),
     );
     addTearDown(holder.kill);
-    await held.first;
+    final SendPort release = await held.first as SendPort;
 
     final Database b = sqlite3.open(path);
     configureSqlite(b);
     addTearDown(b.dispose);
     final Stopwatch clock = Stopwatch()..start();
+    release.send(null); // "about to block" — the holder's hold starts now
     // Without a busy handler this throws code 5 in well under a millisecond.
     b.execute("INSERT INTO t (v) VALUES ('from b')");
     clock.stop();
@@ -69,7 +85,7 @@ void main() {
 
     expect(
       clock.elapsedMilliseconds,
-      greaterThanOrEqualTo(20),
+      greaterThanOrEqualTo(5),
       reason: 'B must have blocked on the held lock, not slipped past it',
     );
     expect(
@@ -88,21 +104,31 @@ void main() {
 }
 
 class _HoldArgs {
-  const _HoldArgs(this.path, this.held, this.done, {required this.holdMs});
+  const _HoldArgs(
+    this.path,
+    this.held,
+    this.waiting,
+    this.done, {
+    required this.holdMs,
+  });
   final String path;
   final SendPort held;
+  final SendPort waiting;
   final SendPort done;
   final int holdMs;
 }
 
-/// Opens its own connection, takes the write lock, signals [held], keeps it
-/// for [holdMs], commits, signals [done].
+/// Opens its own connection, takes the write lock, sends a port on [held],
+/// waits for the test to say it is about to block on that port, keeps the
+/// lock for [holdMs] more, commits, signals [done].
 Future<void> _holdWriteLock(_HoldArgs args) async {
   final Database a = sqlite3.open(args.path);
   configureSqlite(a);
   a.execute('BEGIN IMMEDIATE');
   a.execute("INSERT INTO t (v) VALUES ('from a')");
-  args.held.send(null);
+  final ReceivePort release = ReceivePort();
+  args.held.send(release.sendPort);
+  await release.first;
   await Future<void>.delayed(Duration(milliseconds: args.holdMs));
   a.execute('COMMIT');
   a.dispose();
