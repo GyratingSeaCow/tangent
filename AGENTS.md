@@ -50,7 +50,7 @@ ADH2/
 
 ## Status
 
-Shipping — **v1.33.0** (see CHANGELOG.md). Client and server are both
+Shipping — **v1.33.1** (see CHANGELOG.md). Client and server are both
 implemented and tested (2606
 Flutter tests, 612 server tests, 129 Kotlin tests). The client runs
 natively on Linux AND Windows (tray icon, global record hotkey,
@@ -66,7 +66,7 @@ and 1003 notes-ready, replace-not-stack; Android port on channel `completion`
 fact is learned: `ServerTranscriptionService` outcome hook (only when THIS
 device's status write won) and `DocumentSyncEngine._reportSummaryLanded`
 (only when the row's `summaryRequestedAt` was set — this device asked — and
-the text is new or the marker was spent; exactly once). N3: `currentDumpIdProvider`
+the text is new or the marker was spent; exactly once). N3 (amended in 1.33.1 — NO suppression while the recording is on screen; Jeff read the silent case as a bug; only clear-on-open remains): `currentDumpIdProvider`
 set by `DumpDetailScreen` post-frame and cleared on dispose through a
 controller captured while alive — never `ref` in dispose, and both writes
 deferred a microtask so a mid-build dispose cannot trip Riverpod (114 tests

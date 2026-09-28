@@ -5,6 +5,11 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.33.1 — 2026-09-28
+
+### Changed
+- Completion notifications now post even while you are looking at that recording. The first live run had the transcription finish on-screen and the shade stay silent, which read as the feature not working; the screen shows the text, the shade pings.
+
 ## 1.33.0 — 2026-09-28
 
 ### Added
