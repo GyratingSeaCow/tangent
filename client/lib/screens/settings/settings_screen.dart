@@ -11,6 +11,7 @@ import '../server/server_connection_screen.dart';
 import 'bulk_import_section.dart';
 import 'diagnostics_section.dart';
 import 'obsidian_export_section.dart';
+import 'reminders_section.dart';
 import 'handwriting_search_section.dart';
 import 'ai_summaries_section.dart';
 import 'google_tasks_section.dart';
@@ -224,6 +225,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           const Divider(),
           const GoogleTasksSection(),
           const Divider(),
+          const RemindersSection(),
           const Padding(
             padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
             child: Text(

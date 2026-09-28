@@ -5,6 +5,7 @@ import 'dart:ui' show Color;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
+import 'notification_plugin_init.dart';
 import 'transcription_notifications.dart';
 
 /// The real Android notification, behind [TranscriptionNotificationPort].
@@ -52,11 +53,10 @@ class AndroidTranscriptionNotificationPort
   /// put the prompt in front of a user with no idea what it is for.
   Future<void> _ensureReady() async {
     if (!_initialised) {
-      await _plugin.initialize(
-        const InitializationSettings(
-          android: AndroidInitializationSettings('@mipmap/ic_launcher'),
-        ),
-      );
+      // Shared guard: main() initialises the singleton plugin with the
+      // reminder tap router first; a second initialize() here would have
+      // wiped that callback.
+      await ensureLocalNotificationsInitialised(_plugin);
       _initialised = true;
     }
     if (_permissionRequested) return;

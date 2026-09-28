@@ -1,0 +1,148 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:tangent/data/local_db.dart';
+import 'package:tangent/data/settings_store.dart';
+import 'package:tangent/screens/settings/reminders_section.dart';
+import 'package:tangent/screens/settings/settings_screen.dart'
+    show settingsStoreProvider;
+import 'package:tangent/services/due_reminder_scheduler.dart';
+
+import '../support/fake_due_reminder_port.dart';
+
+/// Spec 2026-09-27 Half B, N4: the Reminders section.
+void main() {
+  late FakeDueReminderPort port;
+  late SettingsStore store;
+  List<TodoRow> todos = <TodoRow>[];
+
+  setUp(() {
+    port = FakeDueReminderPort();
+    store = SettingsStore();
+    todos = <TodoRow>[];
+  });
+
+  Widget host({bool android = true}) => ProviderScope(
+        overrides: <Override>[
+          settingsStoreProvider.overrideWithValue(store),
+          isAndroidProvider.overrideWithValue(android),
+          dueReminderPortProvider.overrideWithValue(port),
+          dueReminderSchedulerProvider.overrideWith(
+            (ref) => DueReminderScheduler(
+              port: port,
+              loadTodos: () async => todos,
+              now: () => DateTime(2026, 9, 27, 6, 30),
+            ),
+          ),
+        ],
+        child: const MaterialApp(
+          home: Scaffold(body: SingleChildScrollView(child: RemindersSection())),
+        ),
+      );
+
+  Finder switchFinder() => find.byKey(RemindersSection.enabledKey);
+  SwitchListTile theSwitch(WidgetTester t) =>
+      t.widget<SwitchListTile>(switchFinder());
+  ListTile timeRow(WidgetTester t) =>
+      t.widget<ListTile>(find.byKey(RemindersSection.timeKey));
+  String statusText(WidgetTester t) =>
+      t.widget<Text>(find.byKey(RemindersSection.statusKey)).data!;
+
+  testWidgets('hidden entirely on non-Android hosts', (tester) async {
+    await tester.pumpWidget(host(android: false));
+    await tester.pump();
+    expect(switchFinder(), findsNothing);
+    expect(find.text('Reminders'), findsNothing);
+  });
+
+  testWidgets('off by default; time row disabled while off', (tester) async {
+    await tester.pumpWidget(host());
+    await tester.pump();
+    expect(theSwitch(tester).value, isFalse);
+    expect(timeRow(tester).enabled, isFalse);
+    expect(timeRow(tester).onTap, isNull);
+    expect(statusText(tester), 'Off');
+    expect(port.scheduledAt, isEmpty);
+    expect(port.permissionRequests, 0);
+  });
+
+  testWidgets('enabling asks permission, schedules, persists; status granted',
+      (tester) async {
+    await tester.pumpWidget(host());
+    await tester.pump();
+    await tester.tap(switchFinder());
+    await tester.pumpAndSettle();
+    expect(port.permissionRequests, 1);
+    expect(port.scheduledAt, <DateTime>[DateTime(2026, 9, 27, 7)]);
+    expect(store.remindersEnabled, isTrue);
+    expect(theSwitch(tester).value, isTrue);
+    expect(timeRow(tester).enabled, isTrue);
+    expect(statusText(tester), startsWith('Next: '));
+    expect(statusText(tester), contains('7:00 AM'));
+    expect(find.byKey(RemindersSection.openSettingsKey), findsNothing);
+  });
+
+  testWidgets('denied permission: says so, offers system settings, no alarm',
+      (tester) async {
+    port.grant = false;
+    await tester.pumpWidget(host());
+    await tester.pump();
+    await tester.tap(switchFinder());
+    await tester.pumpAndSettle();
+    expect(port.permissionRequests, 1);
+    expect(port.scheduledAt, isEmpty);
+    expect(
+      statusText(tester),
+      'Notifications blocked \u2014 open system settings',
+    );
+    await tester.tap(find.byKey(RemindersSection.openSettingsKey));
+    await tester.pump();
+    expect(port.openSettingsCalls, 1);
+  });
+
+  testWidgets('inexact fallback is stated in the status line', (tester) async {
+    port.exact = false;
+    await tester.pumpWidget(host());
+    await tester.pump();
+    await tester.tap(switchFinder());
+    await tester.pumpAndSettle();
+    expect(port.scheduledExact, <bool>[false]);
+    expect(statusText(tester), contains('exact alarms not allowed'));
+  });
+
+  testWidgets('disabling cancels and persists off', (tester) async {
+    store = SettingsStore(remindersEnabled: true);
+    await tester.pumpWidget(host());
+    await tester.pumpAndSettle();
+    // Already on from a previous session: re-armed on show.
+    expect(port.scheduledAt, hasLength(1));
+    await tester.tap(switchFinder());
+    await tester.pumpAndSettle();
+    expect(port.cancels, 1);
+    expect(store.remindersEnabled, isFalse);
+    expect(theSwitch(tester).value, isFalse);
+    expect(statusText(tester), 'Off');
+  });
+
+  testWidgets('time picker changes the minute and re-schedules',
+      (tester) async {
+    store = SettingsStore(remindersEnabled: true);
+    await tester.pumpWidget(host());
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(RemindersSection.timeKey));
+    await tester.pumpAndSettle();
+    // Switch the dialog to keyboard entry and type 8:15.
+    await tester.tap(find.byIcon(Icons.keyboard_outlined));
+    await tester.pumpAndSettle();
+    final Finder fields = find.byType(TextField);
+    await tester.enterText(fields.at(0), '8');
+    await tester.enterText(fields.at(1), '15');
+    await tester.tap(find.text('OK'));
+    await tester.pumpAndSettle();
+    expect(store.reminderMinuteOfDay, 8 * 60 + 15);
+    expect(port.scheduledAt.last, DateTime(2026, 9, 27, 8, 15));
+    expect(timeRow(tester).subtitle, isA<Text>());
+    expect(statusText(tester), contains('8:15 AM'));
+  });
+}

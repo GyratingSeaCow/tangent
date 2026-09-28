@@ -24,6 +24,7 @@ import 'data/storage/local_deletion_service.dart';
 import 'data/storage/storage_providers.dart';
 import 'data/secure_storage.dart';
 import 'data/settings_store.dart';
+import 'data/todo_repository.dart';
 import 'screens/home/home_providers.dart';
 import 'screens/home/home_screen.dart';
 import 'screens/notebook/notebook_editor_screen.dart';
@@ -31,12 +32,17 @@ import 'services/widget_launch.dart';
 import 'screens/recording/recording_controller.dart';
 import 'screens/server/server_connection_screen.dart';
 import 'screens/settings/settings_screen.dart';
+import 'screens/todo/todo_list_screen.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart'
+    show NotificationResponse;
 import 'package:workmanager/workmanager.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'package:device_info_plus/device_info_plus.dart';
 
+import 'services/android_due_reminder_port.dart';
 import 'services/background_sync_scheduler.dart';
+import 'services/due_reminder_scheduler.dart';
 import 'services/close_to_tray.dart';
 import 'services/record_hotkey.dart';
 import 'services/connectivity_service.dart';
@@ -73,6 +79,7 @@ Future<String> _backgroundDeviceLabel() async {
 @pragma('vm:entry-point')
 void backgroundSyncDispatcher() {
   Workmanager().executeTask((String task, Map<String, dynamic>? input) async {
+    if (task == kDueReminderTaskName) return _runDueReminderTask();
     if (task != kDocumentSyncTaskName) return true;
     LocalDb? db;
     try {
@@ -107,6 +114,50 @@ void backgroundSyncDispatcher() {
       await db?.close();
     }
   });
+}
+
+/// The daily reminder, at fire time: read the list AS IT IS NOW, post the
+/// digest (or withdraw the predicted one when nothing is due) and arm
+/// tomorrow. Runs in the background isolate, so it builds its own handles.
+Future<bool> _runDueReminderTask() async {
+  LocalDb? db;
+  try {
+    WidgetsFlutterBinding.ensureInitialized();
+    final SettingsStore settings = await SettingsStore.load();
+    // Toggled off since the task was queued: do nothing and do not re-arm.
+    if (!settings.remindersEnabled) return true;
+    db = LocalDb();
+    final TodoRepository todos = TodoRepository(db: db);
+    final DueReminderScheduler scheduler = DueReminderScheduler(
+      port: AndroidDueReminderPort(),
+      loadTodos: todos.listTodos,
+    );
+    await scheduler.runDailyTask(minuteOfDay: settings.reminderMinuteOfDay);
+    return true;
+  } catch (_) {
+    // Never crash the isolate; a missed morning is recoverable, a task
+    // Android stops scheduling is not.
+    return false;
+  } finally {
+    await db?.close();
+  }
+}
+
+/// Reminder tap → the To Do screen, on top of whatever is showing. The
+/// navigator may not exist yet on a cold start; wait a frame and retry.
+void _openTodoScreen() {
+  final NavigatorState? nav = TangentApp.navigatorKey.currentState;
+  if (nav == null) {
+    WidgetsBinding.instance.addPostFrameCallback((_) => _openTodoScreen());
+    return;
+  }
+  nav.push<void>(
+    MaterialPageRoute<void>(builder: (_) => const TodoListScreen()),
+  );
+}
+
+void _onNotificationTap(NotificationResponse response) {
+  if (response.payload == kDueReminderPayload) _openTodoScreen();
 }
 
 Future<void> main(List<String> args) async {
@@ -181,10 +232,20 @@ Future<void> main(List<String> args) async {
   final settings = await SettingsStore.load();
   // Periodic background sync. Registered before the UI so a user who opens
   // the app once and never returns still gets background syncs.
+  AndroidDueReminderPort? reminderPort;
   if (Platform.isAndroid) {
     final Workmanager workmanager = Workmanager();
     await workmanager.initialize(backgroundSyncDispatcher);
     await registerPeriodicDocumentSync(workmanager);
+    // Initialised here, with the tap router, BEFORE the transcription
+    // notifier can claim the singleton plugin: initialize() replaces the
+    // tap callback, and the first caller wins.
+    reminderPort = AndroidDueReminderPort(onResponse: _onNotificationTap);
+    try {
+      await reminderPort.ensureReady();
+    } catch (e) {
+      debugPrint('tangent.reminders unavailable: $e');
+    }
   }
   final backend =
       Platform.isAndroid ? SafStorageBackend() : FilesystemStorageBackend();
@@ -233,12 +294,40 @@ Future<void> main(List<String> args) async {
         recordingImporterProvider.overrideWithValue(importer),
         localDeletionServiceProvider.overrideWithValue(deletion),
         settingsStoreProvider.overrideWithValue(settings),
+        if (reminderPort != null)
+          dueReminderPortProvider.overrideWithValue(reminderPort),
         if (instance != null)
           instanceCommandsProvider.overrideWithValue(instance.commands),
       ],
       child: const TangentApp(),
     ),
   );
+  if (reminderPort != null) {
+    final AndroidDueReminderPort port = reminderPort;
+    // Re-arm on every launch (spec: app start) so a reboot, a cleared task
+    // or a time-zone change never leaves the reminder silently dead.
+    if (settings.remindersEnabled) {
+      final DueReminderScheduler scheduler = DueReminderScheduler(
+        port: port,
+        loadTodos: () => TodoRepository(db: db).listTodos(),
+      );
+      unawaited(
+        scheduler
+            .scheduleNext(minuteOfDay: settings.reminderMinuteOfDay)
+            .catchError((Object e) {
+          debugPrint('tangent.reminders: reschedule failed: $e');
+          return DateTime.now();
+        }),
+      );
+    }
+    // Cold start from a reminder tap: the tap callback never fires for the
+    // launching notification, so ask the plugin and route it ourselves.
+    unawaited(
+      port.launchedByReminderTap().then((bool tapped) {
+        if (tapped) _openTodoScreen();
+      }),
+    );
+  }
   // Launched via the hotkey with no instance running: the app is up, now
   // honour the intent. Deliver through the same socket the running-instance
   // path uses so there is exactly one code path for the command.
