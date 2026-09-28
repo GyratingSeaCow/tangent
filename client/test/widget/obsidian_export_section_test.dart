@@ -43,19 +43,27 @@ Future<void> pump(
   WidgetTester tester,
   FakeExporter exporter, {
   SettingsStore? store,
+  bool wordTimings = false,
 }) async {
   await tester.pumpWidget(
     ProviderScope(
       overrides: [
         obsidianExporterProvider.overrideWithValue(exporter),
         if (store != null) settingsStoreProvider.overrideWithValue(store),
+        obsidianWordTimingsAvailableProvider
+            .overrideWith((_) async => wordTimings),
       ],
       child: const MaterialApp(
         home: Scaffold(body: ObsidianExportSection()),
       ),
     ),
   );
+  // Let the availability future resolve.
+  await tester.pump();
 }
+
+const wordSwitch = ValueKey<String>('obsidian-word-timestamps');
+const timestampsSwitch = ValueKey<String>('obsidian-timestamps');
 
 class _FakeDb extends Fake implements LocalDb {}
 
@@ -135,6 +143,8 @@ void main() {
         ProviderScope(
           overrides: [
             settingsStoreProvider.overrideWithValue(store),
+            obsidianWordTimingsAvailableProvider
+                .overrideWith((_) async => false),
             // Mirrors the real provider: rebuilt from the options provider.
             obsidianExporterProvider.overrideWith((ref) {
               final exporter = FakeExporter(
@@ -170,6 +180,7 @@ void main() {
             SettingsStore(
               obsidianExportTimestamps: true,
               obsidianExportSummary: false,
+              obsidianExportWordTimestamps: true,
             ),
           ),
           localDbProvider.overrideWithValue(_FakeDb()),
@@ -185,8 +196,101 @@ void main() {
         const TranscriptMarkdownOptions(
           timestamps: true,
           includeSummary: false,
+          wordTimestamps: true,
         ),
       );
+    });
+  });
+
+  group('word timestamps switch (L4)', () {
+    setUp(() => SharedPreferences.setMockInitialValues({}));
+
+    testWidgets('absent when no recording has word timings', (tester) async {
+      await pump(
+        tester,
+        FakeExporter(const ExportSummary(exported: 0, failed: [])),
+        store: await SettingsStore.load(),
+      );
+
+      expect(find.byKey(wordSwitch), findsNothing);
+      expect(find.text('Include word timestamps'), findsNothing);
+    });
+
+    testWidgets('present, default OFF, disabled until timestamps are on',
+        (tester) async {
+      await pump(
+        tester,
+        FakeExporter(const ExportSummary(exported: 0, failed: [])),
+        store: await SettingsStore.load(),
+        wordTimings: true,
+      );
+
+      final tile = tester.widget<SwitchListTile>(find.byKey(wordSwitch));
+      expect(tile.value, isFalse);
+      expect(
+        tile.onChanged,
+        isNull,
+        reason: 'markers ride segment lines; no lines, nothing to mark',
+      );
+
+      await tester.tap(find.byKey(timestampsSwitch));
+      await tester.pump();
+      expect(
+        tester.widget<SwitchListTile>(find.byKey(wordSwitch)).onChanged,
+        isNotNull,
+      );
+    });
+
+    testWidgets('persists across a fresh store load and reaches the exporter',
+        (tester) async {
+      final store = await SettingsStore.load();
+      final built = <FakeExporter>[];
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            settingsStoreProvider.overrideWithValue(store),
+            obsidianWordTimingsAvailableProvider
+                .overrideWith((_) async => true),
+            obsidianExporterProvider.overrideWith((ref) {
+              final exporter = FakeExporter(
+                const ExportSummary(exported: 1, failed: []),
+                options: ref.watch(obsidianMarkdownOptionsProvider),
+              );
+              built.add(exporter);
+              return exporter;
+            }),
+          ],
+          child: const MaterialApp(
+            home: Scaffold(body: ObsidianExportSection()),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      await tester.tap(find.byKey(timestampsSwitch));
+      await tester.pump();
+      await tester.tap(find.byKey(wordSwitch));
+      await tester.pump();
+      expect(
+        tester.widget<SwitchListTile>(find.byKey(wordSwitch)).value,
+        isTrue,
+      );
+
+      await tester.tap(find.text('Export to Obsidian…'));
+      await tester.pumpAndSettle();
+
+      expect(built.last.runs, 1);
+      expect(
+        built.last.options,
+        const TranscriptMarkdownOptions(
+          timestamps: true,
+          includeSummary: true,
+          wordTimestamps: true,
+        ),
+      );
+
+      final reloaded = await SettingsStore.load();
+      expect(reloaded.obsidianExportWordTimestamps, isTrue);
     });
   });
 

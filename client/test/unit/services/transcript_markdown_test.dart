@@ -61,8 +61,37 @@ TranscriptTimings timings(List<(double, String?, String)> segments) {
   return TranscriptTimings.parse(json.toString())!;
 }
 
+/// Segments whose words are the whitespace-split text, each word one
+/// second after the previous starting at the segment start — enough to
+/// pin marker cadence and times. A false fourth field makes a segment-only
+/// entry (older recordings) so fallback can be tested beside marked lines.
+TranscriptTimings wordTimings(List<(double, String?, String, bool)> segments) {
+  final json = StringBuffer('{"segments":[');
+  json.write(
+    segments.map((s) {
+      final words = s.$3.split(' ');
+      final wordJson = s.$4
+          ? '[${[
+              for (var i = 0; i < words.length; i++)
+                '{"w":"${words[i]}","s":${s.$1 + i},"e":${s.$1 + i + 1}}',
+            ].join(',')}]'
+          : '[]';
+      return '{"start":${s.$1},"end":${s.$1 + words.length},'
+          '"speaker":${s.$2 == null ? 'null' : '"${s.$2}"'},'
+          '"text":"${s.$3}","words":$wordJson}';
+    }).join(','),
+  );
+  json.write(']}');
+  return TranscriptTimings.parse(json.toString())!;
+}
+
 const stamped = TranscriptMarkdownOptions(timestamps: true);
 const plain = TranscriptMarkdownOptions();
+const worded =
+    TranscriptMarkdownOptions(timestamps: true, wordTimestamps: true);
+
+/// Twelve words: word 0 and word 10 get markers, nothing else.
+const twelve = 'one two three four five six seven eight nine ten eleven twelve';
 
 String bodyOf(String md) => md.substring(md.indexOf('## Transcript'));
 
@@ -163,6 +192,146 @@ void main() {
       expect(md, isNot(contains('## Transcript')));
       expect(md, isNot(contains('[00:01]')));
       expect(md, endsWith('# Standup\n\nJust a note.\n'));
+    });
+  });
+
+  group('word timestamps (L4)', () {
+    test('the first word and every 10th word carry a word⁽mm:ss⁾ marker', () {
+      final md = transcriptMarkdown(
+        dump: row(transcript: twelve),
+        timings: wordTimings([(65, 'Speaker 1', twelve, true)]),
+        options: worded,
+      );
+
+      expect(
+        bodyOf(md),
+        '## Transcript\n\n'
+        '[01:05] Speaker 1: one\u207D01:05\u207E two three four five six '
+        'seven eight nine ten eleven\u207D01:15\u207E twelve\n',
+      );
+      // Exactly two markers: index 0 and index 10.
+      expect('\u207D'.allMatches(md).length, 2);
+      // The spec's literal glyphs, not ASCII parentheses.
+      expect(md, contains('one⁽01:05⁾'));
+      expect(md, isNot(contains('one(01:05)')));
+    });
+
+    test('marker times come from each word, not the segment start', () {
+      final md = transcriptMarkdown(
+        dump: row(),
+        timings: wordTimings([(3, null, 'a b c d e f g h i j k', true)]),
+        options: worded,
+      );
+
+      expect(md, contains('[00:03] a⁽00:03⁾ b c d e f g h i j k⁽00:13⁾\n'));
+    });
+
+    test('cadence restarts per segment: each segment marks its first word', () {
+      final md = transcriptMarkdown(
+        dump: row(),
+        timings: wordTimings([
+          (0, 'Speaker 1', 'hello there', true),
+          (10, 'Speaker 2', 'hi back', true),
+        ]),
+        options: worded,
+      );
+
+      expect(
+        bodyOf(md),
+        '## Transcript\n\n'
+        '[00:00] Speaker 1: hello⁽00:00⁾ there\n'
+        '[00:10] Speaker 2: hi⁽00:10⁾ back\n',
+      );
+    });
+
+    test('markers promote to h:mm:ss with the rest of the document', () {
+      final md = transcriptMarkdown(
+        dump: row(),
+        timings: wordTimings([
+          (5, null, 'early', true),
+          (3723, null, 'late', true),
+        ]),
+        options: worded,
+      );
+
+      expect(md, contains('[0:00:05] early⁽0:00:05⁾'));
+      expect(md, contains('[1:02:03] late⁽1:02:03⁾'));
+      expect(md, isNot(contains('⁽00:05⁾')), reason: 'never mixed widths');
+    });
+
+    test('a segment without word timings falls back to the plain line', () {
+      final md = transcriptMarkdown(
+        dump: row(),
+        timings: wordTimings([
+          (0, 'Speaker 1', 'with words', true),
+          (5, 'Speaker 1', 'segment only here', false),
+          (9, 'Speaker 1', 'words again', true),
+        ]),
+        options: worded,
+      );
+
+      expect(
+        bodyOf(md),
+        '## Transcript\n\n'
+        '[00:00] Speaker 1: with⁽00:00⁾ words\n'
+        '[00:05] Speaker 1: segment only here\n'
+        '[00:09] Speaker 1: words⁽00:09⁾ again\n',
+      );
+    });
+
+    test(
+        'OFF is byte-identical to the v1.16.0 segment output even when '
+        'word timings exist', () {
+      final t = wordTimings([
+        (65, 'Speaker 1', twelve, true),
+        (80, 'Speaker 2', 'segment only', false),
+      ]);
+      final dump = row(transcript: twelve);
+      final off = transcriptMarkdown(dump: dump, timings: t, options: stamped);
+      final explicitOff = transcriptMarkdown(
+        dump: dump,
+        timings: t,
+        options: const TranscriptMarkdownOptions(
+          timestamps: true,
+          wordTimestamps: false,
+        ),
+      );
+
+      expect(off, explicitOff);
+      expect(off, isNot(contains('\u207D')));
+      expect(
+        bodyOf(off),
+        '## Transcript\n\n'
+        '[01:05] Speaker 1: $twelve\n'
+        '[01:20] Speaker 2: segment only\n',
+      );
+      // And ON differs from OFF only by the markers.
+      final on = transcriptMarkdown(dump: dump, timings: t, options: worded);
+      expect(on, isNot(off));
+      expect(on.replaceAll(RegExp('\u207D[0-9:]+\u207E'), ''), off);
+    });
+
+    test(
+        'wordTimestamps without timestamps changes nothing — the markers '
+        'ride segment lines', () {
+      final t = wordTimings([(0, 'Speaker 1', twelve, true)]);
+      final dump = row(transcript: twelve);
+      expect(
+        transcriptMarkdown(
+          dump: dump,
+          timings: t,
+          options: const TranscriptMarkdownOptions(wordTimestamps: true),
+        ),
+        transcriptMarkdown(dump: dump, timings: t, options: plain),
+      );
+    });
+
+    test('the option defaults OFF and takes part in equality', () {
+      expect(const TranscriptMarkdownOptions().wordTimestamps, isFalse);
+      expect(
+        const TranscriptMarkdownOptions(wordTimestamps: true),
+        isNot(const TranscriptMarkdownOptions()),
+      );
     });
   });
 

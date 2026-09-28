@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:tangent/data/local_db.dart';
 import 'package:tangent/models/dump_mode.dart';
 import 'package:tangent/models/notebook.dart';
 import 'package:tangent/services/obsidian_export.dart';
@@ -141,6 +143,50 @@ void main() {
       expect(a, '2026-09-23 Note.md');
       expect(b, '2026-09-23 Note 2.md');
       expect(c, '2026-09-23 Note 3.md');
+    });
+  });
+
+  group('anyDumpHasWordTimings (L4 switch gate)', () {
+    Future<LocalDb> dbWith(List<(String, String?)> dumps) async {
+      final LocalDb db = LocalDb.forTesting(NativeDatabase.memory());
+      addTearDown(db.close);
+      final DateTime t = DateTime.utc(2026, 9, 28);
+      for (final (id, timings) in dumps) {
+        await db.applyRemoteDump(
+          id: id,
+          mode: 'brain_dump',
+          title: id,
+          transcript: 'hello',
+          meetingNotes: null,
+          durationSeconds: 3,
+          audioOnServer: true,
+          createdAt: t,
+          updatedAt: t,
+          seq: 1,
+          transcriptTimings: timings,
+        );
+      }
+      return db;
+    }
+
+    const segmentOnly =
+        '{"segments":[{"start":0,"end":1,"text":"hello","words":[]}]}';
+    const withWords = '{"segments":[{"start":0,"end":1,"text":"hello",'
+        '"words":[{"w":"hello","s":0,"e":1}]}]}';
+
+    test('false with no recordings', () async {
+      expect(await anyDumpHasWordTimings(await dbWith([])), isFalse);
+    });
+
+    test('false when every recording is segment-only or untimed', () async {
+      final db = await dbWith([('a', null), ('b', segmentOnly)]);
+      expect(await anyDumpHasWordTimings(db), isFalse);
+    });
+
+    test('true once any recording carries word timings', () async {
+      final db =
+          await dbWith([('a', null), ('b', segmentOnly), ('c', withWords)]);
+      expect(await anyDumpHasWordTimings(db), isTrue);
     });
   });
 }

@@ -22,6 +22,7 @@ class TranscriptMarkdownOptions {
   const TranscriptMarkdownOptions({
     this.timestamps = false,
     this.includeSummary = true,
+    this.wordTimestamps = false,
   });
 
   /// E1: one `[mm:ss] Name: text` line per timing segment.
@@ -30,18 +31,28 @@ class TranscriptMarkdownOptions {
   /// E3: a `## Summary` section when the dump carries a real summary.
   final bool includeSummary;
 
+  /// L4 (v1.32.0, E1=b): inside each segment line, the first word and
+  /// every [wordMarkerCadence]-th word after it carries a `word⁽mm:ss⁾`
+  /// marker from the word timings. Only meaningful with [timestamps] on;
+  /// segments without word timings fall back to the plain segment line.
+  /// OFF by default: with it off the document is byte-identical to the
+  /// v1.16.0 output.
+  final bool wordTimestamps;
+
   @override
   bool operator ==(Object other) =>
       other is TranscriptMarkdownOptions &&
       other.timestamps == timestamps &&
-      other.includeSummary == includeSummary;
+      other.includeSummary == includeSummary &&
+      other.wordTimestamps == wordTimestamps;
 
   @override
-  int get hashCode => Object.hash(timestamps, includeSummary);
+  int get hashCode => Object.hash(timestamps, includeSummary, wordTimestamps);
 
   @override
   String toString() => 'TranscriptMarkdownOptions('
-      'timestamps: $timestamps, includeSummary: $includeSummary)';
+      'timestamps: $timestamps, includeSummary: $includeSummary, '
+      'wordTimestamps: $wordTimestamps)';
 }
 
 // ── YAML frontmatter ──────────────────────────────────────────────────
@@ -104,6 +115,43 @@ String formatSegmentStamp(double seconds, {required bool hours}) {
 bool needsHourStamps(TranscriptTimings timings) =>
     timings.segments.any((s) => s.start.floor() >= 3600);
 
+// ── word markers (L4) ─────────────────────────────────────────────────
+
+/// Every N-th word of a segment (counting from the first, which always
+/// carries one) gets an inline marker. Ten keeps a line readable: one
+/// marker per clause or so, never one per word.
+const int wordMarkerCadence = 10;
+
+/// `word⁽mm:ss⁾` — the marker rides the word in superscript parentheses
+/// (U+207D / U+207E) so it reads as an annotation, not as part of the
+/// prose, and never collides with the `[mm:ss]` segment stamps or with
+/// Markdown link syntax. Same width rule as the segment stamps: the caller
+/// decides [hours] once for the whole document.
+String wordMarker(String word, double seconds, {required bool hours}) {
+  final stamp = formatSegmentStamp(seconds, hours: hours);
+  // formatSegmentStamp brackets the time; the marker wants the bare digits.
+  return '$word\u207D${stamp.substring(1, stamp.length - 1)}\u207E';
+}
+
+/// The words of [segment] joined by single spaces, with the first word and
+/// every [wordMarkerCadence]-th word after it marked. Returns null when the
+/// segment carries no word timings — the caller then falls back to the
+/// plain segment text, unchanged.
+String? wordMarkedText(TimedSegment segment, {required bool hours}) {
+  final words = segment.words;
+  if (words.isEmpty) return null;
+  final parts = <String>[];
+  for (var i = 0; i < words.length; i++) {
+    final word = words[i];
+    parts.add(
+      i % wordMarkerCadence == 0
+          ? wordMarker(word.text, word.start, hours: hours)
+          : word.text,
+    );
+  }
+  return parts.join(' ');
+}
+
 // ── speaker names ─────────────────────────────────────────────────────
 
 /// Timings only know `Speaker N`; the user's names live in the
@@ -149,6 +197,10 @@ Map<String, String> resolveSpeakerNames({
 /// - timestamps on + timings: one line per segment, `[mm:ss] Name: text`
 ///   (or `[mm:ss] text` without a speaker); blank segments skipped;
 ///   `[h:mm:ss]` for every line once any segment is ≥ 1 h.
+/// - …and wordTimestamps on: a segment WITH word timings renders its words
+///   with a `word⁽mm:ss⁾` marker on the first and every 10th word; a
+///   segment without word timings is the plain line above. With
+///   wordTimestamps off the output is byte-identical to v1.16.0.
 /// - timestamps on, no timings: raw text and `timestamps: none`.
 /// - timestamps off: raw text, no `timestamps` key.
 /// - text notes never get timestamps; the body is the note text.
@@ -211,8 +263,12 @@ String transcriptMarkdown({
     final hours = needsHourStamps(timings);
     final lines = <String>[];
     for (final segment in timings.segments) {
-      final text = segment.text.trim();
-      if (text.isEmpty) continue;
+      final plain = segment.text.trim();
+      if (plain.isEmpty) continue;
+      // L4 byte-identity guard: word markers exist ONLY behind the toggle.
+      final text = options.wordTimestamps
+          ? wordMarkedText(segment, hours: hours) ?? plain
+          : plain;
       final stamp = formatSegmentStamp(segment.start, hours: hours);
       final speaker = segment.speaker;
       lines.add(

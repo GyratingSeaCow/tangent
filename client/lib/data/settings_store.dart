@@ -37,6 +37,7 @@ class SettingsStore {
   static const _whisperModelKey = 'whisper_model';
   static const _obsidianTimestampsKey = 'obsidian_export_timestamps';
   static const _obsidianSummaryKey = 'obsidian_export_summary';
+  static const _obsidianWordTimestampsKey = 'obsidian_export_word_timestamps';
   static const _notebookImportAudioCardKey = 'notebook-import-audio-card';
   static const _remindersEnabledKey = 'reminders_enabled';
   static const _reminderMinuteOfDayKey = 'reminder_minute_of_day';
@@ -119,6 +120,11 @@ class SettingsStore {
   /// default (spec decision E3).
   bool obsidianExportSummary;
 
+  /// Obsidian export: `word⁽mm:ss⁾` markers on the first and every 10th
+  /// word of a segment line (v1.32.0 L4). OFF by default — with it off the
+  /// file is byte-identical to the v1.16.0 shape.
+  bool obsidianExportWordTimestamps;
+
   /// Transcript → notebook: whether the Text / Transcript + summary shapes
   /// also drop an Audio bubble card beside the text so the `[mm:ss]` stamps
   /// can seek it in place. ON by default (spec §C); remembered per device.
@@ -153,6 +159,7 @@ class SettingsStore {
     this.whisperModel = defaultWhisperModel,
     this.obsidianExportTimestamps = false,
     this.obsidianExportSummary = true,
+    this.obsidianExportWordTimestamps = false,
     this.notebookImportAudioCard = true,
     this.remindersEnabled = false,
     this.reminderMinuteOfDay = 420,
@@ -188,6 +195,8 @@ class SettingsStore {
       obsidianExportTimestamps:
           preferences.getBool(_obsidianTimestampsKey) ?? false,
       obsidianExportSummary: preferences.getBool(_obsidianSummaryKey) ?? true,
+      obsidianExportWordTimestamps:
+          preferences.getBool(_obsidianWordTimestampsKey) ?? false,
       notebookImportAudioCard:
           preferences.getBool(_notebookImportAudioCardKey) ?? true,
       remindersEnabled: preferences.getBool(_remindersEnabledKey) ?? false,
@@ -260,6 +269,11 @@ class SettingsStore {
   Future<void> setObsidianExportSummary(bool value) async {
     obsidianExportSummary = value;
     await _preferences?.setBool(_obsidianSummaryKey, value);
+  }
+
+  Future<void> setObsidianExportWordTimestamps(bool value) async {
+    obsidianExportWordTimestamps = value;
+    await _preferences?.setBool(_obsidianWordTimestampsKey, value);
   }
 
   Future<void> setNotebookImportAudioCard(bool value) async {

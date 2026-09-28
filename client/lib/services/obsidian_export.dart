@@ -269,8 +269,30 @@ class ObsidianExporter {
   }
 }
 
-/// Rebuilt whenever either Obsidian switch flips, so the next run uses
-/// what the user just chose.
+/// True when at least one recording in [db] carries word-level timings —
+/// the only case the word-timestamps switch (L4) can change anything, so
+/// the Settings section shows it only then. Stops at the first hit.
+Future<bool> anyDumpHasWordTimings(LocalDb db) async {
+  for (var offset = 0;; offset += 200) {
+    final page = await db.listDumps(limit: 200, offset: offset);
+    for (final dump in page) {
+      if (TranscriptTimings.parse(dump.transcriptTimings)?.hasWords ?? false) {
+        return true;
+      }
+    }
+    if (page.length < 200) return false;
+  }
+}
+
+/// Whether any recording has word-level timings (L4): gates the third
+/// Obsidian switch. Read once per Settings visit; a recording transcribed
+/// while the screen is open shows up on the next visit.
+final obsidianWordTimingsAvailableProvider = FutureProvider<bool>(
+  (ref) => anyDumpHasWordTimings(ref.watch(localDbProvider)),
+);
+
+/// Rebuilt whenever an Obsidian switch flips, so the next run uses what
+/// the user just chose.
 final obsidianExporterProvider = Provider<ObsidianExporter>((ref) {
   return ObsidianExporter(
     db: ref.watch(localDbProvider),
@@ -281,13 +303,14 @@ final obsidianExporterProvider = Provider<ObsidianExporter>((ref) {
   );
 });
 
-/// The two Settings switches as renderer options. Seeded from the
-/// settings store; the section writes both places on every flip.
+/// The Settings switches as renderer options. Seeded from the settings
+/// store; the section writes both places on every flip.
 final obsidianMarkdownOptionsProvider =
     StateProvider<TranscriptMarkdownOptions>((ref) {
   final settings = ref.watch(settingsStoreProvider);
   return TranscriptMarkdownOptions(
     timestamps: settings.obsidianExportTimestamps,
     includeSummary: settings.obsidianExportSummary,
+    wordTimestamps: settings.obsidianExportWordTimestamps,
   );
 });
