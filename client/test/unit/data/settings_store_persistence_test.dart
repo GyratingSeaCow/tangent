@@ -40,6 +40,16 @@ void main() {
       expect(reloaded.obsidianExportSummary, isFalse);
     });
 
+    test('obsidian word timestamps default OFF and survive a reload (L4)',
+        () async {
+      final first = await SettingsStore.load();
+      expect(first.obsidianExportWordTimestamps, isFalse);
+      await first.setObsidianExportWordTimestamps(true);
+
+      final reloaded = await SettingsStore.load();
+      expect(reloaded.obsidianExportWordTimestamps, isTrue);
+    });
+
     test('default trigger mode is tap', () {
       expect(SettingsStore().triggerMode, TriggerMode.tap);
     });

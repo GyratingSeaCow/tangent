@@ -69,6 +69,7 @@ class _ObsidianExportSectionState extends ConsumerState<ObsidianExportSection> {
           (o) => TranscriptMarkdownOptions(
             timestamps: value,
             includeSummary: o.includeSummary,
+            wordTimestamps: o.wordTimestamps,
           ),
         );
     await ref.read(settingsStoreProvider).setObsidianExportTimestamps(value);
@@ -79,14 +80,35 @@ class _ObsidianExportSectionState extends ConsumerState<ObsidianExportSection> {
           (o) => TranscriptMarkdownOptions(
             timestamps: o.timestamps,
             includeSummary: value,
+            wordTimestamps: o.wordTimestamps,
           ),
         );
     await ref.read(settingsStoreProvider).setObsidianExportSummary(value);
   }
 
+  Future<void> _setWordTimestamps(bool value) async {
+    ref.read(obsidianMarkdownOptionsProvider.notifier).update(
+          (o) => TranscriptMarkdownOptions(
+            timestamps: o.timestamps,
+            includeSummary: o.includeSummary,
+            wordTimestamps: value,
+          ),
+        );
+    await ref
+        .read(settingsStoreProvider)
+        .setObsidianExportWordTimestamps(value);
+  }
+
   @override
   Widget build(BuildContext context) {
     final options = ref.watch(obsidianMarkdownOptionsProvider);
+    // L4: the word switch exists only when some recording has word-level
+    // timings — otherwise it could change nothing, and a control that
+    // silently does nothing reads as broken. While the lookup is still
+    // running (or failed — `value` would rethrow, `valueOrNull` does not)
+    // the switch is absent, not disabled.
+    final bool wordTimingsExist =
+        ref.watch(obsidianWordTimingsAvailableProvider).valueOrNull ?? false;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -99,6 +121,20 @@ class _ObsidianExportSectionState extends ConsumerState<ObsidianExportSection> {
           value: options.timestamps,
           onChanged: _running ? null : _setTimestamps,
         ),
+        if (wordTimingsExist)
+          SwitchListTile(
+            key: const ValueKey<String>('obsidian-word-timestamps'),
+            title: const Text('Include word timestamps'),
+            subtitle: const Text(
+              'A word⁽mm:ss⁾ marker on the first and every 10th word of a '
+              'line (needs Include timestamps)',
+            ),
+            value: options.wordTimestamps,
+            // Markers ride the segment lines: without those there is
+            // nothing to mark, so the switch is disabled, not silent.
+            onChanged:
+                _running || !options.timestamps ? null : _setWordTimestamps,
+          ),
         SwitchListTile(
           key: const ValueKey<String>('obsidian-summary'),
           title: const Text('Include summary'),
