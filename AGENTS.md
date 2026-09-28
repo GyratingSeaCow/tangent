@@ -50,8 +50,8 @@ ADH2/
 
 ## Status
 
-Shipping — **v1.29.0** (see CHANGELOG.md). Client and server are both
-implemented and tested (2515
+Shipping — **v1.29.1** (see CHANGELOG.md). Client and server are both
+implemented and tested (2517
 Flutter tests, 586 server tests, 100 Kotlin tests). The client runs
 natively on Linux AND Windows (tray icon, global record hotkey,
 close-to-tray, single instance, right-click = long-press; AppImage and
@@ -76,6 +76,11 @@ morning|afternoon|evening / end of the day → today with the word KEPT
 inside an item but STRIPPED at the sentence head. **To Do page gets the
 shared SyncButton** (same engine as Recordings/Notebooks). See
 docs/design/2026-09-27-desktop-reminders-and-date-followups.md.
+v1.29.1: every SQLite connection now runs  (PRAGMA
+busy_timeout 5000 + WAL) — the app and the WorkManager isolates open the
+same file, and without a busy handler the second writer fails INSTANTLY
+with  (seen as "Recording failed" once the
+reminder task overlapped a sync). Keep any new isolate on LocalDb().
 
 v1.28.0 (client-only) ships two halves. **Re-transcription duplicate
 guard**: voice capture is keyed by (recording, SHA-1 of the parsed

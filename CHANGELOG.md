@@ -5,6 +5,14 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.29.1 — 2026-09-27
+
+### Fixed
+- **"Recording failed: database is locked"** on Android. The daily
+  reminder and background sync open the app's database from their own
+  workers; when one overlapped a recording the other gave up instantly.
+  Every connection now waits its turn (up to 5 s) instead of failing, and
+  the database runs in WAL mode so readers never block the writer.
 ## 1.29.0 — 2026-09-27
 
 ### Added
