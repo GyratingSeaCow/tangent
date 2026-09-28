@@ -50,13 +50,35 @@ ADH2/
 
 ## Status
 
-Shipping — **v1.31.1** (see CHANGELOG.md). Client and server are both
-implemented and tested (2546
+Shipping — **v1.32.0** (see CHANGELOG.md). Client and server are both
+implemented and tested (2586
 Flutter tests, 612 server tests, 123 Kotlin tests). The client runs
 natively on Linux AND Windows (tray icon, global record hotkey,
 close-to-tray, single instance, right-click = long-press; AppImage and
 Inno Setup installer under `packaging/`) — verified on CachyOS/KDE
 Plasma Wayland and Windows 11; see the README's Desktop sections.
+
+v1.32.0 (client-only) **leftovers sweep** L1-L5, spec
+docs/design/2026-09-28-leftovers-sweep.md. L1 'Regenerate notes' asks the
+server summarizer (Meeting template, existing summarize path) when the
+local mirror AND a live `installed` poll agree, else the rule-based
+extractor; `_NotesEngineCard` names the engine. L3 the digest renders
+`renderSpeakerNames` BEFORE `MeetingNotesProcessor` (stored transcript
+untouched). L2 `reconcileStamps` common-prefix/suffix diff: stamps after
+an edit SHIFT (old 'never shifted' tests rewritten on purpose); an edit
+touching both ends drops all. L4 `TranscriptMarkdownOptions.wordTimestamps`
+(default off, remembered, `obsidian_export_word_timestamps`): `word⁽mm:ss⁾`
+on the first and every 10th word when word timings exist; OFF is
+byte-identical (golden); sheet switch only when
+`obsidianWordTimingsAvailableProvider` (read with valueOrNull) and disabled
+until timestamps are on. L5 the v20 speaker back-fill records REFUSED ids
+(`speakerNamesBackfillRefused` = user headings present AND plan null) in
+settings key `speaker_backfill_skipped`; `SpeakerBackfillBanner` on Home
+opens `DumpsListScreen(filterIds:)`; dismiss clears the key. CI: the
+busy-timeout test now holds the lock from a second isolate for 25 ms —
+SQLite's busy handler counts PLANNED sleep and flutter_tester's SIGPROF
+on Linux cuts every nanosleep to ~1 ms, so a 5 s timeout lasts ~60 ms
+there (main was red since v1.29.1).
 
 v1.31.0 (client-only, Android) **hands-free record**. One spine, two
 triggers: the VIEW deep link `tangent://record` lands the app already

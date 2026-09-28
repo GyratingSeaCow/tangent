@@ -5,6 +5,26 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.32.0 — 2026-09-28
+
+### Added
+- **Regenerate notes now uses the AI summarizer** when your server has it
+  installed (Meeting template); otherwise the quick extractor as before.
+  The card tells you which one ran.
+- **Word-level timestamps in Markdown export** (Settings → Obsidian):
+  `word⁽ᵐᵐ:ˢˢ⁾` on the first and every tenth word. Off by default — off is
+  byte-identical to before.
+- Recordings whose speaker headings could not be safely renamed by the
+  1.17 upgrade are listed once on Home so you can name the speakers again.
+
+### Changed
+- Meeting-notes digests use your speaker names, not “Speaker 1”.
+- Notebook text stamps stay attached to their words when you edit text
+  before them, instead of being dropped.
+
+### Fixed
+- CI on Linux: the SQLite busy-timeout guard no longer depends on how long
+  SQLite sleeps (the app was never affected).
 ## 1.31.1 — 2026-09-28
 
 ### Changed
