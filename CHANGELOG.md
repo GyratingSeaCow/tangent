@@ -5,6 +5,13 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.34.0 — 2026-09-28
+
+### Fixed
+- **Unreachable server is named, not spun on.** A recording whose upload/transcription has been retrying a server that never answers for 45 s now says so on its progress panel — `Can't reach the server at <address> — still retrying` — and, when that address is a Wi-Fi one (192.168.x.x / 10.x / 172.16-31.x), tells you the fix: Settings → Server → the server's Tailscale address. Retries continue underneath; nothing is marked failed. (Jeff's cellular upload spun for an hour with the app paired to the LAN address.)
+- **Connection screen says which address works where.** A standing hint under Find my server: found (Wi-Fi) addresses only work on that network; enter the Tailscale address (http://100.x.x.x:8765) to use Tangent away from home. On cellular the scan error names that fix instead of just 'No local network found'. The URL field hint shows both shapes, labelled.
+- **README pairing rewritten as two options** — Tailscale (works everywhere) and LAN (home only) — with the spin-forever symptom called out and the Windows firewall rule for port 8765 (Docker's LAN rule does not cover the Tailscale interface).
+
 ## 1.33.1 — 2026-09-28
 
 ### Changed

@@ -50,7 +50,7 @@ ADH2/
 
 ## Status
 
-Shipping — **v1.33.1** (see CHANGELOG.md). Client and server are both
+Shipping — **v1.34.0** (see CHANGELOG.md). Client and server are both
 implemented and tested (2606
 Flutter tests, 612 server tests, 129 Kotlin tests). The client runs
 natively on Linux AND Windows (tray icon, global record hotkey,
