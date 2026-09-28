@@ -2,6 +2,7 @@
 <resources>
     <!-- Same disc and glyph as values/: the record button does not restyle
          itself with the system theme. -->
-    <color name="widget_record_disc">#FF3B30</color>
-    <color name="widget_record_glyph">#FFFFFF</color>
+    <color name="widget_record_disc">#141719</color>
+    <color name="widget_record_glyph">#D4FF47</color>
+    <color name="widget_record_dot">#9B2594</color>
 </resources>

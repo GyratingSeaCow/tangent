@@ -5,7 +5,7 @@
 > Built for ADHD minds. Self-hosted. Offline-first. No subscriptions.
 
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](./LICENSE)
-[![Version: 1.31.0](https://img.shields.io/badge/version-1.31.0-blue.svg)](./CHANGELOG.md)
+[![Version: 1.31.1](https://img.shields.io/badge/version-1.31.1-blue.svg)](./CHANGELOG.md)
 [![Client tests: 2546 passing](https://img.shields.io/badge/client_tests-2546%20passing-brightgreen.svg)]()
 [![Server tests: 284 passing](https://img.shields.io/badge/server_tests-284%20passing-brightgreen.svg)]()
 
@@ -71,22 +71,26 @@ you recorded yourself.
 
 ### Voice
 
-**Hands-free recording (Android).** Three triggers start a Brain Dump with no
-further tap — the trigger is the consent — and any of them fired again while
-recording stops it: the **1×1 red mic widget** on the home screen, the
-**Record** shortcut (long-press the Tangent launcher icon), and Google
-Assistant with *"Hey Google, start recording in Tangent"* (also *"record a
-brain dump in Tangent"*, *"new recording in Tangent"*). All three fire the same
-`tangent://record` deep link and land on the same code path as the on-screen
-button and the desktop hotkey, so they can never diverge; if the app is in
-Text Note mode the trigger flips it to Brain Dump first. From a **locked
-phone** the widget or Assistant starts the recording over the lock screen and a
-second tap stops it — anything beyond stop (review, edit, lists) asks for the
-unlock. A literal *"Hey Tangent"* hotword is not possible without an
-always-listening microphone service, which Tangent deliberately does not ship;
-Assistant's own hotword is the way in. Samsung side-key tip: Settings →
-Advanced features → Side key → Double press → Open app → Tangent opens the app
-in two presses, with the Record shortcut one long-press further.
+**Hands-free recording (Android).** Two triggers start a Brain Dump with no
+further tap — the trigger is the consent — and either fired again while
+recording stops it: the **1×1 mic widget** on the home screen (the launcher
+icon's palette: black tile, lime mic, purple dot) and the **Record** shortcut
+(long-press the Tangent launcher icon). Both fire the same `tangent://record`
+deep link and land on the same code path as the on-screen button and the
+desktop hotkey, so they can never diverge; if the app is in Text Note mode
+the trigger flips it to Brain Dump first. From a **locked phone** the widget
+starts the recording over the lock screen and a second tap stops it — anything
+beyond stop (review, edit, lists) asks for the unlock.
+
+*Why no "Hey Google, start recording in Tangent"?* Assistant only fulfils
+an app's custom voice actions once it has indexed the app from the Play
+Store; on a sideloaded build it says "Starting recording in Tangent" and
+delivers nothing — a confirmation with no action, which is worse than no
+voice path. A literal *"Hey Tangent"* hotword would need an always-listening
+microphone service (persistent notification, battery, mic contention with
+Assistant); not shipped. Samsung side-key tip: Settings → Advanced features →
+Side key → Double press → Open app → Tangent opens the app in two presses,
+with the Record shortcut one long-press further.
 
 It's the voice-capture + searchable-archive piece that no current app gets right for ADHD
 users. The closest competitors (Otter, Plaud, Audionotes) all charge monthly fees,

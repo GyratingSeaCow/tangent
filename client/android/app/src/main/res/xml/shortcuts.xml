@@ -1,29 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Trigger 1 (spec 2026-09-28): Google Assistant App Action + static
-     launcher shortcut, both firing the tangent://record spine.
-
-     Spoken form: "Hey Google, start recording in Tangent". A literal
-     "Hey Tangent" hotword would need an always-on mic service, which is
-     out of scope (README → Voice). The static "Record" shortcut (long-press
-     the launcher icon) is how Assistant learns the action before its first
-     voice use, and it is free.
-
-     The custom intent lives under custom.actions.intent.* — Android
-     reserves the actions.intent.* prefix for built-in intents and rejects
-     custom names there. -->
-<shortcuts xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto">
-
-  <capability
-      android:name="custom.actions.intent.START_RECORDING_TANGENT"
-      app:queryPatterns="@array/record_query_patterns">
-    <intent
-        android:action="android.intent.action.VIEW"
-        android:targetPackage="dev.tangent.tangent"
-        android:targetClass="dev.tangent.tangent.MainActivity"
-        android:data="tangent://record" />
-  </capability>
-
+<!-- Static launcher shortcut "Record" (long-press the app icon), firing the
+     tangent://record spine — the same intent as the 1x1 widget.
+     The Google Assistant App Action that shipped in 1.31.0 was REMOVED in
+     1.31.1: Assistant only fulfils custom intents for apps it has indexed
+     from the Play Store, so on a sideloaded build it said "Starting
+     recording in Tangent" and delivered nothing (Fold logcat 07:58-08:02,
+     no intent reached the app). A confirmation with no action is worse
+     than no voice path at all. Re-add the <capability> only alongside a
+     Play listing. -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
   <shortcut
       android:shortcutId="record"
       android:enabled="true"
@@ -35,6 +20,5 @@
         android:targetPackage="dev.tangent.tangent"
         android:targetClass="dev.tangent.tangent.MainActivity"
         android:data="tangent://record" />
-    <capability-binding android:key="custom.actions.intent.START_RECORDING_TANGENT" />
   </shortcut>
 </shortcuts>

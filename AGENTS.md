@@ -50,7 +50,7 @@ ADH2/
 
 ## Status
 
-Shipping — **v1.31.0** (see CHANGELOG.md). Client and server are both
+Shipping — **v1.31.1** (see CHANGELOG.md). Client and server are both
 implemented and tested (2546
 Flutter tests, 612 server tests, 123 Kotlin tests). The client runs
 natively on Linux AND Windows (tray icon, global record hotkey,
@@ -65,13 +65,15 @@ screen only for that intent — `WidgetLaunchIntents.showOverLockScreen`,
 never for a plain launch; H4 always a Brain Dump). Cold start stashes a
 read-once command (`LaunchRouter`, `takeLaunchCommand`), warm start pushes
 method `command`; Dart holds it on `captureReadyProvider` and applies it
-ONCE through the same `toggle-record` path as the desktop hotkey. Trigger
-1: App Actions `custom.actions.intent.START_RECORDING_TANGENT` (the name
-MUST NOT start with `actions.intent`) + a static 'Record' shortcut —
-'Hey Google, start recording in Tangent'; Assistant indexes it after a
-launch or two. Trigger 2: 1x1 `RecordWidgetProvider` widget, red #FF3B30
-disc + white mic (`ic_widget_mic`), PendingIntent to the same URI. See
-docs/design/2026-09-28-hands-free-record.md.
+ONCE through the same `toggle-record` path as the desktop hotkey. Triggers:
+the 1x1 `RecordWidgetProvider` widget (launcher-icon palette: Blackout
+#141719 disc, signal-lime #D4FF47 mic, purple #9B2594 dot above — Jeff's
+pick, v1.31.1) and the static 'Record' launcher shortcut, both a
+PendingIntent to the same URI. The v1.31.0 Google Assistant App Action was
+REMOVED in 1.31.1: Assistant fulfils custom intents only for Play-indexed
+apps; sideloaded it says 'Starting recording in Tangent' and delivers
+nothing (Fold logcat: no intent reached the app). Re-add only with a Play
+listing. See docs/design/2026-09-28-hands-free-record.md.
 
 v1.30.0 **folders ↔ Google lists** (server) + **To Do ↻ pushes to Google**
 (client). Each live folder owns a Google list named exactly like it

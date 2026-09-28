@@ -8,14 +8,4 @@
     <string name="widget_record_content_description">Record a brain dump</string>
     <string name="shortcut_record_short">Record</string>
     <string name="shortcut_record_long">Record a brain dump</string>
-
-    <!-- Assistant App Action query patterns: the part of the utterance
-         after "Hey Google". $app is Assistant's placeholder for the app
-         name, so "start recording in Tangent" matches the first item. -->
-    <string-array name="record_query_patterns">
-        <item>start recording in $app</item>
-        <item>record a brain dump in $app</item>
-        <item>new recording in $app</item>
-        <item>start a recording</item>
-    </string-array>
 </resources>

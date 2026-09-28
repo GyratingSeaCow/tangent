@@ -1,21 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Launcher-shortcut icon for "Record": the same red disc + white mic as
-     the widget and the main-screen button, drawn as one vector. -->
+<!-- Launcher-shortcut icon for "Record": the widget's look as one vector —
+     Blackout disc, signal-lime mic, purple dot above it (the launcher
+     icon's palette). 48-unit canvas; the glyph group is the 24x30
+     ic_widget_mic scaled so the disc keeps 8 units of breathing room. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="48dp"
     android:height="48dp"
     android:viewportWidth="48"
     android:viewportHeight="48">
   <path
-      android:fillColor="#FF3B30"
-      android:pathData="M24,24m-24,0a24,24 0 1,0 48,0a24,24 0 1,0 -48,0"/>
-  <group
-      android:scaleX="1.25"
-      android:scaleY="1.25"
-      android:translateX="9"
-      android:translateY="9">
+      android:fillColor="#141719"
+      android:pathData="M24 0a24 24 0 1 0 0 48a24 24 0 1 0 0-48z"/>
+  <group android:scaleX="1.0" android:scaleY="1.0" android:translateX="12" android:translateY="9">
     <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z"/>
+        android:fillColor="#9B2594"
+        android:pathData="M12 1.2a2.6 2.6 0 1 0 0 5.2a2.6 2.6 0 1 0 0-5.2z"/>
+    <group android:translateY="8">
+      <path
+          android:fillColor="#D4FF47"
+          android:pathData="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z"/>
+    </group>
   </group>
 </vector>

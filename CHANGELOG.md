@@ -5,6 +5,17 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.31.1 — 2026-09-28
+
+### Changed
+- **Record widget in the app icon's colours** — black tile, lime mic,
+  purple dot — instead of the red button. Same for the Record shortcut.
+
+### Removed
+- The "Hey Google, start recording in Tangent" action. Assistant only
+  carries out an app's voice actions once the app is on the Play Store;
+  installed directly, it announced the recording and never started one.
+  Better no voice path than a fake one.
 ## 1.31.0 — 2026-09-28
 
 ### Added

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 1x1 record tile: the main screen's record button, verbatim — a red
-     #FF3B30 disc (TangentColors.record) with the white Material mic glyph.
+<!-- 1x1 record tile in the launcher icon's palette (Jeff): Blackout
+     #141719 disc, signal-lime #D4FF47 mic, purple #9B2594 dot above it.
      8dp margin so the disc has breathing room in a 1x1 cell on Samsung
      launchers; the inner padding keeps the glyph at the button's ratio
      (64 in 120). -->
