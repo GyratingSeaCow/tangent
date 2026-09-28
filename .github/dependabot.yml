@@ -1,0 +1,89 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Proactive dependency bumps. Security-only updates were already on; this
+# adds scheduled version updates so the SHA-pinned actions, the server's
+# Python deps and the client's pub packages don't rot between releases.
+#
+# Every PR here runs the normal CI gates (ci.yml fires on pull_request to
+# main), so a bump that breaks `flutter test` or pytest is red before
+# anyone reads it. Majors are split into their own PRs; minor/patch are
+# grouped so a Monday brings one PR per ecosystem, not fifteen.
+#
+# NOT covered on purpose:
+#   - client/android (gradle): the Kotlin plugin is pinned to 1.8.22 and
+#     AGP/Kotlin bumps need a release build + device run to prove (see
+#     the tangent-app-development skill, "Kotlin floor"). Security updates
+#     still open PRs for known CVEs.
+#   - Flutter SDK itself: pinned in ci.yml / release.yml, bumped by hand.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: America/New_York
+    open-pull-requests-limit: 3
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "ci(deps)"
+
+  - package-ecosystem: pip
+    directory: /server
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: America/New_York
+    open-pull-requests-limit: 3
+    groups:
+      python-minor-patch:
+        update-types: ["minor", "patch"]
+    ignore:
+      # Model runtimes: a new major changes weights/compute contracts and
+      # needs the GPU bench, not a CI runner.
+      - dependency-name: "faster-whisper"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "torch*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "ctranslate2"
+        update-types: ["version-update:semver-major"]
+    commit-message:
+      prefix: "chore(server-deps)"
+
+  - package-ecosystem: docker
+    directory: /server
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 1
+    ignore:
+      # python:3.11-slim -> 3.12/3.13 is a runtime change; hand-tested.
+      - dependency-name: "python"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+    commit-message:
+      prefix: "chore(server-image)"
+
+  - package-ecosystem: pub
+    directory: /client
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: America/New_York
+    open-pull-requests-limit: 3
+    groups:
+      pub-minor-patch:
+        update-types: ["minor", "patch"]
+    ignore:
+      # Kotlin 1.8.22 floor (client/android/settings.gradle): v9+ ships a
+      # kotlin-stdlib 2.x that only fails at `flutter build apk --release`.
+      - dependency-name: "package_info_plus"
+        update-types: ["version-update:semver-major"]
+      # v19+ bundles its own R8 rules and changes the init contract; the
+      # proguard-rules.pro pin must move with it. Hand-bump.
+      - dependency-name: "flutter_local_notifications"
+        update-types: ["version-update:semver-major"]
+    commit-message:
+      prefix: "chore(client-deps)"
