@@ -38,6 +38,8 @@ class SettingsStore {
   static const _obsidianTimestampsKey = 'obsidian_export_timestamps';
   static const _obsidianSummaryKey = 'obsidian_export_summary';
   static const _notebookImportAudioCardKey = 'notebook-import-audio-card';
+  static const _remindersEnabledKey = 'reminders_enabled';
+  static const _reminderMinuteOfDayKey = 'reminder_minute_of_day';
 
   final SharedPreferences? _preferences;
 
@@ -121,6 +123,15 @@ class SettingsStore {
   /// can seek it in place. ON by default (spec §C); remembered per device.
   bool notebookImportAudioCard;
 
+  /// Daily due-date reminder (Android). OFF by default (spec N4): it asks
+  /// for the notification permission, so it only ever turns on by hand.
+  bool remindersEnabled;
+
+  /// Local time of the daily reminder as minutes after midnight; default
+  /// 07:00 (spec N1). Clamped on read: a hand-edited value outside a day
+  /// would put the alarm on no clock at all.
+  int reminderMinuteOfDay;
+
   SettingsStore({
     this.wifiOnlySync = true,
     this.autoSync = true,
@@ -137,6 +148,8 @@ class SettingsStore {
     this.obsidianExportTimestamps = false,
     this.obsidianExportSummary = true,
     this.notebookImportAudioCard = true,
+    this.remindersEnabled = false,
+    this.reminderMinuteOfDay = 420,
     SharedPreferences? preferences,
   }) : _preferences = preferences;
 
@@ -170,6 +183,10 @@ class SettingsStore {
       obsidianExportSummary: preferences.getBool(_obsidianSummaryKey) ?? true,
       notebookImportAudioCard:
           preferences.getBool(_notebookImportAudioCardKey) ?? true,
+      remindersEnabled: preferences.getBool(_remindersEnabledKey) ?? false,
+      reminderMinuteOfDay: clampMinuteOfDay(
+        preferences.getInt(_reminderMinuteOfDayKey),
+      ),
     );
   }
 
@@ -239,6 +256,23 @@ class SettingsStore {
   Future<void> setNotebookImportAudioCard(bool value) async {
     notebookImportAudioCard = value;
     await _preferences?.setBool(_notebookImportAudioCardKey, value);
+  }
+
+  Future<void> setRemindersEnabled(bool value) async {
+    remindersEnabled = value;
+    await _preferences?.setBool(_remindersEnabledKey, value);
+  }
+
+  Future<void> setReminderMinuteOfDay(int value) async {
+    final int clamped = clampMinuteOfDay(value);
+    reminderMinuteOfDay = clamped;
+    await _preferences?.setInt(_reminderMinuteOfDayKey, clamped);
+  }
+
+  /// Minutes after midnight, kept inside one day; null → 07:00.
+  static int clampMinuteOfDay(int? value) {
+    if (value == null) return 420;
+    return value.clamp(0, 24 * 60 - 1);
   }
 
   /// Records the user's explicit microphone choice. Passing a null [id] clears

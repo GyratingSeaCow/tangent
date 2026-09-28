@@ -26,6 +26,16 @@
          FOREGROUND_SERVICE permission is declared. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- Daily due-date reminder: an exact alarm at the user's chosen minute.
+         SCHEDULE_EXACT_ALARM is the Android 12 (API 31-32) form and can be
+         revoked by the user (the app then falls back to inexact and says so
+         in Settings); USE_EXACT_ALARM is the 13+ form for user-facing
+         alarms. RECEIVE_BOOT_COMPLETED lets the plugin's boot receiver
+         re-arm the alarm after a restart. -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
     <application
         android:label="Tangent"
         android:name="${applicationName}"
@@ -81,6 +91,21 @@
                 <action android:name="android.appwidget.action.APPWIDGET_CONFIGURE"/>
             </intent-filter>
         </activity>
+        <!-- flutter_local_notifications: delivers the scheduled reminder and
+             restores pending schedules after a reboot. -->
+        <receiver
+            android:exported="false"
+            android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationReceiver" />
+        <receiver
+            android:exported="false"
+            android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationBootReceiver">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED"/>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED"/>
+                <action android:name="android.intent.action.QUICKBOOT_POWERON"/>
+                <action android:name="com.htc.intent.action.QUICKBOOT_POWERON"/>
+            </intent-filter>
+        </receiver>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data
