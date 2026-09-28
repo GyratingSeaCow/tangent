@@ -8,4 +8,10 @@
          silhouette, so this is the only channel that can carry the purple
          from the brand mark into the shade. -->
     <color name="notification_accent">#9B2594</color>
+
+    <!-- 1x1 mic widget: TangentColors.record and the white mic glyph, the
+         main-screen record button exactly. Repeated in values-night with
+         the same values — the button is identical in both themes. -->
+    <color name="widget_record_disc">#FF3B30</color>
+    <color name="widget_record_glyph">#FFFFFF</color>
 </resources>

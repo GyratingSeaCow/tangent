@@ -69,6 +69,25 @@ tracking.
 meeting recording someone sent you) into Tangent and treats it like anything
 you recorded yourself.
 
+### Voice
+
+**Hands-free recording (Android).** Three triggers start a Brain Dump with no
+further tap — the trigger is the consent — and any of them fired again while
+recording stops it: the **1×1 red mic widget** on the home screen, the
+**Record** shortcut (long-press the Tangent launcher icon), and Google
+Assistant with *"Hey Google, start recording in Tangent"* (also *"record a
+brain dump in Tangent"*, *"new recording in Tangent"*). All three fire the same
+`tangent://record` deep link and land on the same code path as the on-screen
+button and the desktop hotkey, so they can never diverge; if the app is in
+Text Note mode the trigger flips it to Brain Dump first. From a **locked
+phone** the widget or Assistant starts the recording over the lock screen and a
+second tap stops it — anything beyond stop (review, edit, lists) asks for the
+unlock. A literal *"Hey Tangent"* hotword is not possible without an
+always-listening microphone service, which Tangent deliberately does not ship;
+Assistant's own hotword is the way in. Samsung side-key tip: Settings →
+Advanced features → Side key → Double press → Open app → Tangent opens the app
+in two presses, with the Record shortcut one long-press further.
+
 It's the voice-capture + searchable-archive piece that no current app gets right for ADHD
 users. The closest competitors (Otter, Plaud, Audionotes) all charge monthly fees,
 lock you to their cloud, and were never designed for how ADHD brains actually work.

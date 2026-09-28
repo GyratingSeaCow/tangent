@@ -5,6 +5,7 @@ import 'dart:convert';
 
 import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import '../support/legacy_audio_storage_fixture.dart';
@@ -32,6 +33,7 @@ import 'package:tangent/services/recording_service.dart';
 import 'package:tangent/services/screen_awake.dart';
 import 'package:tangent/services/server_transcription_service.dart';
 import 'package:tangent/services/transcription_client.dart';
+import 'package:tangent/services/widget_launch.dart';
 import '../support/resolved_temp.dart';
 
 class _StubClient extends TranscriptionClient {
@@ -555,6 +557,234 @@ void main() {
     expect(find.byType(RecordingWaveform), findsOneWidget);
     expect(find.byIcon(Icons.stop), findsOneWidget);
     expect(find.byType(NoteComposeScreen), findsNothing);
+    expect(tester.takeException(), isNull);
+
+    await unmountHome(tester, db);
+  });
+
+  // ---------------------------------------------------------------------
+  // Hands-free record (spec 2026-09-28): tangent://record from the 1x1
+  // mic widget, the launcher shortcut or Assistant arrives as a launch
+  // command and must behave exactly like the desktop hotkey's
+  // 'toggle-record' — H1 start with no tap, H4 flip Text Note to brain
+  // dump first, H2 a second command stops, and a cold-start command is
+  // held until the controller is ready, then applied exactly once.
+  // ---------------------------------------------------------------------
+
+  const MethodChannel launchChannel = MethodChannel(widgetLaunchChannelName);
+
+  /// Mounts Home with a real [WidgetLaunch] on the launch channel.
+  /// [coldCommand] is what the native side answers to the first
+  /// takeLaunchCommand (read-once: later takes answer null); [ready] is
+  /// the capture-ready future the controller (and the held command) wait
+  /// on — a pending completer models "DB and permissions not up yet".
+  Future<LocalDb> mountHomeForLaunch(
+    WidgetTester tester, {
+    required StubRecordingService recorder,
+    String? coldCommand,
+    Future<void>? ready,
+  }) async {
+    tester.view.physicalSize = const Size(1080, 2340);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    String? pending = coldCommand;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(launchChannel, (MethodCall call) async {
+      if (call.method == 'takeLaunchCommand') {
+        final String? answer = pending;
+        pending = null;
+        return answer;
+      }
+      return null;
+    });
+    addTearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(launchChannel, null);
+    });
+    final db = LocalDb.forTesting(NativeDatabase.memory());
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          localDbProvider.overrideWithValue(db),
+          transcriptionClientProvider.overrideWith((ref) => _StubClient()),
+          recordingServiceProvider.overrideWithValue(recorder),
+          recordingCoordinatorProvider.overrideWith(
+            (ref) =>
+                WidgetRecordingCoordinator(ref.watch(recordingServiceProvider)),
+          ),
+          captureReadyProvider.overrideWith((ref) => ready ?? Future.value()),
+          catalogSyncProvider.overrideWith((ref) async {}),
+          settingsStoreProvider.overrideWithValue(SettingsStore()),
+          screenAwakeProvider.overrideWithValue(_NoopScreenAwake()),
+          widgetLaunchProvider.overrideWith((ref) {
+            final WidgetLaunch launch = WidgetLaunch(channel: launchChannel);
+            ref.onDispose(launch.dispose);
+            return launch;
+          }),
+        ],
+        child: const MaterialApp(home: HomeScreen()),
+      ),
+    );
+    return db;
+  }
+
+  /// A warm tangent://record: native pushes 'command' / 'record'.
+  Future<void> warmRecordCommand() async {
+    final ByteData message = const StandardMethodCodec()
+        .encodeMethodCall(const MethodCall('command', 'record'));
+    await TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .handlePlatformMessage(widgetLaunchChannelName, message, (_) {});
+  }
+
+  /// Bounded settle for the command → ready → start future chain.
+  Future<void> pumpChain(WidgetTester tester) async {
+    for (int i = 0; i < 6; i++) {
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+  }
+
+  testWidgets(
+      'H1: a cold-start record command starts a brain dump with no tap',
+      (tester) async {
+    final stub = StubRecordingService();
+    final db = await mountHomeForLaunch(
+      tester,
+      recorder: stub,
+      coldCommand: 'record',
+    );
+    await pumpChain(tester);
+
+    expect(
+      find.byIcon(Icons.stop),
+      findsOneWidget,
+      reason: 'the trigger is the consent — no further tap',
+    );
+    expect(find.byType(RecordingWaveform), findsOneWidget);
+    expect(
+      stub.events.where((e) => e == 'start').length,
+      1,
+      reason: 'exactly one capture started',
+    );
+    expect(tester.takeException(), isNull);
+
+    await unmountHome(tester, db);
+  });
+
+  testWidgets('H4: a record command in Text Note mode flips to brain dump first',
+      (tester) async {
+    final stub = StubRecordingService();
+    final db = await mountHomeForLaunch(tester, recorder: stub);
+
+    await tester.tap(find.text('Text Note'));
+    await tester.pump();
+    expect(find.byIcon(Icons.edit_note), findsOneWidget);
+
+    await warmRecordCommand();
+    await pumpChain(tester);
+
+    final segments = tester.widget<SegmentedButton<DumpMode>>(
+      find.byType(SegmentedButton<DumpMode>),
+    );
+    expect(
+      segments.selected,
+      {DumpMode.brainDump},
+      reason: 'Text Note is voice-less; the trigger records a brain dump',
+    );
+    expect(find.byIcon(Icons.stop), findsOneWidget);
+    expect(find.byIcon(Icons.edit_note), findsNothing);
+    expect(
+      find.byType(NoteComposeScreen),
+      findsNothing,
+      reason: 'no compose screen nobody asked for',
+    );
+    expect(stub.events, contains('start'));
+    expect(tester.takeException(), isNull);
+
+    await unmountHome(tester, db);
+  });
+
+  testWidgets('H2: a second record command while recording stops it',
+      (tester) async {
+    final stub = StubRecordingService();
+    final db = await mountHomeForLaunch(tester, recorder: stub);
+
+    await warmRecordCommand();
+    await pumpChain(tester);
+    expect(find.byIcon(Icons.stop), findsOneWidget);
+
+    await warmRecordCommand();
+    await pumpChain(tester);
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(
+      find.byIcon(Icons.stop),
+      findsNothing,
+      reason: 'a pocket start is undone the same way',
+    );
+    expect(stub.events.where((e) => e == 'stop').length, 1);
+    expect(tester.takeException(), isNull);
+
+    await unmountHome(tester, db);
+  });
+
+  testWidgets(
+      'a cold-start command arriving before the controller is ready is held '
+      'and applied exactly once (not dropped, not doubled)', (tester) async {
+    final stub = StubRecordingService();
+    final ready = Completer<void>();
+    final db = await mountHomeForLaunch(
+      tester,
+      recorder: stub,
+      coldCommand: 'record',
+      ready: ready.future,
+    );
+    await pumpChain(tester);
+
+    // Held: the controller has not been touched — no capture, no busy
+    // spinner, mic still showing.
+    expect(
+      stub.events,
+      isNot(contains('start')),
+      reason: 'must not start before permissions/DB init',
+    );
+    expect(
+      find.byKey(HomeScreen.busyIndicatorKey),
+      findsNothing,
+      reason: 'the controller must not even be put into starting',
+    );
+    expect(find.byIcon(Icons.mic), findsOneWidget);
+    final container =
+        ProviderScope.containerOf(tester.element(find.byType(HomeScreen)));
+    expect(container.read(recordingControllerProvider), RecordingState.idle);
+
+    ready.complete();
+    await pumpChain(tester);
+
+    // Applied once.
+    expect(find.byIcon(Icons.stop), findsOneWidget, reason: 'not dropped');
+    expect(
+      stub.events.where((e) => e == 'start').length,
+      1,
+      reason: 'not doubled',
+    );
+    await pumpChain(tester);
+    expect(
+      stub.events.where((e) => e == 'start').length,
+      1,
+      reason: 'still exactly one after further frames',
+    );
+    expect(tester.takeException(), isNull);
+
+    await unmountHome(tester, db);
+  });
+
+  testWidgets('a cold start with no command changes nothing', (tester) async {
+    final stub = StubRecordingService();
+    final db = await mountHomeForLaunch(tester, recorder: stub);
+    await pumpChain(tester);
+
+    expect(find.byIcon(Icons.mic), findsOneWidget);
+    expect(stub.events, isEmpty);
     expect(tester.takeException(), isNull);
 
     await unmountHome(tester, db);

@@ -69,7 +69,35 @@
                 <category android:name="android.intent.category.DEFAULT"/>
                 <data android:scheme="tangent" android:host="notebook"/>
             </intent-filter>
+            <!-- Hands-free record spine (spec 2026-09-28): the 1x1 mic
+                 widget, the launcher "Record" shortcut and the Assistant
+                 App Action all fire VIEW tangent://record. Same internal
+                 scheme, no autoVerify. showWhenLocked/turnScreenOn are NOT
+                 declared here: MainActivity sets them at runtime only for
+                 this intent (H3), never for a normal launch. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <data android:scheme="tangent" android:host="record"/>
+            </intent-filter>
+            <!-- Static launcher shortcut + App Actions capability. -->
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts"/>
         </activity>
+        <!-- 1x1 "start a brain dump" mic widget. No config activity: every
+             instance fires tangent://record. -->
+        <receiver
+            android:name=".widget.RecordWidgetProvider"
+            android:exported="false"
+            android:label="Record">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE"/>
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_record_info"/>
+        </receiver>
         <!-- 2x2 "open this notebook" home-screen widget. -->
         <receiver
             android:name=".widget.NotebookWidgetProvider"

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 1x1 mic widget (spec 2026-09-28): minWidth/minHeight = 70dp * 1 - 30dp
+     = 40dp. No configure activity — every instance fires tangent://record.
+     previewLayout is the live layout on API 31+; older launchers get the
+     PNG rendered from the same disc + glyph. -->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="40dp"
+    android:minHeight="40dp"
+    android:targetCellWidth="1"
+    android:targetCellHeight="1"
+    android:initialLayout="@layout/widget_record"
+    android:previewLayout="@layout/widget_record"
+    android:previewImage="@drawable/widget_record_preview"
+    android:resizeMode="none"
+    android:widgetCategory="home_screen"
+    android:description="@string/widget_record_description" />

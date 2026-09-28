@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 1x1 record tile: the main screen's record button, verbatim — a red
+     #FF3B30 disc (TangentColors.record) with the white Material mic glyph.
+     8dp margin so the disc has breathing room in a 1x1 cell on Samsung
+     launchers; the inner padding keeps the glyph at the button's ratio
+     (64 in 120). -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+  <ImageView
+      android:id="@+id/widget_record_root"
+      android:layout_width="match_parent"
+      android:layout_height="match_parent"
+      android:layout_margin="8dp"
+      android:padding="12dp"
+      android:background="@drawable/widget_record_bg"
+      android:scaleType="fitCenter"
+      android:src="@drawable/ic_widget_mic"
+      android:contentDescription="@string/widget_record_content_description" />
+</FrameLayout>
