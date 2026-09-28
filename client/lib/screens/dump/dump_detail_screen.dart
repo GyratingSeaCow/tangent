@@ -21,6 +21,7 @@ import '../../services/recording_playback.dart';
 import '../../services/render_speaker_names.dart';
 import '../../services/speaker_naming.dart' show detectSpeakers;
 import '../../services/language_display.dart';
+import '../../services/summaries_client.dart';
 import '../../services/summary_pending.dart';
 import '../../services/transcript_alignment.dart'
     show TranscriptAlignment, alignTranscript;
@@ -151,12 +152,20 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
   bool _canRetryPlayback = false;
   bool _deleteBusy = false;
 
-  /// 'Regenerate notes' runs the on-device extractor, which finishes in
-  /// milliseconds and usually produces the SAME notes for the same
-  /// transcript - so nothing visibly changes and the tap feels ignored.
-  /// Show a spinner on the button for a beat and a snackbar when done,
-  /// so the answer is unambiguous even when the text is identical.
+  /// 'Regenerate notes' (leftovers sweep L1): with the AI summarizer
+  /// installed on the server AND the capability switched on here (the
+  /// same readiness the Summarize button checks), the tap requests a
+  /// server summary with the Meeting template through the existing
+  /// summarize path; otherwise it runs the on-device extractor, which
+  /// finishes in milliseconds and usually produces the SAME notes for the
+  /// same transcript - so nothing visibly changes and the tap feels
+  /// ignored. Show a spinner on the button for a beat and a snackbar when
+  /// done, so the answer is unambiguous even when the text is identical.
   bool _notesBusy = false;
+
+  /// Which engine the last 'Regenerate notes' tap chose, so the
+  /// in-progress card can say which one is running. Null until a tap.
+  _NotesEngine? _notesEngine;
   int _deletionPreviewGeneration = 0;
   String? _deletionPreviewError;
   final _deletionRecovery = LocalDeletionRecoveryState();
@@ -817,26 +826,116 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
   }
 
   /// Regenerate secretary notes from the existing transcript without
-  /// re-running Whisper. Preserves the raw transcript; only writes to
+  /// re-running Whisper (leftovers sweep L1).
+  ///
+  /// Engine choice: [_installedSummarizer] answers non-null only when the
+  /// capability is on locally AND the server reports the summarizer
+  /// installed — then the tap posts a Meeting-template summary through
+  /// the same 202 → `summary_requested_at` → in-progress card path the
+  /// Summarize button uses, and the AI notes land via normal dump sync.
+  /// Any other answer (capability off, not installed, server offline, or
+  /// the request itself failing) keeps the extractor exactly as before.
+  /// Preserves the raw transcript; the extractor only writes to
   /// `meeting_notes` and the public sidecar.
   Future<void> _regenerateMeetingNotes(String transcript) async {
-    final db = ref.read(localDbProvider);
-    final access = ref.read(recordingAccessProvider);
-
     if (_notesBusy) return;
     final DateTime started = DateTime.now();
     setState(() {
       _notesBusy = true;
+      _notesEngine = null;
       _statusError = null;
       _statusMessage = 'Generating meeting notes…';
     });
+    try {
+      final SummariesClient? summarizer = await _installedSummarizer();
+      if (summarizer != null && mounted) {
+        setState(() => _notesEngine = _NotesEngine.ai);
+        if (await _requestAiMeetingNotes(summarizer)) return;
+        // The server refused or dropped off between the readiness check
+        // and the request: fall back so the tap still produces notes.
+      }
+      if (!mounted) return;
+      setState(() => _notesEngine = _NotesEngine.quick);
+      await _runQuickMeetingNotes(transcript, started);
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _statusError = 'Generate notes failed: $e';
+          _statusMessage = null;
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _notesBusy = false);
+    }
+  }
+
+  /// The summaries client when 'Regenerate notes' may use the AI
+  /// summarizer: the local capability mirror is on (the Summarize button's
+  /// own gate — while the feature is off none of its UI appears) and the
+  /// server's settings poll reports `installed`. Null otherwise, including
+  /// when the server cannot be reached: offline means the extractor.
+  Future<SummariesClient?> _installedSummarizer() async {
+    if (!ref.read(summariesEnabledProvider)) return null;
+    try {
+      final SummariesClient client =
+          await ref.read(summariesClientProvider.future);
+      final SummarySettings settings = await client.getSettings();
+      return settings.installed ? client : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// POST the Meeting-template summary and stamp the local request marker
+  /// (the same two steps `runSummarizeFlow` performs after its picker).
+  /// Returns false when the server refused or the transport failed, so
+  /// the caller can fall back to the extractor.
+  Future<bool> _requestAiMeetingNotes(SummariesClient summarizer) async {
+    try {
+      await summarizer.summarizeDump(widget.dumpId, template: 'meeting');
+    } catch (_) {
+      return false;
+    }
+    try {
+      await ref
+          .read(localDbProvider)
+          .recordRequestedSummaryTemplate(widget.dumpId, 'meeting');
+    } catch (_) {
+      // Local mirror only; the server already accepted. Sync delivers
+      // the template with the finished summary regardless.
+    }
+    if (mounted) {
+      setState(() => _statusMessage = 'AI meeting notes queued');
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          key: ValueKey<String>('notes-ai-queued-snack'),
+          content: Text('AI meeting notes queued — the current notes stay '
+              'until the new summary arrives'),
+        ),
+      );
+    }
+    return true;
+  }
+
+  /// The rule-based extractor, exactly as before L1. L3: the transcript
+  /// is rendered through the dump's speaker-name map first so the digest
+  /// says "Jeff" rather than "Speaker 1"; the STORED transcript (and the
+  /// optimistic-concurrency check against it) stays raw.
+  Future<void> _runQuickMeetingNotes(
+    String transcript,
+    DateTime started,
+  ) async {
+    final db = ref.read(localDbProvider);
+    final access = ref.read(recordingAccessProvider);
     try {
       await _withEdit((key) async {
         final existing = await db.getDump(widget.dumpId);
         if (existing == null) throw StateError('Dump not found');
         const processor = MeetingNotesProcessor();
-        final notes =
-            processor.process(title: existing.title, transcript: transcript);
+        final notes = processor.process(
+          title: existing.title,
+          transcript: renderSpeakerNames(transcript, _namesFor(existing)),
+        );
         await db.updateDumpMeetingNotes(
           widget.dumpId,
           storageKey: key,
@@ -865,15 +964,8 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
           ),
         );
       }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _statusError = 'Generate notes failed: $e';
-          _statusMessage = null;
-        });
-      }
     } finally {
-      if (mounted) setState(() => _notesBusy = false);
+      if (mounted) setState(() => _notesEngine = null);
     }
   }
 
@@ -1248,6 +1340,12 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
             ),
           ),
           const SizedBox(height: 8),
+          if (_notesEngine != null &&
+              (_notesBusy ||
+                  (_notesEngine == _NotesEngine.ai && summaryInProgress))) ...[
+            _NotesEngineCard(dumpId: widget.dumpId, engine: _notesEngine!),
+            const SizedBox(height: 8),
+          ],
           if (displayTranscript != null && displayTranscript.isNotEmpty)
             Align(
               alignment: Alignment.centerLeft,
@@ -1908,6 +2006,58 @@ class _RecordingPlaybackPanel extends StatelessWidget {
     final minutes = (value.inMinutes % 60).toString().padLeft(2, '0');
     final seconds = (value.inSeconds % 60).toString().padLeft(2, '0');
     return hours > 0 ? '$hours:$minutes:$seconds' : '$minutes:$seconds';
+  }
+}
+
+/// Which engine a 'Regenerate notes' tap chose (leftovers sweep L1).
+enum _NotesEngine {
+  /// The server's AI summarizer with the Meeting template.
+  ai,
+
+  /// The on-device rule-based extractor.
+  quick;
+
+  String get label => switch (this) {
+        _NotesEngine.ai => 'AI summary (Meeting)',
+        _NotesEngine.quick => 'Quick notes',
+      };
+}
+
+/// The 'Regenerate notes' in-progress card: names the engine that is
+/// running so a tap that lands on the server (a summary in progress) and
+/// one that ran the ms-fast extractor read differently.
+class _NotesEngineCard extends StatelessWidget {
+  const _NotesEngineCard({required this.dumpId, required this.engine});
+
+  final String dumpId;
+  final _NotesEngine engine;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      key: ValueKey('regenerate-notes-engine-$dumpId'),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          children: [
+            Icon(
+              engine == _NotesEngine.ai ? Icons.auto_awesome : Icons.bolt,
+              size: 14,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                'Regenerating notes with ${engine.label}…',
+                key: ValueKey('regenerate-notes-engine-label-$dumpId'),
+                style: theme.textTheme.bodyMedium,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
