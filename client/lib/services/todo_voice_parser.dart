@@ -51,7 +51,9 @@ class VoiceTodoParse {
 ///
 /// Spec: docs/design/2026-09-27-todo-voice-capture.md §"Parsing rules";
 /// due dates: docs/design/2026-09-27-voice-todo-due-dates.md; relative and
-/// per-item dates: docs/design/2026-09-27-voice-todo-relative-dates.md.
+/// per-item dates: docs/design/2026-09-27-voice-todo-relative-dates.md;
+/// times of day, weekends, day-of-month, "a week from", "tonight" (V1-V5):
+/// docs/design/2026-09-27-desktop-reminders-and-date-followups.md §Half B.
 class TodoVoiceParser {
   const TodoVoiceParser._();
 
@@ -116,9 +118,21 @@ class TodoVoiceParser {
   /// the item, a period or a comma — "buy sun screen" and "mon ami" are text
   /// (spec ambiguity guards). Full names still need the word boundary the
   /// whole phrase gets below.
-  static const String _weekday = r'(?<wd>monday|tuesday|wednesday|thursday'
+  static const String _weekdayNames = r'monday|tuesday|wednesday|thursday'
       r'|friday|saturday|sunday'
-      r'|(?:mon|tue|tues|wed|weds|thu|thur|thurs|fri|sat|sun)(?=\.|,|\s*$))';
+      r'|(?:mon|tue|tues|wed|weds|thu|thur|thurs|fri|sat|sun)(?=\.|,|\s*$)';
+
+  static const String _weekday = '(?<wd>$_weekdayNames)';
+
+  /// A time of day (V1). Recognised ONLY so the date phrase next to it can
+  /// be removed cleanly; the time itself is never stripped from the item
+  /// and never parsed into a value — the model is date-only. `a\.?m\.?`
+  /// tolerates the "p.m" that [_clean] leaves after eating the final period.
+  static const String _time = r'(?:'
+      r'(?:at|around)\s+(?:noon|midnight|\d{1,2}(?::\d{2})?'
+      r"(?:\s*(?:a\.?m\.?|p\.?m\.?|o'?clock))?)"
+      r"|\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?|o'?clock)"
+      r')';
 
   /// `one` … `thirty`, or the article of "in a day" / "in a week".
   static const String _numberWord =
@@ -140,6 +154,12 @@ class TodoVoiceParser {
       '|in\\s+(?<n>\\d{1,3}|$_numberWord)\\s+(?<unit>days?|weeks?)'
       r'|next\s+(?<next>week|month)'
       r'|(?:the\s+)?end\s+of\s+(?:the\s+)?(?<endOf>week|month)'
+      r'|(?<weekend>this|next)\s+weekend'
+      r'|the\s+(?<dom>\d{1,2})(?:st|nd|rd|th)'
+      '|(?<wn>\\d{1,2}|$_numberWord)\\s+weeks?\\s+from\\s+'
+      '(?:this\\s+|next\\s+)?(?<from>today|tomorrow|$_weekdayNames)'
+      r'|(?<dayish>tonight|this\s+(?:morning|afternoon|evening)'
+      r'|(?:the\s+)?end\s+of\s+(?:the\s+)?day)'
       r')'
       r'(?![0-9a-z])';
 
@@ -155,8 +175,12 @@ class TodoVoiceParser {
   /// A per-item phrase at the END of an already-cleaned item. Anchored at
   /// the end on purpose: "call mom on Sunday about the trip" is NOT dated —
   /// a mid-sentence weekday is as often a topic as a deadline (R2).
+  ///
+  /// A time phrase may sit on either side of the date (V1: `tomorrow at 3
+  /// pm`, `at 3 pm tomorrow`); it is captured as `tb`/`ta` so [_entry] can
+  /// put it back where the date was. A time ALONE is not a date phrase.
   static final RegExp _itemEndDate = RegExp(
-    '(?<!\\S)$_phrase\\.?\$',
+    '(?<!\\S)(?:(?<tb>$_time)\\s+)?$_phrase(?:\\s+(?<ta>$_time))?\\.?\$',
     caseSensitive: false,
   );
 
@@ -238,6 +262,10 @@ class TodoVoiceParser {
           date.namedGroup('m2') == null && date.namedGroup('m3') == null;
       if (resolved != null && !keepAsText) {
         dueDate = resolved;
+        // At the sentence HEAD there is no item for a V5 word to belong
+        // to ("…to-do list tonight, call mom" must not yield an item
+        // called "tonight"), so every head phrase is removed; V5's
+        // keep-the-word rule applies inside items only (see _entry).
         span = span.substring(date.end);
       }
     }
@@ -267,13 +295,24 @@ class TodoVoiceParser {
     final RegExpMatch? atEnd = _itemEndDate.firstMatch(cleaned);
     if (atEnd != null) {
       dueDate = _resolve(atEnd, recordedOn);
-      if (dueDate != null) rest = cleaned.substring(0, atEnd.start);
+      if (dueDate != null) {
+        // V5: "tonight" carries the date AND belongs in the text.
+        if (_keepsText(atEnd)) return VoiceTodoItem(cleaned, dueDate: dueDate);
+        // V1: the time phrase stays where the date phrase was.
+        final String time = <String?>[atEnd.namedGroup('tb'), atEnd.namedGroup('ta')]
+            .whereType<String>()
+            .join(' ');
+        rest = '${cleaned.substring(0, atEnd.start)} $time';
+      }
     }
     if (dueDate == null) {
       final RegExpMatch? atStart = _itemStartDate.firstMatch(cleaned);
       if (atStart != null) {
         dueDate = _resolve(atStart, recordedOn);
-        if (dueDate != null) rest = cleaned.substring(atStart.end);
+        if (dueDate != null) {
+          if (_keepsText(atStart)) return VoiceTodoItem(cleaned, dueDate: dueDate);
+          rest = cleaned.substring(atStart.end);
+        }
       }
     }
     if (dueDate == null) return VoiceTodoItem(cleaned);
@@ -302,10 +341,7 @@ class TodoVoiceParser {
       // R1: the next occurrence STRICTLY after the recording day — a
       // weekday name on that same weekday means next week's. "next
       // <weekday>" is deliberately the same day (spec: no week-after-next).
-      final int target = _weekdays[weekday.toLowerCase().substring(0, 3)]!;
-      int delta = (target - anchor.weekday) % 7;
-      if (delta == 0) delta = 7;
-      return _isoOf(_plusDays(anchor, delta));
+      return _isoOf(_plusDays(anchor, _weekdayDelta(anchor, weekday)));
     }
 
     final String? count = g('n');
@@ -337,7 +373,64 @@ class TodoVoiceParser {
       // Day 0 of next month is the last day of this one.
       return _isoOf(DateTime(anchor.year, anchor.month + 1, 0));
     }
+
+    final String? weekend = g('weekend');
+    if (weekend != null) {
+      // V2: the coming Saturday STRICTLY after the recording day (R1: said
+      // on a Saturday → next Saturday); "next weekend" is the one after.
+      int delta = (DateTime.saturday - anchor.weekday) % 7;
+      if (delta == 0) delta = 7;
+      if (weekend.toLowerCase() == 'next') delta += 7;
+      return _isoOf(_plusDays(anchor, delta));
+    }
+
+    final String? dom = g('dom');
+    if (dom != null) {
+      // V3: the next such day-of-month on or after the recording day,
+      // skipping months that do not have it (the 31st in September).
+      final int day = int.parse(dom);
+      if (day < 1 || day > 31) return null;
+      for (int i = 0; i <= 12; i++) {
+        final DateTime first = DateTime(anchor.year, anchor.month + i, 1);
+        if (!_isValidDate(first.year, first.month, day)) continue;
+        final DateTime candidate = DateTime(first.year, first.month, day);
+        if (!candidate.isBefore(anchor)) return _isoOf(candidate);
+      }
+      return null;
+    }
+
+    final String? weeksFrom = g('wn');
+    if (weeksFrom != null) {
+      // V4: resolve the inner phrase, then +7 per week.
+      final int? n = _number(weeksFrom);
+      if (n == null || n < 1) return null;
+      final String from = g('from')!.toLowerCase();
+      final int inner;
+      if (from == 'today') {
+        inner = 0;
+      } else if (from == 'tomorrow') {
+        inner = 1;
+      } else {
+        inner = _weekdayDelta(anchor, from);
+      }
+      return _isoOf(_plusDays(anchor, inner + n * 7));
+    }
+
+    // V5: tonight / this morning|afternoon|evening / end of the day → today.
+    if (g('dayish') != null) return _isoOf(anchor);
     return null;
+  }
+
+  /// V5 phrases carry a date but are natural item text ("call mom tonight"):
+  /// the date is taken and NOTHING is stripped.
+  static bool _keepsText(RegExpMatch m) => m.namedGroup('dayish') != null;
+
+  /// R1: days until the next [weekday] STRICTLY after [anchor].
+  static int _weekdayDelta(DateTime anchor, String weekday) {
+    final int target = _weekdays[weekday.toLowerCase().substring(0, 3)]!;
+    int delta = (target - anchor.weekday) % 7;
+    if (delta == 0) delta = 7;
+    return delta;
   }
 
   /// D2 resolution of the absolute forms:
