@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:tangent/data/local_db.dart';
 import 'package:tangent/data/todo_repository.dart';
 import 'package:tangent/services/todo_voice_capture.dart';
+import 'package:tangent/services/todo_voice_parser.dart';
 
 /// To Do arc Phase 2: transcript arrival -> voice todos, against real SQL.
 ///
@@ -79,18 +80,183 @@ void main() {
     expect((await repo.todosFromSource(dumpId)).length, 2);
   });
 
-  test('a re-transcribe with DIFFERENT text still adds nothing', () async {
-    await arrive();
+  group('re-transcription guard (v1.28.0)', () {
+    test(
+        'a re-transcribe producing one changed item adds it, keeps the '
+        'unchanged one (same id) and leaves the stale one alone', () async {
+      final List<TodoRow> first = await arrive();
+      final String keptId =
+          first.singleWhere((r) => r.body == 'pick up thermal paste').id;
+      clock = clock.add(const Duration(minutes: 5));
 
-    final List<TodoRow> second = await arrive(
-      text: 'add to my to do list something else entirely',
-    );
+      final List<TodoRow> second = await arrive(
+        text: 'add to my to do list pick up thermal paste '
+            'and email the Zionsville customer back about the board',
+      );
 
-    expect(second, isEmpty);
-    expect((await repo.todosFromSource(dumpId)).map((r) => r.body), [
-      'pick up thermal paste',
-      'email the Zionsville customer back',
-    ]);
+      expect(
+        second.map((r) => r.body),
+        ['email the Zionsville customer back about the board'],
+      );
+      final List<TodoRow> rows = await repo.todosFromSource(dumpId);
+      expect(rows.map((r) => r.body), [
+        'pick up thermal paste',
+        'email the Zionsville customer back',
+        'email the Zionsville customer back about the board',
+      ]);
+      expect(rows.first.id, keptId, reason: 'same text keeps its id');
+      expect(
+        rows.every((r) => r.deletedAt == null),
+        isTrue,
+        reason: 'the stale item is left alone, never deleted',
+      );
+    });
+
+    test('a user-edited row survives a re-transcribe', () async {
+      final List<TodoRow> first = await arrive();
+      final String editedId =
+          first.singleWhere((r) => r.body == 'pick up thermal paste').id;
+      await repo.editText(editedId, 'pick up TWO tubes of thermal paste');
+
+      await arrive(text: 'add to my to do list email the Zionsville customer');
+
+      final TodoRow edited = (await db.getTodoRow(editedId))!;
+      expect(edited.body, 'pick up TWO tubes of thermal paste');
+      expect(edited.deletedAt, isNull);
+    });
+
+    test('identical result from different wording is the same capture',
+        () async {
+      final List<TodoRow> first = await arrive(
+        text: 'add to my to do list for September 30th pick up thermal '
+            'paste and email the Zionsville customer back',
+      );
+      final String fingerprint = first.first.captureFingerprint!;
+      // The user clears the date on one item. A same-result re-arrival is
+      // the SAME capture and must not put the date back; only a genuinely
+      // different parse may reconcile.
+      await repo.setDueDate(first.first.id, null);
+      clock = clock.add(const Duration(minutes: 5));
+
+      final List<TodoRow> second = await arrive(
+        text: 'the customer board is toast okay add to my to do list '
+            'for September 30th pick up thermal paste and email the '
+            'Zionsville customer back',
+      );
+
+      expect(second, isEmpty);
+      final List<TodoRow> rows = await repo.todosFromSource(dumpId);
+      expect(rows.length, 2);
+      expect(rows.first.dueDate, isNull, reason: 'no reconcile happened');
+      expect(
+        rows.every((r) => r.captureFingerprint == fingerprint),
+        isTrue,
+        reason: 'the fingerprint is over the result, not the wording',
+      );
+    });
+
+    test('the fingerprint is over the parsed result, not the transcript',
+        () async {
+      final VoiceTodoParse a = TodoVoiceParser.parseWithDate(
+        transcript,
+        recordedOn: DateTime(2026, 9, 27),
+      );
+      final VoiceTodoParse b = TodoVoiceParser.parseWithDate(
+        'okay so add to my to do list pick up thermal paste and email the '
+        'Zionsville customer back',
+        recordedOn: DateTime(2026, 9, 27),
+      );
+      expect(a.entries, b.entries);
+      expect(captureFingerprintOf(a.entries), captureFingerprintOf(b.entries));
+      expect(
+        captureFingerprintOf(a.entries),
+        isNot(
+          captureFingerprintOf(<VoiceTodoItem>[
+            const VoiceTodoItem('pick up thermal paste', dueDate: '2026-09-30'),
+            const VoiceTodoItem('email the Zionsville customer back'),
+          ]),
+        ),
+        reason: 'a date is part of the result',
+      );
+    });
+
+    test('re-transcribe after Undo resurrects nothing', () async {
+      await arrive();
+      expect(await repo.softDeleteFromSource(dumpId), 2);
+
+      final List<TodoRow> second = await arrive(
+        text: 'add to my to do list pick up thermal paste and call Sam',
+      );
+
+      expect(second.map((r) => r.body), ['call Sam']);
+      final List<TodoRow> rows = await repo.todosFromSource(dumpId);
+      expect(
+        rows.where((r) => r.body == 'pick up thermal paste').single.deletedAt,
+        isNotNull,
+        reason: 'the undone item stays deleted and is not re-created',
+      );
+      expect(rows.where((r) => r.body == 'pick up thermal paste').length, 1);
+      expect(
+        rows.where((r) => r.deletedAt == null).map((r) => r.body),
+        ['call Sam'],
+      );
+    });
+
+    test('a re-transcribe that adds a date sets due_date and keeps the id',
+        () async {
+      final List<TodoRow> first = await arrive();
+      final String id =
+          first.singleWhere((r) => r.body == 'pick up thermal paste').id;
+      expect(first.every((r) => r.dueDate == null), isTrue);
+
+      final List<TodoRow> second = await arrive(
+        text: 'add to my to do list for September 30th pick up thermal '
+            'paste and email the Zionsville customer back',
+      );
+
+      expect(second, isEmpty, reason: 'same texts, nothing new');
+      final TodoRow dated = (await db.getTodoRow(id))!;
+      expect(dated.dueDate, '2026-09-30');
+      expect(dated.syncDirty, isTrue, reason: 'the date must travel');
+    });
+
+    test('a re-transcribe never overwrites a date the row already has',
+        () async {
+      await arrive(
+        text: 'add to my to do list for September 30th pick up thermal paste',
+      );
+      final String id = (await repo.todosFromSource(dumpId)).single.id;
+      await repo.setDueDate(id, '2026-10-05');
+
+      await arrive(
+        text: 'add to my to do list for October 1st pick up thermal paste',
+      );
+
+      expect((await db.getTodoRow(id))!.dueDate, '2026-10-05');
+    });
+
+    test('the same transcript arriving after a re-transcribe is a no-op',
+        () async {
+      await arrive();
+      const String changed =
+          'add to my to do list pick up thermal paste and call Sam';
+      await arrive(text: changed);
+      final List<TodoRow> settled = await repo.todosFromSource(dumpId);
+
+      expect(await arrive(text: changed), isEmpty);
+      expect(await repo.todosFromSource(dumpId), settled);
+    });
+
+    test('capture_fingerprint is stamped on the rows and stays local',
+        () async {
+      final List<TodoRow> created = await arrive();
+      final String expected = captureFingerprintOf(<VoiceTodoItem>[
+        const VoiceTodoItem('pick up thermal paste'),
+        const VoiceTodoItem('email the Zionsville customer back'),
+      ]);
+      expect(created.map((r) => r.captureFingerprint), [expected, expected]);
+      expect((await repo.add('by hand')).captureFingerprint, isNull);
+    });
   });
 
   test('after Undo a third arrival still creates nothing (no resurrection)',

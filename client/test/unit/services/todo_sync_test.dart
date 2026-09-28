@@ -16,6 +16,7 @@ import 'package:tangent/data/todo_repository.dart';
 import 'package:tangent/models/sync_change.dart';
 import 'package:tangent/services/connectivity_service.dart';
 import 'package:tangent/services/document_sync_engine.dart';
+import 'package:tangent/services/todo_voice_capture.dart';
 import 'package:tangent/services/transcription_client.dart';
 
 class _RecordingClient implements TranscriptionClient {
@@ -308,6 +309,230 @@ void main() {
       expect(after.folderId, isNull);
       expect(after.deletedAt, isNull, reason: 'contents are kept');
       expect(after.syncDirty, isTrue, reason: 'unfiled state must push');
+    });
+  });
+
+  test(
+      'capture_fingerprint is local-only: never pushed, never read from a '
+      'pull', () async {
+    await captureVoiceTodos(
+      db: db,
+      dumpId: 'dump-1',
+      transcript: 'add to my to do list pick up thermal paste',
+      recordedOn: DateTime(2026, 9, 27),
+      repository: repo,
+    );
+    final TodoRow captured = (await repo.todosFromSource('dump-1')).single;
+    expect(captured.captureFingerprint, isNotNull);
+    client.pushResults = <PushResult>[
+      PushResult(
+        entityId: captured.id,
+        entityType: 'todo',
+        seq: 41,
+        applied: true,
+      ),
+    ];
+    client.pullPages = <SyncPullPage>[
+      SyncPullPage(
+        changes: <RemoteChange>[
+          todoChange(
+            id: 'remote-1',
+            payload: <String, dynamic>{
+              ...fullPayload(),
+              'capture_fingerprint': 'peer-fingerprint',
+            },
+          ),
+        ],
+        headSeq: 5,
+        hasMore: false,
+      ),
+    ];
+
+    await build().syncNow();
+
+    final Map<String, dynamic> pushed = client.pushedChanges!
+        .singleWhere((chg) => chg['entity_type'] == 'todo');
+    expect(
+      (pushed['payload'] as Map<String, dynamic>).keys,
+      isNot(contains('capture_fingerprint')),
+    );
+    expect((await db.getTodoRow('remote-1'))!.captureFingerprint, isNull);
+    expect(
+      (await db.getTodoRow(captured.id))!.captureFingerprint,
+      captured.captureFingerprint,
+      reason: 'a confirmed push does not clear the local value',
+    );
+  });
+
+  group('cross-device dedupe on pull (v1.28.0)', () {
+    Map<String, dynamic> voicePayload({
+      required String text,
+      String? sourceRef = 'dump-1',
+      required String createdAt,
+    }) =>
+        <String, dynamic>{
+          'text': text,
+          'done_at': null,
+          'due_date': null,
+          'source': 'voice',
+          'source_ref': sourceRef,
+          'created_at': createdAt,
+          'updated_at': createdAt,
+          'deleted_at': null,
+          'folder_id': null,
+        };
+
+    Future<TodoRow> localVoiceRow({
+      String id = 'local-1',
+      String text = 'pick up thermal paste',
+      String sourceRef = 'dump-1',
+      required String createdAt,
+      String? deletedAt,
+    }) async {
+      await db.applyRemoteTodo(
+        id: id,
+        text: text,
+        source: 'voice',
+        sourceRef: sourceRef,
+        createdAt: createdAt,
+        updatedAt: createdAt,
+        deletedAt: deletedAt,
+        seq: 1,
+      );
+      return (await db.getTodoRow(id))!;
+    }
+
+    Future<void> pull(Map<String, dynamic> payload, {String id = 'remote-1'}) {
+      client.pullPages = <SyncPullPage>[
+        SyncPullPage(
+          changes: <RemoteChange>[todoChange(id: id, payload: payload)],
+          headSeq: 5,
+          hasMore: false,
+        ),
+      ];
+      return build().syncNow();
+    }
+
+    test(
+        'a NEWER remote duplicate is applied then soft-deleted; the local '
+        'row is kept', () async {
+      await localVoiceRow(createdAt: '2026-09-27T09:00:00.000Z');
+
+      await pull(
+        voicePayload(
+          text: 'pick up thermal paste',
+          createdAt: '2026-09-27T09:05:00.000Z',
+        ),
+      );
+
+      final TodoRow local = (await db.getTodoRow('local-1'))!;
+      final TodoRow remote = (await db.getTodoRow('remote-1'))!;
+      expect(local.deletedAt, isNull);
+      expect(remote.body, 'pick up thermal paste', reason: 'applied first');
+      expect(remote.deletedAt, isNotNull);
+      expect(
+        remote.syncDirty,
+        isTrue,
+        reason: 'the soft delete travels back as a normal delete',
+      );
+      expect(
+        (await repo.listTodos()).map((r) => r.id),
+        ['local-1'],
+      );
+    });
+
+    test(
+        'the reverse ordering (OLDER remote) keeps the remote and '
+        'soft-deletes the local', () async {
+      await localVoiceRow(createdAt: '2026-09-27T09:05:00.000Z');
+
+      await pull(
+        voicePayload(
+          text: 'pick up thermal paste',
+          createdAt: '2026-09-27T09:00:00.000Z',
+        ),
+      );
+
+      expect((await db.getTodoRow('remote-1'))!.deletedAt, isNull);
+      final TodoRow local = (await db.getTodoRow('local-1'))!;
+      expect(local.deletedAt, isNotNull);
+      expect(local.syncDirty, isTrue);
+    });
+
+    test(
+        'a soft-deleted local twin is not a dedupe candidate (Undo is not '
+        'reversed, and the remote stays live)', () async {
+      await localVoiceRow(
+        createdAt: '2026-09-27T09:00:00.000Z',
+        deletedAt: '2026-09-27T09:30:00.000Z',
+      );
+
+      await pull(
+        voicePayload(
+          text: 'pick up thermal paste',
+          createdAt: '2026-09-27T09:05:00.000Z',
+        ),
+      );
+
+      expect((await db.getTodoRow('remote-1'))!.deletedAt, isNull);
+      expect(
+        (await db.getTodoRow('local-1'))!.deletedAt,
+        '2026-09-27T09:30:00.000Z',
+      );
+    });
+
+    test('two different recordings with the same item text do NOT collapse',
+        () async {
+      await localVoiceRow(
+        sourceRef: 'dump-1',
+        createdAt: '2026-09-27T09:00:00.000Z',
+      );
+
+      await pull(
+        voicePayload(
+          text: 'pick up thermal paste',
+          sourceRef: 'dump-2',
+          createdAt: '2026-09-27T09:05:00.000Z',
+        ),
+      );
+
+      expect((await db.getTodoRow('local-1'))!.deletedAt, isNull);
+      expect((await db.getTodoRow('remote-1'))!.deletedAt, isNull);
+      expect((await repo.listTodos()).length, 2);
+    });
+
+    test('different text under the same recording is two items', () async {
+      await localVoiceRow(createdAt: '2026-09-27T09:00:00.000Z');
+
+      await pull(
+        voicePayload(
+          text: 'email the Zionsville customer back',
+          createdAt: '2026-09-27T09:05:00.000Z',
+        ),
+      );
+
+      expect((await repo.listTodos()).length, 2);
+    });
+
+    test('a manual item is never deduped against a voice twin', () async {
+      await db.applyRemoteTodo(
+        id: 'local-1',
+        text: 'pick up thermal paste',
+        source: 'manual',
+        sourceRef: 'dump-1',
+        createdAt: '2026-09-27T09:00:00.000Z',
+        updatedAt: '2026-09-27T09:00:00.000Z',
+        seq: 1,
+      );
+
+      await pull(
+        voicePayload(
+          text: 'pick up thermal paste',
+          createdAt: '2026-09-27T09:05:00.000Z',
+        ),
+      );
+
+      expect((await repo.listTodos()).length, 2);
     });
   });
 

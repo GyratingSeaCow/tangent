@@ -23,21 +23,24 @@ const _todoColumns = [
   // v24 (To Do folders, v1.24.0): the shared-folder link, declared last so
   // fresh and upgraded databases agree.
   'folder_id',
+  // v25 (re-transcription guard, v1.28.0): LOCAL-ONLY fingerprint of the
+  // voice parse that made the row. Never pushed, never read from a pull.
+  'capture_fingerprint',
 ];
 
 List<Object?> _columnNames(Database db, String table) =>
     db.select('PRAGMA table_info($table)').map((r) => r['name']).toList();
 
 void main() {
-  test('a fresh database is created at v24 with the todos table', () async {
+  test('a fresh database is created at v25 with the todos table', () async {
     final sql = sqlite3.openInMemory();
     final db = LocalDb.forTesting(NativeDatabase.opened(sql));
     addTearDown(db.close);
 
     await db.listDumps();
 
-    expect(db.schemaVersion, 24);
-    expect(sql.userVersion, 24);
+    expect(db.schemaVersion, 25);
+    expect(sql.userVersion, 25);
     expect(_columnNames(sql, 'todos'), _todoColumns);
     sql.execute(
       'INSERT INTO todos(id,text,created_at,updated_at) '
@@ -68,7 +71,7 @@ void main() {
 
     await db.listDumps();
 
-    expect(sql.userVersion, 24);
+    expect(sql.userVersion, 25);
     expect(_columnNames(sql, 'todos'), _todoColumns);
     expect(
       sqlRows(sql, 'dumps')
@@ -113,7 +116,7 @@ void main() {
 
     await db.listDumps();
 
-    expect(sql.userVersion, 24);
+    expect(sql.userVersion, 25);
     expect(_columnNames(sql, 'todos'), _todoColumns);
     expect(
       sql.select("SELECT text FROM todos WHERE id='kept'").single['text'],
@@ -152,7 +155,7 @@ void main() {
 
     await db.listDumps();
 
-    expect(sql.userVersion, 24);
+    expect(sql.userVersion, 25);
     expect(_columnNames(sql, 'todos'), _todoColumns);
     final rows = sql.select('SELECT id, text, due_date, folder_id FROM todos '
         'ORDER BY id');
@@ -162,5 +165,92 @@ void main() {
     expect(rows[0]['folder_id'], isNull);
     expect(rows[1]['text'], 'eggs');
     expect(rows[1]['folder_id'], isNull);
+  });
+
+  test('v24 -> v25 adds a null capture_fingerprint and changes no data',
+      () async {
+    final sql = oldStorageDatabase(4);
+    // A v24 todos table exactly as v1.24.0 left it (folder_id, no
+    // capture_fingerprint).
+    sql.execute('''
+      CREATE TABLE todos (
+        id TEXT NOT NULL,
+        text TEXT NOT NULL,
+        done_at TEXT NULL,
+        due_date TEXT NULL,
+        source TEXT NOT NULL DEFAULT 'manual',
+        source_ref TEXT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        deleted_at TEXT NULL,
+        sync_dirty INTEGER NOT NULL DEFAULT 1,
+        synced_seq INTEGER NULL,
+        folder_id TEXT NULL,
+        PRIMARY KEY (id)
+      );
+    ''');
+    sql.execute(
+      'INSERT INTO todos(id,text,due_date,source,source_ref,created_at,'
+      'updated_at,sync_dirty,folder_id) '
+      "VALUES('a','milk','2026-10-01','voice','dump-1',"
+      "'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',0,'f1'),"
+      "('b','eggs',NULL,'manual',NULL,'2026-01-02T00:00:00Z',"
+      "'2026-01-02T00:00:00Z',1,NULL)",
+    );
+    sql.userVersion = 24;
+    final before = sqlRows(sql, 'todos');
+    final db = LocalDb.forTesting(NativeDatabase.opened(sql));
+    addTearDown(db.close);
+
+    await db.listDumps();
+
+    expect(sql.userVersion, 25);
+    expect(_columnNames(sql, 'todos'), _todoColumns);
+    final rows = sqlRows(sql, 'todos');
+    expect(rows.length, 2, reason: 'no row is lost by the upgrade');
+    for (final Map<String, Object?> row in rows) {
+      expect(row['capture_fingerprint'], isNull);
+    }
+    expect(
+      rows
+          .map(
+            (Map<String, Object?> row) => <String, Object?>{
+              for (final String name in before.first.keys) name: row[name],
+            },
+          )
+          .toList(),
+      before,
+      reason: 'every pre-existing column is byte-for-byte unchanged',
+    );
+  });
+
+  test('v24 -> v25 is guarded when the column already exists', () async {
+    final sql = oldStorageDatabase(4);
+    sql.execute('''
+      CREATE TABLE todos (
+        id TEXT NOT NULL,
+        text TEXT NOT NULL,
+        done_at TEXT NULL,
+        due_date TEXT NULL,
+        source TEXT NOT NULL DEFAULT 'manual',
+        source_ref TEXT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        deleted_at TEXT NULL,
+        sync_dirty INTEGER NOT NULL DEFAULT 1,
+        synced_seq INTEGER NULL,
+        folder_id TEXT NULL,
+        capture_fingerprint TEXT NULL,
+        PRIMARY KEY (id)
+      );
+    ''');
+    sql.userVersion = 24;
+    final db = LocalDb.forTesting(NativeDatabase.opened(sql));
+    addTearDown(db.close);
+
+    await expectLater(db.listDumps(), completes);
+
+    expect(sql.userVersion, 25);
+    expect(_columnNames(sql, 'todos'), _todoColumns);
   });
 }

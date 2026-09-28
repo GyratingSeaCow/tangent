@@ -82,6 +82,7 @@ class TodoRepository {
     String? dueDate,
     String? source,
     String? sourceRef,
+    String? captureFingerprint,
   }) async {
     final String timestamp = _stamp();
     final String id = _idFactory();
@@ -94,10 +95,23 @@ class TodoRepository {
             dueDate: Value(dueDate),
             source: source == null ? const Value.absent() : Value(source),
             sourceRef: Value(sourceRef),
+            captureFingerprint: Value(captureFingerprint),
             syncDirty: const Value(true),
           ),
         );
     return (await _db.getTodoRow(id))!;
+  }
+
+  /// Stamps the LOCAL-ONLY capture fingerprint on every row of [sourceRef]
+  /// (live or soft-deleted). Deliberately NOT through [_write]: the column
+  /// never syncs, so bumping `updated_at` or dirtying the rows would push
+  /// a no-op edit to every peer.
+  Future<void> setCaptureFingerprint(
+    String sourceRef,
+    String fingerprint,
+  ) async {
+    await (_db.update(_db.todos)..where((t) => t.sourceRef.equals(sourceRef)))
+        .write(TodosCompanion(captureFingerprint: Value(fingerprint)));
   }
 
   /// Soft-deletes every live todo captured from [sourceRef] (the card's Undo).
