@@ -41,6 +41,8 @@ import 'package:window_manager/window_manager.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 
 import 'services/android_due_reminder_port.dart';
+import 'services/desktop_due_reminder_port.dart';
+import 'services/due_digest.dart';
 import 'services/background_sync_scheduler.dart';
 import 'services/due_reminder_scheduler.dart';
 import 'services/close_to_tray.dart';
@@ -131,6 +133,9 @@ Future<bool> _runDueReminderTask() async {
     final DueReminderScheduler scheduler = DueReminderScheduler(
       port: AndroidDueReminderPort(),
       loadTodos: todos.listTodos,
+      // K1: the desktop catch-up reads this; Android records it too so the
+      // pref means the same thing on every platform.
+      onPosted: settings.setLastReminderShownDay,
     );
     await scheduler.runDailyTask(minuteOfDay: settings.reminderMinuteOfDay);
     return true;
@@ -232,7 +237,8 @@ Future<void> main(List<String> args) async {
   final settings = await SettingsStore.load();
   // Periodic background sync. Registered before the UI so a user who opens
   // the app once and never returns still gets background syncs.
-  AndroidDueReminderPort? reminderPort;
+  AndroidDueReminderPort? androidReminderPort;
+  DesktopDueReminderPort? desktopReminderPort;
   if (Platform.isAndroid) {
     final Workmanager workmanager = Workmanager();
     await workmanager.initialize(backgroundSyncDispatcher);
@@ -240,13 +246,35 @@ Future<void> main(List<String> args) async {
     // Initialised here, with the tap router, BEFORE the transcription
     // notifier can claim the singleton plugin: initialize() replaces the
     // tap callback, and the first caller wins.
-    reminderPort = AndroidDueReminderPort(onResponse: _onNotificationTap);
+    androidReminderPort = AndroidDueReminderPort(onResponse: _onNotificationTap);
     try {
-      await reminderPort.ensureReady();
+      await androidReminderPort.ensureReady();
     } catch (e) {
       debugPrint('tangent.reminders unavailable: $e');
     }
+  } else if (Platform.isLinux || Platform.isWindows) {
+    // Desktop reminder (spec 2026-09-27 Half A): in-process timer + system
+    // notification; a click raises the window and opens To Do, like the
+    // Android warm tap.
+    final LocalNotifierDesktopNotifier notifier =
+        LocalNotifierDesktopNotifier(appName: 'Tangent');
+    try {
+      await notifier.setup();
+    } catch (e) {
+      debugPrint('tangent.reminders unavailable: $e');
+    }
+    desktopReminderPort = DesktopDueReminderPort(
+      notifier: notifier,
+      loadDigest: () async =>
+          buildDueDigest(await TodoRepository(db: db).listTodos(), DateTime.now()),
+      onPosted: settings.setLastReminderShownDay,
+      onClick: () {
+        unawaited(raiseAppWindow());
+        _openTodoScreen();
+      },
+    );
   }
+  final DueReminderPort? reminderPort = androidReminderPort ?? desktopReminderPort;
   final backend =
       Platform.isAndroid ? SafStorageBackend() : FilesystemStorageBackend();
   final mutations = DefaultRecordingMutationCoordinator(db: db);
@@ -302,8 +330,35 @@ Future<void> main(List<String> args) async {
       child: const TangentApp(),
     ),
   );
-  if (reminderPort != null) {
-    final AndroidDueReminderPort port = reminderPort;
+  if (desktopReminderPort != null) {
+    final DesktopDueReminderPort port = desktopReminderPort;
+    if (settings.remindersEnabled) {
+      // K1: the app was not running at the chosen time → show the digest
+      // once on the first launch after it, then arm the normal timer.
+      final DueReminderScheduler scheduler = DueReminderScheduler(
+        port: port,
+        loadTodos: () => TodoRepository(db: db).listTodos(),
+      );
+      unawaited(() async {
+        try {
+          await runDesktopReminderCatchUp(
+            settings: settings,
+            port: port,
+            loadDigest: () async => buildDueDigest(
+              await TodoRepository(db: db).listTodos(),
+              DateTime.now(),
+            ),
+            now: DateTime.now(),
+          );
+          await scheduler.scheduleNext(minuteOfDay: settings.reminderMinuteOfDay);
+        } catch (e) {
+          debugPrint('tangent.reminders: desktop start failed: $e');
+        }
+      }());
+    }
+  }
+  if (androidReminderPort != null) {
+    final AndroidDueReminderPort port = androidReminderPort;
     // Re-arm on every launch (spec: app start) so a reboot, a cleared task
     // or a time-zone change never leaves the reminder silently dead.
     if (settings.remindersEnabled) {

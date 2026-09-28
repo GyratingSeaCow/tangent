@@ -77,6 +77,15 @@ void main() {
       expect(again.remindersEnabled, isTrue);
     });
 
+    test('lastReminderShownDay defaults to empty and round-trips', () async {
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      final SettingsStore store = await SettingsStore.load();
+      expect(store.lastReminderShownDay, '');
+      await store.setLastReminderShownDay('2026-09-27');
+      final SettingsStore again = await SettingsStore.load();
+      expect(again.lastReminderShownDay, '2026-09-27');
+    });
+
     test('out-of-range value is clamped to a day', () async {
       SharedPreferences.setMockInitialValues(<String, Object>{
         'reminder_minute_of_day': 99999,
@@ -156,6 +165,29 @@ void main() {
       expect(port.posted, isEmpty);
       expect(port.withdraws, 1);
       expect(port.scheduledAt, <DateTime>[DateTime(2026, 9, 28, 7)]);
+    });
+
+    test('runDailyTask records the shown day after a post (K1 pref), not on empty',
+        () async {
+      final List<String> recorded = <String>[];
+      final DueReminderScheduler recording = DueReminderScheduler(
+        port: port,
+        loadTodos: () async => todos,
+        now: () => now,
+        onPosted: (String day) async => recorded.add(day),
+      );
+      todos = <TodoRow>[todo('done one', due: '2026-09-27', done: true)];
+      await recording.runDailyTask(
+        minuteOfDay: 420,
+        now: DateTime(2026, 9, 27, 7),
+      );
+      expect(recorded, isEmpty);
+      todos = <TodoRow>[todo('call the dentist', due: '2026-09-27')];
+      await recording.runDailyTask(
+        minuteOfDay: 420,
+        now: DateTime(2026, 9, 27, 7),
+      );
+      expect(recorded, <String>['2026-09-27']);
     });
   });
 }

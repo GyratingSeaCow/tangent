@@ -23,10 +23,10 @@ void main() {
     todos = <TodoRow>[];
   });
 
-  Widget host({bool android = true}) => ProviderScope(
+  Widget host({bool supported = true}) => ProviderScope(
         overrides: <Override>[
           settingsStoreProvider.overrideWithValue(store),
-          isAndroidProvider.overrideWithValue(android),
+          remindersSupportedProvider.overrideWithValue(supported),
           dueReminderPortProvider.overrideWithValue(port),
           dueReminderSchedulerProvider.overrideWith(
             (ref) => DueReminderScheduler(
@@ -49,11 +49,46 @@ void main() {
   String statusText(WidgetTester t) =>
       t.widget<Text>(find.byKey(RemindersSection.statusKey)).data!;
 
-  testWidgets('hidden entirely on non-Android hosts', (tester) async {
-    await tester.pumpWidget(host(android: false));
+  testWidgets('hidden entirely on unsupported hosts', (tester) async {
+    await tester.pumpWidget(host(supported: false));
     await tester.pump();
     expect(switchFinder(), findsNothing);
     expect(find.text('Reminders'), findsNothing);
+  });
+
+  testWidgets('remindersSupportedProvider is true on this desktop host',
+      (tester) async {
+    // Half A: the production gate admits Linux and Windows, not just
+    // Android. The test host IS one of those, so the real provider says so.
+    final ProviderContainer container = ProviderContainer();
+    addTearDown(container.dispose);
+    expect(container.read(remindersSupportedProvider), isTrue);
+  });
+
+  testWidgets('visible on Linux/Windows via the provider override',
+      (tester) async {
+    await tester.pumpWidget(host(supported: true));
+    await tester.pump();
+    expect(switchFinder(), findsOneWidget);
+    expect(find.text('Reminders'), findsOneWidget);
+    expect(
+      find.text(
+        'Shows a system notification each morning listing to-dos due today.',
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('Open system settings hidden when the port cannot open them',
+      (tester) async {
+    port.grant = false;
+    port.canOpenSettings = false;
+    await tester.pumpWidget(host());
+    await tester.pump();
+    await tester.tap(switchFinder());
+    await tester.pumpAndSettle();
+    expect(statusText(tester), contains('blocked'));
+    expect(find.byKey(RemindersSection.openSettingsKey), findsNothing);
   });
 
   testWidgets('off by default; time row disabled while off', (tester) async {
