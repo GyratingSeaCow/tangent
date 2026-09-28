@@ -214,13 +214,36 @@ transcription and multi-device sync do.
 
 ### Connecting the app to your server (pairing)
 
-The app finds your server and earns its own credential — no URL typing, no
-token copying:
+There are **two ways the app can reach your server**, and which one you
+pair with decides where the app works:
 
-1. On the device, open **Settings → Server** and tap **Find my server**. The
-   app sweeps your local network and lists every Tangent server it finds
-   (name, address, version) within a few seconds.
-2. Tap **Pair** next to your server.
+| Pair with… | Works at home (same Wi-Fi) | Works away from home (cellular, other Wi-Fi) |
+|---|---|---|
+| the **LAN address** (`192.168.x.x`) — what **Find my server** returns | yes | **no** — the app spins forever, there is no error |
+| the **Tailscale address** (`100.x.x.x`) | yes | yes |
+
+**If you ever want to use Tangent away from home, pair with the Tailscale
+address.** Nothing else changes — the same code, the same token — only the
+address the app stores. Find your server's Tailscale address with
+`tailscale ip -4` on the server machine, or from the Tailscale admin
+console.
+
+> **Symptom to recognise:** a recording sits on "Uploading audio to your
+> server" indefinitely when you are away from home, but works the moment
+> you are back on home Wi-Fi. The app is paired to the LAN address. Fix:
+> **Settings → Server**, replace the address with
+> `http://<tailscale-ip>:8765`, Save. The stuck upload goes through within
+> 30 seconds. **Find my server cannot fix this** — on cellular it sweeps
+> the carrier's subnet (e.g. `33.x.x.x`), where there is nothing to find.
+
+#### Option A — pair over Tailscale (works everywhere)
+
+1. Install [Tailscale](https://tailscale.com) on the server machine and on
+   the device, sign both into the same tailnet, and confirm the device can
+   see the server (tap the server in the Tailscale app → it shows online).
+2. On the device, open **Settings → Server**. Ignore **Find my server**.
+   In the **Server URL** field enter `http://<tailscale-ip>:8765` (the
+   server's `100.x.x.x` address), then tap **Pair**.
 3. The server prints a **6-digit code** to its log. Read it there:
 
    ```powershell
@@ -233,8 +256,28 @@ token copying:
    docker compose logs tangent-server --since 2m | grep code_issued
    ```
 
-4. Type the code into the app. Done — the device now holds its own token and
-   is fully connected.
+4. Type the code into the app. Done — the device holds its own token and
+   reaches the server from anywhere the tailnet does.
+
+On Windows, make sure the firewall allows the port in from the Tailscale
+interface (it is *not* covered by the rule Docker Desktop adds for the LAN):
+
+```powershell
+New-NetFirewallRule -DisplayName "Tangent server 8765" -Direction Inbound -Protocol TCP -LocalPort 8765 -Action Allow -Profile Any
+```
+
+#### Option B — pair on the local network (home only)
+
+1. On the device, open **Settings → Server** and tap **Find my server**. The
+   app sweeps your local network and lists every Tangent server it finds
+   (name, address, version) within a few seconds.
+2. Tap **Pair** next to your server.
+3. Read the 6-digit code from the server log (commands above) and type it
+   into the app.
+
+Pairing this way stores the LAN address; the app will only reach the
+server while on the same network. Switch to the Tailscale address later
+under **Settings → Server** at any time — no re-pairing needed.
 
 **Why a code?** It proves you control the server, not just its network. The
 code is never sent to the requesting device, expires in **120 seconds**, is
@@ -244,13 +287,11 @@ everything else:
 
 ```bash
 curl -X DELETE http://localhost:8765/v1/devices/<device-id>/token \
-  -H "Authorization: Bearer <any-valid-token>"
+  -H "Authorization: Bearer ***"
 ```
 
-**Manual fallback:** the same screen still accepts a URL + token directly —
-use this when the server is reachable but not on your local subnet (e.g.
-over **Tailscale** or another VPN, where the network sweep can't see it).
-Enter `http://<server-address>:8765` plus the token from setup.
+**Token instead of a code:** the same screen also accepts a URL + the
+primary token from setup directly, for scripted or headless installs.
 
 > **Note for pairing:** tap Pair on the device *first*, then read the log —
 > the code is only generated when the device asks, and it expires quickly.

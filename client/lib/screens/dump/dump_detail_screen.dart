@@ -50,6 +50,9 @@ import '../home/home_providers.dart'
         currentDumpIdProvider,
         recordingPlaybackEngineFactoryProvider,
         serverTranscriptionServiceProvider;
+import '../../services/unreachable_server_notice.dart';
+import '../server/server_connection_screen.dart'
+    show transcriptionClientProvider;
 
 /// Padding for the recording screen's scrolling body.
 ///
@@ -1648,6 +1651,10 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
             // Read here, where a Consumer already exists, and passed down: a
             // panel that rebuilds once a second must not own a provider read.
             whisperModel: ref.read(settingsStoreProvider).whisperModel,
+            // Named in the unreachable notice so the user sees WHICH
+            // address is being retried (a LAN one on cellular is the
+            // classic silent hang). Read, not watched — same reason.
+            serverBaseUrl: ref.read(transcriptionClientProvider).baseUrl,
           ),
           const SizedBox(height: 16),
         ],
@@ -2266,10 +2273,15 @@ class _ServerTranscriptionProgressPanel extends StatefulWidget {
     required this.row,
     required this.status,
     required this.whisperModel,
+    required this.serverBaseUrl,
   });
 
   final DumpRow row;
   final TranscriptionStatus status;
+
+  /// The address the client is configured to call, for the unreachable
+  /// notice. Never used for a request here.
+  final String serverBaseUrl;
 
   /// The model this device last saw the server transcribing with, from the
   /// local mirror. Empty until the catalogue has been fetched at least once.
@@ -2333,6 +2345,13 @@ class _ServerTranscriptionProgressPanelState
         ? Duration.zero
         : DateTime.now().difference(startedAt);
     final elapsed = rawElapsed.isNegative ? Duration.zero : rawElapsed;
+    final String? unreachable = unreachableServerNotice(
+      inProgress: status.isInProgress,
+      transcriptionError: widget.row.transcriptionError,
+      startedAt: startedAt,
+      now: DateTime.now(),
+      baseUrl: widget.serverBaseUrl,
+    );
 
     final scheme = Theme.of(context).colorScheme;
     // This panel is a FILLED lime surface, so its text must use the container's
@@ -2362,6 +2381,17 @@ class _ServerTranscriptionProgressPanelState
                 _detailText(status, elapsed),
                 style: TextStyle(color: onPanel),
               ),
+              if (unreachable != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  // Red on the lime panel, like the failure code: this is
+                  // the one line the user must read. The retries go on
+                  // underneath; a dead route stays silent otherwise.
+                  unreachable,
+                  key: const ValueKey<String>('unreachable-server-notice'),
+                  style: TextStyle(color: scheme.error),
+                ),
+              ],
               if (status.isInProgress) ...[
                 const SizedBox(height: 12),
                 const LinearProgressIndicator(),

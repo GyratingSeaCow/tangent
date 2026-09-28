@@ -118,8 +118,10 @@ class _ServerConnectionScreenState
     if (!mounted) return;
     if (self == null) {
       setState(() {
-        _error = 'No local network found. If your server is on Tailscale or '
-            'another VPN, enter its address below.';
+        _error = 'No local network to scan (cellular or VPN-only). '
+            'Find my server only sees the Wi-Fi you are on. Enter the '
+            "server's Tailscale address below — http://100.x.x.x:8765 — "
+            'and tap Pair; that address works from anywhere.';
       });
       return;
     }
@@ -314,6 +316,20 @@ class _ServerConnectionScreenState
                 style: Theme.of(context).textTheme.bodySmall,
               ),
             ],
+            const SizedBox(height: 8),
+            // The one fact that decides whether the app works away from
+            // home. A LAN address (192.168.x.x) found by the sweep only
+            // reaches the server on that Wi-Fi; on cellular it neither
+            // answers nor refuses, so uploads spin forever with no error.
+            // Say it HERE, before the choice is made, not in a README.
+            Text(
+              'Found servers show their Wi-Fi address, which only works on '
+              'this network. To use Tangent away from home, enter the '
+              "server's Tailscale address (http://100.x.x.x:8765) below "
+              'instead and tap Pair.',
+              key: const ValueKey<String>('address-scope-hint'),
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
             const SizedBox(height: 16),
             const Row(
               children: [
@@ -330,7 +346,8 @@ class _ServerConnectionScreenState
               controller: _urlController,
               decoration: const InputDecoration(
                 labelText: 'Server URL',
-                hintText: 'http://homelab.lan:8000',
+                hintText: 'http://100.x.x.x:8765 (Tailscale) or '
+                    'http://192.168.x.x:8765 (Wi-Fi only)',
               ),
               keyboardType: TextInputType.url,
             ),
