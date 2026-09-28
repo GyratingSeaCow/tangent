@@ -50,8 +50,8 @@ ADH2/
 
 ## Status
 
-Shipping — **v1.28.0** (see CHANGELOG.md). Client and server are both
-implemented and tested (2466
+Shipping — **v1.28.1** (see CHANGELOG.md). Client and server are both
+implemented and tested (2467
 Flutter tests, 586 server tests, 100 Kotlin tests). The client runs
 natively on Linux AND Windows (tray icon, global record hotkey,
 close-to-tray, single instance, right-click = long-press; AppImage and
@@ -66,7 +66,8 @@ changed transcript adds new-text items, keeps same-text rows (enriching
 due_date only when missing), never deletes stale rows, never resurrects
 an Undo. Pull-time dedupe: an incoming voice todo matching a local live
 voice row on source_ref+text keeps the OLDER created_at and soft-deletes
-the other (heals cross-device duplicates without a server change).
+the other; v1.28.1 also SWEEPS every live twin group once per sync cycle,
+because pairs that were both local before the upgrade never re-arrive.
 **Daily due-date reminder** (Android only, OFF by default): Settings →
 Reminders — one digest notification ('Due today: a, b · N overdue'; none
 when nothing is due) at a chosen time (default 07:00), exact alarm with
