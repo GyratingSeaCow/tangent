@@ -127,21 +127,31 @@ void main() {
 
     test('identical result from different wording is the same capture',
         () async {
-      await arrive();
+      final List<TodoRow> first = await arrive(
+        text: 'add to my to do list for September 30th pick up thermal '
+            'paste and email the Zionsville customer back',
+      );
+      final String fingerprint = first.first.captureFingerprint!;
+      // The user clears the date on one item. A same-result re-arrival is
+      // the SAME capture and must not put the date back; only a genuinely
+      // different parse may reconcile.
+      await repo.setDueDate(first.first.id, null);
       clock = clock.add(const Duration(minutes: 5));
 
       final List<TodoRow> second = await arrive(
         text: 'the customer board is toast okay add to my to do list '
-            'pick up thermal paste and email the Zionsville customer back',
+            'for September 30th pick up thermal paste and email the '
+            'Zionsville customer back',
       );
 
       expect(second, isEmpty);
       final List<TodoRow> rows = await repo.todosFromSource(dumpId);
       expect(rows.length, 2);
+      expect(rows.first.dueDate, isNull, reason: 'no reconcile happened');
       expect(
-        rows.every((r) => r.updatedAt == rows.first.updatedAt),
+        rows.every((r) => r.captureFingerprint == fingerprint),
         isTrue,
-        reason: 'no row was touched',
+        reason: 'the fingerprint is over the result, not the wording',
       );
     });
 
