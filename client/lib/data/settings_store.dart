@@ -40,6 +40,7 @@ class SettingsStore {
   static const _notebookImportAudioCardKey = 'notebook-import-audio-card';
   static const _remindersEnabledKey = 'reminders_enabled';
   static const _reminderMinuteOfDayKey = 'reminder_minute_of_day';
+  static const _lastReminderShownDayKey = 'last_reminder_shown_day';
 
   final SharedPreferences? _preferences;
 
@@ -132,6 +133,11 @@ class SettingsStore {
   /// would put the alarm on no clock at all.
   int reminderMinuteOfDay;
 
+  /// `YYYY-MM-DD` of the last day a due-date reminder was actually posted
+  /// (spec 2026-09-27 K1); '' when never. Desktop catch-up on launch shows
+  /// the missed digest once per day and never twice for the same day.
+  String lastReminderShownDay;
+
   SettingsStore({
     this.wifiOnlySync = true,
     this.autoSync = true,
@@ -150,6 +156,7 @@ class SettingsStore {
     this.notebookImportAudioCard = true,
     this.remindersEnabled = false,
     this.reminderMinuteOfDay = 420,
+    this.lastReminderShownDay = '',
     SharedPreferences? preferences,
   }) : _preferences = preferences;
 
@@ -187,6 +194,8 @@ class SettingsStore {
       reminderMinuteOfDay: clampMinuteOfDay(
         preferences.getInt(_reminderMinuteOfDayKey),
       ),
+      lastReminderShownDay:
+          preferences.getString(_lastReminderShownDayKey) ?? '',
     );
   }
 
@@ -267,6 +276,11 @@ class SettingsStore {
     final int clamped = clampMinuteOfDay(value);
     reminderMinuteOfDay = clamped;
     await _preferences?.setInt(_reminderMinuteOfDayKey, clamped);
+  }
+
+  Future<void> setLastReminderShownDay(String isoDay) async {
+    lastReminderShownDay = isoDay;
+    await _preferences?.setString(_lastReminderShownDayKey, isoDay);
   }
 
   /// Minutes after midnight, kept inside one day; null → 07:00.

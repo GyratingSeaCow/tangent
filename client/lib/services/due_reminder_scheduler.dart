@@ -72,6 +72,10 @@ abstract class DueReminderPort {
 
   /// Opens the system notification settings for the app.
   Future<void> openSystemSettings();
+
+  /// Whether [openSystemSettings] leads anywhere. Desktop has no per-app
+  /// notification page to open, so the section hides the button there.
+  bool get canOpenSystemSettings => true;
 }
 
 /// Decisions only; see the library doc.
@@ -80,13 +84,19 @@ class DueReminderScheduler {
     required DueReminderPort port,
     required Future<List<TodoRow>> Function() loadTodos,
     DateTime Function()? now,
+    Future<void> Function(String isoDay)? onPosted,
   })  : _port = port,
         _loadTodos = loadTodos,
-        _now = now ?? DateTime.now;
+        _now = now ?? DateTime.now,
+        _onPosted = onPosted;
 
   final DueReminderPort _port;
   final Future<List<TodoRow>> Function() _loadTodos;
   final DateTime Function() _now;
+
+  /// Called with the local `YYYY-MM-DD` after a digest was posted at fire
+  /// time; production records `SettingsStore.lastReminderShownDay` (K1).
+  final Future<void> Function(String isoDay)? _onPosted;
 
   /// The next occurrence of [minuteOfDay] STRICTLY after [now], in local
   /// time. At exactly 07:00 the answer is tomorrow 07:00, never "now" —
@@ -109,6 +119,8 @@ class DueReminderScheduler {
   Future<bool> exactAllowed() => _port.canScheduleExact();
 
   Future<void> openSystemSettings() => _port.openSystemSettings();
+
+  bool get canOpenSystemSettings => _port.canOpenSystemSettings;
 
   /// Arms the next reminder. Returns the instant it will fire.
   Future<DateTime> scheduleNext({
@@ -141,16 +153,18 @@ class DueReminderScheduler {
       await _port.withdraw();
     } else {
       await _port.post(digest);
+      await _onPosted?.call(isoDate(at));
     }
     await scheduleNext(minuteOfDay: minuteOfDay, now: at);
     return digest;
   }
 }
 
-/// `Platform.isAndroid` behind a provider so the Settings section can be
-/// shown on a Windows/Linux test host and hidden there in production.
-final Provider<bool> isAndroidProvider =
-    Provider<bool>((ref) => Platform.isAndroid);
+/// Platforms with a reminder port (Android alarm, Linux/Windows in-process
+/// timer + system notification), behind a provider so tests can force it.
+final Provider<bool> remindersSupportedProvider = Provider<bool>(
+  (ref) => Platform.isAndroid || Platform.isLinux || Platform.isWindows,
+);
 
 /// The platform port. Production overrides this in `main()` with the real
 /// Android implementation; the default throws so a test that forgets to

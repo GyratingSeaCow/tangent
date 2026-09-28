@@ -5,9 +5,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../services/due_reminder_scheduler.dart';
 import 'settings_screen.dart';
 
-/// Settings → Reminders (spec 2026-09-27 Half B, N4). Android only: the
-/// whole section is HIDDEN elsewhere, not disabled — desktop reminders are
-/// a follow-up and a greyed-out switch would promise them.
+/// Settings → Reminders (spec 2026-09-27 Half B, N4; Half A adds Linux +
+/// Windows). Android, Linux and Windows have a port; the whole section is
+/// HIDDEN elsewhere, not disabled — a greyed-out switch would promise it.
 ///
 /// Turning the switch on asks for the notification permission right there
 /// (the prompt arrives with its reason on screen) and arms the alarm.
@@ -36,7 +36,7 @@ class _RemindersSectionState extends ConsumerState<RemindersSection> {
   @override
   void initState() {
     super.initState();
-    if (_enabled && ref.read(isAndroidProvider)) {
+    if (_enabled && ref.read(remindersSupportedProvider)) {
       // Already on from a previous session: show the real next time.
       WidgetsBinding.instance.addPostFrameCallback((_) => _rearm());
     }
@@ -127,7 +127,7 @@ class _RemindersSectionState extends ConsumerState<RemindersSection> {
 
   @override
   Widget build(BuildContext context) {
-    if (!ref.watch(isAndroidProvider)) return const SizedBox.shrink();
+    if (!ref.watch(remindersSupportedProvider)) return const SizedBox.shrink();
     final ThemeData theme = Theme.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -144,7 +144,7 @@ class _RemindersSectionState extends ConsumerState<RemindersSection> {
           key: RemindersSection.enabledKey,
           title: const Text('Daily due-date reminder'),
           subtitle: const Text(
-            'One morning notification listing to-dos due today.',
+            'Shows a system notification each morning listing to-dos due today.',
           ),
           value: _enabled,
           onChanged: _busy ? null : _toggle,
@@ -167,7 +167,9 @@ class _RemindersSectionState extends ConsumerState<RemindersSection> {
             ),
           ),
         ),
-        if (_enabled && _denied)
+        if (_enabled &&
+            _denied &&
+            ref.read(dueReminderSchedulerProvider).canOpenSystemSettings)
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
             child: Align(

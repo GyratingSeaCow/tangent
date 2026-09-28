@@ -172,6 +172,9 @@ class AndroidDueReminderPort implements DueReminderPort {
   }
 
   @override
+  bool get canOpenSystemSettings => true;
+
+  @override
   Future<void> openSystemSettings() async {
     try {
       await openAppSettings();

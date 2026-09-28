@@ -6,6 +6,7 @@ import 'package:tangent/services/due_reminder_scheduler.dart';
 class FakeDueReminderPort implements DueReminderPort {
   bool grant = true;
   bool exact = true;
+  bool canOpenSettings = true;
   int permissionRequests = 0;
   int cancels = 0;
   int withdraws = 0;
@@ -46,4 +47,7 @@ class FakeDueReminderPort implements DueReminderPort {
 
   @override
   Future<void> openSystemSettings() async => openSettingsCalls++;
+
+  @override
+  bool get canOpenSystemSettings => canOpenSettings;
 }
