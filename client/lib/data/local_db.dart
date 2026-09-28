@@ -367,6 +367,13 @@ class Todos extends Table {
   /// rows as recordings and notebooks). Null = unfiled. Declared last so a
   /// fresh onCreate and a v23 `addColumn` upgrade agree on column order.
   TextColumn get folderId => text().nullable()();
+
+  /// v1.28.0: LOCAL-ONLY fingerprint of the voice parse that created (or
+  /// last reconciled) this row — SHA-1 of the parsed RESULT, so a
+  /// re-transcribe that yields the same items is the same capture. Never
+  /// pushed, never read from a pull (same pattern as `summary_requested_at`).
+  /// Null on manual rows and on rows that arrived from a peer.
+  TextColumn get captureFingerprint => text().nullable()();
   @override
   Set<Column> get primaryKey => {id};
 }
@@ -396,7 +403,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   LocalDb.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 24;
+  int get schemaVersion => 25;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -882,6 +889,20 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
                 .any((QueryRow row) => row.read<String>('name') == 'folder_id');
             if (!hasFolderId) {
               await m.addColumn(todos, todos.folderId);
+            }
+          }
+          if (from < 25) {
+            // v1.28.0: local-only capture_fingerprint on todos. Same
+            // ask-the-database guard as v24: the v23 createTable branch may
+            // already have built the table with this column.
+            final List<QueryRow> todoColumns =
+                await customSelect('PRAGMA table_info(todos)').get();
+            final bool hasFingerprint = todoColumns.any(
+              (QueryRow row) =>
+                  row.read<String>('name') == 'capture_fingerprint',
+            );
+            if (!hasFingerprint) {
+              await m.addColumn(todos, todos.captureFingerprint);
             }
           }
         },
@@ -1646,6 +1667,8 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
         sourceRef: Value(resolve(sourceRef, existing?.sourceRef)),
         deletedAt: Value(resolve(deletedAt, existing?.deletedAt)),
         folderId: Value(resolve(folderId, existing?.folderId)),
+        // Local-only: a pull never carries it, so the held value survives.
+        captureFingerprint: Value(existing?.captureFingerprint),
         syncDirty: const Value(false),
         syncedSeq: Value(seq),
       ),

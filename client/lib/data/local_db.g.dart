@@ -6803,6 +6803,12 @@ class $TodosTable extends Todos with TableInfo<$TodosTable, TodoRow> {
   late final GeneratedColumn<String> folderId = GeneratedColumn<String>(
       'folder_id', aliasedName, true,
       type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _captureFingerprintMeta =
+      const VerificationMeta('captureFingerprint');
+  @override
+  late final GeneratedColumn<String> captureFingerprint =
+      GeneratedColumn<String>('capture_fingerprint', aliasedName, true,
+          type: DriftSqlType.string, requiredDuringInsert: false);
   @override
   List<GeneratedColumn> get $columns => [
         id,
@@ -6816,7 +6822,8 @@ class $TodosTable extends Todos with TableInfo<$TodosTable, TodoRow> {
         deletedAt,
         syncDirty,
         syncedSeq,
-        folderId
+        folderId,
+        captureFingerprint
       ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -6883,6 +6890,12 @@ class $TodosTable extends Todos with TableInfo<$TodosTable, TodoRow> {
       context.handle(_folderIdMeta,
           folderId.isAcceptableOrUnknown(data['folder_id']!, _folderIdMeta));
     }
+    if (data.containsKey('capture_fingerprint')) {
+      context.handle(
+          _captureFingerprintMeta,
+          captureFingerprint.isAcceptableOrUnknown(
+              data['capture_fingerprint']!, _captureFingerprintMeta));
+    }
     return context;
   }
 
@@ -6916,6 +6929,8 @@ class $TodosTable extends Todos with TableInfo<$TodosTable, TodoRow> {
           .read(DriftSqlType.int, data['${effectivePrefix}synced_seq']),
       folderId: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}folder_id']),
+      captureFingerprint: attachedDatabase.typeMapping.read(
+          DriftSqlType.string, data['${effectivePrefix}capture_fingerprint']),
     );
   }
 
@@ -6960,6 +6975,13 @@ class TodoRow extends DataClass implements Insertable<TodoRow> {
   /// rows as recordings and notebooks). Null = unfiled. Declared last so a
   /// fresh onCreate and a v23 `addColumn` upgrade agree on column order.
   final String? folderId;
+
+  /// v1.28.0: LOCAL-ONLY fingerprint of the voice parse that created (or
+  /// last reconciled) this row — SHA-1 of the parsed RESULT, so a
+  /// re-transcribe that yields the same items is the same capture. Never
+  /// pushed, never read from a pull (same pattern as `summary_requested_at`).
+  /// Null on manual rows and on rows that arrived from a peer.
+  final String? captureFingerprint;
   const TodoRow(
       {required this.id,
       required this.body,
@@ -6972,7 +6994,8 @@ class TodoRow extends DataClass implements Insertable<TodoRow> {
       this.deletedAt,
       required this.syncDirty,
       this.syncedSeq,
-      this.folderId});
+      this.folderId,
+      this.captureFingerprint});
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -6999,6 +7022,9 @@ class TodoRow extends DataClass implements Insertable<TodoRow> {
     }
     if (!nullToAbsent || folderId != null) {
       map['folder_id'] = Variable<String>(folderId);
+    }
+    if (!nullToAbsent || captureFingerprint != null) {
+      map['capture_fingerprint'] = Variable<String>(captureFingerprint);
     }
     return map;
   }
@@ -7028,6 +7054,9 @@ class TodoRow extends DataClass implements Insertable<TodoRow> {
       folderId: folderId == null && nullToAbsent
           ? const Value.absent()
           : Value(folderId),
+      captureFingerprint: captureFingerprint == null && nullToAbsent
+          ? const Value.absent()
+          : Value(captureFingerprint),
     );
   }
 
@@ -7047,6 +7076,8 @@ class TodoRow extends DataClass implements Insertable<TodoRow> {
       syncDirty: serializer.fromJson<bool>(json['syncDirty']),
       syncedSeq: serializer.fromJson<int?>(json['syncedSeq']),
       folderId: serializer.fromJson<String?>(json['folderId']),
+      captureFingerprint:
+          serializer.fromJson<String?>(json['captureFingerprint']),
     );
   }
   @override
@@ -7065,6 +7096,7 @@ class TodoRow extends DataClass implements Insertable<TodoRow> {
       'syncDirty': serializer.toJson<bool>(syncDirty),
       'syncedSeq': serializer.toJson<int?>(syncedSeq),
       'folderId': serializer.toJson<String?>(folderId),
+      'captureFingerprint': serializer.toJson<String?>(captureFingerprint),
     };
   }
 
@@ -7080,7 +7112,8 @@ class TodoRow extends DataClass implements Insertable<TodoRow> {
           Value<String?> deletedAt = const Value.absent(),
           bool? syncDirty,
           Value<int?> syncedSeq = const Value.absent(),
-          Value<String?> folderId = const Value.absent()}) =>
+          Value<String?> folderId = const Value.absent(),
+          Value<String?> captureFingerprint = const Value.absent()}) =>
       TodoRow(
         id: id ?? this.id,
         body: body ?? this.body,
@@ -7094,6 +7127,9 @@ class TodoRow extends DataClass implements Insertable<TodoRow> {
         syncDirty: syncDirty ?? this.syncDirty,
         syncedSeq: syncedSeq.present ? syncedSeq.value : this.syncedSeq,
         folderId: folderId.present ? folderId.value : this.folderId,
+        captureFingerprint: captureFingerprint.present
+            ? captureFingerprint.value
+            : this.captureFingerprint,
       );
   TodoRow copyWithCompanion(TodosCompanion data) {
     return TodoRow(
@@ -7109,6 +7145,9 @@ class TodoRow extends DataClass implements Insertable<TodoRow> {
       syncDirty: data.syncDirty.present ? data.syncDirty.value : this.syncDirty,
       syncedSeq: data.syncedSeq.present ? data.syncedSeq.value : this.syncedSeq,
       folderId: data.folderId.present ? data.folderId.value : this.folderId,
+      captureFingerprint: data.captureFingerprint.present
+          ? data.captureFingerprint.value
+          : this.captureFingerprint,
     );
   }
 
@@ -7126,14 +7165,27 @@ class TodoRow extends DataClass implements Insertable<TodoRow> {
           ..write('deletedAt: $deletedAt, ')
           ..write('syncDirty: $syncDirty, ')
           ..write('syncedSeq: $syncedSeq, ')
-          ..write('folderId: $folderId')
+          ..write('folderId: $folderId, ')
+          ..write('captureFingerprint: $captureFingerprint')
           ..write(')'))
         .toString();
   }
 
   @override
-  int get hashCode => Object.hash(id, body, doneAt, dueDate, source, sourceRef,
-      createdAt, updatedAt, deletedAt, syncDirty, syncedSeq, folderId);
+  int get hashCode => Object.hash(
+      id,
+      body,
+      doneAt,
+      dueDate,
+      source,
+      sourceRef,
+      createdAt,
+      updatedAt,
+      deletedAt,
+      syncDirty,
+      syncedSeq,
+      folderId,
+      captureFingerprint);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -7149,7 +7201,8 @@ class TodoRow extends DataClass implements Insertable<TodoRow> {
           other.deletedAt == this.deletedAt &&
           other.syncDirty == this.syncDirty &&
           other.syncedSeq == this.syncedSeq &&
-          other.folderId == this.folderId);
+          other.folderId == this.folderId &&
+          other.captureFingerprint == this.captureFingerprint);
 }
 
 class TodosCompanion extends UpdateCompanion<TodoRow> {
@@ -7165,6 +7218,7 @@ class TodosCompanion extends UpdateCompanion<TodoRow> {
   final Value<bool> syncDirty;
   final Value<int?> syncedSeq;
   final Value<String?> folderId;
+  final Value<String?> captureFingerprint;
   final Value<int> rowid;
   const TodosCompanion({
     this.id = const Value.absent(),
@@ -7179,6 +7233,7 @@ class TodosCompanion extends UpdateCompanion<TodoRow> {
     this.syncDirty = const Value.absent(),
     this.syncedSeq = const Value.absent(),
     this.folderId = const Value.absent(),
+    this.captureFingerprint = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   TodosCompanion.insert({
@@ -7194,6 +7249,7 @@ class TodosCompanion extends UpdateCompanion<TodoRow> {
     this.syncDirty = const Value.absent(),
     this.syncedSeq = const Value.absent(),
     this.folderId = const Value.absent(),
+    this.captureFingerprint = const Value.absent(),
     this.rowid = const Value.absent(),
   })  : id = Value(id),
         body = Value(body),
@@ -7212,6 +7268,7 @@ class TodosCompanion extends UpdateCompanion<TodoRow> {
     Expression<bool>? syncDirty,
     Expression<int>? syncedSeq,
     Expression<String>? folderId,
+    Expression<String>? captureFingerprint,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -7227,6 +7284,7 @@ class TodosCompanion extends UpdateCompanion<TodoRow> {
       if (syncDirty != null) 'sync_dirty': syncDirty,
       if (syncedSeq != null) 'synced_seq': syncedSeq,
       if (folderId != null) 'folder_id': folderId,
+      if (captureFingerprint != null) 'capture_fingerprint': captureFingerprint,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -7244,6 +7302,7 @@ class TodosCompanion extends UpdateCompanion<TodoRow> {
       Value<bool>? syncDirty,
       Value<int?>? syncedSeq,
       Value<String?>? folderId,
+      Value<String?>? captureFingerprint,
       Value<int>? rowid}) {
     return TodosCompanion(
       id: id ?? this.id,
@@ -7258,6 +7317,7 @@ class TodosCompanion extends UpdateCompanion<TodoRow> {
       syncDirty: syncDirty ?? this.syncDirty,
       syncedSeq: syncedSeq ?? this.syncedSeq,
       folderId: folderId ?? this.folderId,
+      captureFingerprint: captureFingerprint ?? this.captureFingerprint,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -7301,6 +7361,9 @@ class TodosCompanion extends UpdateCompanion<TodoRow> {
     if (folderId.present) {
       map['folder_id'] = Variable<String>(folderId.value);
     }
+    if (captureFingerprint.present) {
+      map['capture_fingerprint'] = Variable<String>(captureFingerprint.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -7322,6 +7385,7 @@ class TodosCompanion extends UpdateCompanion<TodoRow> {
           ..write('syncDirty: $syncDirty, ')
           ..write('syncedSeq: $syncedSeq, ')
           ..write('folderId: $folderId, ')
+          ..write('captureFingerprint: $captureFingerprint, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -10760,6 +10824,7 @@ typedef $$TodosTableCreateCompanionBuilder = TodosCompanion Function({
   Value<bool> syncDirty,
   Value<int?> syncedSeq,
   Value<String?> folderId,
+  Value<String?> captureFingerprint,
   Value<int> rowid,
 });
 typedef $$TodosTableUpdateCompanionBuilder = TodosCompanion Function({
@@ -10775,6 +10840,7 @@ typedef $$TodosTableUpdateCompanionBuilder = TodosCompanion Function({
   Value<bool> syncDirty,
   Value<int?> syncedSeq,
   Value<String?> folderId,
+  Value<String?> captureFingerprint,
   Value<int> rowid,
 });
 
@@ -10821,6 +10887,10 @@ class $$TodosTableFilterComposer extends Composer<_$LocalDb, $TodosTable> {
 
   ColumnFilters<String> get folderId => $composableBuilder(
       column: $table.folderId, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get captureFingerprint => $composableBuilder(
+      column: $table.captureFingerprint,
+      builder: (column) => ColumnFilters(column));
 }
 
 class $$TodosTableOrderingComposer extends Composer<_$LocalDb, $TodosTable> {
@@ -10866,6 +10936,10 @@ class $$TodosTableOrderingComposer extends Composer<_$LocalDb, $TodosTable> {
 
   ColumnOrderings<String> get folderId => $composableBuilder(
       column: $table.folderId, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get captureFingerprint => $composableBuilder(
+      column: $table.captureFingerprint,
+      builder: (column) => ColumnOrderings(column));
 }
 
 class $$TodosTableAnnotationComposer extends Composer<_$LocalDb, $TodosTable> {
@@ -10911,6 +10985,9 @@ class $$TodosTableAnnotationComposer extends Composer<_$LocalDb, $TodosTable> {
 
   GeneratedColumn<String> get folderId =>
       $composableBuilder(column: $table.folderId, builder: (column) => column);
+
+  GeneratedColumn<String> get captureFingerprint => $composableBuilder(
+      column: $table.captureFingerprint, builder: (column) => column);
 }
 
 class $$TodosTableTableManager extends RootTableManager<
@@ -10948,6 +11025,7 @@ class $$TodosTableTableManager extends RootTableManager<
             Value<bool> syncDirty = const Value.absent(),
             Value<int?> syncedSeq = const Value.absent(),
             Value<String?> folderId = const Value.absent(),
+            Value<String?> captureFingerprint = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               TodosCompanion(
@@ -10963,6 +11041,7 @@ class $$TodosTableTableManager extends RootTableManager<
             syncDirty: syncDirty,
             syncedSeq: syncedSeq,
             folderId: folderId,
+            captureFingerprint: captureFingerprint,
             rowid: rowid,
           ),
           createCompanionCallback: ({
@@ -10978,6 +11057,7 @@ class $$TodosTableTableManager extends RootTableManager<
             Value<bool> syncDirty = const Value.absent(),
             Value<int?> syncedSeq = const Value.absent(),
             Value<String?> folderId = const Value.absent(),
+            Value<String?> captureFingerprint = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               TodosCompanion.insert(
@@ -10993,6 +11073,7 @@ class $$TodosTableTableManager extends RootTableManager<
             syncDirty: syncDirty,
             syncedSeq: syncedSeq,
             folderId: folderId,
+            captureFingerprint: captureFingerprint,
             rowid: rowid,
           ),
           withReferenceMapper: (p0) => p0

@@ -14,6 +14,7 @@ library;
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:drift/drift.dart';
 import 'package:flutter/foundation.dart';
 
 import '../data/local_db.dart';
@@ -431,8 +432,7 @@ class DocumentSyncEngine extends ChangeNotifier {
       id: change.entityId,
       text: payload['text'] as String? ?? local?.body ?? '',
       createdAt: payload['created_at'] as String? ?? fallbackStamp,
-      updatedAt:
-          remoteUpdatedAt.isEmpty ? fallbackStamp : remoteUpdatedAt,
+      updatedAt: remoteUpdatedAt.isEmpty ? fallbackStamp : remoteUpdatedAt,
       source: payload['source'] as String?,
       // Absent-vs-null discipline (the summary-field rule): a payload
       // missing a key keeps the local value; a PRESENT null is
@@ -456,6 +456,50 @@ class DocumentSyncEngine extends ChangeNotifier {
           : LocalDb.absentTodoField,
       seq: change.seq,
     );
+    await _dedupeVoiceTodo(change.entityId);
+  }
+
+  /// v1.28.0 cross-device dedupe (retranscribe-guard spec, rule 4).
+  ///
+  /// Two devices that each captured the same recording before either push
+  /// landed hold the same item under two ids. Once the peer's copy arrives
+  /// here, a LIVE voice row with the same `source_ref` + `text` but a
+  /// different id is a duplicate: the OLDER `created_at` stays, the other
+  /// is soft-deleted as an ordinary dirty edit so it travels back as the
+  /// deletion it is. Soft-deleted rows are not candidates (an Undo must not
+  /// be reversed by a late arrival) and the check is per `source_ref`: two
+  /// recordings that both said "call the dentist" are two items.
+  Future<void> _dedupeVoiceTodo(String id) async {
+    final TodoRow? applied = await _db.getTodoRow(id);
+    if (applied == null ||
+        applied.source != voiceTodoSource ||
+        applied.sourceRef == null ||
+        applied.deletedAt != null) {
+      return;
+    }
+    final List<TodoRow> twins = await (_db.select(_db.todos)
+          ..where(
+            (t) =>
+                t.sourceRef.equals(applied.sourceRef!) &
+                t.body.equals(applied.body) &
+                t.source.equals(voiceTodoSource) &
+                t.deletedAt.isNull() &
+                t.id.equals(id).not(),
+          ))
+        .get();
+    if (twins.isEmpty) return;
+    final List<TodoRow> all = <TodoRow>[applied, ...twins]
+      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    final String stamp = DateTime.now().toUtc().toIso8601String();
+    for (final TodoRow loser in all.skip(1)) {
+      await (_db.update(_db.todos)..where((t) => t.id.equals(loser.id))).write(
+        TodosCompanion(
+          deletedAt: Value(stamp),
+          updatedAt: Value(stamp),
+          syncDirty: const Value(true),
+        ),
+      );
+    }
   }
 
   /// Canonical JSON text for a timings payload value: the server sends the

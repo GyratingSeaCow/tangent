@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import 'dart:convert' show utf8;
+
+import 'package:crypto/crypto.dart' show sha1;
+
 import '../data/local_db.dart';
 import '../data/todo_repository.dart';
 import 'todo_voice_parser.dart';
@@ -11,10 +15,16 @@ import 'todo_voice_parser.dart';
 /// transcription) — and both route through here, so a re-sync, a
 /// re-transcribe, or a manual repair can never double-add.
 ///
-/// The guard is provenance, not content: a dump that has ANY todo carrying
-/// its id as `source_ref` is already captured, even if every one of those
-/// rows is soft-deleted. That is what makes Undo permanent — the spec's
-/// "re-sync can't resurrect them".
+/// The guard is keyed by (dumpId, fingerprint of the parsed RESULT) —
+/// v1.28.0, docs/design/2026-09-27-retranscribe-guard-and-due-reminders.md
+/// Half A. Rows for the dump (live OR soft-deleted) carrying the SAME
+/// fingerprint mean this exact capture already happened: nothing to do.
+/// A DIFFERENT fingerprint is a re-transcription: entries whose text has no
+/// row yet are added, live rows with the same text are kept (their id is
+/// what the user's other devices know), stale live rows are left alone
+/// (they may be user-edited), and soft-deleted texts are never re-created.
+/// That last rule is what makes Undo permanent — the spec's "re-sync can't
+/// resurrect them".
 ///
 /// [recordedOn] is the dump's `created_at` — the day the words were spoken,
 /// which anchors "September 30th" and "Friday" (v1.26.0 D2). Never
@@ -33,27 +43,77 @@ Future<List<TodoRow>> captureVoiceTodos({
   TodoRepository? repository,
 }) async {
   final TodoRepository repo = repository ?? TodoRepository(db: db);
-  // Ask BEFORE parsing: the answer is cheap and it short-circuits every
-  // repeat arrival for the overwhelmingly common already-captured dump.
-  if (await repo.hasTodosFromSource(dumpId)) return const <TodoRow>[];
   // The recording DAY is a local-calendar notion; sync hands us UTC stamps.
   final VoiceTodoParse parse = TodoVoiceParser.parseWithDate(
     transcript,
     recordedOn: recordedOn.toLocal(),
   );
-  if (parse.entries.isEmpty) return const <TodoRow>[];
-  final List<TodoRow> created = <TodoRow>[];
-  for (final VoiceTodoItem entry in parse.entries) {
-    created.add(
-      await repo.add(
-        entry.text,
-        dueDate: entry.dueDate ?? parse.dueDate,
-        source: voiceTodoSource,
-        sourceRef: dumpId,
-      ),
-    );
+  final List<VoiceTodoItem> entries = <VoiceTodoItem>[
+    for (final VoiceTodoItem entry in parse.entries)
+      VoiceTodoItem(entry.text, dueDate: entry.dueDate ?? parse.dueDate),
+  ];
+  final List<TodoRow> existing = await repo.todosFromSource(dumpId);
+  if (existing.isEmpty) {
+    if (entries.isEmpty) return const <TodoRow>[];
+    final String fingerprint = captureFingerprintOf(entries);
+    return <TodoRow>[
+      for (final VoiceTodoItem entry in entries)
+        await repo.add(
+          entry.text,
+          dueDate: entry.dueDate,
+          source: voiceTodoSource,
+          sourceRef: dumpId,
+          captureFingerprint: fingerprint,
+        ),
+    ];
   }
+  // Something was captured before. Same result → nothing to do; and a
+  // transcript that no longer yields any item must not touch rows either.
+  if (entries.isEmpty) return const <TodoRow>[];
+  final String fingerprint = captureFingerprintOf(entries);
+  if (existing.any((TodoRow row) => row.captureFingerprint == fingerprint)) {
+    return const <TodoRow>[];
+  }
+  // A re-transcription. Reconcile by text; never delete, never resurrect.
+  final List<TodoRow> created = <TodoRow>[];
+  for (final VoiceTodoItem entry in entries) {
+    final Iterable<TodoRow> sameText =
+        existing.where((TodoRow row) => row.body == entry.text);
+    if (sameText.isEmpty) {
+      created.add(
+        await repo.add(
+          entry.text,
+          dueDate: entry.dueDate,
+          source: voiceTodoSource,
+          sourceRef: dumpId,
+          captureFingerprint: fingerprint,
+        ),
+      );
+      continue;
+    }
+    for (final TodoRow row in sameText) {
+      // Soft-deleted rows stay deleted (Undo is permanent). Live rows keep
+      // their id; a date is added only when the row has none yet.
+      if (row.deletedAt != null) continue;
+      if (row.dueDate == null && entry.dueDate != null) {
+        await repo.setDueDate(row.id, entry.dueDate);
+      }
+    }
+  }
+  // Remember this parse so the same transcript arriving again is a no-op.
+  await repo.setCaptureFingerprint(dumpId, fingerprint);
   return created;
+}
+
+/// SHA-1 hex over the parsed RESULT: `text|dueDate` per entry, joined by
+/// `\n`. Two transcripts that yield identical to-dos share a fingerprint;
+/// a changed word inside an item, or a newly recognised date, does not.
+/// Deliberately NOT a hash of the raw transcript (spec rule 1).
+String captureFingerprintOf(Iterable<VoiceTodoItem> entries) {
+  final String joined = entries
+      .map((VoiceTodoItem e) => '${e.text}|${e.dueDate ?? ''}')
+      .join('\n');
+  return sha1.convert(utf8.encode(joined)).toString();
 }
 
 /// The `source` value phase 1 reserved for voice-captured items.
