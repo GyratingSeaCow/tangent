@@ -231,10 +231,13 @@ void main() {
     testWidgets('a hook returning null leaves the message untouched',
         (tester) async {
       int calls = 0;
-      await mountAndTap(tester, afterSync: () async {
-        calls++;
-        return null;
-      });
+      await mountAndTap(
+        tester,
+        afterSync: () async {
+          calls++;
+          return null;
+        },
+      );
       expect(calls, 1);
       expect(find.text('Already up to date'), findsOneWidget);
       await unmount(tester);
@@ -331,11 +334,13 @@ void main() {
   group('afterSyncErrorSuffix', () {
     test('an ApiException contributes its message only', () {
       expect(
-        afterSyncErrorSuffix(const ApiException(
-          statusCode: 502,
-          code: 'upstream',
-          message: 'Google unreachable',
-        )),
+        afterSyncErrorSuffix(
+          const ApiException(
+            statusCode: 502,
+            code: 'upstream',
+            message: 'Google unreachable',
+          ),
+        ),
         ' · Google: Google unreachable',
       );
     });
