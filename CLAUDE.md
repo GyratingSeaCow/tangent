@@ -1,6 +1,7 @@
 # Tangent — agent working rules
 
-Read **`docs/HANDOVER.md`** first. Then **`docs/ENGINEERING-NOTES.md`**,
+Read **`../ADH2-private/docs/HANDOVER.md`** first (private, next to this repo — not
+published). Then **`../ADH2-private/docs/ENGINEERING-NOTES.md`**,
 which is 98 KB of rules each paid for with a real failure.
 
 ## What this is
@@ -39,8 +40,8 @@ paths to native tools (no MSYS translation). Scratch in `$LOCALAPPDATA/Temp`.
 Complex backslash one-liners break — write a `.py` file instead.
 
 ```
-adb      C:/Users/Jeff/AppData/Local/Android/Sdk/platform-tools/adb.exe
-flutter  C:/Users/Jeff/AppData/Local/flutter/bin/flutter.bat
+adb      %LOCALAPPDATA%/Android/Sdk/platform-tools/adb.exe
+flutter  %LOCALAPPDATA%/flutter/bin/flutter.bat
 devices  <tab-s10fe-serial> (tablet SM-X520) · <fold-serial> (Z Fold SM-F971U1)
 server   http://localhost:8765 · tailscale <server-tailscale-ip>:8765
 ```

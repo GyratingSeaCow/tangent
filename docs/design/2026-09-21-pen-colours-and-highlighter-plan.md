@@ -1276,7 +1276,7 @@ Expected: analyze "No issues found!", and **at least 1443 + the new tests** pass
 
 ```bash
 flutter build apk --release
-"C:/Users/Jeff/AppData/Local/Android/Sdk/build-tools/34.0.0/apksigner.bat" verify --print-certs build/app/outputs/flutter-apk/app-release.apk
+"%LOCALAPPDATA%/Android/Sdk/build-tools/34.0.0/apksigner.bat" verify --print-certs build/app/outputs/flutter-apk/app-release.apk
 ```
 Expected: `✓ Built`, and `CN=Tangent` in the certificate. A debug APK will not install over the release-signed builds on either device.
 

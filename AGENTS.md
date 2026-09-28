@@ -364,7 +364,7 @@ recognizer — that is precisely why recognition is server-side). The feature
 is off by default behind an install wizard. See
 `docs/design/2026-09-21-handwriting-search-ocr.md` for the approved spec.
 
-Open work candidates live in `docs/next-iteration.md`.
+Open work candidates live in `../ADH2-private/docs/next-iteration.md` (private, not published).
 
 ---
 

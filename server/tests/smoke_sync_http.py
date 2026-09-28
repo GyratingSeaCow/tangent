@@ -21,7 +21,7 @@ import time
 import urllib.error
 import urllib.request
 
-SERVER_DIR = r"C:\Users\Jeff\Documents\ADH2\server"
+SERVER_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def free_port() -> int:
