@@ -23,10 +23,18 @@ log = get_logger(__name__)
 DIARIZATION_BACKEND = "pyannote"
 PYANNOTE_PIPELINE = "pyannote/speaker-diarization-3.1"
 
-# Voice matching (v1.36.0). Provisional until scripts/voice_calibrate.py
-# has been run on Jeff's recordings — see the spec's §Calibration.
-VOICE_ACCEPT = 0.70
+# Voice matching (v1.36.0). Calibrated with scripts/voice_calibrate.py on
+# real recordings, 2026-09-29 — see the spec's §Calibration for the table.
+# Jeff at >= 15 s of speech: 0.76–0.85 leave-one-out; every confirmed
+# other voice at >= 15 s: <= 0.28. A miss leaves 'Speaker N'; only a wrong
+# name is a bad outcome, so the accept line sits well above the impostors.
+VOICE_ACCEPT = 0.60
 VOICE_MARGIN = 0.10
+# Below this much total speech in a recording, a speaker's centroid is
+# noise (a stranger's 6 s clip out-scored Jeff's own 2.5 s clip). Such
+# speakers keep their 'Speaker N' label but carry no voice: never taught,
+# never matched.
+VOICE_MIN_SPEECH_S = 15.0
 
 # Sample rate we decode to before handing audio to pyannote. Matches the
 # rate faster-whisper decodes at, so both consumers hear the same audio.
@@ -265,8 +273,11 @@ def diarize_segments_with_embeddings(
 
     labelled = assign_speakers(segments, turns)
     display = _label_map(turns)
+    speech = _speech_seconds(turns)
     embeddings = {
-        display[raw]: vec for raw, vec in raw_embeddings.items() if raw in display
+        display[raw]: vec
+        for raw, vec in raw_embeddings.items()
+        if raw in display and speech.get(raw, 0.0) >= VOICE_MIN_SPEECH_S
     }
     log.info(
         "diarization.complete",
@@ -274,8 +285,17 @@ def diarize_segments_with_embeddings(
         segments=len(labelled),
         speakers=len({s["speaker"] for s in labelled if s["speaker"]}),
         embeddings=len(embeddings),
+        gated=len(raw_embeddings) - len(embeddings),
     )
     return labelled, embeddings
+
+
+def _speech_seconds(turns: list[Turn]) -> dict[str, float]:
+    """Total seconds each raw label was speaking, summed over its turns."""
+    total: dict[str, float] = {}
+    for start, end, label in turns:
+        total[label] = total.get(label, 0.0) + max(0.0, end - start)
+    return total
 
 
 def diarize_segments(

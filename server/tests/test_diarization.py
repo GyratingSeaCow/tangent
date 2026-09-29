@@ -459,15 +459,66 @@ def test_extract_embeddings_none_rows_is_empty() -> None:
 def test_diarize_with_embeddings_keys_by_display_label(monkeypatch) -> None:
     monkeypatch.setenv("TANGENT_DIARIZATION", "pyannote")
     monkeypatch.setenv("HF_TOKEN", "hf_fake")
-    # SPEAKER_01 speaks first → it becomes 'Speaker 1'
-    ann = _FakeAnnotation([(0.0, 1.0, "SPEAKER_01"), (1.0, 2.0, "SPEAKER_00")])
+    # SPEAKER_01 speaks first → it becomes 'Speaker 1'. Both speak for
+    # longer than VOICE_MIN_SPEECH_S so both centroids survive the gate.
+    ann = _FakeAnnotation([(0.0, 20.0, "SPEAKER_01"), (20.0, 40.0, "SPEAKER_00")])
     out = _FakeDiarizeOutput(ann, [[1.0, 0.0], [0.0, 1.0]])
     monkeypatch.setattr(diarization, "_load_pipeline", lambda: (lambda _w: out))
     monkeypatch.setattr(diarization, "_decode_waveform", lambda path: {})
-    segs = [{"start": 0.0, "end": 1.0, "text": "a"}, {"start": 1.0, "end": 2.0, "text": "b"}]
+    segs = [{"start": 0.0, "end": 20.0, "text": "a"}, {"start": 20.0, "end": 40.0, "text": "b"}]
     labelled, emb = diarization.diarize_segments_with_embeddings("x.wav", segs)
     assert [s["speaker"] for s in labelled] == ["Speaker 1", "Speaker 2"]
     assert emb == {"Speaker 1": pytest.approx([0.0, 1.0]), "Speaker 2": pytest.approx([1.0, 0.0])}
+
+
+def test_short_speakers_get_labels_but_no_voice(monkeypatch) -> None:
+    """Calibration on real audio (2026-09-29): a centroid from < 15 s of
+    speech is noise — a stranger's 6 s clip out-scored Jeff's 2.5 s clip.
+    Such speakers are still labelled 'Speaker N' but contribute no voice:
+    nothing to teach, nothing to match against."""
+    monkeypatch.setenv("TANGENT_DIARIZATION", "pyannote")
+    monkeypatch.setenv("HF_TOKEN", "hf_fake")
+    # SPEAKER_00 talks 4 s + 4 s = 8 s (gated); SPEAKER_01 talks 16 s (kept)
+    ann = _FakeAnnotation(
+        [(0.0, 4.0, "SPEAKER_00"), (4.0, 20.0, "SPEAKER_01"), (20.0, 24.0, "SPEAKER_00")]
+    )
+    out = _FakeDiarizeOutput(ann, [[1.0, 0.0], [0.0, 1.0]])
+    monkeypatch.setattr(diarization, "_load_pipeline", lambda: (lambda _w: out))
+    monkeypatch.setattr(diarization, "_decode_waveform", lambda path: {})
+    segs = [
+        {"start": 0.0, "end": 4.0, "text": "a"},
+        {"start": 4.0, "end": 20.0, "text": "b"},
+        {"start": 20.0, "end": 24.0, "text": "c"},
+    ]
+    labelled, emb = diarization.diarize_segments_with_embeddings("x.wav", segs)
+    assert [s["speaker"] for s in labelled] == ["Speaker 1", "Speaker 2", "Speaker 1"]
+    assert list(emb) == ["Speaker 2"]
+
+
+def test_min_speech_gate_is_exactly_at_threshold(monkeypatch) -> None:
+    """Total speech == VOICE_MIN_SPEECH_S passes; a hair under does not."""
+    monkeypatch.setenv("TANGENT_DIARIZATION", "pyannote")
+    monkeypatch.setenv("HF_TOKEN", "hf_fake")
+    gate = diarization.VOICE_MIN_SPEECH_S
+    monkeypatch.setattr(diarization, "_decode_waveform", lambda path: {})
+    for total, expect in ((gate, ["Speaker 1"]), (gate - 0.01, [])):
+        ann = _FakeAnnotation([(0.0, total, "SPEAKER_00")])
+        out = _FakeDiarizeOutput(ann, [[1.0, 0.0]])
+        monkeypatch.setattr(diarization, "_load_pipeline", lambda out=out: (lambda _w: out))
+        _labelled, emb = diarization.diarize_segments_with_embeddings(
+            "x.wav", [{"start": 0.0, "end": total, "text": "a"}]
+        )
+        assert list(emb) == expect, total
+
+
+def test_calibrated_constants() -> None:
+    """Set from scripts/voice_calibrate.py on Jeff's library, 2026-09-29:
+    Jeff ≥ 15 s scored 0.76–0.85 leave-one-out, every confirmed non-Jeff
+    ≥ 15 s scored ≤ 0.28. 0.60 is 0.32 above the worst impostor; a miss
+    stays 'Speaker N', a wrong name is the only bad outcome."""
+    assert diarization.VOICE_ACCEPT == 0.60
+    assert diarization.VOICE_MARGIN == 0.10
+    assert diarization.VOICE_MIN_SPEECH_S == 15.0
 
 
 def test_diarize_with_embeddings_failure_yields_empty_dict(monkeypatch) -> None:
