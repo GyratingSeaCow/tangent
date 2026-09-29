@@ -14,6 +14,10 @@ class ServerInfo with _$ServerInfo {
     required List<String> availableModels,
     required int storageUsedBytes,
     required int dumpCount,
+
+    /// v1.36.0: whether the server diarizes (and so keeps a voice book).
+    /// Older servers omit it → false, and Settings hides the Voices section.
+    @Default(false) bool diarization,
   }) = _ServerInfo;
 
   factory ServerInfo.fromJson(Map<String, dynamic> json) {
@@ -26,6 +30,7 @@ class ServerInfo with _$ServerInfo {
           .toList(),
       storageUsedBytes: (json['storage_used_bytes'] as num).toInt(),
       dumpCount: (json['dump_count'] as num).toInt(),
+      diarization: (json['diarization'] as bool?) ?? false,
     );
   }
 }

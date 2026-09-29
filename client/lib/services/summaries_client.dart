@@ -277,6 +277,28 @@ class GoogleCalendarStatus {
   final String? lastError;
 }
 
+/// One row of Settings → Voices (v1.36.0): `GET /v1/voices` item.
+class VoiceEntry {
+  const VoiceEntry({
+    required this.name,
+    required this.samples,
+    required this.updatedAt,
+  });
+
+  factory VoiceEntry.fromJson(Map<String, dynamic> json) => VoiceEntry(
+        name: json['name'] as String,
+        samples: (json['samples'] as num?)?.toInt() ?? 1,
+        updatedAt: DateTime.tryParse(json['updated_at'] as String? ?? '') ??
+            DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+      );
+
+  final String name;
+
+  /// Recordings that taught this voice.
+  final int samples;
+  final DateTime updatedAt;
+}
+
 /// One folder ↔ Google list pairing from `GoogleTasksStatus.lists`.
 class GoogleTaskListMapping {
   const GoogleTaskListMapping({
@@ -489,6 +511,32 @@ class SummariesClient {
     return GoogleTasksStatus.fromJson(
       (resp.data as Map<String, dynamic>?) ?? const {},
     );
+  }
+
+  // ---- voices (v1.36.0) ----------------------------------------------------
+
+  /// GET /v1/voices — the remembered voices, server order (newest first).
+  /// A server without the route (pre-1.36.0) answers 404 → empty list, so
+  /// Settings simply shows nothing rather than an error.
+  Future<List<VoiceEntry>> listVoices() async {
+    final resp = await _dio.get<dynamic>('/v1/voices');
+    if (resp.statusCode == 404) return const <VoiceEntry>[];
+    _checkStatus(resp);
+    final Object? body = resp.data;
+    if (body is! List) return const <VoiceEntry>[];
+    return body
+        .whereType<Map<dynamic, dynamic>>()
+        .map((m) => VoiceEntry.fromJson(m.cast<String, dynamic>()))
+        .toList(growable: false);
+  }
+
+  /// DELETE /v1/voices/{name} — forget ONE voice. The name is a display
+  /// string (spaces, unicode) so it is percent-encoded as a single path
+  /// segment. 404 (unknown) surfaces as [ApiException].
+  Future<void> forgetVoice(String name) async {
+    final resp =
+        await _dio.delete<dynamic>('/v1/voices/${Uri.encodeComponent(name)}');
+    _checkStatus(resp);
   }
 
   /// POST /v1/dumps/{id}/summarize — (re)generate one dump's summary.
