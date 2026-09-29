@@ -15,6 +15,7 @@ import '../data/recording_metadata.dart';
 import '../models/api_exception.dart';
 import '../models/transcription_status.dart';
 import 'meeting_transcript_formatter.dart';
+import 'calendar_voice_capture.dart';
 import 'todo_voice_capture.dart';
 import 'transcription_client.dart';
 
@@ -763,6 +764,13 @@ class ServerTranscriptionService extends ChangeNotifier {
       transcript: transcript,
       recordedOn: row.createdAt,
     );
+    await captureVoiceEventsQuietly(
+      db: _db,
+      dumpId: row.id,
+      transcript: transcript,
+      recordedOn: row.createdAt,
+      mode: row.mode,
+    );
     _throwIfDisposed();
     final committed = await _db.getDump(row.id);
     _throwIfDisposed();
@@ -1137,6 +1145,13 @@ class ServerTranscriptionService extends ChangeNotifier {
         dumpId: row.id,
         transcript: stored,
         recordedOn: row.createdAt,
+      );
+      await captureVoiceEventsQuietly(
+        db: _db,
+        dumpId: row.id,
+        transcript: stored,
+        recordedOn: row.createdAt,
+        mode: row.mode,
       );
       _throwIfDisposed();
       await _awaitSidecarWrite(

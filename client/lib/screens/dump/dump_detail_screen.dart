@@ -39,6 +39,7 @@ import '../../services/transcription_notifications.dart'
     show describedWhisperModel;
 import 'local_deletion_presentation.dart';
 import 'sync_status_presentation.dart';
+import '../../widgets/voice_events_card.dart';
 import '../../widgets/voice_todos_card.dart';
 import '../home/home_screen.dart' show localDbProvider;
 import '../notebook/send_to_notebook.dart';
@@ -1552,6 +1553,8 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
         // with Undo. Renders nothing when there was no trigger or the user
         // already Undid it — it watches the live rows.
         VoiceTodosCard(dumpId: widget.dumpId),
+        // v1.35.0: same treatment for spoken calendar events.
+        VoiceEventsCard(dumpId: widget.dumpId),
         // Task 4: the server-generated AI summary, BELOW the transcript per
         // the spec. Server-owned, arrives via normal dump sync; absent-safe —
         // a null/blank summary renders nothing at all. The subtle header

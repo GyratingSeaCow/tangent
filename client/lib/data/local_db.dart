@@ -379,6 +379,51 @@ class Todos extends Table {
   Set<Column> get primaryKey => {id};
 }
 
+/// v1.35.0: calendar events spoken in a recording ("add this to my
+/// calendar …"). Same sync spine as [Todos]; the three `google*` columns are
+/// SERVER-authored and arrive only through a pull — a device push never
+/// carries them (see the sync engine's projection).
+/// Spec: docs/design/2026-09-28-voice-calendar-events.md.
+@DataClassName('CalendarEventRow')
+class CalendarEvents extends Table {
+  @override
+  String get tableName => 'calendar_events';
+  TextColumn get id => text()();
+  TextColumn get title => text()();
+
+  /// `YYYY-MM-DD` when [allDay], else local `YYYY-MM-DDTHH:MM:SS`.
+  TextColumn get start => text()();
+
+  /// Same shape as [start]; all-day end is EXCLUSIVE (the next day). The
+  /// column is `end_` because `end` is an SQL keyword; the wire key is `end`.
+  TextColumn get end => text().named('end_')();
+  BoolColumn get allDay => boolean().withDefault(const Constant(true))();
+  TextColumn get timeZone => text()();
+
+  /// The phrase carried no date (C3): sits on the recording day until the
+  /// user fixes it on Google; cleared by the next pull that moves it.
+  BoolColumn get needsDate => boolean().withDefault(const Constant(false))();
+  TextColumn get source => text().withDefault(const Constant('voice'))();
+
+  /// The dump id the event was captured from.
+  TextColumn get sourceRef => text().nullable()();
+  TextColumn get createdAt => text()();
+  TextColumn get updatedAt => text()();
+  TextColumn get deletedAt => text().nullable()();
+  BoolColumn get syncDirty => boolean().withDefault(const Constant(true))();
+  IntColumn get syncedSeq => integer().nullable()();
+
+  // Server-only (pull-only) — the card's link and the worker's cursor.
+  TextColumn get googleEventId => text().nullable()();
+  TextColumn get googleHtmlLink => text().nullable()();
+  TextColumn get googleUpdated => text().nullable()();
+
+  /// LOCAL-ONLY, same contract as [Todos.captureFingerprint].
+  TextColumn get captureFingerprint => text().nullable()();
+  @override
+  Set<Column> get primaryKey => {id};
+}
+
 @DriftDatabase(
   tables: [
     Dumps,
@@ -396,6 +441,7 @@ class Todos extends Table {
     InkIndexEntries,
     LocalSettings,
     Todos,
+    CalendarEvents,
   ],
 )
 class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
@@ -404,7 +450,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   LocalDb.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 25;
+  int get schemaVersion => 26;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -906,6 +952,10 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
               await m.addColumn(todos, todos.captureFingerprint);
             }
           }
+          if (from < 26) {
+            // v1.35.0: voice → Google Calendar events.
+            await m.createTable(calendarEvents);
+          }
         },
       );
 
@@ -1281,9 +1331,8 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     // shows a stale one. An older summarized_at (a stale peer echo) leaves
     // the marker alone: the requested job has not finished yet.
     final int? requestedAt = existing?.summaryRequestedAt;
-    final int? incomingSummarizedAt = summarizedAtValue.present
-        ? summarizedAtValue.value
-        : null;
+    final int? incomingSummarizedAt =
+        summarizedAtValue.present ? summarizedAtValue.value : null;
     final bool summaryAnswered = requestedAt != null &&
         incomingSummarizedAt != null &&
         incomingSummarizedAt >= requestedAt;
@@ -1723,6 +1772,80 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     );
   }
 
+  // ---- calendar events (v1.35.0) -----------------------------------------
+
+  Future<CalendarEventRow?> getCalendarEventRow(String id) =>
+      (select(calendarEvents)..where((t) => t.id.equals(id))).getSingleOrNull();
+
+  /// Same contract as [todosNeedingPush]: soft-deleted rows stay in.
+  Future<List<CalendarEventRow>> calendarEventsNeedingPush() =>
+      (select(calendarEvents)..where((t) => t.syncDirty.equals(true))).get();
+
+  Future<void> markCalendarEventSynced(
+    String id, {
+    required int seq,
+    required String pushedUpdatedAt,
+  }) async {
+    await (update(calendarEvents)
+          ..where((t) => t.id.equals(id) & t.updatedAt.equals(pushedUpdatedAt)))
+        .write(
+      CalendarEventsCompanion(
+        syncDirty: const Value(false),
+        syncedSeq: Value(seq),
+      ),
+    );
+  }
+
+  /// Applies a calendar event the server sent us — clean, not dirty (same
+  /// reasoning as [applyRemoteTodo]). The `google*` fields are the ONLY
+  /// way those columns ever get a value on a device; absent keys keep what
+  /// is held. `capture_fingerprint` is local-only and never read here.
+  Future<void> applyRemoteCalendarEvent({
+    required String id,
+    required String title,
+    required String start,
+    required String end,
+    required bool allDay,
+    required String timeZone,
+    required bool needsDate,
+    required String createdAt,
+    required String updatedAt,
+    required int seq,
+    String? source,
+    Object? sourceRef = absentTodoField,
+    Object? deletedAt = absentTodoField,
+    Object? googleEventId = absentTodoField,
+    Object? googleHtmlLink = absentTodoField,
+    Object? googleUpdated = absentTodoField,
+  }) async {
+    final CalendarEventRow? existing = await getCalendarEventRow(id);
+    String? resolve(Object? incoming, String? held) =>
+        identical(incoming, absentTodoField) ? held : incoming as String?;
+    await into(calendarEvents).insert(
+      CalendarEventsCompanion.insert(
+        id: id,
+        title: title,
+        start: start,
+        end: end,
+        allDay: Value(allDay),
+        timeZone: timeZone,
+        needsDate: Value(needsDate),
+        createdAt: createdAt,
+        updatedAt: updatedAt,
+        source: Value(source ?? existing?.source ?? 'voice'),
+        sourceRef: Value(resolve(sourceRef, existing?.sourceRef)),
+        deletedAt: Value(resolve(deletedAt, existing?.deletedAt)),
+        googleEventId: Value(resolve(googleEventId, existing?.googleEventId)),
+        googleHtmlLink:
+            Value(resolve(googleHtmlLink, existing?.googleHtmlLink)),
+        googleUpdated: Value(resolve(googleUpdated, existing?.googleUpdated)),
+        captureFingerprint: Value(existing?.captureFingerprint),
+        syncDirty: const Value(false),
+        syncedSeq: Value(seq),
+      ),
+      mode: InsertMode.insertOrReplace,
+    );
+  }
   // ---- folders -----------------------------------------------------------
 
   /// Creates a folder and returns its id.

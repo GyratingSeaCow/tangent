@@ -46,6 +46,18 @@ const String kGoogleTasksDocUrl =
     'https://developers.google.com/tasks/get_started';
 
 /// Amber banner wording for `reauth_required`.
+/// The Settings line for `GoogleTasksStatus.calendar` (v1.35.0).
+String calendarLine(GoogleCalendarStatus c) {
+  if (!c.enabled) {
+    return 'Calendar: not enabled — tap Reconnect to grant calendar access';
+  }
+  if (c.lastError != null) return 'Calendar: ${c.lastError}';
+  final int n = c.lastPushed + c.lastPulled;
+  return n == 0
+      ? 'Calendar: connected'
+      : 'Calendar: connected · ${n == 1 ? '1 event' : '$n events'} last sync';
+}
+
 const String kGoogleTasksReauthText =
     'Google needs you to sign in again (test-mode tokens expire weekly)';
 
@@ -68,8 +80,7 @@ class GoogleTasksSection extends ConsumerStatefulWidget {
   const GoogleTasksSection({super.key});
 
   @override
-  ConsumerState<GoogleTasksSection> createState() =>
-      _GoogleTasksSectionState();
+  ConsumerState<GoogleTasksSection> createState() => _GoogleTasksSectionState();
 }
 
 class _GoogleTasksSectionState extends ConsumerState<GoogleTasksSection> {
@@ -159,11 +170,16 @@ class _GoogleTasksSectionState extends ConsumerState<GoogleTasksSection> {
     final String id = _clientId.text.trim();
     final String secret = _clientSecret.text.trim();
     if (id.isEmpty || secret.isEmpty) {
-      setState(() => _error = 'Both the client ID and the client secret are needed');
+      setState(
+        () => _error = 'Both the client ID and the client secret are needed',
+      );
       return;
     }
     await _run((client) async {
-      await client.saveGoogleTasksCredentials(clientId: id, clientSecret: secret);
+      await client.saveGoogleTasksCredentials(
+        clientId: id,
+        clientSecret: secret,
+      );
       // The secret is server-side now; it must not linger in a text field.
       _clientId.clear();
       _clientSecret.clear();
@@ -209,6 +225,7 @@ class _GoogleTasksSectionState extends ConsumerState<GoogleTasksSection> {
       _startPolling(client);
     });
   }
+
   Future<void> _syncNow() async {
     await _run((client) async => _adopt(await client.syncGoogleTasksNow()));
   }
@@ -259,8 +276,9 @@ class _GoogleTasksSectionState extends ConsumerState<GoogleTasksSection> {
     if (s == null) return _error == null ? 'Checking…' : 'Server unreachable';
     if (_awaitingConnect) return 'Waiting for Google sign-in…';
     return switch (s.status) {
-      GoogleTasksLinkStatus.disconnected =>
-        s.hasCredentials ? 'Not connected — credentials saved' : 'Not connected',
+      GoogleTasksLinkStatus.disconnected => s.hasCredentials
+          ? 'Not connected — credentials saved'
+          : 'Not connected',
       GoogleTasksLinkStatus.pending => 'Waiting for Google sign-in…',
       GoogleTasksLinkStatus.connected =>
         'Connected as ${s.googleEmail ?? 'Google'}',
@@ -375,7 +393,8 @@ class _GoogleTasksSectionState extends ConsumerState<GoogleTasksSection> {
             child: Text(
               _summaryLine(s),
               key: const ValueKey<String>('google-tasks-summary'),
-              style: const TextStyle(fontSize: 12, color: TangentColors.textDim),
+              style:
+                  const TextStyle(fontSize: 12, color: TangentColors.textDim),
             ),
           ),
           // v1.30.0: which Google list each folder writes to. Absent on an
@@ -390,6 +409,21 @@ class _GoogleTasksSectionState extends ConsumerState<GoogleTasksSection> {
                     const TextStyle(fontSize: 12, color: TangentColors.textDim),
               ),
             ),
+          // v1.35.0: the calendar half of the same link. Not enabled means
+          // the token predates the calendar scope — Reconnect grants it.
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+            child: Text(
+              calendarLine(s.calendar),
+              key: const ValueKey<String>('google-calendar-line'),
+              style: TextStyle(
+                fontSize: 12,
+                color: s.calendar.lastError != null
+                    ? theme.colorScheme.error
+                    : TangentColors.textDim,
+              ),
+            ),
+          ),
           _buttonRow(<Widget>[
             FilledButton.tonal(
               key: const ValueKey<String>('google-tasks-sync-now'),

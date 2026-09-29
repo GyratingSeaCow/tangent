@@ -231,7 +231,8 @@ void main() {
       );
     });
 
-    testWidgets('Copy sign-in link fetches the auth URL onto the clipboard '
+    testWidgets(
+        'Copy sign-in link fetches the auth URL onto the clipboard '
         'instead of opening a browser (loopback redirect must finish on the '
         'server machine)', (tester) async {
       final List<String> copied = <String>[];
@@ -284,7 +285,8 @@ void main() {
       expect(_k('google-tasks-client-id'), findsNothing);
     });
 
-    testWidgets('connected with lists (v1.30.0): the mapping is shown, '
+    testWidgets(
+        'connected with lists (v1.30.0): the mapping is shown, '
         'unfiled last and labelled', (tester) async {
       await _mount(tester, <Map<String, dynamic>>[
         <String, dynamic>{
@@ -318,6 +320,56 @@ void main() {
         (tester) async {
       await _mount(tester, <Map<String, dynamic>>[_connected()]);
       expect(_k('google-tasks-lists'), findsNothing);
+    });
+
+    // v1.35.0: the calendar half of the link.
+    testWidgets('calendar line: older server (no block) → not enabled hint',
+        (tester) async {
+      await _mount(tester, <Map<String, dynamic>>[_connected()]);
+      expect(
+        tester.widget<Text>(_k('google-calendar-line')).data,
+        'Calendar: not enabled — tap Reconnect to grant calendar access',
+      );
+    });
+
+    testWidgets('calendar line: enabled with counts / with an error',
+        (tester) async {
+      await _mount(tester, <Map<String, dynamic>>[
+        <String, dynamic>{
+          ..._connected(),
+          'calendar': <String, dynamic>{
+            'enabled': true,
+            'last_pushed': 2,
+            'last_pulled': 1,
+            'last_error': null,
+          },
+        },
+      ]);
+      expect(
+        tester.widget<Text>(_k('google-calendar-line')).data,
+        'Calendar: connected · 3 events last sync',
+      );
+    });
+
+    test('calendarLine: every branch', () {
+      expect(
+        calendarLine(const GoogleCalendarStatus()),
+        'Calendar: not enabled — tap Reconnect to grant calendar access',
+      );
+      expect(
+        calendarLine(const GoogleCalendarStatus(enabled: true)),
+        'Calendar: connected',
+      );
+      expect(
+        calendarLine(const GoogleCalendarStatus(enabled: true, lastPushed: 1)),
+        'Calendar: connected · 1 event last sync',
+      );
+      expect(
+        calendarLine(
+          const GoogleCalendarStatus(enabled: true, lastError: 'quota'),
+        ),
+        'Calendar: quota',
+      );
     });
 
     testWidgets('reauth_required: amber banner + Reconnect', (tester) async {
@@ -551,8 +603,7 @@ void main() {
       expect(s.lists, isEmpty, reason: 'v1.30.0 field absent on old servers');
     });
 
-    test('fromJson parses `lists` (v1.30.0): name, tasklist_id, folder_id',
-        () {
+    test('fromJson parses `lists` (v1.30.0): name, tasklist_id, folder_id', () {
       final GoogleTasksStatus s = GoogleTasksStatus.fromJson(<String, dynamic>{
         ..._connected(),
         'lists': <Map<String, dynamic>>[

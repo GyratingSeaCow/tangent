@@ -7392,6 +7392,871 @@ class TodosCompanion extends UpdateCompanion<TodoRow> {
   }
 }
 
+class $CalendarEventsTable extends CalendarEvents
+    with TableInfo<$CalendarEventsTable, CalendarEventRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $CalendarEventsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<String> id = GeneratedColumn<String>(
+      'id', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _titleMeta = const VerificationMeta('title');
+  @override
+  late final GeneratedColumn<String> title = GeneratedColumn<String>(
+      'title', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _startMeta = const VerificationMeta('start');
+  @override
+  late final GeneratedColumn<String> start = GeneratedColumn<String>(
+      'start', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _endMeta = const VerificationMeta('end');
+  @override
+  late final GeneratedColumn<String> end = GeneratedColumn<String>(
+      'end_', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _allDayMeta = const VerificationMeta('allDay');
+  @override
+  late final GeneratedColumn<bool> allDay = GeneratedColumn<bool>(
+      'all_day', aliasedName, false,
+      type: DriftSqlType.bool,
+      requiredDuringInsert: false,
+      defaultConstraints:
+          GeneratedColumn.constraintIsAlways('CHECK ("all_day" IN (0, 1))'),
+      defaultValue: const Constant(true));
+  static const VerificationMeta _timeZoneMeta =
+      const VerificationMeta('timeZone');
+  @override
+  late final GeneratedColumn<String> timeZone = GeneratedColumn<String>(
+      'time_zone', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _needsDateMeta =
+      const VerificationMeta('needsDate');
+  @override
+  late final GeneratedColumn<bool> needsDate = GeneratedColumn<bool>(
+      'needs_date', aliasedName, false,
+      type: DriftSqlType.bool,
+      requiredDuringInsert: false,
+      defaultConstraints:
+          GeneratedColumn.constraintIsAlways('CHECK ("needs_date" IN (0, 1))'),
+      defaultValue: const Constant(false));
+  static const VerificationMeta _sourceMeta = const VerificationMeta('source');
+  @override
+  late final GeneratedColumn<String> source = GeneratedColumn<String>(
+      'source', aliasedName, false,
+      type: DriftSqlType.string,
+      requiredDuringInsert: false,
+      defaultValue: const Constant('voice'));
+  static const VerificationMeta _sourceRefMeta =
+      const VerificationMeta('sourceRef');
+  @override
+  late final GeneratedColumn<String> sourceRef = GeneratedColumn<String>(
+      'source_ref', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _createdAtMeta =
+      const VerificationMeta('createdAt');
+  @override
+  late final GeneratedColumn<String> createdAt = GeneratedColumn<String>(
+      'created_at', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _updatedAtMeta =
+      const VerificationMeta('updatedAt');
+  @override
+  late final GeneratedColumn<String> updatedAt = GeneratedColumn<String>(
+      'updated_at', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _deletedAtMeta =
+      const VerificationMeta('deletedAt');
+  @override
+  late final GeneratedColumn<String> deletedAt = GeneratedColumn<String>(
+      'deleted_at', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _syncDirtyMeta =
+      const VerificationMeta('syncDirty');
+  @override
+  late final GeneratedColumn<bool> syncDirty = GeneratedColumn<bool>(
+      'sync_dirty', aliasedName, false,
+      type: DriftSqlType.bool,
+      requiredDuringInsert: false,
+      defaultConstraints:
+          GeneratedColumn.constraintIsAlways('CHECK ("sync_dirty" IN (0, 1))'),
+      defaultValue: const Constant(true));
+  static const VerificationMeta _syncedSeqMeta =
+      const VerificationMeta('syncedSeq');
+  @override
+  late final GeneratedColumn<int> syncedSeq = GeneratedColumn<int>(
+      'synced_seq', aliasedName, true,
+      type: DriftSqlType.int, requiredDuringInsert: false);
+  static const VerificationMeta _googleEventIdMeta =
+      const VerificationMeta('googleEventId');
+  @override
+  late final GeneratedColumn<String> googleEventId = GeneratedColumn<String>(
+      'google_event_id', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _googleHtmlLinkMeta =
+      const VerificationMeta('googleHtmlLink');
+  @override
+  late final GeneratedColumn<String> googleHtmlLink = GeneratedColumn<String>(
+      'google_html_link', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _googleUpdatedMeta =
+      const VerificationMeta('googleUpdated');
+  @override
+  late final GeneratedColumn<String> googleUpdated = GeneratedColumn<String>(
+      'google_updated', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _captureFingerprintMeta =
+      const VerificationMeta('captureFingerprint');
+  @override
+  late final GeneratedColumn<String> captureFingerprint =
+      GeneratedColumn<String>('capture_fingerprint', aliasedName, true,
+          type: DriftSqlType.string, requiredDuringInsert: false);
+  @override
+  List<GeneratedColumn> get $columns => [
+        id,
+        title,
+        start,
+        end,
+        allDay,
+        timeZone,
+        needsDate,
+        source,
+        sourceRef,
+        createdAt,
+        updatedAt,
+        deletedAt,
+        syncDirty,
+        syncedSeq,
+        googleEventId,
+        googleHtmlLink,
+        googleUpdated,
+        captureFingerprint
+      ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'calendar_events';
+  @override
+  VerificationContext validateIntegrity(Insertable<CalendarEventRow> instance,
+      {bool isInserting = false}) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    } else if (isInserting) {
+      context.missing(_idMeta);
+    }
+    if (data.containsKey('title')) {
+      context.handle(
+          _titleMeta, title.isAcceptableOrUnknown(data['title']!, _titleMeta));
+    } else if (isInserting) {
+      context.missing(_titleMeta);
+    }
+    if (data.containsKey('start')) {
+      context.handle(
+          _startMeta, start.isAcceptableOrUnknown(data['start']!, _startMeta));
+    } else if (isInserting) {
+      context.missing(_startMeta);
+    }
+    if (data.containsKey('end_')) {
+      context.handle(
+          _endMeta, end.isAcceptableOrUnknown(data['end_']!, _endMeta));
+    } else if (isInserting) {
+      context.missing(_endMeta);
+    }
+    if (data.containsKey('all_day')) {
+      context.handle(_allDayMeta,
+          allDay.isAcceptableOrUnknown(data['all_day']!, _allDayMeta));
+    }
+    if (data.containsKey('time_zone')) {
+      context.handle(_timeZoneMeta,
+          timeZone.isAcceptableOrUnknown(data['time_zone']!, _timeZoneMeta));
+    } else if (isInserting) {
+      context.missing(_timeZoneMeta);
+    }
+    if (data.containsKey('needs_date')) {
+      context.handle(_needsDateMeta,
+          needsDate.isAcceptableOrUnknown(data['needs_date']!, _needsDateMeta));
+    }
+    if (data.containsKey('source')) {
+      context.handle(_sourceMeta,
+          source.isAcceptableOrUnknown(data['source']!, _sourceMeta));
+    }
+    if (data.containsKey('source_ref')) {
+      context.handle(_sourceRefMeta,
+          sourceRef.isAcceptableOrUnknown(data['source_ref']!, _sourceRefMeta));
+    }
+    if (data.containsKey('created_at')) {
+      context.handle(_createdAtMeta,
+          createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta));
+    } else if (isInserting) {
+      context.missing(_createdAtMeta);
+    }
+    if (data.containsKey('updated_at')) {
+      context.handle(_updatedAtMeta,
+          updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta));
+    } else if (isInserting) {
+      context.missing(_updatedAtMeta);
+    }
+    if (data.containsKey('deleted_at')) {
+      context.handle(_deletedAtMeta,
+          deletedAt.isAcceptableOrUnknown(data['deleted_at']!, _deletedAtMeta));
+    }
+    if (data.containsKey('sync_dirty')) {
+      context.handle(_syncDirtyMeta,
+          syncDirty.isAcceptableOrUnknown(data['sync_dirty']!, _syncDirtyMeta));
+    }
+    if (data.containsKey('synced_seq')) {
+      context.handle(_syncedSeqMeta,
+          syncedSeq.isAcceptableOrUnknown(data['synced_seq']!, _syncedSeqMeta));
+    }
+    if (data.containsKey('google_event_id')) {
+      context.handle(
+          _googleEventIdMeta,
+          googleEventId.isAcceptableOrUnknown(
+              data['google_event_id']!, _googleEventIdMeta));
+    }
+    if (data.containsKey('google_html_link')) {
+      context.handle(
+          _googleHtmlLinkMeta,
+          googleHtmlLink.isAcceptableOrUnknown(
+              data['google_html_link']!, _googleHtmlLinkMeta));
+    }
+    if (data.containsKey('google_updated')) {
+      context.handle(
+          _googleUpdatedMeta,
+          googleUpdated.isAcceptableOrUnknown(
+              data['google_updated']!, _googleUpdatedMeta));
+    }
+    if (data.containsKey('capture_fingerprint')) {
+      context.handle(
+          _captureFingerprintMeta,
+          captureFingerprint.isAcceptableOrUnknown(
+              data['capture_fingerprint']!, _captureFingerprintMeta));
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  CalendarEventRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return CalendarEventRow(
+      id: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}id'])!,
+      title: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}title'])!,
+      start: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}start'])!,
+      end: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}end_'])!,
+      allDay: attachedDatabase.typeMapping
+          .read(DriftSqlType.bool, data['${effectivePrefix}all_day'])!,
+      timeZone: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}time_zone'])!,
+      needsDate: attachedDatabase.typeMapping
+          .read(DriftSqlType.bool, data['${effectivePrefix}needs_date'])!,
+      source: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}source'])!,
+      sourceRef: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}source_ref']),
+      createdAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}created_at'])!,
+      updatedAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}updated_at'])!,
+      deletedAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}deleted_at']),
+      syncDirty: attachedDatabase.typeMapping
+          .read(DriftSqlType.bool, data['${effectivePrefix}sync_dirty'])!,
+      syncedSeq: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}synced_seq']),
+      googleEventId: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}google_event_id']),
+      googleHtmlLink: attachedDatabase.typeMapping.read(
+          DriftSqlType.string, data['${effectivePrefix}google_html_link']),
+      googleUpdated: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}google_updated']),
+      captureFingerprint: attachedDatabase.typeMapping.read(
+          DriftSqlType.string, data['${effectivePrefix}capture_fingerprint']),
+    );
+  }
+
+  @override
+  $CalendarEventsTable createAlias(String alias) {
+    return $CalendarEventsTable(attachedDatabase, alias);
+  }
+}
+
+class CalendarEventRow extends DataClass
+    implements Insertable<CalendarEventRow> {
+  final String id;
+  final String title;
+
+  /// `YYYY-MM-DD` when [allDay], else local `YYYY-MM-DDTHH:MM:SS`.
+  final String start;
+
+  /// Same shape as [start]; all-day end is EXCLUSIVE (the next day). The
+  /// column is `end_` because `end` is an SQL keyword; the wire key is `end`.
+  final String end;
+  final bool allDay;
+  final String timeZone;
+
+  /// The phrase carried no date (C3): sits on the recording day until the
+  /// user fixes it on Google; cleared by the next pull that moves it.
+  final bool needsDate;
+  final String source;
+
+  /// The dump id the event was captured from.
+  final String? sourceRef;
+  final String createdAt;
+  final String updatedAt;
+  final String? deletedAt;
+  final bool syncDirty;
+  final int? syncedSeq;
+  final String? googleEventId;
+  final String? googleHtmlLink;
+  final String? googleUpdated;
+
+  /// LOCAL-ONLY, same contract as [Todos.captureFingerprint].
+  final String? captureFingerprint;
+  const CalendarEventRow(
+      {required this.id,
+      required this.title,
+      required this.start,
+      required this.end,
+      required this.allDay,
+      required this.timeZone,
+      required this.needsDate,
+      required this.source,
+      this.sourceRef,
+      required this.createdAt,
+      required this.updatedAt,
+      this.deletedAt,
+      required this.syncDirty,
+      this.syncedSeq,
+      this.googleEventId,
+      this.googleHtmlLink,
+      this.googleUpdated,
+      this.captureFingerprint});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<String>(id);
+    map['title'] = Variable<String>(title);
+    map['start'] = Variable<String>(start);
+    map['end_'] = Variable<String>(end);
+    map['all_day'] = Variable<bool>(allDay);
+    map['time_zone'] = Variable<String>(timeZone);
+    map['needs_date'] = Variable<bool>(needsDate);
+    map['source'] = Variable<String>(source);
+    if (!nullToAbsent || sourceRef != null) {
+      map['source_ref'] = Variable<String>(sourceRef);
+    }
+    map['created_at'] = Variable<String>(createdAt);
+    map['updated_at'] = Variable<String>(updatedAt);
+    if (!nullToAbsent || deletedAt != null) {
+      map['deleted_at'] = Variable<String>(deletedAt);
+    }
+    map['sync_dirty'] = Variable<bool>(syncDirty);
+    if (!nullToAbsent || syncedSeq != null) {
+      map['synced_seq'] = Variable<int>(syncedSeq);
+    }
+    if (!nullToAbsent || googleEventId != null) {
+      map['google_event_id'] = Variable<String>(googleEventId);
+    }
+    if (!nullToAbsent || googleHtmlLink != null) {
+      map['google_html_link'] = Variable<String>(googleHtmlLink);
+    }
+    if (!nullToAbsent || googleUpdated != null) {
+      map['google_updated'] = Variable<String>(googleUpdated);
+    }
+    if (!nullToAbsent || captureFingerprint != null) {
+      map['capture_fingerprint'] = Variable<String>(captureFingerprint);
+    }
+    return map;
+  }
+
+  CalendarEventsCompanion toCompanion(bool nullToAbsent) {
+    return CalendarEventsCompanion(
+      id: Value(id),
+      title: Value(title),
+      start: Value(start),
+      end: Value(end),
+      allDay: Value(allDay),
+      timeZone: Value(timeZone),
+      needsDate: Value(needsDate),
+      source: Value(source),
+      sourceRef: sourceRef == null && nullToAbsent
+          ? const Value.absent()
+          : Value(sourceRef),
+      createdAt: Value(createdAt),
+      updatedAt: Value(updatedAt),
+      deletedAt: deletedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(deletedAt),
+      syncDirty: Value(syncDirty),
+      syncedSeq: syncedSeq == null && nullToAbsent
+          ? const Value.absent()
+          : Value(syncedSeq),
+      googleEventId: googleEventId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(googleEventId),
+      googleHtmlLink: googleHtmlLink == null && nullToAbsent
+          ? const Value.absent()
+          : Value(googleHtmlLink),
+      googleUpdated: googleUpdated == null && nullToAbsent
+          ? const Value.absent()
+          : Value(googleUpdated),
+      captureFingerprint: captureFingerprint == null && nullToAbsent
+          ? const Value.absent()
+          : Value(captureFingerprint),
+    );
+  }
+
+  factory CalendarEventRow.fromJson(Map<String, dynamic> json,
+      {ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return CalendarEventRow(
+      id: serializer.fromJson<String>(json['id']),
+      title: serializer.fromJson<String>(json['title']),
+      start: serializer.fromJson<String>(json['start']),
+      end: serializer.fromJson<String>(json['end']),
+      allDay: serializer.fromJson<bool>(json['allDay']),
+      timeZone: serializer.fromJson<String>(json['timeZone']),
+      needsDate: serializer.fromJson<bool>(json['needsDate']),
+      source: serializer.fromJson<String>(json['source']),
+      sourceRef: serializer.fromJson<String?>(json['sourceRef']),
+      createdAt: serializer.fromJson<String>(json['createdAt']),
+      updatedAt: serializer.fromJson<String>(json['updatedAt']),
+      deletedAt: serializer.fromJson<String?>(json['deletedAt']),
+      syncDirty: serializer.fromJson<bool>(json['syncDirty']),
+      syncedSeq: serializer.fromJson<int?>(json['syncedSeq']),
+      googleEventId: serializer.fromJson<String?>(json['googleEventId']),
+      googleHtmlLink: serializer.fromJson<String?>(json['googleHtmlLink']),
+      googleUpdated: serializer.fromJson<String?>(json['googleUpdated']),
+      captureFingerprint:
+          serializer.fromJson<String?>(json['captureFingerprint']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<String>(id),
+      'title': serializer.toJson<String>(title),
+      'start': serializer.toJson<String>(start),
+      'end': serializer.toJson<String>(end),
+      'allDay': serializer.toJson<bool>(allDay),
+      'timeZone': serializer.toJson<String>(timeZone),
+      'needsDate': serializer.toJson<bool>(needsDate),
+      'source': serializer.toJson<String>(source),
+      'sourceRef': serializer.toJson<String?>(sourceRef),
+      'createdAt': serializer.toJson<String>(createdAt),
+      'updatedAt': serializer.toJson<String>(updatedAt),
+      'deletedAt': serializer.toJson<String?>(deletedAt),
+      'syncDirty': serializer.toJson<bool>(syncDirty),
+      'syncedSeq': serializer.toJson<int?>(syncedSeq),
+      'googleEventId': serializer.toJson<String?>(googleEventId),
+      'googleHtmlLink': serializer.toJson<String?>(googleHtmlLink),
+      'googleUpdated': serializer.toJson<String?>(googleUpdated),
+      'captureFingerprint': serializer.toJson<String?>(captureFingerprint),
+    };
+  }
+
+  CalendarEventRow copyWith(
+          {String? id,
+          String? title,
+          String? start,
+          String? end,
+          bool? allDay,
+          String? timeZone,
+          bool? needsDate,
+          String? source,
+          Value<String?> sourceRef = const Value.absent(),
+          String? createdAt,
+          String? updatedAt,
+          Value<String?> deletedAt = const Value.absent(),
+          bool? syncDirty,
+          Value<int?> syncedSeq = const Value.absent(),
+          Value<String?> googleEventId = const Value.absent(),
+          Value<String?> googleHtmlLink = const Value.absent(),
+          Value<String?> googleUpdated = const Value.absent(),
+          Value<String?> captureFingerprint = const Value.absent()}) =>
+      CalendarEventRow(
+        id: id ?? this.id,
+        title: title ?? this.title,
+        start: start ?? this.start,
+        end: end ?? this.end,
+        allDay: allDay ?? this.allDay,
+        timeZone: timeZone ?? this.timeZone,
+        needsDate: needsDate ?? this.needsDate,
+        source: source ?? this.source,
+        sourceRef: sourceRef.present ? sourceRef.value : this.sourceRef,
+        createdAt: createdAt ?? this.createdAt,
+        updatedAt: updatedAt ?? this.updatedAt,
+        deletedAt: deletedAt.present ? deletedAt.value : this.deletedAt,
+        syncDirty: syncDirty ?? this.syncDirty,
+        syncedSeq: syncedSeq.present ? syncedSeq.value : this.syncedSeq,
+        googleEventId:
+            googleEventId.present ? googleEventId.value : this.googleEventId,
+        googleHtmlLink:
+            googleHtmlLink.present ? googleHtmlLink.value : this.googleHtmlLink,
+        googleUpdated:
+            googleUpdated.present ? googleUpdated.value : this.googleUpdated,
+        captureFingerprint: captureFingerprint.present
+            ? captureFingerprint.value
+            : this.captureFingerprint,
+      );
+  CalendarEventRow copyWithCompanion(CalendarEventsCompanion data) {
+    return CalendarEventRow(
+      id: data.id.present ? data.id.value : this.id,
+      title: data.title.present ? data.title.value : this.title,
+      start: data.start.present ? data.start.value : this.start,
+      end: data.end.present ? data.end.value : this.end,
+      allDay: data.allDay.present ? data.allDay.value : this.allDay,
+      timeZone: data.timeZone.present ? data.timeZone.value : this.timeZone,
+      needsDate: data.needsDate.present ? data.needsDate.value : this.needsDate,
+      source: data.source.present ? data.source.value : this.source,
+      sourceRef: data.sourceRef.present ? data.sourceRef.value : this.sourceRef,
+      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+      deletedAt: data.deletedAt.present ? data.deletedAt.value : this.deletedAt,
+      syncDirty: data.syncDirty.present ? data.syncDirty.value : this.syncDirty,
+      syncedSeq: data.syncedSeq.present ? data.syncedSeq.value : this.syncedSeq,
+      googleEventId: data.googleEventId.present
+          ? data.googleEventId.value
+          : this.googleEventId,
+      googleHtmlLink: data.googleHtmlLink.present
+          ? data.googleHtmlLink.value
+          : this.googleHtmlLink,
+      googleUpdated: data.googleUpdated.present
+          ? data.googleUpdated.value
+          : this.googleUpdated,
+      captureFingerprint: data.captureFingerprint.present
+          ? data.captureFingerprint.value
+          : this.captureFingerprint,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('CalendarEventRow(')
+          ..write('id: $id, ')
+          ..write('title: $title, ')
+          ..write('start: $start, ')
+          ..write('end: $end, ')
+          ..write('allDay: $allDay, ')
+          ..write('timeZone: $timeZone, ')
+          ..write('needsDate: $needsDate, ')
+          ..write('source: $source, ')
+          ..write('sourceRef: $sourceRef, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('deletedAt: $deletedAt, ')
+          ..write('syncDirty: $syncDirty, ')
+          ..write('syncedSeq: $syncedSeq, ')
+          ..write('googleEventId: $googleEventId, ')
+          ..write('googleHtmlLink: $googleHtmlLink, ')
+          ..write('googleUpdated: $googleUpdated, ')
+          ..write('captureFingerprint: $captureFingerprint')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+      id,
+      title,
+      start,
+      end,
+      allDay,
+      timeZone,
+      needsDate,
+      source,
+      sourceRef,
+      createdAt,
+      updatedAt,
+      deletedAt,
+      syncDirty,
+      syncedSeq,
+      googleEventId,
+      googleHtmlLink,
+      googleUpdated,
+      captureFingerprint);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is CalendarEventRow &&
+          other.id == this.id &&
+          other.title == this.title &&
+          other.start == this.start &&
+          other.end == this.end &&
+          other.allDay == this.allDay &&
+          other.timeZone == this.timeZone &&
+          other.needsDate == this.needsDate &&
+          other.source == this.source &&
+          other.sourceRef == this.sourceRef &&
+          other.createdAt == this.createdAt &&
+          other.updatedAt == this.updatedAt &&
+          other.deletedAt == this.deletedAt &&
+          other.syncDirty == this.syncDirty &&
+          other.syncedSeq == this.syncedSeq &&
+          other.googleEventId == this.googleEventId &&
+          other.googleHtmlLink == this.googleHtmlLink &&
+          other.googleUpdated == this.googleUpdated &&
+          other.captureFingerprint == this.captureFingerprint);
+}
+
+class CalendarEventsCompanion extends UpdateCompanion<CalendarEventRow> {
+  final Value<String> id;
+  final Value<String> title;
+  final Value<String> start;
+  final Value<String> end;
+  final Value<bool> allDay;
+  final Value<String> timeZone;
+  final Value<bool> needsDate;
+  final Value<String> source;
+  final Value<String?> sourceRef;
+  final Value<String> createdAt;
+  final Value<String> updatedAt;
+  final Value<String?> deletedAt;
+  final Value<bool> syncDirty;
+  final Value<int?> syncedSeq;
+  final Value<String?> googleEventId;
+  final Value<String?> googleHtmlLink;
+  final Value<String?> googleUpdated;
+  final Value<String?> captureFingerprint;
+  final Value<int> rowid;
+  const CalendarEventsCompanion({
+    this.id = const Value.absent(),
+    this.title = const Value.absent(),
+    this.start = const Value.absent(),
+    this.end = const Value.absent(),
+    this.allDay = const Value.absent(),
+    this.timeZone = const Value.absent(),
+    this.needsDate = const Value.absent(),
+    this.source = const Value.absent(),
+    this.sourceRef = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+    this.deletedAt = const Value.absent(),
+    this.syncDirty = const Value.absent(),
+    this.syncedSeq = const Value.absent(),
+    this.googleEventId = const Value.absent(),
+    this.googleHtmlLink = const Value.absent(),
+    this.googleUpdated = const Value.absent(),
+    this.captureFingerprint = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  CalendarEventsCompanion.insert({
+    required String id,
+    required String title,
+    required String start,
+    required String end,
+    this.allDay = const Value.absent(),
+    required String timeZone,
+    this.needsDate = const Value.absent(),
+    this.source = const Value.absent(),
+    this.sourceRef = const Value.absent(),
+    required String createdAt,
+    required String updatedAt,
+    this.deletedAt = const Value.absent(),
+    this.syncDirty = const Value.absent(),
+    this.syncedSeq = const Value.absent(),
+    this.googleEventId = const Value.absent(),
+    this.googleHtmlLink = const Value.absent(),
+    this.googleUpdated = const Value.absent(),
+    this.captureFingerprint = const Value.absent(),
+    this.rowid = const Value.absent(),
+  })  : id = Value(id),
+        title = Value(title),
+        start = Value(start),
+        end = Value(end),
+        timeZone = Value(timeZone),
+        createdAt = Value(createdAt),
+        updatedAt = Value(updatedAt);
+  static Insertable<CalendarEventRow> custom({
+    Expression<String>? id,
+    Expression<String>? title,
+    Expression<String>? start,
+    Expression<String>? end,
+    Expression<bool>? allDay,
+    Expression<String>? timeZone,
+    Expression<bool>? needsDate,
+    Expression<String>? source,
+    Expression<String>? sourceRef,
+    Expression<String>? createdAt,
+    Expression<String>? updatedAt,
+    Expression<String>? deletedAt,
+    Expression<bool>? syncDirty,
+    Expression<int>? syncedSeq,
+    Expression<String>? googleEventId,
+    Expression<String>? googleHtmlLink,
+    Expression<String>? googleUpdated,
+    Expression<String>? captureFingerprint,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (title != null) 'title': title,
+      if (start != null) 'start': start,
+      if (end != null) 'end_': end,
+      if (allDay != null) 'all_day': allDay,
+      if (timeZone != null) 'time_zone': timeZone,
+      if (needsDate != null) 'needs_date': needsDate,
+      if (source != null) 'source': source,
+      if (sourceRef != null) 'source_ref': sourceRef,
+      if (createdAt != null) 'created_at': createdAt,
+      if (updatedAt != null) 'updated_at': updatedAt,
+      if (deletedAt != null) 'deleted_at': deletedAt,
+      if (syncDirty != null) 'sync_dirty': syncDirty,
+      if (syncedSeq != null) 'synced_seq': syncedSeq,
+      if (googleEventId != null) 'google_event_id': googleEventId,
+      if (googleHtmlLink != null) 'google_html_link': googleHtmlLink,
+      if (googleUpdated != null) 'google_updated': googleUpdated,
+      if (captureFingerprint != null) 'capture_fingerprint': captureFingerprint,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  CalendarEventsCompanion copyWith(
+      {Value<String>? id,
+      Value<String>? title,
+      Value<String>? start,
+      Value<String>? end,
+      Value<bool>? allDay,
+      Value<String>? timeZone,
+      Value<bool>? needsDate,
+      Value<String>? source,
+      Value<String?>? sourceRef,
+      Value<String>? createdAt,
+      Value<String>? updatedAt,
+      Value<String?>? deletedAt,
+      Value<bool>? syncDirty,
+      Value<int?>? syncedSeq,
+      Value<String?>? googleEventId,
+      Value<String?>? googleHtmlLink,
+      Value<String?>? googleUpdated,
+      Value<String?>? captureFingerprint,
+      Value<int>? rowid}) {
+    return CalendarEventsCompanion(
+      id: id ?? this.id,
+      title: title ?? this.title,
+      start: start ?? this.start,
+      end: end ?? this.end,
+      allDay: allDay ?? this.allDay,
+      timeZone: timeZone ?? this.timeZone,
+      needsDate: needsDate ?? this.needsDate,
+      source: source ?? this.source,
+      sourceRef: sourceRef ?? this.sourceRef,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+      deletedAt: deletedAt ?? this.deletedAt,
+      syncDirty: syncDirty ?? this.syncDirty,
+      syncedSeq: syncedSeq ?? this.syncedSeq,
+      googleEventId: googleEventId ?? this.googleEventId,
+      googleHtmlLink: googleHtmlLink ?? this.googleHtmlLink,
+      googleUpdated: googleUpdated ?? this.googleUpdated,
+      captureFingerprint: captureFingerprint ?? this.captureFingerprint,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<String>(id.value);
+    }
+    if (title.present) {
+      map['title'] = Variable<String>(title.value);
+    }
+    if (start.present) {
+      map['start'] = Variable<String>(start.value);
+    }
+    if (end.present) {
+      map['end_'] = Variable<String>(end.value);
+    }
+    if (allDay.present) {
+      map['all_day'] = Variable<bool>(allDay.value);
+    }
+    if (timeZone.present) {
+      map['time_zone'] = Variable<String>(timeZone.value);
+    }
+    if (needsDate.present) {
+      map['needs_date'] = Variable<bool>(needsDate.value);
+    }
+    if (source.present) {
+      map['source'] = Variable<String>(source.value);
+    }
+    if (sourceRef.present) {
+      map['source_ref'] = Variable<String>(sourceRef.value);
+    }
+    if (createdAt.present) {
+      map['created_at'] = Variable<String>(createdAt.value);
+    }
+    if (updatedAt.present) {
+      map['updated_at'] = Variable<String>(updatedAt.value);
+    }
+    if (deletedAt.present) {
+      map['deleted_at'] = Variable<String>(deletedAt.value);
+    }
+    if (syncDirty.present) {
+      map['sync_dirty'] = Variable<bool>(syncDirty.value);
+    }
+    if (syncedSeq.present) {
+      map['synced_seq'] = Variable<int>(syncedSeq.value);
+    }
+    if (googleEventId.present) {
+      map['google_event_id'] = Variable<String>(googleEventId.value);
+    }
+    if (googleHtmlLink.present) {
+      map['google_html_link'] = Variable<String>(googleHtmlLink.value);
+    }
+    if (googleUpdated.present) {
+      map['google_updated'] = Variable<String>(googleUpdated.value);
+    }
+    if (captureFingerprint.present) {
+      map['capture_fingerprint'] = Variable<String>(captureFingerprint.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('CalendarEventsCompanion(')
+          ..write('id: $id, ')
+          ..write('title: $title, ')
+          ..write('start: $start, ')
+          ..write('end: $end, ')
+          ..write('allDay: $allDay, ')
+          ..write('timeZone: $timeZone, ')
+          ..write('needsDate: $needsDate, ')
+          ..write('source: $source, ')
+          ..write('sourceRef: $sourceRef, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('deletedAt: $deletedAt, ')
+          ..write('syncDirty: $syncDirty, ')
+          ..write('syncedSeq: $syncedSeq, ')
+          ..write('googleEventId: $googleEventId, ')
+          ..write('googleHtmlLink: $googleHtmlLink, ')
+          ..write('googleUpdated: $googleUpdated, ')
+          ..write('captureFingerprint: $captureFingerprint, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$LocalDb extends GeneratedDatabase {
   _$LocalDb(QueryExecutor e) : super(e);
   $LocalDbManager get managers => $LocalDbManager(this);
@@ -7417,6 +8282,7 @@ abstract class _$LocalDb extends GeneratedDatabase {
       $InkIndexEntriesTable(this);
   late final $LocalSettingsTable localSettings = $LocalSettingsTable(this);
   late final $TodosTable todos = $TodosTable(this);
+  late final $CalendarEventsTable calendarEvents = $CalendarEventsTable(this);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -7436,7 +8302,8 @@ abstract class _$LocalDb extends GeneratedDatabase {
         syncStates,
         inkIndexEntries,
         localSettings,
-        todos
+        todos,
+        calendarEvents
       ];
   @override
   StreamQueryUpdateRules get streamUpdateRules => const StreamQueryUpdateRules(
@@ -11095,6 +11962,380 @@ typedef $$TodosTableProcessedTableManager = ProcessedTableManager<
     (TodoRow, BaseReferences<_$LocalDb, $TodosTable, TodoRow>),
     TodoRow,
     PrefetchHooks Function()>;
+typedef $$CalendarEventsTableCreateCompanionBuilder = CalendarEventsCompanion
+    Function({
+  required String id,
+  required String title,
+  required String start,
+  required String end,
+  Value<bool> allDay,
+  required String timeZone,
+  Value<bool> needsDate,
+  Value<String> source,
+  Value<String?> sourceRef,
+  required String createdAt,
+  required String updatedAt,
+  Value<String?> deletedAt,
+  Value<bool> syncDirty,
+  Value<int?> syncedSeq,
+  Value<String?> googleEventId,
+  Value<String?> googleHtmlLink,
+  Value<String?> googleUpdated,
+  Value<String?> captureFingerprint,
+  Value<int> rowid,
+});
+typedef $$CalendarEventsTableUpdateCompanionBuilder = CalendarEventsCompanion
+    Function({
+  Value<String> id,
+  Value<String> title,
+  Value<String> start,
+  Value<String> end,
+  Value<bool> allDay,
+  Value<String> timeZone,
+  Value<bool> needsDate,
+  Value<String> source,
+  Value<String?> sourceRef,
+  Value<String> createdAt,
+  Value<String> updatedAt,
+  Value<String?> deletedAt,
+  Value<bool> syncDirty,
+  Value<int?> syncedSeq,
+  Value<String?> googleEventId,
+  Value<String?> googleHtmlLink,
+  Value<String?> googleUpdated,
+  Value<String?> captureFingerprint,
+  Value<int> rowid,
+});
+
+class $$CalendarEventsTableFilterComposer
+    extends Composer<_$LocalDb, $CalendarEventsTable> {
+  $$CalendarEventsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get id => $composableBuilder(
+      column: $table.id, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get title => $composableBuilder(
+      column: $table.title, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get start => $composableBuilder(
+      column: $table.start, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get end => $composableBuilder(
+      column: $table.end, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<bool> get allDay => $composableBuilder(
+      column: $table.allDay, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get timeZone => $composableBuilder(
+      column: $table.timeZone, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<bool> get needsDate => $composableBuilder(
+      column: $table.needsDate, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get source => $composableBuilder(
+      column: $table.source, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get sourceRef => $composableBuilder(
+      column: $table.sourceRef, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get createdAt => $composableBuilder(
+      column: $table.createdAt, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get updatedAt => $composableBuilder(
+      column: $table.updatedAt, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get deletedAt => $composableBuilder(
+      column: $table.deletedAt, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<bool> get syncDirty => $composableBuilder(
+      column: $table.syncDirty, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get syncedSeq => $composableBuilder(
+      column: $table.syncedSeq, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get googleEventId => $composableBuilder(
+      column: $table.googleEventId, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get googleHtmlLink => $composableBuilder(
+      column: $table.googleHtmlLink,
+      builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get googleUpdated => $composableBuilder(
+      column: $table.googleUpdated, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get captureFingerprint => $composableBuilder(
+      column: $table.captureFingerprint,
+      builder: (column) => ColumnFilters(column));
+}
+
+class $$CalendarEventsTableOrderingComposer
+    extends Composer<_$LocalDb, $CalendarEventsTable> {
+  $$CalendarEventsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get id => $composableBuilder(
+      column: $table.id, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get title => $composableBuilder(
+      column: $table.title, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get start => $composableBuilder(
+      column: $table.start, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get end => $composableBuilder(
+      column: $table.end, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<bool> get allDay => $composableBuilder(
+      column: $table.allDay, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get timeZone => $composableBuilder(
+      column: $table.timeZone, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<bool> get needsDate => $composableBuilder(
+      column: $table.needsDate, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get source => $composableBuilder(
+      column: $table.source, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get sourceRef => $composableBuilder(
+      column: $table.sourceRef, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get createdAt => $composableBuilder(
+      column: $table.createdAt, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get updatedAt => $composableBuilder(
+      column: $table.updatedAt, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get deletedAt => $composableBuilder(
+      column: $table.deletedAt, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<bool> get syncDirty => $composableBuilder(
+      column: $table.syncDirty, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get syncedSeq => $composableBuilder(
+      column: $table.syncedSeq, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get googleEventId => $composableBuilder(
+      column: $table.googleEventId,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get googleHtmlLink => $composableBuilder(
+      column: $table.googleHtmlLink,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get googleUpdated => $composableBuilder(
+      column: $table.googleUpdated,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get captureFingerprint => $composableBuilder(
+      column: $table.captureFingerprint,
+      builder: (column) => ColumnOrderings(column));
+}
+
+class $$CalendarEventsTableAnnotationComposer
+    extends Composer<_$LocalDb, $CalendarEventsTable> {
+  $$CalendarEventsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<String> get title =>
+      $composableBuilder(column: $table.title, builder: (column) => column);
+
+  GeneratedColumn<String> get start =>
+      $composableBuilder(column: $table.start, builder: (column) => column);
+
+  GeneratedColumn<String> get end =>
+      $composableBuilder(column: $table.end, builder: (column) => column);
+
+  GeneratedColumn<bool> get allDay =>
+      $composableBuilder(column: $table.allDay, builder: (column) => column);
+
+  GeneratedColumn<String> get timeZone =>
+      $composableBuilder(column: $table.timeZone, builder: (column) => column);
+
+  GeneratedColumn<bool> get needsDate =>
+      $composableBuilder(column: $table.needsDate, builder: (column) => column);
+
+  GeneratedColumn<String> get source =>
+      $composableBuilder(column: $table.source, builder: (column) => column);
+
+  GeneratedColumn<String> get sourceRef =>
+      $composableBuilder(column: $table.sourceRef, builder: (column) => column);
+
+  GeneratedColumn<String> get createdAt =>
+      $composableBuilder(column: $table.createdAt, builder: (column) => column);
+
+  GeneratedColumn<String> get updatedAt =>
+      $composableBuilder(column: $table.updatedAt, builder: (column) => column);
+
+  GeneratedColumn<String> get deletedAt =>
+      $composableBuilder(column: $table.deletedAt, builder: (column) => column);
+
+  GeneratedColumn<bool> get syncDirty =>
+      $composableBuilder(column: $table.syncDirty, builder: (column) => column);
+
+  GeneratedColumn<int> get syncedSeq =>
+      $composableBuilder(column: $table.syncedSeq, builder: (column) => column);
+
+  GeneratedColumn<String> get googleEventId => $composableBuilder(
+      column: $table.googleEventId, builder: (column) => column);
+
+  GeneratedColumn<String> get googleHtmlLink => $composableBuilder(
+      column: $table.googleHtmlLink, builder: (column) => column);
+
+  GeneratedColumn<String> get googleUpdated => $composableBuilder(
+      column: $table.googleUpdated, builder: (column) => column);
+
+  GeneratedColumn<String> get captureFingerprint => $composableBuilder(
+      column: $table.captureFingerprint, builder: (column) => column);
+}
+
+class $$CalendarEventsTableTableManager extends RootTableManager<
+    _$LocalDb,
+    $CalendarEventsTable,
+    CalendarEventRow,
+    $$CalendarEventsTableFilterComposer,
+    $$CalendarEventsTableOrderingComposer,
+    $$CalendarEventsTableAnnotationComposer,
+    $$CalendarEventsTableCreateCompanionBuilder,
+    $$CalendarEventsTableUpdateCompanionBuilder,
+    (
+      CalendarEventRow,
+      BaseReferences<_$LocalDb, $CalendarEventsTable, CalendarEventRow>
+    ),
+    CalendarEventRow,
+    PrefetchHooks Function()> {
+  $$CalendarEventsTableTableManager(_$LocalDb db, $CalendarEventsTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$CalendarEventsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$CalendarEventsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$CalendarEventsTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback: ({
+            Value<String> id = const Value.absent(),
+            Value<String> title = const Value.absent(),
+            Value<String> start = const Value.absent(),
+            Value<String> end = const Value.absent(),
+            Value<bool> allDay = const Value.absent(),
+            Value<String> timeZone = const Value.absent(),
+            Value<bool> needsDate = const Value.absent(),
+            Value<String> source = const Value.absent(),
+            Value<String?> sourceRef = const Value.absent(),
+            Value<String> createdAt = const Value.absent(),
+            Value<String> updatedAt = const Value.absent(),
+            Value<String?> deletedAt = const Value.absent(),
+            Value<bool> syncDirty = const Value.absent(),
+            Value<int?> syncedSeq = const Value.absent(),
+            Value<String?> googleEventId = const Value.absent(),
+            Value<String?> googleHtmlLink = const Value.absent(),
+            Value<String?> googleUpdated = const Value.absent(),
+            Value<String?> captureFingerprint = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              CalendarEventsCompanion(
+            id: id,
+            title: title,
+            start: start,
+            end: end,
+            allDay: allDay,
+            timeZone: timeZone,
+            needsDate: needsDate,
+            source: source,
+            sourceRef: sourceRef,
+            createdAt: createdAt,
+            updatedAt: updatedAt,
+            deletedAt: deletedAt,
+            syncDirty: syncDirty,
+            syncedSeq: syncedSeq,
+            googleEventId: googleEventId,
+            googleHtmlLink: googleHtmlLink,
+            googleUpdated: googleUpdated,
+            captureFingerprint: captureFingerprint,
+            rowid: rowid,
+          ),
+          createCompanionCallback: ({
+            required String id,
+            required String title,
+            required String start,
+            required String end,
+            Value<bool> allDay = const Value.absent(),
+            required String timeZone,
+            Value<bool> needsDate = const Value.absent(),
+            Value<String> source = const Value.absent(),
+            Value<String?> sourceRef = const Value.absent(),
+            required String createdAt,
+            required String updatedAt,
+            Value<String?> deletedAt = const Value.absent(),
+            Value<bool> syncDirty = const Value.absent(),
+            Value<int?> syncedSeq = const Value.absent(),
+            Value<String?> googleEventId = const Value.absent(),
+            Value<String?> googleHtmlLink = const Value.absent(),
+            Value<String?> googleUpdated = const Value.absent(),
+            Value<String?> captureFingerprint = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              CalendarEventsCompanion.insert(
+            id: id,
+            title: title,
+            start: start,
+            end: end,
+            allDay: allDay,
+            timeZone: timeZone,
+            needsDate: needsDate,
+            source: source,
+            sourceRef: sourceRef,
+            createdAt: createdAt,
+            updatedAt: updatedAt,
+            deletedAt: deletedAt,
+            syncDirty: syncDirty,
+            syncedSeq: syncedSeq,
+            googleEventId: googleEventId,
+            googleHtmlLink: googleHtmlLink,
+            googleUpdated: googleUpdated,
+            captureFingerprint: captureFingerprint,
+            rowid: rowid,
+          ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ));
+}
+
+typedef $$CalendarEventsTableProcessedTableManager = ProcessedTableManager<
+    _$LocalDb,
+    $CalendarEventsTable,
+    CalendarEventRow,
+    $$CalendarEventsTableFilterComposer,
+    $$CalendarEventsTableOrderingComposer,
+    $$CalendarEventsTableAnnotationComposer,
+    $$CalendarEventsTableCreateCompanionBuilder,
+    $$CalendarEventsTableUpdateCompanionBuilder,
+    (
+      CalendarEventRow,
+      BaseReferences<_$LocalDb, $CalendarEventsTable, CalendarEventRow>
+    ),
+    CalendarEventRow,
+    PrefetchHooks Function()>;
 
 class $LocalDbManager {
   final _$LocalDb _db;
@@ -11129,4 +12370,6 @@ class $LocalDbManager {
       $$LocalSettingsTableTableManager(_db, _db.localSettings);
   $$TodosTableTableManager get todos =>
       $$TodosTableTableManager(_db, _db.todos);
+  $$CalendarEventsTableTableManager get calendarEvents =>
+      $$CalendarEventsTableTableManager(_db, _db.calendarEvents);
 }
