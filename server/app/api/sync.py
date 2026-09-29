@@ -285,6 +285,43 @@ def _apply_dump(conn: sqlite3.Connection, change: SyncChange, now: int) -> None:
         ),
     )
 
+    if "speaker_names" in p:
+        _teach_from_rename(
+            conn,
+            existing["speaker_names"] if existing is not None else None,
+            p["speaker_names"],
+            existing["speaker_embeddings"] if existing is not None else None,
+        )
+
+
+def _teach_from_rename(
+    conn: sqlite3.Connection,
+    stored_map: str | None,
+    new_map: str | None,
+    embeddings_json: str | None,
+) -> list[str]:
+    """Teach new or changed device-authored label/name pairs."""
+    from app.services.voice_book import teach  # noqa: PLC0415
+
+    if not new_map or not embeddings_json:
+        return []
+    try:
+        new = json.loads(new_map) or {}
+        old = json.loads(stored_map) if stored_map else {}
+        embeddings = json.loads(embeddings_json) or {}
+    except (TypeError, ValueError):
+        return []
+    taught: list[str] = []
+    for label, name in new.items():
+        clean = (name or "").strip()
+        if not clean or old.get(label) == name or label not in embeddings:
+            continue
+        teach(conn, clean, embeddings[label])
+        taught.append(clean)
+    if taught:
+        log.info("voice_book.taught", names=taught)
+    return taught
+
 
 def _apply_folder(conn: sqlite3.Connection, change: SyncChange, now: int) -> None:
     """Folders sync by ID only: same-named folders stay separate (user

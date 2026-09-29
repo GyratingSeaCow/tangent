@@ -87,6 +87,46 @@ def enqueue_job(
     return job_id, True
 
 
+def _auto_name_speakers(
+    db: sqlite3.Connection, job_id: str, embeddings: dict[str, list[float]]
+) -> dict[str, str]:
+    """Write matched names only when the recording has no user-authored map."""
+    from app.services.diarization import VOICE_ACCEPT, VOICE_MARGIN  # noqa: PLC0415
+    from app.services.voice_book import load_voice_book, match  # noqa: PLC0415
+
+    row = db.execute(
+        "SELECT id, speaker_names FROM dumps WHERE id = "
+        "(SELECT dump_id FROM jobs WHERE id = ?)",
+        (job_id,),
+    ).fetchone()
+    if row is None:
+        return {}
+    stored = row["speaker_names"]
+    if stored and stored.strip() not in ("", "{}"):
+        return {}
+    book = load_voice_book(db)
+    if not book:
+        return {}
+    names, rejected = match(
+        embeddings, book, accept=VOICE_ACCEPT, margin=VOICE_MARGIN
+    )
+    log.info(
+        "voice_match.applied",
+        dump_id=row["id"],
+        names=names,
+        rejected=[
+            (label, round(similarity, 3), name)
+            for label, similarity, name in rejected
+        ],
+    )
+    if names:
+        db.execute(
+            "UPDATE dumps SET speaker_names = ? WHERE id = ?",
+            (json.dumps(names), row["id"]),
+        )
+    return names
+
+
 def run_job_inline(job_id: str, audio_path: str, translate: bool = False) -> None:
     """Execute a job synchronously. Updates job status as it progresses.
 
@@ -201,6 +241,8 @@ def run_job_inline(job_id: str, audio_path: str, translate: bool = False) -> Non
                     job_id,
                 ),
             )
+            if result.speaker_embeddings:
+                _auto_name_speakers(db, job_id, result.speaker_embeddings)
             # Publish to the sync feed so other devices receive the finished
             # transcript. Attributed to the server: no device pushed this.
             try:

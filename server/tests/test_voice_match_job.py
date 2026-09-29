@@ -10,6 +10,7 @@ from pathlib import Path
 from app.db import init_db
 from app.services.job_queue import run_job_inline
 from app.services.transcription import TranscriptionResult
+from app.services import voice_book as vb
 
 
 class _FakeService:
@@ -78,4 +79,59 @@ def test_job_without_embeddings_stores_null(temp_data_dir: Path, monkeypatch) ->
     result = TranscriptionResult(text="hi", segments=[], speaker_embeddings=None)
     conn, row = _run(temp_data_dir, monkeypatch, result)
     assert row["speaker_embeddings"] is None
+    conn.close()
+
+
+def _voice_result() -> TranscriptionResult:
+    return TranscriptionResult(
+        text="hello",
+        segments=[
+            {"start": 0.0, "end": 1.0, "speaker": "Speaker 1", "text": "hello"},
+            {"start": 1.0, "end": 2.0, "speaker": "Speaker 2", "text": "there"},
+        ],
+        speaker_embeddings={"Speaker 1": [1.0, 0.05], "Speaker 2": [0.0, 1.0]},
+    )
+
+
+def _run_seeded_job(data_dir: Path, monkeypatch, *, speaker_names=None):
+    job_id, audio_path = _seed(data_dir, speaker_names=speaker_names)
+    monkeypatch.setattr(
+        "app.services.job_queue.get_transcription_service",
+        lambda: _FakeService(_voice_result()),
+    )
+    run_job_inline(job_id, audio_path)
+    conn = sqlite3.connect(data_dir / "tangent.db")
+    conn.row_factory = sqlite3.Row
+    row = conn.execute("SELECT * FROM dumps WHERE id = 'dump-voice-match'").fetchone()
+    return conn, row
+
+
+def test_job_auto_names_when_map_empty(temp_data_dir: Path, monkeypatch) -> None:
+    init_db(str(temp_data_dir))
+    conn = sqlite3.connect(temp_data_dir / "tangent.db")
+    vb.teach(conn, "Jeff", [1.0, 0.0])
+    conn.commit()
+    conn.close()
+    conn, row = _run_seeded_job(temp_data_dir, monkeypatch)
+    assert json.loads(row["speaker_names"]) == {"Speaker 1": "Jeff"}
+    assert vb.load_voice_book(conn)[0].samples == 1
+    conn.close()
+
+
+def test_job_never_overwrites_existing_map(temp_data_dir: Path, monkeypatch) -> None:
+    init_db(str(temp_data_dir))
+    conn = sqlite3.connect(temp_data_dir / "tangent.db")
+    vb.teach(conn, "Jeff", [1.0, 0.0])
+    conn.commit()
+    conn.close()
+    conn, row = _run_seeded_job(
+        temp_data_dir, monkeypatch, speaker_names={"Speaker 1": "Tom"}
+    )
+    assert json.loads(row["speaker_names"]) == {"Speaker 1": "Tom"}
+    conn.close()
+
+
+def test_job_empty_book_leaves_map_null(temp_data_dir: Path, monkeypatch) -> None:
+    conn, row = _run_seeded_job(temp_data_dir, monkeypatch)
+    assert row["speaker_names"] is None
     conn.close()
