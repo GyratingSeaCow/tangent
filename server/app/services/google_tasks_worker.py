@@ -994,6 +994,12 @@ def run_cycle(db: sqlite3.Connection) -> tuple[int, int]:
                 db, access_token, managed,
                 stats=stats, google_lists=google_lists, stale_ids=stale,
             )
+            # Calendar shares this OAuth connection and five-minute tick. Keep
+            # the import local to avoid a module cycle: the calendar worker
+            # delegates its HTTP/parsing helpers back to this module.
+            from app.services import google_calendar_worker
+
+            google_calendar_worker.run_calendar_cycle(db, access_token)
             db.execute(
                 """
                 UPDATE google_tasks_link SET status = 'connected', last_error = NULL,
