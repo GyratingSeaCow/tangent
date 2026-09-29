@@ -23,6 +23,10 @@ mixin _$ServerInfo {
   int get storageUsedBytes => throw _privateConstructorUsedError;
   int get dumpCount => throw _privateConstructorUsedError;
 
+  /// v1.36.0: whether the server diarizes (and so keeps a voice book).
+  /// Older servers omit it → false, and Settings hides the Voices section.
+  bool get diarization => throw _privateConstructorUsedError;
+
   /// Create a copy of ServerInfo
   /// with the given fields replaced by the non-null parameter values.
   @JsonKey(includeFromJson: false, includeToJson: false)
@@ -42,7 +46,8 @@ abstract class $ServerInfoCopyWith<$Res> {
       String defaultModel,
       List<String> availableModels,
       int storageUsedBytes,
-      int dumpCount});
+      int dumpCount,
+      bool diarization});
 }
 
 /// @nodoc
@@ -66,6 +71,7 @@ class _$ServerInfoCopyWithImpl<$Res, $Val extends ServerInfo>
     Object? availableModels = null,
     Object? storageUsedBytes = null,
     Object? dumpCount = null,
+    Object? diarization = null,
   }) {
     return _then(_value.copyWith(
       version: null == version
@@ -92,6 +98,10 @@ class _$ServerInfoCopyWithImpl<$Res, $Val extends ServerInfo>
           ? _value.dumpCount
           : dumpCount // ignore: cast_nullable_to_non_nullable
               as int,
+      diarization: null == diarization
+          ? _value.diarization
+          : diarization // ignore: cast_nullable_to_non_nullable
+              as bool,
     ) as $Val);
   }
 }
@@ -110,7 +120,8 @@ abstract class _$$ServerInfoImplCopyWith<$Res>
       String defaultModel,
       List<String> availableModels,
       int storageUsedBytes,
-      int dumpCount});
+      int dumpCount,
+      bool diarization});
 }
 
 /// @nodoc
@@ -132,6 +143,7 @@ class __$$ServerInfoImplCopyWithImpl<$Res>
     Object? availableModels = null,
     Object? storageUsedBytes = null,
     Object? dumpCount = null,
+    Object? diarization = null,
   }) {
     return _then(_$ServerInfoImpl(
       version: null == version
@@ -158,6 +170,10 @@ class __$$ServerInfoImplCopyWithImpl<$Res>
           ? _value.dumpCount
           : dumpCount // ignore: cast_nullable_to_non_nullable
               as int,
+      diarization: null == diarization
+          ? _value.diarization
+          : diarization // ignore: cast_nullable_to_non_nullable
+              as bool,
     ));
   }
 }
@@ -171,7 +187,8 @@ class _$ServerInfoImpl extends _ServerInfo {
       required this.defaultModel,
       required final List<String> availableModels,
       required this.storageUsedBytes,
-      required this.dumpCount})
+      required this.dumpCount,
+      this.diarization = false})
       : _availableModels = availableModels,
         super._();
 
@@ -194,9 +211,15 @@ class _$ServerInfoImpl extends _ServerInfo {
   @override
   final int dumpCount;
 
+  /// v1.36.0: whether the server diarizes (and so keeps a voice book).
+  /// Older servers omit it → false, and Settings hides the Voices section.
+  @override
+  @JsonKey()
+  final bool diarization;
+
   @override
   String toString() {
-    return 'ServerInfo(version: $version, setupComplete: $setupComplete, defaultModel: $defaultModel, availableModels: $availableModels, storageUsedBytes: $storageUsedBytes, dumpCount: $dumpCount)';
+    return 'ServerInfo(version: $version, setupComplete: $setupComplete, defaultModel: $defaultModel, availableModels: $availableModels, storageUsedBytes: $storageUsedBytes, dumpCount: $dumpCount, diarization: $diarization)';
   }
 
   @override
@@ -214,7 +237,9 @@ class _$ServerInfoImpl extends _ServerInfo {
             (identical(other.storageUsedBytes, storageUsedBytes) ||
                 other.storageUsedBytes == storageUsedBytes) &&
             (identical(other.dumpCount, dumpCount) ||
-                other.dumpCount == dumpCount));
+                other.dumpCount == dumpCount) &&
+            (identical(other.diarization, diarization) ||
+                other.diarization == diarization));
   }
 
   @override
@@ -225,7 +250,8 @@ class _$ServerInfoImpl extends _ServerInfo {
       defaultModel,
       const DeepCollectionEquality().hash(_availableModels),
       storageUsedBytes,
-      dumpCount);
+      dumpCount,
+      diarization);
 
   /// Create a copy of ServerInfo
   /// with the given fields replaced by the non-null parameter values.
@@ -243,7 +269,8 @@ abstract class _ServerInfo extends ServerInfo {
       required final String defaultModel,
       required final List<String> availableModels,
       required final int storageUsedBytes,
-      required final int dumpCount}) = _$ServerInfoImpl;
+      required final int dumpCount,
+      final bool diarization}) = _$ServerInfoImpl;
   const _ServerInfo._() : super._();
 
   @override
@@ -258,6 +285,11 @@ abstract class _ServerInfo extends ServerInfo {
   int get storageUsedBytes;
   @override
   int get dumpCount;
+
+  /// v1.36.0: whether the server diarizes (and so keeps a voice book).
+  /// Older servers omit it → false, and Settings hides the Voices section.
+  @override
+  bool get diarization;
 
   /// Create a copy of ServerInfo
   /// with the given fields replaced by the non-null parameter values.

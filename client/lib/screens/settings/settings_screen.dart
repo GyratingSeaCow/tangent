@@ -15,6 +15,7 @@ import 'reminders_section.dart';
 import 'handwriting_search_section.dart';
 import 'ai_summaries_section.dart';
 import 'google_tasks_section.dart';
+import 'voices_section.dart';
 import 'input_device_section.dart';
 import 'mic_gain_section.dart';
 import 'storage_settings_section.dart';
@@ -224,6 +225,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           const AiSummariesSection(),
           const Divider(),
           const GoogleTasksSection(),
+          // v1.36.0: reuses the info fetched above — no second round trip.
+          VoicesSection(available: _serverInfo?.diarization ?? false),
           const Divider(),
           const RemindersSection(),
           const Padding(
@@ -337,6 +340,7 @@ class ServerInfoSnapshot {
     this.model,
     this.models,
     this.dumpCount,
+    this.diarization = false,
   });
 
   factory ServerInfoSnapshot.fromInfo(dynamic info) {
@@ -345,6 +349,7 @@ class ServerInfoSnapshot {
       model: info.defaultModel as String?,
       models: (info.availableModels as List?)?.map((e) => e.toString()).toList(),
       dumpCount: info.dumpCount as int?,
+      diarization: (info.diarization as bool?) ?? false,
     );
   }
 
@@ -352,6 +357,9 @@ class ServerInfoSnapshot {
   final String? model;
   final List<String>? models;
   final int? dumpCount;
+
+  /// v1.36.0: the server diarizes, so Settings → Voices applies.
+  final bool diarization;
 
   String get title => 'Server transcription';
 }
