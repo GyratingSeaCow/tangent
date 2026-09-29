@@ -122,8 +122,17 @@ the user already wrote is never overwritten, including on re-transcribe
 (the name-map spec's N2 rule stands). Published on the sync feed via the
 existing `_publish_dump_change` so every device renders the names.
 
-Constants in `diarization.py`, one place: `VOICE_ACCEPT = 0.70`,
-`VOICE_MARGIN = 0.10`. Both provisional until calibration.
+Constants in `diarization.py`, one place: `VOICE_ACCEPT = 0.60`,
+`VOICE_MARGIN = 0.10`, `VOICE_MIN_SPEECH_S = 15.0`. All three set by
+calibration on real recordings (below), not guessed.
+
+**Minimum-speech gate.** A speaker who talks for less than
+`VOICE_MIN_SPEECH_S` seconds in total across a recording keeps their
+`Speaker N` label but carries **no centroid**: never stored, never taught
+from a rename, never matched. Centroids from a few seconds of speech are
+noise — see the calibration table. Turns are summed per speaker, so a
+back-and-forth meeting where nobody holds the floor for 15 s straight
+still qualifies.
 
 Log line per recording: `voice_match.applied names=… rejected=[(label,
 best_sim, best_name), …]` so a wrong or missed match is diagnosable from
@@ -145,6 +154,35 @@ container against Jeff's real DB copy:
    impostor and the gap to the lowest true match is recorded in the spec's
    status line. If the two overlap, the feature ships with a higher
    threshold (misses beat mislabels under V1) and the spec says so.
+
+### Result (2026-09-29, Jeff's library, pyannote 4.0.7)
+
+Running the script is `docker cp server/scripts tangent-server:/app/scripts`
+then `docker exec tangent-server python -m scripts.voice_calibrate --name
+Jeff` (the image does not ship `scripts/`). The first run on the 128-
+recording library found three real-audio defects the unit tests could
+not (wrapper vs inner `labels()`, `database is locked` against the live
+server, NaN centroids on near-silent clips) — all fixed before the numbers
+below were taken.
+
+Almost the whole library was 2–12 s test clips, and on those the scores
+overlapped: a confirmed stranger's 6 s clip scored **0.58**, Jeff's own
+2.5 s clip **0.38**. Jeff recorded three 22–60 s clips of himself and two
+of other people, and with a centroid built from Jeff's ≥ 15 s recordings
+only:
+
+| Group | Cosine to "Jeff" centroid |
+|---|---|
+| Jeff, ≥ 15 s (leave-one-out) | 0.76 – 0.85 (one outlier 0.53) |
+| Confirmed not Jeff, ≥ 15 s | −0.04, −0.07 |
+| Every other unlabelled speaker ≥ 15 s (all confirmed not Jeff) | ≤ 0.28 |
+| Jeff, < 15 s clips | 0.38 – 0.69 |
+| Confirmed not Jeff, 6 s clip | 0.58 |
+
+Hence `VOICE_MIN_SPEECH_S = 15.0` (the overlap lives entirely under 15 s)
+and `VOICE_ACCEPT = 0.60`: 0.32 above the worst impostor, 0.16 under
+Jeff's typical floor. The 0.53 outlier is a miss (stays `Speaker 1`),
+which V1 prefers to a wrong name.
 
 ## Settings → Voices (client)
 
