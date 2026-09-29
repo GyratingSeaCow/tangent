@@ -122,3 +122,12 @@ def test_discovery_info_reports_server_name(client):
     c, _token = client
     resp = c.get("/v1/server/info/public")
     assert resp.json()["name"] == "TestUser"
+
+
+def test_server_info_reports_diarization_flag(client, monkeypatch):
+    cli, token = client
+    monkeypatch.delenv("TANGENT_DIARIZATION", raising=False)
+    assert cli.get("/v1/server/info", headers=_auth(token)).json()["diarization"] is False
+    monkeypatch.setenv("TANGENT_DIARIZATION", "pyannote")
+    monkeypatch.setenv("HF_TOKEN", "x")
+    assert cli.get("/v1/server/info", headers=_auth(token)).json()["diarization"] is True

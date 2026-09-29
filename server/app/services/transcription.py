@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from app.config import get_settings
 from app.logging_config import get_logger
-from app.services.diarization import diarize_segments
+from app.services.diarization import diarize_segments_with_embeddings
 
 if TYPE_CHECKING:
     from faster_whisper import WhisperModel
@@ -114,6 +114,7 @@ class TranscriptionResult:
     segments: list[dict[str, Any]] = field(default_factory=list)
     peaks: list[float] = field(default_factory=list)
     language: str | None = None
+    speaker_embeddings: dict[str, list[float]] | None = None
 
 
 def resolve_configured_model() -> str:
@@ -245,8 +246,10 @@ class TranscriptionService:
         joined = " ".join(s["text"] for s in collected)
 
         # Diarization is optional and must never break transcription.
+        speaker_embeddings: dict[str, list[float]] | None = None
         try:
-            collected = diarize_segments(audio_path, collected)
+            collected, emb = diarize_segments_with_embeddings(audio_path, collected)
+            speaker_embeddings = emb or None
         except Exception as exc:
             log.warning(
                 "transcription.diarization_skipped",
@@ -262,7 +265,11 @@ class TranscriptionService:
             characters=len(joined),
         )
         return TranscriptionResult(
-            text=joined, segments=collected, peaks=peaks, language=info.language
+            text=joined,
+            segments=collected,
+            peaks=peaks,
+            language=info.language,
+            speaker_embeddings=speaker_embeddings,
         )
 
 

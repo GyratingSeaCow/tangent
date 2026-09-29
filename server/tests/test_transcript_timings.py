@@ -114,7 +114,8 @@ def test_transcribe_requests_word_timestamps_and_emits_compact_words(monkeypatch
         "app.services.transcription._decode_audio_samples", lambda _path: samples
     )
     monkeypatch.setattr(
-        "app.services.transcription.diarize_segments", lambda _path, segments: segments
+        "app.services.transcription.diarize_segments_with_embeddings",
+        lambda _path, segments: (segments, {}),
     )
 
     result = service.transcribe(str(tmp_path / "audio.wav"))

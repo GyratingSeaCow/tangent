@@ -129,6 +129,7 @@ class ServerInfo(BaseModel):
     available_models: list[str]
     storage_used_bytes: int
     dump_count: int
+    diarization: bool = False
 
 
 class PublicServerInfo(BaseModel):
