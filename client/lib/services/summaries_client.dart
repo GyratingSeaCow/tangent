@@ -198,6 +198,7 @@ class GoogleTasksStatus {
     this.pulled = 0,
     this.hasCredentials = false,
     this.lists = const <GoogleTaskListMapping>[],
+    this.calendar = const GoogleCalendarStatus(),
   });
 
   factory GoogleTasksStatus.fromJson(Map<String, dynamic> json) {
@@ -215,6 +216,10 @@ class GoogleTasksStatus {
           (json['has_credentials'] as bool?) ??
           false,
       lists: GoogleTaskListMapping.listFromJson(json['lists']),
+      // v1.35.0; absent on an older server → disabled, zero counts.
+      calendar: GoogleCalendarStatus.fromJson(
+        json['calendar'] as Map<String, dynamic>?,
+      ),
     );
   }
 
@@ -241,6 +246,35 @@ class GoogleTasksStatus {
   /// "Tangent" list (v1.30.0). Empty against a server that predates the
   /// field — the section simply shows no mapping then.
   final List<GoogleTaskListMapping> lists;
+
+  /// v1.35.0: the Google Calendar half of the same link.
+  final GoogleCalendarStatus calendar;
+}
+
+/// `GoogleTasksStatus.calendar` — whether the granted token carries the
+/// calendar scope, and the last cycle's event counts.
+class GoogleCalendarStatus {
+  const GoogleCalendarStatus({
+    this.enabled = false,
+    this.lastPushed = 0,
+    this.lastPulled = 0,
+    this.lastError,
+  });
+
+  factory GoogleCalendarStatus.fromJson(Map<String, dynamic>? json) {
+    if (json == null) return const GoogleCalendarStatus();
+    return GoogleCalendarStatus(
+      enabled: (json['enabled'] as bool?) ?? false,
+      lastPushed: (json['last_pushed'] as num?)?.toInt() ?? 0,
+      lastPulled: (json['last_pulled'] as num?)?.toInt() ?? 0,
+      lastError: json['last_error'] as String?,
+    );
+  }
+
+  final bool enabled;
+  final int lastPushed;
+  final int lastPulled;
+  final String? lastError;
 }
 
 /// One folder ↔ Google list pairing from `GoogleTasksStatus.lists`.
@@ -264,7 +298,8 @@ class GoogleTaskListMapping {
     if (raw is! List) return const <GoogleTaskListMapping>[];
     return <GoogleTaskListMapping>[
       for (final Object? item in raw)
-        if (item is Map<String, dynamic>) GoogleTaskListMapping.fromJson(item)
+        if (item is Map<String, dynamic>)
+          GoogleTaskListMapping.fromJson(item)
         else if (item is Map)
           GoogleTaskListMapping.fromJson(Map<String, dynamic>.from(item)),
     ];
@@ -389,7 +424,6 @@ class SummariesClient {
     final resp = await _dio.post<dynamic>('/v1/summaries/uninstall');
     _checkStatus(resp);
   }
-
 
   // ---- Google Tasks (/v1/google-tasks/*) ------------------------------------
   //
