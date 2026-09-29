@@ -20,6 +20,7 @@ import 'package:flutter/foundation.dart';
 import '../data/local_db.dart';
 import '../models/sync_change.dart';
 import 'connectivity_service.dart';
+import 'calendar_voice_capture.dart';
 import 'todo_voice_capture.dart';
 import 'transcription_client.dart';
 
@@ -409,6 +410,13 @@ class DocumentSyncEngine extends ChangeNotifier {
       dumpId: change.entityId,
       transcript: payload['transcript'] as String?,
       recordedOn: _tsToDate(payload['created_at']),
+    );
+    await captureVoiceEventsQuietly(
+      db: _db,
+      dumpId: change.entityId,
+      transcript: payload['transcript'] as String?,
+      recordedOn: _tsToDate(payload['created_at']),
+      mode: payload['mode'] as String? ?? local?.mode ?? 'brain_dump',
     );
   }
 
