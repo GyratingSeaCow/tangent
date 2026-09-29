@@ -498,6 +498,27 @@ def _migrate_dumps_speaker_names(conn: sqlite3.Connection) -> list[str]:
     ]
 
 
+def _migrate_dumps_speaker_embeddings(conn: sqlite3.Connection) -> None:
+    """Server-private per-speaker centroids from diarization (v1.36.0)."""
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(dumps)")}
+    if "speaker_embeddings" not in cols:
+        conn.execute("ALTER TABLE dumps ADD COLUMN speaker_embeddings TEXT")
+
+
+def _migrate_voice_book(conn: sqlite3.Connection) -> None:
+    """One remembered centroid per display name (v1.36.0)."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS voice_book (
+            name TEXT PRIMARY KEY,
+            embedding TEXT NOT NULL,
+            samples INTEGER NOT NULL DEFAULT 1,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+
+
 def _migrate_dumps_language(conn: sqlite3.Connection) -> list[str]:
     """Add server-authored translation metadata and republish once."""
     cols = {row[1] for row in conn.execute("PRAGMA table_info(dumps)")}
@@ -982,6 +1003,8 @@ def init_db(data_dir: str) -> None:
         _migrate_dumps_summary(conn)
         template_backfills = _migrate_dumps_summary_template(conn)
         speaker_name_backfills = _migrate_dumps_speaker_names(conn)
+        _migrate_dumps_speaker_embeddings(conn)
+        _migrate_voice_book(conn)
         language_backfills = _migrate_dumps_language(conn)
         summary_status_backfills = _migrate_dumps_summary_status(conn)
         timing_backfills = _migrate_dumps_transcript_timings(conn)
