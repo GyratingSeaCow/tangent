@@ -12,6 +12,7 @@ from app.auth import require_auth
 from app.config import get_settings
 from app.db import get_db
 from app.models import PublicServerInfo, ServerInfo
+from app.services.diarization import is_diarization_enabled
 from app.services.storage import (
     SUPPORTED_MODELS,
     get_storage_used_bytes,
@@ -67,4 +68,5 @@ def get_server_info(
         available_models=list(SUPPORTED_MODELS),
         storage_used_bytes=get_storage_used_bytes(settings.data_dir),
         dump_count=dump_count,
+        diarization=is_diarization_enabled(),
     )
