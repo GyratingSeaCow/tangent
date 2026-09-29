@@ -243,13 +243,14 @@ def test_transcribe_applies_diarization_when_enabled(monkeypatch, tmp_path):
     def fake_diarize(audio_path, segments):
         seen.append(audio_path)
         labels = ["Speaker 1", "Speaker 2"]
-        return [
+        labelled = [
             {**segment, "speaker": label}
             for segment, label in zip(segments, labels, strict=False)
         ]
+        return labelled, {"Speaker 1": [1.0, 0.0]}
 
     monkeypatch.setattr(
-        "app.services.transcription.diarize_segments", fake_diarize
+        "app.services.transcription.diarize_segments_with_embeddings", fake_diarize
     )
 
     service = TranscriptionService(model_name="large-v3")
@@ -273,7 +274,7 @@ def test_diarization_failure_does_not_fail_transcription(monkeypatch, tmp_path):
         raise RuntimeError("diarization backend unavailable")
 
     monkeypatch.setattr(
-        "app.services.transcription.diarize_segments", exploding_diarize
+        "app.services.transcription.diarize_segments_with_embeddings", exploding_diarize
     )
 
     service = TranscriptionService(model_name="large-v3")

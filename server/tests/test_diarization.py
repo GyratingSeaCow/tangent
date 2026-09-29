@@ -104,6 +104,13 @@ class _FakeAnnotation:
             else:
                 yield _FakeTurn(start, end), f"track-{index}"
 
+    def labels(self):
+        seen: list[str] = []
+        for _start, _end, label in self._turns:
+            if label not in seen:
+                seen.append(label)
+        return sorted(seen)
+
 
 # --------------------------------------------------------------------------
 # Env gating
@@ -410,6 +417,67 @@ def test_extract_turns_unwraps_pyannote_4x_diarize_output() -> None:
         (0.03, 3.15, "SPEAKER_00"),
         (3.37, 6.51, "SPEAKER_01"),
     ]
+
+
+# --------------------------------------------------------------------------
+# Embeddings (v1.36.0 voice matching)
+# --------------------------------------------------------------------------
+
+
+class _FakeDiarizeOutput:
+    """pyannote 4.x DiarizeOutput: annotation + centroid rows aligned with labels()."""
+
+    def __init__(self, annotation: _FakeAnnotation, embeddings) -> None:
+        self.speaker_diarization = annotation
+        self.speaker_embeddings = embeddings
+
+    def labels(self):
+        return self.speaker_diarization.labels()
+
+
+def test_extract_embeddings_keys_by_raw_label_and_normalises() -> None:
+    ann = _FakeAnnotation([(0.0, 1.0, "SPEAKER_00"), (1.0, 2.0, "SPEAKER_01")])
+    out = _FakeDiarizeOutput(ann, [[3.0, 4.0], [0.0, 2.0]])
+    emb = diarization._extract_embeddings(out)
+    assert emb["SPEAKER_00"] == pytest.approx([0.6, 0.8])
+    assert emb["SPEAKER_01"] == pytest.approx([0.0, 1.0])
+
+
+def test_extract_embeddings_bare_annotation_is_empty() -> None:
+    ann = _FakeAnnotation([(0.0, 1.0, "SPEAKER_00")])
+    assert diarization._extract_embeddings(ann) == {}
+
+
+def test_extract_embeddings_none_rows_is_empty() -> None:
+    ann = _FakeAnnotation([(0.0, 1.0, "SPEAKER_00")])
+    assert diarization._extract_embeddings(_FakeDiarizeOutput(ann, None)) == {}
+
+
+def test_diarize_with_embeddings_keys_by_display_label(monkeypatch) -> None:
+    monkeypatch.setenv("TANGENT_DIARIZATION", "pyannote")
+    monkeypatch.setenv("HF_TOKEN", "hf_fake")
+    # SPEAKER_01 speaks first → it becomes 'Speaker 1'
+    ann = _FakeAnnotation([(0.0, 1.0, "SPEAKER_01"), (1.0, 2.0, "SPEAKER_00")])
+    out = _FakeDiarizeOutput(ann, [[1.0, 0.0], [0.0, 1.0]])
+    monkeypatch.setattr(diarization, "_load_pipeline", lambda: (lambda _w: out))
+    monkeypatch.setattr(diarization, "_decode_waveform", lambda path: {})
+    segs = [{"start": 0.0, "end": 1.0, "text": "a"}, {"start": 1.0, "end": 2.0, "text": "b"}]
+    labelled, emb = diarization.diarize_segments_with_embeddings("x.wav", segs)
+    assert [s["speaker"] for s in labelled] == ["Speaker 1", "Speaker 2"]
+    assert emb == {"Speaker 1": pytest.approx([0.0, 1.0]), "Speaker 2": pytest.approx([1.0, 0.0])}
+
+
+def test_diarize_with_embeddings_failure_yields_empty_dict(monkeypatch) -> None:
+    monkeypatch.setenv("TANGENT_DIARIZATION", "pyannote")
+    monkeypatch.setenv("HF_TOKEN", "hf_fake")
+
+    def explode():
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(diarization, "_load_pipeline", explode)
+    segs = [{"start": 0.0, "end": 1.0, "text": "a"}]
+    labelled, emb = diarization.diarize_segments_with_embeddings("x.wav", segs)
+    assert labelled == segs and emb == {}
 
 
 # --------------------------------------------------------------------------

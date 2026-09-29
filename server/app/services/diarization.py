@@ -23,6 +23,11 @@ log = get_logger(__name__)
 DIARIZATION_BACKEND = "pyannote"
 PYANNOTE_PIPELINE = "pyannote/speaker-diarization-3.1"
 
+# Voice matching (v1.36.0). Provisional until scripts/voice_calibrate.py
+# has been run on Jeff's recordings — see the spec's §Calibration.
+VOICE_ACCEPT = 0.70
+VOICE_MARGIN = 0.10
+
 # Sample rate we decode to before handing audio to pyannote. Matches the
 # rate faster-whisper decodes at, so both consumers hear the same audio.
 DECODE_SAMPLE_RATE = 16000
@@ -143,6 +148,24 @@ def _extract_turns(annotation: Any) -> list[Turn]:
     return turns
 
 
+def _extract_embeddings(annotation: Any) -> dict[str, list[float]]:
+    """Return unit centroids keyed by the raw pyannote speaker label.
+
+    pyannote 4.x exposes rows on ``DiarizeOutput.speaker_embeddings`` aligned
+    with ``labels()``. A bare 3.x ``Annotation`` has no embeddings.
+    """
+    from app.services.voice_book import normalise  # noqa: PLC0415
+
+    rows = getattr(annotation, "speaker_embeddings", None)
+    if rows is None or not hasattr(annotation, "labels"):
+        return {}
+    labels = list(annotation.labels())
+    out: dict[str, list[float]] = {}
+    for label, row in zip(labels, rows):
+        out[str(label)] = normalise([float(x) for x in row])
+    return out
+
+
 def _label_map(turns: list[Turn]) -> dict[str, str]:
     """Map raw backend labels to 'Speaker N' by chronological first appearance."""
     mapping: dict[str, str] = {}
@@ -180,21 +203,20 @@ def assign_speakers(
     return result
 
 
-def diarize_segments(
+def diarize_segments_with_embeddings(
     audio_path: str, segments: list[dict[str, Any]]
-) -> list[dict[str, Any]]:
-    """Return segments with speaker labels when diarization is enabled and works.
+) -> tuple[list[dict[str, Any]], dict[str, list[float]]]:
+    """Return labelled segments plus ``{'Speaker N': unit vector}``.
 
-    Degrades gracefully: on any failure (flag off, package missing, token
-    rejected, backend crash) the segments come back unchanged with
-    ``speaker=None``. Never raises.
+    The second element is empty whenever labelling did not happen or the
+    backend gave no embeddings; embedding extraction never causes a failure.
     """
     if not segments:
-        return list(segments)
+        return list(segments), {}
 
     if not is_diarization_enabled():
         log.debug("diarization.disabled")
-        return [{**segment} for segment in segments]
+        return [{**segment} for segment in segments], {}
 
     try:
         pipeline = _load_pipeline()
@@ -205,13 +227,14 @@ def diarize_segments(
         # "473176 samples instead of the expected 480000" failure).
         annotation = pipeline(_decode_waveform(audio_path))
         turns = _extract_turns(annotation)
+        raw_embeddings = _extract_embeddings(annotation)
     except ImportError as exc:
         log.warning(
             "diarization.unavailable",
             reason=str(exc) or "pyannote.audio is not installed",
             audio=audio_path,
         )
-        return [{**segment} for segment in segments]
+        return [{**segment} for segment in segments], {}
     except Exception as exc:
         log.warning(
             "diarization.failed",
@@ -219,17 +242,29 @@ def diarize_segments(
             error_type=type(exc).__name__,
             audio=audio_path,
         )
-        return [{**segment} for segment in segments]
+        return [{**segment} for segment in segments], {}
 
     if not turns:
         log.warning("diarization.no_turns", audio=audio_path)
-        return [{**segment} for segment in segments]
+        return [{**segment} for segment in segments], {}
 
     labelled = assign_speakers(segments, turns)
+    display = _label_map(turns)
+    embeddings = {
+        display[raw]: vec for raw, vec in raw_embeddings.items() if raw in display
+    }
     log.info(
         "diarization.complete",
         audio=audio_path,
         segments=len(labelled),
         speakers=len({s["speaker"] for s in labelled if s["speaker"]}),
+        embeddings=len(embeddings),
     )
-    return labelled
+    return labelled, embeddings
+
+
+def diarize_segments(
+    audio_path: str, segments: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Segments with speaker labels; see ``diarize_segments_with_embeddings``."""
+    return diarize_segments_with_embeddings(audio_path, segments)[0]
