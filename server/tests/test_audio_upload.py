@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import sqlite3
 import time
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -13,8 +14,9 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.api.dumps import router as dumps_router
+from app.api.dumps import get_audio_path_for_dump, router as dumps_router
 from app.api.dumps import upload_audio
+from app.api.sync import router as sync_router
 from app.auth import generate_token, hash_token
 from app.db import init_db
 
@@ -290,3 +292,81 @@ def test_upload_audio_rejected_for_text_note(authed_client, temp_data_dir: Path)
     assert "Text notes" in resp.json()["detail"]
     audio_dir = temp_data_dir / "audio"
     assert not list(audio_dir.glob("note-dump-1.*")) if audio_dir.exists() else True
+
+
+def test_path_traversal_dump_id_is_rejected_everywhere(
+    authed_client, temp_data_dir: Path
+) -> None:
+    client, token = authed_client
+    bad_id = "../../escape"
+    escaped = temp_data_dir / "escape.opus"
+
+    create = client.post(
+        "/v1/dumps",
+        json={
+            "id": bad_id,
+            "mode": "brain_dump",
+            "duration_seconds": 1,
+            "title": "Must reject",
+            "created_at": datetime.now(UTC).isoformat(),
+        },
+        headers=_auth(token),
+    )
+    assert create.status_code == 422, create.text
+
+    encoded = "%2E%2E%2F%2E%2E%2Fescape"
+    upload = client.post(
+        f"/v1/dumps/{encoded}/audio",
+        files={"audio": ("escape.opus", b"not-safe", "audio/ogg")},
+        headers=_auth(token),
+    )
+    assert upload.status_code == 422, upload.text
+    assert not escaped.exists(), "a rejected upload must not escape data_dir/audio"
+
+    download = client.get(f"/v1/dumps/{encoded}/audio", headers=_auth(token))
+    assert download.status_code == 422, download.text
+    assert get_audio_path_for_dump("../x") is None
+
+    dotfile = client.post(
+        "/v1/dumps/.hidden/audio",
+        files={"audio": ("hidden.opus", b"not-safe", "audio/ogg")},
+        headers=_auth(token),
+    )
+    assert dotfile.status_code == 422, dotfile.text
+
+
+def test_sync_rejects_path_traversal_entity_id(authed_client) -> None:
+    client, token = authed_client
+    client.app.include_router(sync_router)
+    response = client.post(
+        "/v1/sync/push",
+        json={
+            "device_id": "device-security-1",
+            "changes": [
+                {
+                    "entity_type": "dump",
+                    "entity_id": "../../escape",
+                    "op": "delete",
+                }
+            ],
+        },
+        headers=_auth(token),
+    )
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.parametrize("dump_id", ["folder-123e4567-e89b-12d3-a456-426614174000", str(uuid.uuid4())])
+def test_safe_uuid_style_dump_ids_still_support_audio(
+    authed_client, dump_id: str
+) -> None:
+    client, token = authed_client
+    _create_dump(client, token, dump_id)
+    upload = client.post(
+        f"/v1/dumps/{dump_id}/audio",
+        files={"audio": (f"{dump_id}.opus", b"safe", "audio/ogg")},
+        headers=_auth(token),
+    )
+    assert upload.status_code == 204, upload.text
+    download = client.get(f"/v1/dumps/{dump_id}/audio", headers=_auth(token))
+    assert download.status_code == 200, download.text
+    assert download.content == b"safe"
