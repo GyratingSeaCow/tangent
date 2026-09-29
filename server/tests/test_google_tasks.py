@@ -84,6 +84,7 @@ def _save_and_start(client: TestClient, token: str) -> str:
     assert query["access_type"] == ["offline"]
     assert query["prompt"] == ["consent"]
     assert "https://www.googleapis.com/auth/tasks" in query["scope"][0]
+    assert "https://www.googleapis.com/auth/calendar.events.owned" in query["scope"][0]
     # Google only accepts loopback redirect URIs for Desktop-app clients;
     # a LAN/Tailscale address produced "Error 400: invalid_request" on a
     # real device. TestClient calls us as http://testserver (port 80).
@@ -123,6 +124,12 @@ def test_disconnected_connect_callback_connected_status(google_api, monkeypatch)
         "pulled": 0,
         "lists": [],
         "last_cycle": {"pushed": 0, "pulled": 0, "moved": 0},
+        "calendar": {
+            "enabled": False,
+            "last_pushed": 0,
+            "last_pulled": 0,
+            "last_error": None,
+        },
     }
     state = _save_and_start(client, token)
     pending = client.get("/v1/google-tasks/status", headers=_headers(token)).json()
@@ -141,6 +148,10 @@ def test_disconnected_connect_callback_connected_status(google_api, monkeypatch)
                     "refresh_token": "refresh-1",
                     "expires_in": 3600,
                     "email": "jeff@example.test",
+                    "scope": (
+                        "https://www.googleapis.com/auth/tasks openid email "
+                        "https://www.googleapis.com/auth/calendar.events.owned"
+                    ),
                 },
             )
         assert method == "GET"
@@ -164,7 +175,11 @@ def test_disconnected_connect_callback_connected_status(google_api, monkeypatch)
         row = db.execute("SELECT * FROM google_tasks_link WHERE id = 1").fetchone()
         assert row["tasklist_id"] == "list-1"
         assert row["refresh_token"] == "refresh-1"
+        assert row["granted_scope"].split()[-1] == (
+            "https://www.googleapis.com/auth/calendar.events.owned"
+        )
         assert row["oauth_state"] is None
+        assert connected["calendar"]["enabled"] is True
 
 
 def test_callback_creates_tangent_list_when_missing(google_api, monkeypatch):
@@ -260,8 +275,9 @@ def _connected(db: sqlite3.Connection, *, expired: bool = False) -> None:
         """
         INSERT OR REPLACE INTO google_tasks_link
             (id, client_id, client_secret, refresh_token, access_token,
-             access_expires_at, tasklist_id, status)
-        VALUES (1, 'client', 'secret', 'refresh', 'access', ?, 'list-1', 'connected')
+             access_expires_at, tasklist_id, status, granted_scope)
+        VALUES (1, 'client', 'secret', 'refresh', 'access', ?, 'list-1', 'connected',
+                'https://www.googleapis.com/auth/tasks')
         """,
         (int(time.time()) - 1 if expired else int(time.time()) + 3600,),
     )
@@ -562,7 +578,13 @@ def test_sync_now_returns_last_cycle_counts(google_api, monkeypatch):
     )
     response = client.post("/v1/google-tasks/sync-now", headers=_headers(token))
     assert response.status_code == 200
-    assert response.json()["status"] == "connected"
+    assert response.json()["status"] == "reauth_required"
+    assert response.json()["calendar"] == {
+        "enabled": False,
+        "last_pushed": 0,
+        "last_pulled": 0,
+        "last_error": "Google Calendar permission not granted — Reconnect",
+    }
     assert response.json()["pushed"] == 1
     assert response.json()["pulled"] == 0
     assert response.json()["last_sync_at"] is not None
@@ -1069,7 +1091,7 @@ def test_push_todo_in_deleted_folder_is_moved_to_unfiled_list(google_api, fake_g
         row = db.execute("SELECT * FROM todos WHERE id='orphan'").fetchone()
         assert row["google_task_id"] == "g-1"
         assert row["google_tasklist_id"] == "list-1"
-        assert db.execute("SELECT status FROM google_tasks_link").fetchone()[0] == "connected"
+        assert db.execute("SELECT status FROM google_tasks_link").fetchone()[0] == "reauth_required"
 
 
 def test_push_deletes_from_the_recorded_list(google_api, fake_google):
@@ -1364,7 +1386,10 @@ def test_status_exposes_lists_and_last_cycle(google_api, fake_google):
     response = client.post("/v1/google-tasks/sync-now", headers=_headers(token))
     assert response.status_code == 200
     body = response.json()
-    assert body["status"] == "connected"
+    assert body["status"] == "reauth_required"
+    assert body["calendar"]["last_error"] == (
+        "Google Calendar permission not granted — Reconnect"
+    )
     assert body["lists"] == [
         {"name": "Tangent", "tasklist_id": "list-1", "folder_id": None},
         {"name": "Personal", "tasklist_id": "list-2", "folder_id": "f-personal"},
