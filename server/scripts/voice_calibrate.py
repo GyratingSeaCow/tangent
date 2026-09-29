@@ -52,8 +52,12 @@ def _mean_centroid(vectors: list[list[float]]) -> list[float]:
 
 def calibrate(db_path: Path, audio_root: Path, name: str) -> None:
     """Re-diarize retained audio, persist missing centroids, and print ranking."""
-    conn = sqlite3.connect(db_path)
+    # The server owns this file and writes on its own schedule; wait for
+    # its write locks instead of dying with "database is locked", and hold
+    # our own write to one short transaction at the end.
+    conn = sqlite3.connect(db_path, timeout=30.0)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA busy_timeout = 30000")
     try:
         rows = conn.execute(
             "SELECT id, title, transcript_timings, speaker_names, speaker_embeddings "
@@ -75,13 +79,17 @@ def calibrate(db_path: Path, audio_root: Path, name: str) -> None:
             _labelled, embeddings = diarize_segments_with_embeddings(str(audio), segments)
             if not embeddings:
                 continue
-            if row["speaker_embeddings"] is None:
-                conn.execute(
-                    "UPDATE dumps SET speaker_embeddings = ? WHERE id = ?",
-                    (json.dumps(embeddings), row["id"]),
-                )
             recordings.append((row, embeddings, _json_object(row["speaker_names"])))
-        conn.commit()
+        pending = [
+            (json.dumps(embeddings), row["id"])
+            for row, embeddings, _names in recordings
+            if row["speaker_embeddings"] is None
+        ]
+        if pending:
+            with conn:
+                conn.executemany(
+                    "UPDATE dumps SET speaker_embeddings = ? WHERE id = ?", pending
+                )
 
         references: list[list[float]] = []
         teaching_recordings: set[str] = set()
