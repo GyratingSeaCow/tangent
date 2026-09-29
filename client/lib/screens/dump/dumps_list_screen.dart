@@ -47,7 +47,7 @@ import '../home/home_screen.dart' show localDbProvider;
 /// What the `+` FAB on the dumps list asks the home screen to create.
 /// The list pops itself with one of these; home switches mode and either
 /// opens note compose or starts recording immediately.
-enum DumpsCreateAction { textNote, brainDump }
+enum DumpsCreateAction { textNote, brainDump, meeting }
 
 class DumpsListScreen extends ConsumerStatefulWidget {
   const DumpsListScreen({super.key, this.onOpenDump, this.filterIds});
@@ -175,10 +175,7 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
     final direct = switch (ref.read(dumpModeFilterProvider)) {
       DumpModeFilter.textNote => DumpsCreateAction.textNote,
       DumpModeFilter.brainDump => DumpsCreateAction.brainDump,
-      // Meeting capture is removed (v1.22.0): the filter still shows
-      // existing meeting recordings, but the FAB falls back to the create
-      // sheet instead of starting a new meeting recording.
-      DumpModeFilter.meeting => null,
+      DumpModeFilter.meeting => DumpsCreateAction.meeting,
       DumpModeFilter.all => null,
     };
     final action = direct ??
@@ -201,6 +198,13 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
                   title: const Text('Brain Dump'),
                   onTap: () => Navigator.of(sheetContext)
                       .pop(DumpsCreateAction.brainDump),
+                ),
+                ListTile(
+                  key: const ValueKey('create-option-meeting'),
+                  leading: const Icon(Icons.groups),
+                  title: const Text('Meeting'),
+                  onTap: () =>
+                      Navigator.of(sheetContext).pop(DumpsCreateAction.meeting),
                 ),
               ],
             ),
