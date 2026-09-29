@@ -236,6 +236,10 @@ class DocumentSyncEngine extends ChangeNotifier {
       await _applyRemoteTodo(change);
       return false;
     }
+    if (change.entityType == 'calendar_event') {
+      await _applyRemoteCalendarEvent(change);
+      return false;
+    }
     if (change.entityType == 'folder') {
       if (change.op == SyncOp.delete) {
         await _db.applyRemoteFolderDeletion(change.entityId);
@@ -458,6 +462,71 @@ class DocumentSyncEngine extends ChangeNotifier {
   /// chronologically. Deletion is soft and rides the same upsert as a
   /// `deleted_at` value, so there is no separate delete path to keep in
   /// step — but a peer's op:delete is honoured anyway for forward compat.
+  /// Calendar events: the same merge as todos (dirty local wins until
+  /// pushed; older remote ignored) plus the three server-authored
+  /// `google_*` fields, which only ever arrive this way.
+  Future<void> _applyRemoteCalendarEvent(RemoteChange change) async {
+    final Map<String, dynamic> payload = change.payload ?? const {};
+    final CalendarEventRow? local =
+        await _db.getCalendarEventRow(change.entityId);
+    if (local != null && local.syncDirty == true) return;
+    if (change.op == SyncOp.delete) {
+      if (local != null && local.deletedAt == null) {
+        await _db.applyRemoteCalendarEvent(
+          id: local.id,
+          title: local.title,
+          start: local.start,
+          end: local.end,
+          allDay: local.allDay,
+          timeZone: local.timeZone,
+          needsDate: local.needsDate,
+          createdAt: local.createdAt,
+          updatedAt: local.updatedAt,
+          deletedAt: DateTime.now().toUtc().toIso8601String(),
+          seq: change.seq,
+        );
+      }
+      return;
+    }
+    final String remoteUpdatedAt = payload['updated_at'] as String? ?? '';
+    if (local != null &&
+        remoteUpdatedAt.isNotEmpty &&
+        local.updatedAt.compareTo(remoteUpdatedAt) > 0) {
+      return;
+    }
+    final String fallbackStamp = DateTime.now().toUtc().toIso8601String();
+    Object? field(String key) => payload.containsKey(key)
+        ? payload[key] as String?
+        : LocalDb.absentTodoField;
+    await _db.applyRemoteCalendarEvent(
+      id: change.entityId,
+      title: payload['title'] as String? ?? local?.title ?? '',
+      start: payload['start'] as String? ?? local?.start ?? '',
+      end: payload['end'] as String? ?? local?.end ?? '',
+      allDay: _truthy(payload['all_day'], local?.allDay ?? true),
+      timeZone: payload['time_zone'] as String? ?? local?.timeZone ?? 'local',
+      needsDate: _truthy(payload['needs_date'], local?.needsDate ?? false),
+      createdAt: payload['created_at'] as String? ?? fallbackStamp,
+      updatedAt: remoteUpdatedAt.isEmpty ? fallbackStamp : remoteUpdatedAt,
+      source: payload['source'] as String?,
+      sourceRef: field('source_ref'),
+      deletedAt: field('deleted_at'),
+      googleEventId: field('google_event_id'),
+      googleHtmlLink: field('google_html_link'),
+      googleUpdated: field('google_updated'),
+      seq: change.seq,
+    );
+  }
+
+  /// sqlite sends 0/1, a JSON-native peer may send true/false.
+  static bool _truthy(Object? v, bool held) => switch (v) {
+        null => held,
+        bool b => b,
+        num n => n != 0,
+        String s => s == '1' || s == 'true',
+        _ => held,
+      };
+
   Future<void> _applyRemoteTodo(RemoteChange change) async {
     final Map<String, dynamic> payload = change.payload ?? const {};
     final TodoRow? local = await _db.getTodoRow(change.entityId);
@@ -706,11 +775,14 @@ class DocumentSyncEngine extends ChangeNotifier {
     final List<DumpRow> dirtyDumps = await _db.dumpsNeedingMetadataPush();
     final List<Folder> dirtyFolders = await _db.foldersNeedingPush();
     final List<TodoRow> dirtyTodos = await _db.todosNeedingPush();
+    final List<CalendarEventRow> dirtyEvents =
+        await _db.calendarEventsNeedingPush();
     final List<SyncTombstoneRow> tombstones = await _db.pendingTombstones();
     if (dirty.isEmpty &&
         dirtyDumps.isEmpty &&
         dirtyFolders.isEmpty &&
         dirtyTodos.isEmpty &&
+        dirtyEvents.isEmpty &&
         tombstones.isEmpty) {
       return 0;
     }
@@ -792,6 +864,28 @@ class DocumentSyncEngine extends ChangeNotifier {
             'folder_id': row.folderId,
           },
         },
+      for (final CalendarEventRow row in dirtyEvents)
+        <String, dynamic>{
+          'entity_type': 'calendar_event',
+          'entity_id': row.id,
+          'op': 'upsert',
+          // Projection: google_event_id / google_html_link / google_updated
+          // are SERVER-authored and capture_fingerprint is local-only —
+          // none of the four ever rides a device push.
+          'payload': <String, dynamic>{
+            'title': row.title,
+            'start': row.start,
+            'end': row.end,
+            'all_day': row.allDay ? 1 : 0,
+            'time_zone': row.timeZone,
+            'needs_date': row.needsDate ? 1 : 0,
+            'source': row.source,
+            'source_ref': row.sourceRef,
+            'created_at': row.createdAt,
+            'updated_at': row.updatedAt,
+            'deleted_at': row.deletedAt,
+          },
+        },
       for (final SyncTombstoneRow stone in tombstones)
         <String, dynamic>{
           'entity_type': stone.entityType,
@@ -816,6 +910,9 @@ class DocumentSyncEngine extends ChangeNotifier {
     };
     final Map<String, String> pushedTodoUpdatedAt = <String, String>{
       for (final TodoRow row in dirtyTodos) row.id: row.updatedAt,
+    };
+    final Map<String, String> pushedEventUpdatedAt = <String, String>{
+      for (final CalendarEventRow row in dirtyEvents) row.id: row.updatedAt,
     };
 
     int accepted = 0;
@@ -850,6 +947,17 @@ class DocumentSyncEngine extends ChangeNotifier {
           await _db.clearTombstone(
             entityType: result.entityType,
             entityId: result.entityId,
+          );
+        }
+        continue;
+      }
+      if (result.entityType == 'calendar_event') {
+        final String? was = pushedEventUpdatedAt[result.entityId];
+        if (was != null) {
+          await _db.markCalendarEventSynced(
+            result.entityId,
+            seq: result.seq,
+            pushedUpdatedAt: was,
           );
         }
         continue;
