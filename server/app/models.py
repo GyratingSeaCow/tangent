@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 DumpMode = Literal["brain_dump", "meeting", "text_note"]
 JobStatus = Literal["queued", "running", "completed", "failed"]
+ENTITY_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
 
 
 class SetupRequest(BaseModel):
@@ -38,7 +39,7 @@ class SetupResponse(BaseModel):
 class DumpCreate(BaseModel):
     """Metadata for a new dump. Audio is uploaded separately via multipart."""
 
-    id: str = Field(min_length=8, max_length=64)
+    id: str = Field(min_length=8, max_length=64, pattern=ENTITY_ID_PATTERN)
     mode: DumpMode
     duration_seconds: int = Field(ge=0, le=7200)  # 0 to 2 hours
     title: str = Field(min_length=1, max_length=500)
@@ -219,7 +220,7 @@ class SyncChange(BaseModel):
     """
 
     entity_type: Literal["dump", "notebook", "note", "folder", "ink_index", "todo"]
-    entity_id: str = Field(min_length=1, max_length=64)
+    entity_id: str = Field(min_length=1, max_length=64, pattern=ENTITY_ID_PATTERN)
     op: Literal["upsert", "delete"]
     payload: dict[str, Any] | None = None
     #: Server-assigned. Ignored on push, populated on pull.

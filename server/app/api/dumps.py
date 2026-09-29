@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sqlite3
 import time
 import uuid
@@ -26,7 +27,7 @@ from app.auth import require_auth
 from app.config import get_settings
 from app.db import get_db
 from app.logging_config import get_logger
-from app.models import DumpCreate, DumpListResponse, DumpPatch, DumpResponse
+from app.models import ENTITY_ID_PATTERN, DumpCreate, DumpListResponse, DumpPatch, DumpResponse
 from app.services.change_log import record_change
 
 router = APIRouter()
@@ -135,7 +136,24 @@ def _audio_dir() -> Path:
     return p
 
 
-@router.post("/v1/dumps/{dump_id}/audio", status_code=status.HTTP_204_NO_CONTENT)
+def _audio_path(dump_id: str, ext: str) -> Path:
+    """Build a confined audio path after independently validating its id."""
+    if re.fullmatch(ENTITY_ID_PATTERN, dump_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Invalid dump id",
+        )
+    audio_dir = _audio_dir().resolve()
+    path = (audio_dir / f"{dump_id}{ext}").resolve()
+    if not path.is_relative_to(audio_dir):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Invalid dump id",
+        )
+    return path
+
+
+@router.post("/v1/dumps/{dump_id:path}/audio", status_code=status.HTTP_204_NO_CONTENT)
 async def upload_audio(
     dump_id: str,
     audio: UploadFile,
@@ -149,6 +167,7 @@ async def upload_audio(
     derived from the upload's content-type. Idempotent: re-uploading
     replaces the file.
     """
+    _audio_path(dump_id, ".opus")
     row = db.execute(
         "SELECT id, mode FROM dumps WHERE id = ? AND deleted_at IS NULL",
         (dump_id,),
@@ -180,7 +199,7 @@ async def upload_audio(
         if ext not in {".opus", ".wav", ".mp3", ".m4a", ".ogg"}:
             ext = ".opus"
 
-    target = _audio_dir() / f"{dump_id}{ext}"
+    target = _audio_path(dump_id, ext)
     target.parent.mkdir(parents=True, exist_ok=True)
 
     # Stream into a unique file in the destination directory. The canonical
@@ -221,13 +240,14 @@ async def upload_audio(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.get("/v1/dumps/{dump_id}/audio")
+@router.get("/v1/dumps/{dump_id:path}/audio")
 def get_audio(
     dump_id: str,
     db: Annotated[sqlite3.Connection, Depends(get_db)],
     _user: Annotated[str, Depends(require_auth)],
 ) -> Response:
     """Download the audio file for a dump. Returns 404 if missing."""
+    _audio_path(dump_id, ".opus")
     row = db.execute(
         "SELECT id FROM dumps WHERE id = ? AND deleted_at IS NULL", (dump_id,)
     ).fetchone()
@@ -239,7 +259,7 @@ def get_audio(
 
     # Try common extensions.
     for ext in (".opus", ".ogg", ".wav", ".mp3", ".m4a"):
-        path = _audio_dir() / f"{dump_id}{ext}"
+        path = _audio_path(dump_id, ext)
         if path.exists():
             data = path.read_bytes()
             media = "audio/ogg" if ext in {".opus", ".ogg"} else f"audio/{ext.lstrip('.')}"
@@ -254,7 +274,10 @@ def get_audio(
 def get_audio_path_for_dump(dump_id: str) -> Path | None:
     """Look up the on-disk audio path for a dump (used by transcription jobs)."""
     for ext in (".opus", ".ogg", ".wav", ".mp3", ".m4a"):
-        path = _audio_dir() / f"{dump_id}{ext}"
+        try:
+            path = _audio_path(dump_id, ext)
+        except HTTPException:
+            return None
         if path.exists():
             return path
     return None
