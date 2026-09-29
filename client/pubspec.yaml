@@ -10,7 +10,7 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  flutter_riverpod: ^2.5.1
+  flutter_riverpod: ^3.4.3
   drift: ^2.20.2
   sqlite3: ^2.9.4
   drift_flutter: ^0.2.2
