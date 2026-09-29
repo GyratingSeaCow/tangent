@@ -48,6 +48,12 @@ PULL_LIMIT = 500
 #: Never written from a device payload, never republished in the feed.
 FOLDER_SERVER_ONLY_FIELDS = frozenset({"google_tasklist_id"})
 
+#: Calendar columns authored only by the Google worker. Device pushes cannot
+#: set or clear these, but the canonical pull projection includes them.
+CALENDAR_SERVER_ONLY_FIELDS = frozenset(
+    {"google_event_id", "google_html_link", "google_updated"}
+)
+
 
 def _now_ts() -> int:
     return int(time.time())
@@ -432,6 +438,111 @@ def _apply_todo(
     return True, _todo_sync_payload(stored)
 
 
+def _calendar_event_payload(row: sqlite3.Row) -> dict[str, Any]:
+    """Canonical device projection, mapping SQL ``end_`` to JSON ``end``."""
+    return {
+        "id": row["id"],
+        "title": row["title"],
+        "start": row["start"],
+        "end": row["end_"],
+        "all_day": row["all_day"],
+        "time_zone": row["time_zone"],
+        "needs_date": row["needs_date"],
+        "source": row["source"],
+        "source_ref": row["source_ref"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+        "deleted_at": row["deleted_at"],
+        "google_event_id": row["google_event_id"],
+        "google_html_link": row["google_html_link"],
+        "google_updated": row["google_updated"],
+    }
+
+
+def _apply_calendar_event(
+    conn: sqlite3.Connection, change: SyncChange, now: int
+) -> tuple[bool, dict[str, Any] | None]:
+    """Apply one event with LWW semantics and server-only field projection."""
+    existing = conn.execute(
+        "SELECT * FROM calendar_events WHERE id = ?", (change.entity_id,)
+    ).fetchone()
+    p: dict[str, Any] = change.payload or {}
+
+    if change.op == "delete":
+        incoming_updated = p.get(
+            "updated_at", datetime.fromtimestamp(now, tz=UTC).isoformat()
+        )
+        incoming_updated = _iso_instant(incoming_updated, "updated_at")
+        if existing is not None and _instant_value(incoming_updated) <= _instant_value(
+            existing["updated_at"]
+        ):
+            return False, None
+        if existing is not None:
+            deleted_at = p.get("deleted_at", incoming_updated)
+            _iso_instant(deleted_at, "deleted_at")
+            conn.execute(
+                "UPDATE calendar_events SET updated_at = ?, deleted_at = ? WHERE id = ?",
+                (incoming_updated, deleted_at, change.entity_id),
+            )
+        return True, None
+
+    if change.payload is None:
+        raise ValueError("calendar_event upsert requires a payload")
+    required = ("title", "start", "end", "time_zone", "created_at", "updated_at")
+    for field in required:
+        if field not in p:
+            raise ValueError(f"calendar_event upsert requires {field}")
+    for field in ("title", "start", "end", "time_zone"):
+        if not isinstance(p[field], str) or not p[field].strip():
+            raise ValueError(f"calendar_event {field} must be a non-empty string")
+    created_at = _iso_instant(p["created_at"], "created_at")
+    updated_at = _iso_instant(p["updated_at"], "updated_at")
+    if existing is not None and _instant_value(updated_at) <= _instant_value(
+        existing["updated_at"]
+    ):
+        return False, None
+
+    def nullable(field: str) -> str | None:
+        value = p[field] if field in p else (existing[field] if existing is not None else None)
+        if value is not None and not isinstance(value, str):
+            raise ValueError(f"calendar_event {field} must be a string or null")
+        return value
+
+    deleted_at = nullable("deleted_at")
+    if deleted_at is not None:
+        _iso_instant(deleted_at, "deleted_at")
+    source_ref = nullable("source_ref")
+    source = p.get("source", existing["source"] if existing is not None else "voice")
+    if not isinstance(source, str) or not source:
+        raise ValueError("calendar_event source must be a non-empty string")
+    all_day = int(bool(p.get("all_day", existing["all_day"] if existing else 1)))
+    needs_date = int(bool(p.get("needs_date", existing["needs_date"] if existing else 0)))
+
+    conn.execute(
+        """
+        INSERT INTO calendar_events
+            (id, title, start, end_, all_day, time_zone, needs_date, source,
+             source_ref, created_at, updated_at, deleted_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            title = excluded.title, start = excluded.start, end_ = excluded.end_,
+            all_day = excluded.all_day, time_zone = excluded.time_zone,
+            needs_date = excluded.needs_date, source = excluded.source,
+            source_ref = excluded.source_ref, updated_at = excluded.updated_at,
+            deleted_at = excluded.deleted_at
+        """,
+        (
+            change.entity_id, p["title"], p["start"], p["end"], all_day,
+            p["time_zone"], needs_date, source, source_ref, created_at,
+            updated_at, deleted_at,
+        ),
+    )
+    stored = conn.execute(
+        "SELECT * FROM calendar_events WHERE id = ?", (change.entity_id,)
+    ).fetchone()
+    return True, _calendar_event_payload(stored)
+
+
 def _apply_document(
     conn: sqlite3.Connection,
     table: str,
@@ -602,6 +713,18 @@ def sync_push(
                     }
             elif change.entity_type == "todo":
                 changed, publish_payload = _apply_todo(db, change, now)
+                if not changed:
+                    results.append(
+                        SyncPushResult(
+                            entity_id=change.entity_id,
+                            entity_type=change.entity_type,
+                            seq=0,
+                            status="applied",
+                        )
+                    )
+                    continue
+            elif change.entity_type == "calendar_event":
+                changed, publish_payload = _apply_calendar_event(db, change, now)
                 if not changed:
                     results.append(
                         SyncPushResult(
