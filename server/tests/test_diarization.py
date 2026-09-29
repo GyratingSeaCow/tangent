@@ -425,14 +425,17 @@ def test_extract_turns_unwraps_pyannote_4x_diarize_output() -> None:
 
 
 class _FakeDiarizeOutput:
-    """pyannote 4.x DiarizeOutput: annotation + centroid rows aligned with labels()."""
+    """pyannote 4.x DiarizeOutput as it REALLY is (verified on 4.0.7 against
+    a recording): ``speaker_diarization`` (the Annotation, which owns
+    ``labels()``) + ``speaker_embeddings`` rows aligned with those labels.
+    The wrapper itself has NO ``labels()`` — the first version of this fake
+    gave it one and the extractor silently returned {} on every real
+    recording (calibration run 2026-09-29: ``embeddings=0`` ×14).
+    """
 
     def __init__(self, annotation: _FakeAnnotation, embeddings) -> None:
         self.speaker_diarization = annotation
         self.speaker_embeddings = embeddings
-
-    def labels(self):
-        return self.speaker_diarization.labels()
 
 
 def test_extract_embeddings_keys_by_raw_label_and_normalises() -> None:

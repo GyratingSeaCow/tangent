@@ -157,9 +157,20 @@ def _extract_embeddings(annotation: Any) -> dict[str, list[float]]:
     from app.services.voice_book import normalise  # noqa: PLC0415
 
     rows = getattr(annotation, "speaker_embeddings", None)
-    if rows is None or not hasattr(annotation, "labels"):
+    if rows is None:
         return {}
-    labels = list(annotation.labels())
+    # The wrapper does not own labels(); its inner Annotation does. Resolve
+    # the same way _extract_turns does, so both stay aligned.
+    owner = annotation
+    if not hasattr(owner, "labels"):
+        for attr in ("speaker_diarization", "exclusive_speaker_diarization"):
+            candidate = getattr(annotation, attr, None)
+            if candidate is not None and hasattr(candidate, "labels"):
+                owner = candidate
+                break
+        else:
+            return {}
+    labels = list(owner.labels())
     out: dict[str, list[float]] = {}
     for label, row in zip(labels, rows):
         out[str(label)] = normalise([float(x) for x in row])
