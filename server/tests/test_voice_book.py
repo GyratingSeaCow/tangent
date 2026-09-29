@@ -134,3 +134,17 @@ def test_forget_removes_exactly_one_row(conn):
     assert vb.forget(conn, "Tom") is True
     assert vb.forget(conn, "Tom") is False
     assert [e.name for e in vb.load_voice_book(conn)] == ["Jeff"]
+
+
+def test_nan_embedding_is_rejected_by_teach_and_skipped_by_match(conn):
+    """pyannote returns NaN centroids for near-empty recordings; they must
+    never enter the book or produce a match (calibration 2026-09-29)."""
+    nan = [float("nan")] * 2
+    assert vb.is_finite(nan) is False and vb.is_finite([]) is False
+    assert vb.is_finite([0.0, 1.0]) is True
+    with pytest.raises(ValueError):
+        vb.teach(conn, "Ghost", nan)
+    assert vb.load_voice_book(conn) == []
+    book = _book(Jeff=_unit(1, 0))
+    names, rejected = vb.match({"Speaker 1": nan}, book, accept=0.7, margin=0.1)
+    assert names == {}

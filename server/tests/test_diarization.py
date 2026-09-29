@@ -610,3 +610,11 @@ def test_load_pipeline_caches_the_loaded_pipeline(monkeypatch: pytest.MonkeyPatc
     assert diarization._load_pipeline() == "cached-pipeline"
     assert sum(loads) == 1
     diarization.reset_pipeline()
+
+
+def test_extract_embeddings_drops_nan_rows() -> None:
+    ann = _FakeAnnotation([(0.0, 1.0, "SPEAKER_00"), (1.0, 2.0, "SPEAKER_01")])
+    out = _FakeDiarizeOutput(ann, [[float("nan"), float("nan")], [0.0, 2.0]])
+    emb = diarization._extract_embeddings(out)
+    assert list(emb) == ["SPEAKER_01"]
+    assert emb["SPEAKER_01"] == pytest.approx([0.0, 1.0])

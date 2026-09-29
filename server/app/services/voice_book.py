@@ -27,9 +27,16 @@ def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def is_finite(v: Sequence[float]) -> bool:
+    """False for an empty vector or any NaN/inf component. pyannote hands
+    back NaN centroids for very short recordings; those must never be
+    stored, taught or matched (calibration run 2026-09-29: ``nan`` rows)."""
+    return len(v) > 0 and all(math.isfinite(float(x)) for x in v)
+
+
 def normalise(v: Sequence[float]) -> list[float]:
     norm = math.sqrt(sum(float(x) * float(x) for x in v))
-    if norm == 0.0:
+    if norm == 0.0 or not math.isfinite(norm):
         return [0.0 for _ in v]
     return [float(x) / norm for x in v]
 
@@ -49,6 +56,8 @@ def teach(
     clean = name.strip()
     if not clean:
         raise ValueError("voice name must not be empty")
+    if not is_finite(embedding):
+        raise ValueError("voice embedding must be finite and non-empty")
     incoming = normalise(embedding)
     stamp = now or _now()
     row = conn.execute(

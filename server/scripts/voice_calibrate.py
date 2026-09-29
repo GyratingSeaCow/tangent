@@ -9,7 +9,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from app.services.diarization import diarize_segments_with_embeddings
-from app.services.voice_book import normalise
+from app.services.voice_book import is_finite, normalise
 
 
 def _dot(a: Sequence[float], b: Sequence[float]) -> float:
@@ -25,6 +25,7 @@ def rank_against(
     ranked = [
         (_dot(ref, normalise(embedding)), title, label)
         for title, label, embedding in candidates
+        if is_finite(embedding)
     ]
     return sorted(ranked, key=lambda row: (-row[0], row[1], row[2]))
 
@@ -76,7 +77,15 @@ def calibrate(db_path: Path, audio_root: Path, name: str) -> None:
             segments = timings.get("segments")
             if audio is None or not isinstance(segments, list):
                 continue
-            _labelled, embeddings = diarize_segments_with_embeddings(str(audio), segments)
+            # Reuse a stored centroid set: re-diarizing 100+ recordings is
+            # minutes of GPU work and the answer does not change.
+            stored = _json_object(row["speaker_embeddings"])
+            if stored:
+                embeddings = {k: [float(x) for x in v] for k, v in stored.items()}
+            else:
+                _labelled, embeddings = diarize_segments_with_embeddings(
+                    str(audio), segments
+                )
             if not embeddings:
                 continue
             recordings.append((row, embeddings, _json_object(row["speaker_names"])))

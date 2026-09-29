@@ -316,7 +316,10 @@ def _teach_from_rename(
         clean = (name or "").strip()
         if not clean or old.get(label) == name or label not in embeddings:
             continue
-        teach(conn, clean, embeddings[label])
+        try:
+            teach(conn, clean, embeddings[label])
+        except ValueError:
+            continue  # a NaN centroid slipped into an old row: skip, never poison
         taught.append(clean)
     if taught:
         log.info("voice_book.taught", names=taught)

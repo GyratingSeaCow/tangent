@@ -154,7 +154,7 @@ def _extract_embeddings(annotation: Any) -> dict[str, list[float]]:
     pyannote 4.x exposes rows on ``DiarizeOutput.speaker_embeddings`` aligned
     with ``labels()``. A bare 3.x ``Annotation`` has no embeddings.
     """
-    from app.services.voice_book import normalise  # noqa: PLC0415
+    from app.services.voice_book import is_finite, normalise  # noqa: PLC0415
 
     rows = getattr(annotation, "speaker_embeddings", None)
     if rows is None:
@@ -173,7 +173,11 @@ def _extract_embeddings(annotation: Any) -> dict[str, list[float]]:
     labels = list(owner.labels())
     out: dict[str, list[float]] = {}
     for label, row in zip(labels, rows):
-        out[str(label)] = normalise([float(x) for x in row])
+        vec = [float(x) for x in row]
+        if not is_finite(vec):
+            # Too little speech for a centroid: no voice to remember.
+            continue
+        out[str(label)] = normalise(vec)
     return out
 
 
