@@ -478,20 +478,34 @@ def test_short_speakers_get_labels_but_no_voice(monkeypatch) -> None:
     nothing to teach, nothing to match against."""
     monkeypatch.setenv("TANGENT_DIARIZATION", "pyannote")
     monkeypatch.setenv("HF_TOKEN", "hf_fake")
-    # SPEAKER_00 talks 4 s + 4 s = 8 s (gated); SPEAKER_01 talks 16 s (kept)
+    # SPEAKER_00: 4 s + 4 s = 8 s total (gated). SPEAKER_01: 6 s + 6 s + 6 s
+    # = 18 s total (kept) — no single turn passes on its own, so the gate
+    # must SUM a speaker's turns, as in any real back-and-forth meeting.
     ann = _FakeAnnotation(
-        [(0.0, 4.0, "SPEAKER_00"), (4.0, 20.0, "SPEAKER_01"), (20.0, 24.0, "SPEAKER_00")]
+        [
+            (0.0, 4.0, "SPEAKER_00"),
+            (4.0, 10.0, "SPEAKER_01"),
+            (10.0, 14.0, "SPEAKER_00"),
+            (14.0, 20.0, "SPEAKER_01"),
+            (20.0, 26.0, "SPEAKER_01"),
+        ]
     )
     out = _FakeDiarizeOutput(ann, [[1.0, 0.0], [0.0, 1.0]])
     monkeypatch.setattr(diarization, "_load_pipeline", lambda: (lambda _w: out))
     monkeypatch.setattr(diarization, "_decode_waveform", lambda path: {})
     segs = [
         {"start": 0.0, "end": 4.0, "text": "a"},
-        {"start": 4.0, "end": 20.0, "text": "b"},
-        {"start": 20.0, "end": 24.0, "text": "c"},
+        {"start": 4.0, "end": 10.0, "text": "b"},
+        {"start": 10.0, "end": 14.0, "text": "c"},
+        {"start": 14.0, "end": 26.0, "text": "d"},
     ]
     labelled, emb = diarization.diarize_segments_with_embeddings("x.wav", segs)
-    assert [s["speaker"] for s in labelled] == ["Speaker 1", "Speaker 2", "Speaker 1"]
+    assert [s["speaker"] for s in labelled] == [
+        "Speaker 1",
+        "Speaker 2",
+        "Speaker 1",
+        "Speaker 2",
+    ]
     assert list(emb) == ["Speaker 2"]
 
 
