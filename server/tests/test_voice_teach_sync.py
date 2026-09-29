@@ -87,14 +87,21 @@ def test_unchanged_pairs_do_not_bump_samples(authed_client, temp_data_dir):
 
 
 def test_correction_teaches_new_name_leaves_old_alone(authed_client, temp_data_dir):
+    """V2: the matcher wrongly named Speaker 1 'Tom' (stored map says so);
+    Jeff corrects it to 'Dana'. Dana learns this voice; Tom's stored voice
+    is untouched — not re-taught, not un-taught."""
     client, token = authed_client
     conn = _seed(temp_data_dir, {"Speaker 1": [1.0, 0.0]})
     vb.teach(conn, "Tom", [0.0, 1.0])
+    conn.execute(
+        "UPDATE dumps SET speaker_names = ? WHERE id = ?",
+        (json.dumps({"Speaker 1": "Tom"}), DUMP),
+    )
     conn.commit()
     _push(client, token, {"speaker_names": json.dumps({"Speaker 1": "Dana"})})
     book = {e.name: e for e in vb.load_voice_book(conn)}
     assert book["Tom"].embedding == [0.0, 1.0] and book["Tom"].samples == 1
-    assert book["Dana"].embedding == [1.0, 0.0]
+    assert book["Dana"].embedding == [1.0, 0.0] and book["Dana"].samples == 1
 
 
 def test_unmapped_or_blank_or_no_embedding_teaches_nothing(authed_client, temp_data_dir):
