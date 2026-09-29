@@ -5,6 +5,23 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.35.0 — 2026-09-28
+
+### Added
+- **Voice → Google Calendar events.** "Add this to my calendar dentist Thursday at 2" (and "add X to my calendar", "put this/that on my calendar", "calendar this") in a Brain Dump or Meeting creates the event on your primary Google Calendar on the server's next Google tick. Date + time → one-hour timed event; date only → all-day. Spoken times are parsed for the first time ("at 3", "3:30 pm", "noon", "at 15:00", "3 o'clock", "seven in the morning"). The recording gets an **Added to your calendar** card — each row opens the Google event, shows *· syncing…* until the server has pushed it, and Undo removes them from Google too. Edits made on Google flow back (title/date/time, deletion). Spec `docs/design/2026-09-28-voice-calendar-events.md`.
+- **No-date rule (Brain Dump only).** "Add this to my calendar renew the passport" in a Brain Dump lands on the recording's day flagged *today (no date said) — tap to fix*; in a Meeting a date-less phrase is skipped because it is said conversationally there. A time with no date is today at that time, flagged.
+- **Meeting capture is back** in the home picker (Brain Dump · Meeting · Text Note) and the recordings list's create menu — it had been removed from capture in v1.22.0. Meeting notes, action items and the rendering never left.
+- Settings → Google shows a **Calendar:** line: *not enabled — tap Reconnect* when the stored token predates the calendar scope, otherwise *connected · N events last sync*.
+
+### Changed
+- Google OAuth now requests `calendar.events.owned` alongside Tasks. Existing links keep working for Tasks; one **Reconnect** grants the calendar half. Enable the Google Calendar API in your Cloud project first.
+- Server: new `calendar_events` entity on the sync feed (`google_event_id` / `google_html_link` / `google_updated` are server-authored and never accepted from a device); `google_tasks_link` gains `granted_scope`, `calendar_sync_token` and the last-cycle calendar counters. Update the server image with this release.
+- Client database v26 (`calendar_events` table). The spoken-date grammar moved to `voice_date_grammar.dart`, shared by To Do and calendar capture — To Do parsing is byte-identical.
+
+### Security
+- Server: audio paths are confined to validated entity ids (`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$` on `DumpCreate.id`, `SyncChange.entity_id` and every path parameter, plus a containment assert) — closes the CodeQL `py/path-injection` findings in `dumps.py`.
+- CI: least-privilege `GITHUB_TOKEN` per workflow/job, CodeQL (actions + python), Dependabot version updates, release-tag protection ruleset.
+
 ## 1.34.0 — 2026-09-28
 
 ### Fixed

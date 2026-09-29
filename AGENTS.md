@@ -50,13 +50,31 @@ ADH2/
 
 ## Status
 
-Shipping — **v1.34.0** (see CHANGELOG.md). Client and server are both
-implemented and tested (2606
-Flutter tests, 612 server tests, 129 Kotlin tests). The client runs
+Shipping — **v1.35.0** (see CHANGELOG.md). Client and server are both
+implemented and tested (2669
+Flutter tests, 636 server tests, 129 Kotlin tests). The client runs
 natively on Linux AND Windows (tray icon, global record hotkey,
 close-to-tray, single instance, right-click = long-press; AppImage and
 Inno Setup installer under `packaging/`) — verified on CachyOS/KDE
 Plasma Wayland and Windows 11; see the README's Desktop sections.
+
+v1.35.0 **voice → Google Calendar events + Meeting capture restored**, spec
+docs/design/2026-09-28-voice-calendar-events.md, plan `…-plan.md`. Client:
+`CalendarVoiceParser` (trigger family, both subject-before/after shapes, one
+event per trigger) on the shared `VoiceDateGrammar` extracted verbatim from
+the To Do parser; `parseTimePhrase` is the first spoken-time → value;
+`calendar_events` drift table (v26, `end_` column ↔ wire key `end`),
+`CalendarEventRepository`, sync push PROJECTS OUT `google_*` +
+`capture_fingerprint`, pull writes the Google fields; `captureVoiceEvents`
+at the same three transcript sinks as To Do with the same fingerprint
+idempotency, mode-gated (C3: no-date → Brain Dump only); `VoiceEventsCard`
+(`openExternalProvider` seam). Server (Ted): `_apply_calendar_event` +
+`_calendar_event_payload` in sync.py, `google_calendar_worker` (insert/
+patch/delete, `syncToken` pull with 410 → full relist, LWW on Google
+`updated`, `needs_date` cleared when the date moves), scope gate
+`has_calendar_scope` → `reauth_required` with a named error, `granted_scope`
+stored from the token response, `GoogleCalendarStatus` block on /status.
+Meeting restore = revert of only the UI hunks of b607a93.
 
 v1.33.0 (client-only) **completion notifications**, spec
 docs/design/2026-09-28-completion-notifications.md. Pure `CompletionNotifier`

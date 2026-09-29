@@ -5,9 +5,9 @@
 > Built for ADHD minds. Self-hosted. Offline-first. No subscriptions.
 
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](./LICENSE)
-[![Version: 1.34.0](https://img.shields.io/badge/version-1.34.0-blue.svg)](./CHANGELOG.md)
-[![Client tests: 2606 passing](https://img.shields.io/badge/client_tests-2606%20passing-brightgreen.svg)]()
-[![Server tests: 612 passing](https://img.shields.io/badge/server_tests-612%20passing-brightgreen.svg)]()
+[![Version: 1.35.0](https://img.shields.io/badge/version-1.35.0-blue.svg)](./CHANGELOG.md)
+[![Client tests: 2669 passing](https://img.shields.io/badge/client_tests-2669%20passing-brightgreen.svg)]()
+[![Server tests: 636 passing](https://img.shields.io/badge/server_tests-636%20passing-brightgreen.svg)]()
 
 ---
 
@@ -81,6 +81,20 @@ desktop hotkey, so they can never diverge; if the app is in Text Note mode
 the trigger flips it to Brain Dump first. From a **locked phone** the widget
 starts the recording over the lock screen and a second tap stops it — anything
 beyond stop (review, edit, lists) asks for the unlock.
+
+**Spoken calendar events (v1.35.0).** Say *"add this to my calendar dentist
+Thursday at 2"* (or *"add the dentist Thursday at 2 to my calendar"*, *"put
+that on my calendar…"*, *"calendar this…"*) in a Brain Dump or Meeting and
+the event lands on your primary Google Calendar on the server's next sync
+tick — date + time makes a one-hour event, a date alone makes an all-day
+one. The recording shows an **Added to your calendar** card with a link to
+the Google event and an Undo. Say it in a Brain Dump with no date and the
+event goes on the recording's day, flagged *no date said — tap to fix*; in a
+Meeting a date-less phrase is ignored (people say it conversationally
+there). Needs the Google link from Settings → Google with the calendar
+permission — enable the **Google Calendar API** in the same Cloud project as
+Tasks, and tap **Reconnect** once after updating the server so the token
+carries `calendar.events.owned`.
 
 *Why no "Hey Google, start recording in Tangent"?* Assistant only fulfils
 an app's custom voice actions once it has indexed the app from the Play
