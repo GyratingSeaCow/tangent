@@ -282,7 +282,11 @@ CREATE TABLE IF NOT EXISTS google_tasks_link (
     last_moved INTEGER NOT NULL DEFAULT 0,
     oauth_state TEXT,
     oauth_state_expires_at INTEGER,
-    granted_scope TEXT
+    granted_scope TEXT,
+    calendar_sync_token TEXT,
+    last_cal_pushed INTEGER NOT NULL DEFAULT 0,
+    last_cal_pulled INTEGER NOT NULL DEFAULT 0,
+    last_cal_error TEXT
 );
 
 -- v1.30 folders <-> Google lists: one pull cursor (updatedMin) per managed
@@ -309,12 +313,20 @@ def _db_path(data_dir: str) -> Path:
 
 
 def _migrate_google_link_scope(conn: sqlite3.Connection) -> None:
-    """Add the OAuth scope grant captured from Google's token response."""
+    """Add Calendar OAuth, cursor, and status fields to existing links."""
     columns = {
         row[1] for row in conn.execute("PRAGMA table_info(google_tasks_link)")
     }
-    if "granted_scope" not in columns:
-        conn.execute("ALTER TABLE google_tasks_link ADD COLUMN granted_scope TEXT")
+    additions = {
+        "granted_scope": "TEXT",
+        "calendar_sync_token": "TEXT",
+        "last_cal_pushed": "INTEGER NOT NULL DEFAULT 0",
+        "last_cal_pulled": "INTEGER NOT NULL DEFAULT 0",
+        "last_cal_error": "TEXT",
+    }
+    for name, ddl in additions.items():
+        if name not in columns:
+            conn.execute(f"ALTER TABLE google_tasks_link ADD COLUMN {name} {ddl}")
 
 
 def _migrate_jobs_request_id(conn: sqlite3.Connection) -> None:

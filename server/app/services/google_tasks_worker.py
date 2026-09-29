@@ -970,9 +970,19 @@ def run_cycle(db: sqlite3.Connection) -> tuple[int, int]:
     """Run one ensure-lists / push / pull LWW cycle and persist its status."""
     with _cycle_lock:
         row = db.execute("SELECT * FROM google_tasks_link WHERE id = 1").fetchone()
-        if row is None or row["status"] not in ("connected", "error"):
+        calendar_reauth = (
+            row is not None
+            and row["status"] == "reauth_required"
+            and row["last_error"]
+            == "Google Calendar permission not granted — Reconnect"
+        )
+        if row is None or (
+            row["status"] not in ("connected", "error") and not calendar_reauth
+        ):
             return (0, 0)
         stats = CycleStats()
+        calendar_stats = None
+        calendar_started = False
         try:
             access_token = _refresh_access_token(db, row)
             if not row["tasklist_id"]:
@@ -999,15 +1009,36 @@ def run_cycle(db: sqlite3.Connection) -> tuple[int, int]:
             # delegates its HTTP/parsing helpers back to this module.
             from app.services import google_calendar_worker
 
-            google_calendar_worker.run_calendar_cycle(db, access_token)
-            db.execute(
-                """
-                UPDATE google_tasks_link SET status = 'connected', last_error = NULL,
-                    last_sync_at = ?, last_pushed = ?, last_pulled = ?, last_moved = ?
-                WHERE id = 1
-                """,
-                (_now_rfc3339(), stats.pushed, stats.pulled, stats.moved),
-            )
+            calendar_started = True
+            calendar_stats = google_calendar_worker.run_calendar_cycle(db, access_token)
+            if google_calendar_worker.has_calendar_scope(row):
+                db.execute(
+                    """
+                    UPDATE google_tasks_link SET status = 'connected', last_error = NULL,
+                        last_sync_at = ?, last_pushed = ?, last_pulled = ?,
+                        last_moved = ?, last_cal_pushed = ?, last_cal_pulled = ?,
+                        last_cal_error = NULL
+                    WHERE id = 1
+                    """,
+                    (
+                        _now_rfc3339(), stats.pushed, stats.pulled, stats.moved,
+                        calendar_stats.pushed, calendar_stats.pulled,
+                    ),
+                )
+            else:
+                # The Calendar scope gate deliberately owns status/last_error;
+                # Tasks still completed and their counters must be persisted.
+                db.execute(
+                    """
+                    UPDATE google_tasks_link SET last_sync_at = ?, last_pushed = ?,
+                        last_pulled = ?, last_moved = ?, last_cal_pushed = ?,
+                        last_cal_pulled = ? WHERE id = 1
+                    """,
+                    (
+                        _now_rfc3339(), stats.pushed, stats.pulled, stats.moved,
+                        calendar_stats.pushed, calendar_stats.pulled,
+                    ),
+                )
             db.commit()
             log.info(
                 "google_tasks_worker.synced",
@@ -1020,6 +1051,16 @@ def run_cycle(db: sqlite3.Connection) -> tuple[int, int]:
                 "last_pushed = ?, last_pulled = ?, last_moved = ? WHERE id = 1",
                 (next_status, str(exc)[:500], stats.pushed, stats.pulled, stats.moved),
             )
+            if calendar_started:
+                db.execute(
+                    "UPDATE google_tasks_link SET last_cal_pushed = ?, "
+                    "last_cal_pulled = ?, last_cal_error = ? WHERE id = 1",
+                    (
+                        calendar_stats.pushed if calendar_stats else 0,
+                        calendar_stats.pulled if calendar_stats else 0,
+                        str(exc)[:500],
+                    ),
+                )
             db.commit()
             log.warning(
                 "google_tasks_worker.sync_failed",
@@ -1030,8 +1071,15 @@ def run_cycle(db: sqlite3.Connection) -> tuple[int, int]:
 
 
 def run_cycle_if_connected(db: sqlite3.Connection) -> bool:
-    row = db.execute("SELECT status FROM google_tasks_link WHERE id = 1").fetchone()
-    if row is None or row[0] != "connected":
+    row = db.execute(
+        "SELECT status, last_error FROM google_tasks_link WHERE id = 1"
+    ).fetchone()
+    calendar_reauth = (
+        row is not None
+        and row["status"] == "reauth_required"
+        and row["last_error"] == "Google Calendar permission not granted — Reconnect"
+    )
+    if row is None or (row["status"] != "connected" and not calendar_reauth):
         return False
     run_cycle(db)
     return True

@@ -19,13 +19,16 @@ from pydantic import BaseModel, Field
 from app.auth import require_auth
 from app.db import get_db
 from app.logging_config import get_logger
-from app.services import google_tasks_worker
+from app.services import google_calendar_worker, google_tasks_worker
 
 router = APIRouter(prefix="/v1/google-tasks", tags=["google-tasks"])
 log = get_logger(__name__)
 
 AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
-OAUTH_SCOPE = "https://www.googleapis.com/auth/tasks openid email"
+OAUTH_SCOPE = (
+    "https://www.googleapis.com/auth/tasks openid email "
+    "https://www.googleapis.com/auth/calendar.events.owned"
+)
 STATE_TTL_S = 10 * 60
 
 GoogleLinkStatus = Literal[
@@ -47,6 +50,13 @@ class GoogleCycleCounts(BaseModel):
     moved: int = 0
 
 
+class GoogleCalendarStatus(BaseModel):
+    enabled: bool = False
+    last_pushed: int = 0
+    last_pulled: int = 0
+    last_error: str | None = None
+
+
 class GoogleTasksStatus(BaseModel):
     status: GoogleLinkStatus
     credentials_configured: bool
@@ -57,6 +67,7 @@ class GoogleTasksStatus(BaseModel):
     pulled: int = 0
     lists: list[GoogleListMapping] = Field(default_factory=list)
     last_cycle: GoogleCycleCounts = Field(default_factory=GoogleCycleCounts)
+    calendar: GoogleCalendarStatus = Field(default_factory=GoogleCalendarStatus)
 
 
 class GoogleCredentials(BaseModel):
@@ -113,6 +124,12 @@ def _status(db: sqlite3.Connection) -> GoogleTasksStatus:
             pushed=row["last_pushed"],
             pulled=row["last_pulled"],
             moved=row["last_moved"],
+        ),
+        calendar=GoogleCalendarStatus(
+            enabled=google_calendar_worker.has_calendar_scope(row),
+            last_pushed=row["last_cal_pushed"],
+            last_pulled=row["last_cal_pulled"],
+            last_error=row["last_cal_error"],
         ),
     )
 
@@ -197,6 +214,11 @@ def save_credentials(
             last_pushed = 0,
             last_pulled = 0,
             last_moved = 0,
+            granted_scope = NULL,
+            calendar_sync_token = NULL,
+            last_cal_pushed = 0,
+            last_cal_pulled = 0,
+            last_cal_error = NULL,
             oauth_state = NULL,
             oauth_state_expires_at = NULL
         """,
@@ -295,6 +317,11 @@ def callback(
         expires_in = max(0, int(tokens.get("expires_in", 3600)))
         tasklist_id = google_tasks_worker.ensure_tangent_tasklist(access_token)
         email = tokens.get("email") or _email_from_id_token(tokens.get("id_token"))
+        granted_scope = tokens.get("scope")
+        if granted_scope is not None and not isinstance(granted_scope, str):
+            raise google_tasks_worker.GoogleTasksError(
+                "Google token response included an invalid scope"
+            )
     except (google_tasks_worker.GoogleTasksError, TypeError, ValueError) as exc:
         next_status = "reauth_required" if getattr(exc, "code", None) == "invalid_grant" else "error"
         db.execute(
@@ -312,7 +339,9 @@ def callback(
         """
         UPDATE google_tasks_link SET
             refresh_token = ?, access_token = ?, access_expires_at = ?,
-            google_email = ?, tasklist_id = ?, status = 'connected',
+            google_email = ?, tasklist_id = ?, granted_scope = ?,
+            calendar_sync_token = NULL, last_cal_pushed = 0,
+            last_cal_pulled = 0, last_cal_error = NULL, status = 'connected',
             last_error = NULL, oauth_state = NULL, oauth_state_expires_at = NULL
         WHERE id = 1
         """,
@@ -322,6 +351,7 @@ def callback(
             int(time.time()) + expires_in,
             str(email) if email else None,
             tasklist_id,
+            granted_scope,
         ),
     )
     log.info("google_tasks.connected", has_email=bool(email))
@@ -350,9 +380,12 @@ def disconnect(
                 refresh_token = NULL, access_token = NULL,
                 access_expires_at = NULL, google_email = NULL,
                 tasklist_id = NULL, last_pull_updated_min = NULL,
+                granted_scope = NULL, calendar_sync_token = NULL,
                 status = 'disconnected', last_error = NULL,
                 last_sync_at = NULL, last_pushed = 0, last_pulled = 0,
-                last_moved = 0, oauth_state = NULL, oauth_state_expires_at = NULL
+                last_moved = 0, last_cal_pushed = 0, last_cal_pulled = 0,
+                last_cal_error = NULL, oauth_state = NULL,
+                oauth_state_expires_at = NULL
             WHERE id = 1
             """
         )
