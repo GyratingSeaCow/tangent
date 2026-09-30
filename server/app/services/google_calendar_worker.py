@@ -30,14 +30,34 @@ def _request(*args: Any, **kwargs: Any):
     return google_tasks_worker._request(*args, **kwargs)
 
 
+# Legacy clients (Linux builds before the flutter_timezone fallback fix)
+# stored OS abbreviations instead of IANA names; Google rejects those with
+# 400 "Invalid time zone definition". Map the common US/UTC ones and fall
+# back to UTC for anything else that isn't an Area/City name.
+_TZ_ABBREVIATIONS = {
+    "EST": "America/New_York", "EDT": "America/New_York",
+    "CST": "America/Chicago", "CDT": "America/Chicago",
+    "MST": "America/Denver", "MDT": "America/Denver",
+    "PST": "America/Los_Angeles", "PDT": "America/Los_Angeles",
+    "UTC": "UTC", "GMT": "UTC", "Z": "UTC",
+}
+
+
+def _sanitize_time_zone(zone: str) -> str:
+    if "/" in zone:
+        return zone
+    return _TZ_ABBREVIATIONS.get(zone.upper(), "UTC")
+
+
 def event_to_google(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
     """Map a local event to Google Calendar's writable representation."""
     if row["all_day"]:
         start = {"date": row["start"]}
         end = {"date": row["end_"]}
     else:
-        start = {"dateTime": row["start"], "timeZone": row["time_zone"]}
-        end = {"dateTime": row["end_"], "timeZone": row["time_zone"]}
+        zone = _sanitize_time_zone(row["time_zone"])
+        start = {"dateTime": row["start"], "timeZone": zone}
+        end = {"dateTime": row["end_"], "timeZone": zone}
     return {
         "summary": row["title"],
         "start": start,

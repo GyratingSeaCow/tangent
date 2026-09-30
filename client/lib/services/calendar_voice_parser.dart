@@ -13,6 +13,8 @@
 /// it, because "put that on the calendar" is said conversationally there.
 library;
 
+import 'dart:io';
+
 import 'package:flutter_timezone/flutter_timezone.dart';
 
 import '../models/dump_mode.dart';
@@ -236,12 +238,35 @@ class CalendarVoiceParser {
   }
 
   /// The device's IANA zone, for the capture seam (tests never call this).
+  ///
+  /// flutter_timezone has NO Linux implementation, so on Linux the plugin
+  /// call throws and we must resolve the IANA name from the OS ourselves.
+  /// The old fallback (`DateTime.now().timeZoneName`) returns an
+  /// abbreviation like "EDT", which Google rejects with
+  /// "Invalid time zone definition for start time" (400).
   static Future<String> deviceTimeZone() async {
     try {
       return await FlutterTimezone.getLocalTimezone();
     } catch (_) {
-      return DateTime.now().timeZoneName;
+      return _osIanaZone() ?? 'UTC';
     }
+  }
+
+  /// IANA zone from the OS: $TZ if it looks like an Area/City name,
+  /// else the /etc/localtime symlink target under .../zoneinfo/.
+  static String? _osIanaZone() {
+    try {
+      final tz = Platform.environment['TZ'];
+      if (tz != null && tz.contains('/') && !tz.startsWith(':')) return tz;
+      if (tz != null && tz.startsWith(':') && tz.contains('/')) {
+        return tz.substring(1);
+      }
+      final target = Link('/etc/localtime').resolveSymbolicLinksSync();
+      const marker = 'zoneinfo/';
+      final idx = target.indexOf(marker);
+      if (idx != -1) return target.substring(idx + marker.length);
+    } catch (_) {}
+    return null;
   }
 
   static String _clean(String raw) {

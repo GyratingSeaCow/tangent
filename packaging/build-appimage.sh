@@ -52,7 +52,7 @@ cp -L "$LIBMPV" "$APPDIR/usr/lib/"
 # name too and every probe resolves inside the AppImage.
 ln -sf "$(basename "$LIBMPV")" "$APPDIR/usr/lib/libmpv.so"
 
-BASELINE_RE='^(ld-linux|linux-vdso|libc\.so|libm\.so|libdl\.so|libpthread\.so|librt\.so|libresolv\.so|libgcc_s|libstdc\+\+|libz\.so|libglib|libgobject|libgio|libgmodule|libgtk|libgdk|libpango|libcairo|libatk|libX|libxcb|libxkb|libwayland|libEGL|libGL|libGLX|libGLdispatch|libOpenGL|libvulkan|libdrm|libgbm|libdbus|libsystemd|libudev|libasound|libpulse|libfontconfig|libfreetype|libharfbuzz|libfribidi|libexpat|libffi|libpcre|libmount|libblkid|libselinux|libcap\.so|libgcrypt|libgpg-error|liblzma|liblz4|libzstd\.so|libbz2|libpng|libjpeg|libbrotli|libssl|libcrypto|libnghttp|libcurl|libidn|libunistring|libpsl|libkrb5|libgssapi|libcom_err|libk5crypto|libkrb5support|libkeyutils|libuuid\.so|libsecret|libjson)'
+BASELINE_RE='^(ld-linux|linux-vdso|libc\.so|libm\.so|libdl\.so|libpthread\.so|librt\.so|libresolv\.so|libgcc_s|libstdc\+\+|libz\.so|libglib|libgobject|libgio|libgmodule|libgtk|libgdk|libpango|libcairo|libatk|libX|libxcb|libxkb|libwayland|libEGL|libGL|libGLX|libGLdispatch|libOpenGL|libvulkan|libdrm|libgbm|libdbus|libsystemd|libudev|libasound|libpulse|libfontconfig|libfreetype|libharfbuzz|libfribidi|libexpat|libffi|libpcre|libmount|libblkid|libselinux|libcap\.so|libgcrypt|libgpg-error|liblzma|liblz4|libzstd\.so|libbz2|libpng|libjpeg|libbrotli|libssl|libcrypto|libnghttp|libcurl|libidn|libunistring|libpsl|libkrb5|libgssapi|libcom_err|libk5crypto|libkrb5support|libkeyutils|libuuid\.so|libsecret|libjson|libva|libvdpau)'
 
 for _pass in 1 2 3; do
   # Both our lib dir AND the Flutter bundle's plugin .so files: plugins can

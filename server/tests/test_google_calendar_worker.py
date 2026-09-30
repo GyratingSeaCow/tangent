@@ -84,6 +84,28 @@ def test_timed_event_body_has_datetime_and_timezone() -> None:
     assert "tangent://dump/dump-1" in body["description"]
 
 
+def test_legacy_abbreviation_time_zone_is_sanitized() -> None:
+    """Rows written by pre-fix Linux clients stored 'EDT', not IANA names."""
+    body = w.event_to_google(
+        {
+            "title": "Dentist",
+            "start": "2026-10-01T14:00:00",
+            "end_": "2026-10-01T15:00:00",
+            "all_day": 0,
+            "time_zone": "EDT",
+            "id": "ev-3",
+            "source_ref": "dump-1",
+        }
+    )
+    assert body["start"]["timeZone"] == "America/New_York"
+    assert body["end"]["timeZone"] == "America/New_York"
+
+
+def test_unknown_abbreviation_falls_back_to_utc() -> None:
+    assert w._sanitize_time_zone("XYZT") == "UTC"
+    assert w._sanitize_time_zone("Europe/Paris") == "Europe/Paris"
+
+
 def test_all_day_event_body_uses_date_only() -> None:
     body = w.event_to_google(
         {
