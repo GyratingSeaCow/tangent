@@ -424,6 +424,21 @@ class CalendarEvents extends Table {
   Set<Column> get primaryKey => {id};
 }
 
+/// v1.37.0: server-authored Ask history. These rows are pull-only.
+@DataClassName('AskMessageRow')
+class AskMessages extends Table {
+  @override
+  String get tableName => 'ask_messages';
+  TextColumn get id => text()();
+  TextColumn get role => text()();
+  TextColumn get body => text().named('text')();
+  TextColumn get sourcesJson => text().withDefault(const Constant('[]'))();
+  IntColumn get createdAt => integer()();
+  IntColumn get serverSeq => integer()();
+  @override
+  Set<Column> get primaryKey => {id};
+}
+
 @DriftDatabase(
   tables: [
     Dumps,
@@ -442,6 +457,7 @@ class CalendarEvents extends Table {
     LocalSettings,
     Todos,
     CalendarEvents,
+    AskMessages,
   ],
 )
 class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
@@ -450,7 +466,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   LocalDb.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 26;
+  int get schemaVersion => 27;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -956,6 +972,12 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
             // v1.35.0: voice → Google Calendar events.
             await m.createTable(calendarEvents);
           }
+          if (from < 27) {
+            final List<QueryRow> table = await customSelect(
+              "SELECT name FROM sqlite_master WHERE type='table' AND name='ask_messages'",
+            ).get();
+            if (table.isEmpty) await m.createTable(askMessages);
+          }
         },
       );
 
@@ -1121,10 +1143,45 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
         syncTombstones,
         syncStates,
         inkIndexEntries,
+        askMessages,
       ])
         TableUpdate.onTable(table),
     });
   }
+
+  /// Replaces a notebook's mirrored index rows with a freshly pulled set.
+  Stream<List<AskMessageRow>> watchAskHistory() => (select(askMessages)
+        ..orderBy(<OrderingTerm Function($AskMessagesTable)>[
+          (t) => OrderingTerm.asc(t.createdAt),
+          (t) => OrderingTerm.asc(t.serverSeq),
+        ]))
+      .watch();
+
+  Future<List<AskMessageRow>> askHistory() => (select(askMessages)
+        ..orderBy(<OrderingTerm Function($AskMessagesTable)>[
+          (t) => OrderingTerm.asc(t.createdAt),
+          (t) => OrderingTerm.asc(t.serverSeq),
+        ]))
+      .get();
+
+  Future<void> applyRemoteAskMessage({
+    required String id,
+    required String role,
+    required String text,
+    required String sourcesJson,
+    required int createdAt,
+    required int seq,
+  }) =>
+      into(askMessages).insertOnConflictUpdate(
+        AskMessagesCompanion.insert(
+          id: id,
+          role: role,
+          body: text,
+          sourcesJson: Value<String>(sourcesJson),
+          createdAt: createdAt,
+          serverSeq: seq,
+        ),
+      );
 
   /// Replaces a notebook's mirrored index rows with a freshly pulled set.
   ///

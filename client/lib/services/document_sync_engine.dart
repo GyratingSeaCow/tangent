@@ -241,6 +241,19 @@ class DocumentSyncEngine extends ChangeNotifier {
       await _applyRemoteCalendarEvent(change);
       return false;
     }
+    if (change.entityType == 'ask_message') {
+      if (change.op == SyncOp.delete) return false;
+      final Map<String, dynamic> payload = change.payload ?? const {};
+      await _db.applyRemoteAskMessage(
+        id: change.entityId,
+        role: payload['role'] as String? ?? 'assistant',
+        text: payload['text'] as String? ?? '',
+        sourcesJson: jsonEncode(payload['sources'] ?? const <dynamic>[]),
+        createdAt: (payload['created_at'] as num?)?.toInt() ?? 0,
+        seq: change.seq,
+      );
+      return false;
+    }
     if (change.entityType == 'folder') {
       if (change.op == SyncOp.delete) {
         await _db.applyRemoteFolderDeletion(change.entityId);
@@ -895,11 +908,12 @@ class DocumentSyncEngine extends ChangeNotifier {
           },
         },
       for (final SyncTombstoneRow stone in tombstones)
-        <String, dynamic>{
-          'entity_type': stone.entityType,
-          'entity_id': stone.entityId,
-          'op': 'delete',
-        },
+        if (stone.entityType != 'ask_message')
+          <String, dynamic>{
+            'entity_type': stone.entityType,
+            'entity_id': stone.entityId,
+            'op': 'delete',
+          },
     ];
 
     final List<PushResult> results = await client.pushChanges(

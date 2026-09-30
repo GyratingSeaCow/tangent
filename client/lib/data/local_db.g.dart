@@ -8257,6 +8257,353 @@ class CalendarEventsCompanion extends UpdateCompanion<CalendarEventRow> {
   }
 }
 
+class $AskMessagesTable extends AskMessages
+    with TableInfo<$AskMessagesTable, AskMessageRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $AskMessagesTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<String> id = GeneratedColumn<String>(
+      'id', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _roleMeta = const VerificationMeta('role');
+  @override
+  late final GeneratedColumn<String> role = GeneratedColumn<String>(
+      'role', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _bodyMeta = const VerificationMeta('body');
+  @override
+  late final GeneratedColumn<String> body = GeneratedColumn<String>(
+      'text', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _sourcesJsonMeta =
+      const VerificationMeta('sourcesJson');
+  @override
+  late final GeneratedColumn<String> sourcesJson = GeneratedColumn<String>(
+      'sources_json', aliasedName, false,
+      type: DriftSqlType.string,
+      requiredDuringInsert: false,
+      defaultValue: const Constant('[]'));
+  static const VerificationMeta _createdAtMeta =
+      const VerificationMeta('createdAt');
+  @override
+  late final GeneratedColumn<int> createdAt = GeneratedColumn<int>(
+      'created_at', aliasedName, false,
+      type: DriftSqlType.int, requiredDuringInsert: true);
+  static const VerificationMeta _serverSeqMeta =
+      const VerificationMeta('serverSeq');
+  @override
+  late final GeneratedColumn<int> serverSeq = GeneratedColumn<int>(
+      'server_seq', aliasedName, false,
+      type: DriftSqlType.int, requiredDuringInsert: true);
+  @override
+  List<GeneratedColumn> get $columns =>
+      [id, role, body, sourcesJson, createdAt, serverSeq];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'ask_messages';
+  @override
+  VerificationContext validateIntegrity(Insertable<AskMessageRow> instance,
+      {bool isInserting = false}) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    } else if (isInserting) {
+      context.missing(_idMeta);
+    }
+    if (data.containsKey('role')) {
+      context.handle(
+          _roleMeta, role.isAcceptableOrUnknown(data['role']!, _roleMeta));
+    } else if (isInserting) {
+      context.missing(_roleMeta);
+    }
+    if (data.containsKey('text')) {
+      context.handle(
+          _bodyMeta, body.isAcceptableOrUnknown(data['text']!, _bodyMeta));
+    } else if (isInserting) {
+      context.missing(_bodyMeta);
+    }
+    if (data.containsKey('sources_json')) {
+      context.handle(
+          _sourcesJsonMeta,
+          sourcesJson.isAcceptableOrUnknown(
+              data['sources_json']!, _sourcesJsonMeta));
+    }
+    if (data.containsKey('created_at')) {
+      context.handle(_createdAtMeta,
+          createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta));
+    } else if (isInserting) {
+      context.missing(_createdAtMeta);
+    }
+    if (data.containsKey('server_seq')) {
+      context.handle(_serverSeqMeta,
+          serverSeq.isAcceptableOrUnknown(data['server_seq']!, _serverSeqMeta));
+    } else if (isInserting) {
+      context.missing(_serverSeqMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  AskMessageRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return AskMessageRow(
+      id: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}id'])!,
+      role: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}role'])!,
+      body: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}text'])!,
+      sourcesJson: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}sources_json'])!,
+      createdAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}created_at'])!,
+      serverSeq: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}server_seq'])!,
+    );
+  }
+
+  @override
+  $AskMessagesTable createAlias(String alias) {
+    return $AskMessagesTable(attachedDatabase, alias);
+  }
+}
+
+class AskMessageRow extends DataClass implements Insertable<AskMessageRow> {
+  final String id;
+  final String role;
+  final String body;
+  final String sourcesJson;
+  final int createdAt;
+  final int serverSeq;
+  const AskMessageRow(
+      {required this.id,
+      required this.role,
+      required this.body,
+      required this.sourcesJson,
+      required this.createdAt,
+      required this.serverSeq});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<String>(id);
+    map['role'] = Variable<String>(role);
+    map['text'] = Variable<String>(body);
+    map['sources_json'] = Variable<String>(sourcesJson);
+    map['created_at'] = Variable<int>(createdAt);
+    map['server_seq'] = Variable<int>(serverSeq);
+    return map;
+  }
+
+  AskMessagesCompanion toCompanion(bool nullToAbsent) {
+    return AskMessagesCompanion(
+      id: Value(id),
+      role: Value(role),
+      body: Value(body),
+      sourcesJson: Value(sourcesJson),
+      createdAt: Value(createdAt),
+      serverSeq: Value(serverSeq),
+    );
+  }
+
+  factory AskMessageRow.fromJson(Map<String, dynamic> json,
+      {ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return AskMessageRow(
+      id: serializer.fromJson<String>(json['id']),
+      role: serializer.fromJson<String>(json['role']),
+      body: serializer.fromJson<String>(json['body']),
+      sourcesJson: serializer.fromJson<String>(json['sourcesJson']),
+      createdAt: serializer.fromJson<int>(json['createdAt']),
+      serverSeq: serializer.fromJson<int>(json['serverSeq']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<String>(id),
+      'role': serializer.toJson<String>(role),
+      'body': serializer.toJson<String>(body),
+      'sourcesJson': serializer.toJson<String>(sourcesJson),
+      'createdAt': serializer.toJson<int>(createdAt),
+      'serverSeq': serializer.toJson<int>(serverSeq),
+    };
+  }
+
+  AskMessageRow copyWith(
+          {String? id,
+          String? role,
+          String? body,
+          String? sourcesJson,
+          int? createdAt,
+          int? serverSeq}) =>
+      AskMessageRow(
+        id: id ?? this.id,
+        role: role ?? this.role,
+        body: body ?? this.body,
+        sourcesJson: sourcesJson ?? this.sourcesJson,
+        createdAt: createdAt ?? this.createdAt,
+        serverSeq: serverSeq ?? this.serverSeq,
+      );
+  AskMessageRow copyWithCompanion(AskMessagesCompanion data) {
+    return AskMessageRow(
+      id: data.id.present ? data.id.value : this.id,
+      role: data.role.present ? data.role.value : this.role,
+      body: data.body.present ? data.body.value : this.body,
+      sourcesJson:
+          data.sourcesJson.present ? data.sourcesJson.value : this.sourcesJson,
+      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+      serverSeq: data.serverSeq.present ? data.serverSeq.value : this.serverSeq,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('AskMessageRow(')
+          ..write('id: $id, ')
+          ..write('role: $role, ')
+          ..write('body: $body, ')
+          ..write('sourcesJson: $sourcesJson, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('serverSeq: $serverSeq')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode =>
+      Object.hash(id, role, body, sourcesJson, createdAt, serverSeq);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is AskMessageRow &&
+          other.id == this.id &&
+          other.role == this.role &&
+          other.body == this.body &&
+          other.sourcesJson == this.sourcesJson &&
+          other.createdAt == this.createdAt &&
+          other.serverSeq == this.serverSeq);
+}
+
+class AskMessagesCompanion extends UpdateCompanion<AskMessageRow> {
+  final Value<String> id;
+  final Value<String> role;
+  final Value<String> body;
+  final Value<String> sourcesJson;
+  final Value<int> createdAt;
+  final Value<int> serverSeq;
+  final Value<int> rowid;
+  const AskMessagesCompanion({
+    this.id = const Value.absent(),
+    this.role = const Value.absent(),
+    this.body = const Value.absent(),
+    this.sourcesJson = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.serverSeq = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  AskMessagesCompanion.insert({
+    required String id,
+    required String role,
+    required String body,
+    this.sourcesJson = const Value.absent(),
+    required int createdAt,
+    required int serverSeq,
+    this.rowid = const Value.absent(),
+  })  : id = Value(id),
+        role = Value(role),
+        body = Value(body),
+        createdAt = Value(createdAt),
+        serverSeq = Value(serverSeq);
+  static Insertable<AskMessageRow> custom({
+    Expression<String>? id,
+    Expression<String>? role,
+    Expression<String>? body,
+    Expression<String>? sourcesJson,
+    Expression<int>? createdAt,
+    Expression<int>? serverSeq,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (role != null) 'role': role,
+      if (body != null) 'text': body,
+      if (sourcesJson != null) 'sources_json': sourcesJson,
+      if (createdAt != null) 'created_at': createdAt,
+      if (serverSeq != null) 'server_seq': serverSeq,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  AskMessagesCompanion copyWith(
+      {Value<String>? id,
+      Value<String>? role,
+      Value<String>? body,
+      Value<String>? sourcesJson,
+      Value<int>? createdAt,
+      Value<int>? serverSeq,
+      Value<int>? rowid}) {
+    return AskMessagesCompanion(
+      id: id ?? this.id,
+      role: role ?? this.role,
+      body: body ?? this.body,
+      sourcesJson: sourcesJson ?? this.sourcesJson,
+      createdAt: createdAt ?? this.createdAt,
+      serverSeq: serverSeq ?? this.serverSeq,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<String>(id.value);
+    }
+    if (role.present) {
+      map['role'] = Variable<String>(role.value);
+    }
+    if (body.present) {
+      map['text'] = Variable<String>(body.value);
+    }
+    if (sourcesJson.present) {
+      map['sources_json'] = Variable<String>(sourcesJson.value);
+    }
+    if (createdAt.present) {
+      map['created_at'] = Variable<int>(createdAt.value);
+    }
+    if (serverSeq.present) {
+      map['server_seq'] = Variable<int>(serverSeq.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('AskMessagesCompanion(')
+          ..write('id: $id, ')
+          ..write('role: $role, ')
+          ..write('body: $body, ')
+          ..write('sourcesJson: $sourcesJson, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('serverSeq: $serverSeq, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$LocalDb extends GeneratedDatabase {
   _$LocalDb(QueryExecutor e) : super(e);
   $LocalDbManager get managers => $LocalDbManager(this);
@@ -8283,6 +8630,7 @@ abstract class _$LocalDb extends GeneratedDatabase {
   late final $LocalSettingsTable localSettings = $LocalSettingsTable(this);
   late final $TodosTable todos = $TodosTable(this);
   late final $CalendarEventsTable calendarEvents = $CalendarEventsTable(this);
+  late final $AskMessagesTable askMessages = $AskMessagesTable(this);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -8303,7 +8651,8 @@ abstract class _$LocalDb extends GeneratedDatabase {
         inkIndexEntries,
         localSettings,
         todos,
-        calendarEvents
+        calendarEvents,
+        askMessages
       ];
   @override
   StreamQueryUpdateRules get streamUpdateRules => const StreamQueryUpdateRules(
@@ -12336,6 +12685,194 @@ typedef $$CalendarEventsTableProcessedTableManager = ProcessedTableManager<
     ),
     CalendarEventRow,
     PrefetchHooks Function()>;
+typedef $$AskMessagesTableCreateCompanionBuilder = AskMessagesCompanion
+    Function({
+  required String id,
+  required String role,
+  required String body,
+  Value<String> sourcesJson,
+  required int createdAt,
+  required int serverSeq,
+  Value<int> rowid,
+});
+typedef $$AskMessagesTableUpdateCompanionBuilder = AskMessagesCompanion
+    Function({
+  Value<String> id,
+  Value<String> role,
+  Value<String> body,
+  Value<String> sourcesJson,
+  Value<int> createdAt,
+  Value<int> serverSeq,
+  Value<int> rowid,
+});
+
+class $$AskMessagesTableFilterComposer
+    extends Composer<_$LocalDb, $AskMessagesTable> {
+  $$AskMessagesTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get id => $composableBuilder(
+      column: $table.id, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get role => $composableBuilder(
+      column: $table.role, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get body => $composableBuilder(
+      column: $table.body, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get sourcesJson => $composableBuilder(
+      column: $table.sourcesJson, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get createdAt => $composableBuilder(
+      column: $table.createdAt, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get serverSeq => $composableBuilder(
+      column: $table.serverSeq, builder: (column) => ColumnFilters(column));
+}
+
+class $$AskMessagesTableOrderingComposer
+    extends Composer<_$LocalDb, $AskMessagesTable> {
+  $$AskMessagesTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get id => $composableBuilder(
+      column: $table.id, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get role => $composableBuilder(
+      column: $table.role, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get body => $composableBuilder(
+      column: $table.body, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get sourcesJson => $composableBuilder(
+      column: $table.sourcesJson, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get createdAt => $composableBuilder(
+      column: $table.createdAt, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get serverSeq => $composableBuilder(
+      column: $table.serverSeq, builder: (column) => ColumnOrderings(column));
+}
+
+class $$AskMessagesTableAnnotationComposer
+    extends Composer<_$LocalDb, $AskMessagesTable> {
+  $$AskMessagesTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<String> get role =>
+      $composableBuilder(column: $table.role, builder: (column) => column);
+
+  GeneratedColumn<String> get body =>
+      $composableBuilder(column: $table.body, builder: (column) => column);
+
+  GeneratedColumn<String> get sourcesJson => $composableBuilder(
+      column: $table.sourcesJson, builder: (column) => column);
+
+  GeneratedColumn<int> get createdAt =>
+      $composableBuilder(column: $table.createdAt, builder: (column) => column);
+
+  GeneratedColumn<int> get serverSeq =>
+      $composableBuilder(column: $table.serverSeq, builder: (column) => column);
+}
+
+class $$AskMessagesTableTableManager extends RootTableManager<
+    _$LocalDb,
+    $AskMessagesTable,
+    AskMessageRow,
+    $$AskMessagesTableFilterComposer,
+    $$AskMessagesTableOrderingComposer,
+    $$AskMessagesTableAnnotationComposer,
+    $$AskMessagesTableCreateCompanionBuilder,
+    $$AskMessagesTableUpdateCompanionBuilder,
+    (
+      AskMessageRow,
+      BaseReferences<_$LocalDb, $AskMessagesTable, AskMessageRow>
+    ),
+    AskMessageRow,
+    PrefetchHooks Function()> {
+  $$AskMessagesTableTableManager(_$LocalDb db, $AskMessagesTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$AskMessagesTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$AskMessagesTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$AskMessagesTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback: ({
+            Value<String> id = const Value.absent(),
+            Value<String> role = const Value.absent(),
+            Value<String> body = const Value.absent(),
+            Value<String> sourcesJson = const Value.absent(),
+            Value<int> createdAt = const Value.absent(),
+            Value<int> serverSeq = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              AskMessagesCompanion(
+            id: id,
+            role: role,
+            body: body,
+            sourcesJson: sourcesJson,
+            createdAt: createdAt,
+            serverSeq: serverSeq,
+            rowid: rowid,
+          ),
+          createCompanionCallback: ({
+            required String id,
+            required String role,
+            required String body,
+            Value<String> sourcesJson = const Value.absent(),
+            required int createdAt,
+            required int serverSeq,
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              AskMessagesCompanion.insert(
+            id: id,
+            role: role,
+            body: body,
+            sourcesJson: sourcesJson,
+            createdAt: createdAt,
+            serverSeq: serverSeq,
+            rowid: rowid,
+          ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ));
+}
+
+typedef $$AskMessagesTableProcessedTableManager = ProcessedTableManager<
+    _$LocalDb,
+    $AskMessagesTable,
+    AskMessageRow,
+    $$AskMessagesTableFilterComposer,
+    $$AskMessagesTableOrderingComposer,
+    $$AskMessagesTableAnnotationComposer,
+    $$AskMessagesTableCreateCompanionBuilder,
+    $$AskMessagesTableUpdateCompanionBuilder,
+    (
+      AskMessageRow,
+      BaseReferences<_$LocalDb, $AskMessagesTable, AskMessageRow>
+    ),
+    AskMessageRow,
+    PrefetchHooks Function()>;
 
 class $LocalDbManager {
   final _$LocalDb _db;
@@ -12372,4 +12909,6 @@ class $LocalDbManager {
       $$TodosTableTableManager(_db, _db.todos);
   $$CalendarEventsTableTableManager get calendarEvents =>
       $$CalendarEventsTableTableManager(_db, _db.calendarEvents);
+  $$AskMessagesTableTableManager get askMessages =>
+      $$AskMessagesTableTableManager(_db, _db.askMessages);
 }

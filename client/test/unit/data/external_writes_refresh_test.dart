@@ -35,8 +35,7 @@ void main() {
       'wrote', () async {
     final StreamController<List<String>> seen =
         StreamController<List<String>>.broadcast();
-    final StreamSubscription<List<String>> sub = (a.select(a.notebooks)
-            .watch())
+    final StreamSubscription<List<String>> sub = (a.select(a.notebooks).watch())
         .map((rows) => rows.map((r) => r.title).toList())
         .listen(seen.add);
     addTearDown(sub.cancel);
@@ -61,5 +60,30 @@ void main() {
         .timeout(const Duration(seconds: 5));
     await a.refreshExternalWrites();
     expect(await after, contains('pulled in the background'));
+  });
+
+  test('refreshExternalWrites re-emits Ask history from another connection',
+      () async {
+    final StreamController<List<String>> seen =
+        StreamController<List<String>>.broadcast();
+    final StreamSubscription<List<String>> sub = a
+        .watchAskHistory()
+        .map((rows) => rows.map((r) => r.body).toList())
+        .listen(seen.add);
+    addTearDown(sub.cancel);
+    expect(await seen.stream.first, isEmpty);
+    await b.applyRemoteAskMessage(
+      id: 'server-answer',
+      role: 'assistant',
+      text: 'Externally synced answer',
+      sourcesJson: '[]',
+      createdAt: 99,
+      seq: 101,
+    );
+    final Future<List<String>> after = seen.stream
+        .firstWhere((rows) => rows.contains('Externally synced answer'))
+        .timeout(const Duration(seconds: 5));
+    await a.refreshExternalWrites();
+    expect(await after, contains('Externally synced answer'));
   });
 }
