@@ -333,36 +333,33 @@ class _AskScreenState extends ConsumerState<AskScreen> {
                   return Align(
                     alignment:
                         user ? Alignment.centerRight : Alignment.centerLeft,
-                    child: Card(
-                      key: Key('ask-message-${message.id}'),
-                      child: Padding(
-                        padding: const EdgeInsets.all(12),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: <Widget>[
-                            Text(message.text),
-                            if (message.sources.isNotEmpty)
-                              const SizedBox(height: 8),
-                            Wrap(
-                              spacing: 6,
-                              runSpacing: 6,
-                              children: message.sources.indexed
-                                  .map(
-                                    (entry) => ActionChip(
-                                      key: Key(
-                                        'ask-source-${message.id}-${entry.$1}-${entry.$2.entityType}-${entry.$2.entityId}',
-                                      ),
-                                      avatar: Icon(
-                                        _sourceIcon(entry.$2.entityType),
-                                        size: 16,
-                                      ),
-                                      label: Text(_sourceLabel(entry.$2)),
-                                      onPressed: () => _openSource(entry.$2),
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxWidth: MediaQuery.sizeOf(context).width - 24,
+                      ),
+                      child: Card(
+                        key: Key('ask-message-${message.id}'),
+                        child: Padding(
+                          padding: const EdgeInsets.all(12),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: <Widget>[
+                              Text(message.text),
+                              if (message.sources.isNotEmpty) ...<Widget>[
+                                const SizedBox(height: 4),
+                                ...message.sources.indexed.map(
+                                  (entry) => _SourceRow(
+                                    key: Key(
+                                      'ask-source-${message.id}-${entry.$1}-${entry.$2.entityType}-${entry.$2.entityId}',
                                     ),
-                                  )
-                                  .toList(growable: false),
-                            ),
-                          ],
+                                    icon: _sourceIcon(entry.$2.entityType),
+                                    label: _sourceLabel(entry.$2),
+                                    onTap: () => _openSource(entry.$2),
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
                         ),
                       ),
                     ),
@@ -448,4 +445,50 @@ IconData _sourceIcon(String type) => switch (type) {
 String _timestamp(double seconds) {
   final int total = seconds.floor();
   return '${total ~/ 60}:${(total % 60).toString().padLeft(2, '0')}';
+}
+
+/// One citation, rendered full-width on its own line so a list of sources
+/// reads as a single scannable column instead of a reflowing chip cloud.
+class _SourceRow extends StatelessWidget {
+  const _SourceRow({
+    super.key,
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+        child: Row(
+          children: <Widget>[
+            Icon(icon, size: 18, color: scheme.primary),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
+            ),
+            Icon(
+              Icons.chevron_right,
+              size: 18,
+              color: scheme.onSurfaceVariant,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }

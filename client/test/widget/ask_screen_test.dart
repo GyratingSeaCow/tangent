@@ -98,6 +98,71 @@ void main() {
     expect((cards[1].key as Key).toString(), contains('a-17'));
   });
 
+  testWidgets('citations stack one per line in a single left-aligned column',
+      (tester) async {
+    tester.view.physicalSize = const Size(1248, 1972);
+    tester.view.devicePixelRatio = 2.0;
+    addTearDown(tester.view.reset);
+    final message = AskHistoryMessage(
+      id: 'a-col',
+      role: 'assistant',
+      text: "I couldn't find that in your notes",
+      sources: const <AskSource>[
+        AskSource(
+          entityType: 'todo',
+          entityId: 'todo-1',
+          snippet: 'todo',
+          seekSeconds: null,
+        ),
+        AskSource(
+          entityType: 'dump',
+          entityId: 'dump-1',
+          snippet: 'a',
+          seekSeconds: 34,
+        ),
+        AskSource(
+          entityType: 'dump',
+          entityId: 'dump-2',
+          snippet: 'b',
+          seekSeconds: 116,
+        ),
+        AskSource(
+          entityType: 'dump',
+          entityId: 'dump-3',
+          snippet: 'c',
+          seekSeconds: 39,
+        ),
+      ],
+      createdAt: DateTime.utc(2026, 9, 30),
+    );
+    await tester.pumpWidget(_app(history: <AskHistoryMessage>[message]));
+    await tester.pump();
+
+    final List<Rect> rects = <Rect>[
+      tester.getRect(find.byKey(const Key('ask-source-a-col-0-todo-todo-1'))),
+      tester.getRect(find.byKey(const Key('ask-source-a-col-1-dump-dump-1'))),
+      tester.getRect(find.byKey(const Key('ask-source-a-col-2-dump-dump-2'))),
+      tester.getRect(find.byKey(const Key('ask-source-a-col-3-dump-dump-3'))),
+    ];
+
+    // Every citation starts at the same left edge: one readable column.
+    for (final Rect rect in rects) {
+      expect(rect.left, moreOrLessEquals(rects.first.left, epsilon: 0.5));
+    }
+    // Each citation sits strictly BELOW the previous one -- never side by side.
+    for (int i = 1; i < rects.length; i++) {
+      expect(
+        rects[i].top,
+        greaterThanOrEqualTo(rects[i - 1].bottom - 0.5),
+        reason: 'citation $i shares a row with ${i - 1}; layout reflowed',
+      );
+    }
+    // Rows span the bubble so the whole line is a tap target, not a pill.
+    expect(rects.first.width, greaterThan(200));
+    // No chip cloud remains.
+    expect(find.byType(ActionChip), findsNothing);
+  });
+
   testWidgets('missing citation remains visible and reports honest miss',
       (tester) async {
     final db = _Db();
