@@ -412,6 +412,19 @@ class DocumentSyncEngine extends ChangeNotifier {
       summaryQueuePosition: payload.containsKey('summary_queue_position')
           ? (payload['summary_queue_position'] as num?)?.toInt()
           : LocalDb.absentSummaryField,
+      // v1.38 filing: same pattern as the notebook folder_id — null means
+      // UNFILED while absence means "older server, keep the local filing".
+      folderId: payload.containsKey('folder_id')
+          ? payload['folder_id'] as String?
+          : LocalDb.absentFolderId,
+      // Auto-file markers (server-authored): while auto_filed_at is set the
+      // card shows "Auto-filed to <folder> · Undo".
+      autoFiledAt: payload.containsKey('auto_filed_at')
+          ? (payload['auto_filed_at'] as num?)?.toInt()
+          : LocalDb.absentSummaryField,
+      autoFilePrevFolderId: payload.containsKey('auto_file_prev_folder_id')
+          ? payload['auto_file_prev_folder_id'] as String?
+          : LocalDb.absentSummaryField,
       seq: change.seq,
     );
     await _reportSummaryLanded(change.entityId, local, payload);
@@ -858,12 +871,18 @@ class DocumentSyncEngine extends ChangeNotifier {
             'duration_seconds': row.durationSeconds,
             'created_at': row.createdAt.millisecondsSinceEpoch ~/ 1000,
             'updated_at': row.updatedAt.millisecondsSinceEpoch ~/ 1000,
+            // v1.38: filing travels with the dump, todo-style — null is
+            // always meaningful (unfiled), so the key is always present.
+            'folder_id': row.folderId,
             // audio_kept is deliberately absent: whether the SERVER holds the
             // audio is the server's own fact, and sending our view of it
             // would let a device that never uploaded clear the flag.
             // Likewise absent (v1.19.0): language, translated,
             // summary_status, summary_error, summary_queue_position are
             // server-authored, and summary_error_dismissed_at is local-only.
+            // The auto-file markers are server-authored too: a push never
+            // carries them — pushing a CHANGED folder_id is what clears
+            // them server-side.
           },
         },
       for (final TodoRow row in dirtyTodos)

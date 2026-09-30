@@ -318,6 +318,17 @@ def run_job_inline(job_id: str, audio_path: str, translate: bool = False) -> Non
                 log.exception(
                     "job.summary_trigger_failed", job_id=job_id
                 )
+            # Auto-file (spec 2026-09-30, queued item #3): the finished
+            # transcript picks its own folder when the server is confident,
+            # and does nothing otherwise. Same contract as the summary
+            # trigger: fires after the commit above, and a failure must
+            # never fail the finished transcription.
+            try:
+                from app.services import auto_file
+
+                auto_file.maybe_auto_file(db, success_dump["dump_id"])
+            except Exception:
+                log.exception("job.auto_file_failed", job_id=job_id)
     finally:
         with contextlib.suppress(StopIteration):
             next(gen)

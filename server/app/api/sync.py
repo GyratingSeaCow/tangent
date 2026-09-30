@@ -254,12 +254,31 @@ def _apply_dump(conn: sqlite3.Connection, change: SyncChange, now: int) -> None:
             return existing[key]
         return default
 
+    # folder_id: present means "this filing", absent means "keep what is
+    # stored" (the notebooks contract — an older client is a narrower
+    # payload, not an eraser). A push that CHANGES the filing also retires
+    # the server's auto-file markers: the user took control (an Undo is
+    # exactly such a push), so the chip must disappear everywhere.
+    filing_changed = "folder_id" in p and (
+        existing is None or p["folder_id"] != existing["folder_id"]
+    )
+    auto_filed_at = (
+        None
+        if filing_changed or existing is None
+        else existing["auto_filed_at"]
+    )
+    auto_file_prev_folder_id = (
+        None
+        if filing_changed or existing is None
+        else existing["auto_file_prev_folder_id"]
+    )
     conn.execute(
         """
         INSERT INTO dumps
             (id, client_id, created_at, updated_at, mode, duration_seconds,
-             title, transcript, meeting_notes, speaker_names, audio_kept, deleted_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+             title, transcript, meeting_notes, speaker_names, audio_kept,
+             folder_id, auto_filed_at, auto_file_prev_folder_id, deleted_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
         ON CONFLICT(id) DO UPDATE SET
             mode = excluded.mode,
             duration_seconds = excluded.duration_seconds,
@@ -267,6 +286,9 @@ def _apply_dump(conn: sqlite3.Connection, change: SyncChange, now: int) -> None:
             transcript = excluded.transcript,
             meeting_notes = excluded.meeting_notes,
             speaker_names = excluded.speaker_names,
+            folder_id = excluded.folder_id,
+            auto_filed_at = excluded.auto_filed_at,
+            auto_file_prev_folder_id = excluded.auto_file_prev_folder_id,
             updated_at = excluded.updated_at,
             deleted_at = NULL
         """,
@@ -282,6 +304,9 @@ def _apply_dump(conn: sqlite3.Connection, change: SyncChange, now: int) -> None:
             val("meeting_notes"),
             val("speaker_names"),
             int(existing["audio_kept"]) if existing is not None else 0,
+            val("folder_id"),
+            auto_filed_at,
+            auto_file_prev_folder_id,
         ),
     )
 
@@ -745,7 +770,8 @@ def sync_push(
                         "SELECT audio_kept, summary, summary_model, "
                         "summarized_at, summary_template, speaker_names, language, translated, "
                         "summary_status, summary_error, summary_queue_position, transcript_timings, "
-                        "timings_version "
+                        "timings_version, folder_id, auto_filed_at, "
+                        "auto_file_prev_folder_id "
                         "FROM dumps WHERE id = ?",
                         (change.entity_id,),
                     ).fetchone()
@@ -770,6 +796,15 @@ def sync_push(
                             "transcript_timings"
                         ]
                         publish_payload["timings_version"] = stored["timings_version"]
+                        # Filing as APPLIED (absent-key pushes keep the
+                        # stored filing; echoing the omission would unfile
+                        # the row on every other device), plus the
+                        # server-authored auto-file markers.
+                        publish_payload["folder_id"] = stored["folder_id"]
+                        publish_payload["auto_filed_at"] = stored["auto_filed_at"]
+                        publish_payload["auto_file_prev_folder_id"] = stored[
+                            "auto_file_prev_folder_id"
+                        ]
             elif change.entity_type == "notebook":
                 _apply_document(db, "notebooks", change, now)
                 # The OCR worker re-derives this notebook's index (a delete

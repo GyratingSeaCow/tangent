@@ -152,6 +152,18 @@ class $DumpsTable extends Dumps with TableInfo<$DumpsTable, DumpRow> {
   late final GeneratedColumn<String> folderId = GeneratedColumn<String>(
       'folder_id', aliasedName, true,
       type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _autoFiledAtMeta =
+      const VerificationMeta('autoFiledAt');
+  @override
+  late final GeneratedColumn<int> autoFiledAt = GeneratedColumn<int>(
+      'auto_filed_at', aliasedName, true,
+      type: DriftSqlType.int, requiredDuringInsert: false);
+  static const VerificationMeta _autoFilePrevFolderIdMeta =
+      const VerificationMeta('autoFilePrevFolderId');
+  @override
+  late final GeneratedColumn<String> autoFilePrevFolderId =
+      GeneratedColumn<String>('auto_file_prev_folder_id', aliasedName, true,
+          type: DriftSqlType.string, requiredDuringInsert: false);
   static const VerificationMeta _syncDirtyMeta =
       const VerificationMeta('syncDirty');
   @override
@@ -290,6 +302,8 @@ class $DumpsTable extends Dumps with TableInfo<$DumpsTable, DumpRow> {
         transcriptionCompletedAt,
         transcriptionError,
         folderId,
+        autoFiledAt,
+        autoFilePrevFolderId,
         syncDirty,
         syncedSeq,
         remoteOnly,
@@ -454,6 +468,18 @@ class $DumpsTable extends Dumps with TableInfo<$DumpsTable, DumpRow> {
       context.handle(_folderIdMeta,
           folderId.isAcceptableOrUnknown(data['folder_id']!, _folderIdMeta));
     }
+    if (data.containsKey('auto_filed_at')) {
+      context.handle(
+          _autoFiledAtMeta,
+          autoFiledAt.isAcceptableOrUnknown(
+              data['auto_filed_at']!, _autoFiledAtMeta));
+    }
+    if (data.containsKey('auto_file_prev_folder_id')) {
+      context.handle(
+          _autoFilePrevFolderIdMeta,
+          autoFilePrevFolderId.isAcceptableOrUnknown(
+              data['auto_file_prev_folder_id']!, _autoFilePrevFolderIdMeta));
+    }
     if (data.containsKey('sync_dirty')) {
       context.handle(_syncDirtyMeta,
           syncDirty.isAcceptableOrUnknown(data['sync_dirty']!, _syncDirtyMeta));
@@ -606,6 +632,11 @@ class $DumpsTable extends Dumps with TableInfo<$DumpsTable, DumpRow> {
           DriftSqlType.string, data['${effectivePrefix}transcription_error']),
       folderId: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}folder_id']),
+      autoFiledAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}auto_filed_at']),
+      autoFilePrevFolderId: attachedDatabase.typeMapping.read(
+          DriftSqlType.string,
+          data['${effectivePrefix}auto_file_prev_folder_id']),
       syncDirty: attachedDatabase.typeMapping
           .read(DriftSqlType.bool, data['${effectivePrefix}sync_dirty']),
       syncedSeq: attachedDatabase.typeMapping
@@ -675,7 +706,17 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
 
   /// Which folder this recording or note is filed in, or null when unfiled.
   /// Same metadata approach as notebooks: filing never moves the audio file.
+  /// v1.38: filing travels with the dump payload (null means unfiled), so a
+  /// move syncs across devices exactly like a notebook or to-do filing.
   final String? folderId;
+
+  /// v1.38 auto-file (server-authored, server→client only): unix seconds
+  /// when the SERVER filed this capture after transcription, and the filing
+  /// it replaced (null = it was unfiled). While [autoFiledAt] is set the
+  /// card shows "Auto-filed to <folder> · Undo"; an undo or any manual
+  /// re-file clears both here and, via the pushed filing, on the server.
+  final int? autoFiledAt;
+  final String? autoFilePrevFolderId;
 
   /// Sync state, mirroring the notebook columns. [syncDirty] means this row
   /// has local metadata edits the server has not accepted yet; [syncedSeq]
@@ -792,6 +833,8 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
       this.transcriptionCompletedAt,
       this.transcriptionError,
       this.folderId,
+      this.autoFiledAt,
+      this.autoFilePrevFolderId,
       this.syncDirty,
       this.syncedSeq,
       this.remoteOnly,
@@ -857,6 +900,12 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
     }
     if (!nullToAbsent || folderId != null) {
       map['folder_id'] = Variable<String>(folderId);
+    }
+    if (!nullToAbsent || autoFiledAt != null) {
+      map['auto_filed_at'] = Variable<int>(autoFiledAt);
+    }
+    if (!nullToAbsent || autoFilePrevFolderId != null) {
+      map['auto_file_prev_folder_id'] = Variable<String>(autoFilePrevFolderId);
     }
     if (!nullToAbsent || syncDirty != null) {
       map['sync_dirty'] = Variable<bool>(syncDirty);
@@ -957,6 +1006,12 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
       folderId: folderId == null && nullToAbsent
           ? const Value.absent()
           : Value(folderId),
+      autoFiledAt: autoFiledAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(autoFiledAt),
+      autoFilePrevFolderId: autoFilePrevFolderId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(autoFilePrevFolderId),
       syncDirty: syncDirty == null && nullToAbsent
           ? const Value.absent()
           : Value(syncDirty),
@@ -1045,6 +1100,9 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
       transcriptionError:
           serializer.fromJson<String?>(json['transcriptionError']),
       folderId: serializer.fromJson<String?>(json['folderId']),
+      autoFiledAt: serializer.fromJson<int?>(json['autoFiledAt']),
+      autoFilePrevFolderId:
+          serializer.fromJson<String?>(json['autoFilePrevFolderId']),
       syncDirty: serializer.fromJson<bool?>(json['syncDirty']),
       syncedSeq: serializer.fromJson<int?>(json['syncedSeq']),
       remoteOnly: serializer.fromJson<bool?>(json['remoteOnly']),
@@ -1097,6 +1155,8 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
           serializer.toJson<DateTime?>(transcriptionCompletedAt),
       'transcriptionError': serializer.toJson<String?>(transcriptionError),
       'folderId': serializer.toJson<String?>(folderId),
+      'autoFiledAt': serializer.toJson<int?>(autoFiledAt),
+      'autoFilePrevFolderId': serializer.toJson<String?>(autoFilePrevFolderId),
       'syncDirty': serializer.toJson<bool?>(syncDirty),
       'syncedSeq': serializer.toJson<int?>(syncedSeq),
       'remoteOnly': serializer.toJson<bool?>(remoteOnly),
@@ -1141,6 +1201,8 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
           Value<DateTime?> transcriptionCompletedAt = const Value.absent(),
           Value<String?> transcriptionError = const Value.absent(),
           Value<String?> folderId = const Value.absent(),
+          Value<int?> autoFiledAt = const Value.absent(),
+          Value<String?> autoFilePrevFolderId = const Value.absent(),
           Value<bool?> syncDirty = const Value.absent(),
           Value<int?> syncedSeq = const Value.absent(),
           Value<bool?> remoteOnly = const Value.absent(),
@@ -1195,6 +1257,10 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
             ? transcriptionError.value
             : this.transcriptionError,
         folderId: folderId.present ? folderId.value : this.folderId,
+        autoFiledAt: autoFiledAt.present ? autoFiledAt.value : this.autoFiledAt,
+        autoFilePrevFolderId: autoFilePrevFolderId.present
+            ? autoFilePrevFolderId.value
+            : this.autoFilePrevFolderId,
         syncDirty: syncDirty.present ? syncDirty.value : this.syncDirty,
         syncedSeq: syncedSeq.present ? syncedSeq.value : this.syncedSeq,
         remoteOnly: remoteOnly.present ? remoteOnly.value : this.remoteOnly,
@@ -1281,6 +1347,11 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
           ? data.transcriptionError.value
           : this.transcriptionError,
       folderId: data.folderId.present ? data.folderId.value : this.folderId,
+      autoFiledAt:
+          data.autoFiledAt.present ? data.autoFiledAt.value : this.autoFiledAt,
+      autoFilePrevFolderId: data.autoFilePrevFolderId.present
+          ? data.autoFilePrevFolderId.value
+          : this.autoFilePrevFolderId,
       syncDirty: data.syncDirty.present ? data.syncDirty.value : this.syncDirty,
       syncedSeq: data.syncedSeq.present ? data.syncedSeq.value : this.syncedSeq,
       remoteOnly:
@@ -1350,6 +1421,8 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
           ..write('transcriptionCompletedAt: $transcriptionCompletedAt, ')
           ..write('transcriptionError: $transcriptionError, ')
           ..write('folderId: $folderId, ')
+          ..write('autoFiledAt: $autoFiledAt, ')
+          ..write('autoFilePrevFolderId: $autoFilePrevFolderId, ')
           ..write('syncDirty: $syncDirty, ')
           ..write('syncedSeq: $syncedSeq, ')
           ..write('remoteOnly: $remoteOnly, ')
@@ -1395,6 +1468,8 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
         transcriptionCompletedAt,
         transcriptionError,
         folderId,
+        autoFiledAt,
+        autoFilePrevFolderId,
         syncDirty,
         syncedSeq,
         remoteOnly,
@@ -1439,6 +1514,8 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
           other.transcriptionCompletedAt == this.transcriptionCompletedAt &&
           other.transcriptionError == this.transcriptionError &&
           other.folderId == this.folderId &&
+          other.autoFiledAt == this.autoFiledAt &&
+          other.autoFilePrevFolderId == this.autoFilePrevFolderId &&
           other.syncDirty == this.syncDirty &&
           other.syncedSeq == this.syncedSeq &&
           other.remoteOnly == this.remoteOnly &&
@@ -1481,6 +1558,8 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
   final Value<DateTime?> transcriptionCompletedAt;
   final Value<String?> transcriptionError;
   final Value<String?> folderId;
+  final Value<int?> autoFiledAt;
+  final Value<String?> autoFilePrevFolderId;
   final Value<bool?> syncDirty;
   final Value<int?> syncedSeq;
   final Value<bool?> remoteOnly;
@@ -1522,6 +1601,8 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
     this.transcriptionCompletedAt = const Value.absent(),
     this.transcriptionError = const Value.absent(),
     this.folderId = const Value.absent(),
+    this.autoFiledAt = const Value.absent(),
+    this.autoFilePrevFolderId = const Value.absent(),
     this.syncDirty = const Value.absent(),
     this.syncedSeq = const Value.absent(),
     this.remoteOnly = const Value.absent(),
@@ -1564,6 +1645,8 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
     this.transcriptionCompletedAt = const Value.absent(),
     this.transcriptionError = const Value.absent(),
     this.folderId = const Value.absent(),
+    this.autoFiledAt = const Value.absent(),
+    this.autoFilePrevFolderId = const Value.absent(),
     this.syncDirty = const Value.absent(),
     this.syncedSeq = const Value.absent(),
     this.remoteOnly = const Value.absent(),
@@ -1614,6 +1697,8 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
     Expression<DateTime>? transcriptionCompletedAt,
     Expression<String>? transcriptionError,
     Expression<String>? folderId,
+    Expression<int>? autoFiledAt,
+    Expression<String>? autoFilePrevFolderId,
     Expression<bool>? syncDirty,
     Expression<int>? syncedSeq,
     Expression<bool>? remoteOnly,
@@ -1663,6 +1748,9 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
         'transcription_completed_at': transcriptionCompletedAt,
       if (transcriptionError != null) 'transcription_error': transcriptionError,
       if (folderId != null) 'folder_id': folderId,
+      if (autoFiledAt != null) 'auto_filed_at': autoFiledAt,
+      if (autoFilePrevFolderId != null)
+        'auto_file_prev_folder_id': autoFilePrevFolderId,
       if (syncDirty != null) 'sync_dirty': syncDirty,
       if (syncedSeq != null) 'synced_seq': syncedSeq,
       if (remoteOnly != null) 'remote_only': remoteOnly,
@@ -1710,6 +1798,8 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
       Value<DateTime?>? transcriptionCompletedAt,
       Value<String?>? transcriptionError,
       Value<String?>? folderId,
+      Value<int?>? autoFiledAt,
+      Value<String?>? autoFilePrevFolderId,
       Value<bool?>? syncDirty,
       Value<int?>? syncedSeq,
       Value<bool?>? remoteOnly,
@@ -1755,6 +1845,8 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
           transcriptionCompletedAt ?? this.transcriptionCompletedAt,
       transcriptionError: transcriptionError ?? this.transcriptionError,
       folderId: folderId ?? this.folderId,
+      autoFiledAt: autoFiledAt ?? this.autoFiledAt,
+      autoFilePrevFolderId: autoFilePrevFolderId ?? this.autoFilePrevFolderId,
       syncDirty: syncDirty ?? this.syncDirty,
       syncedSeq: syncedSeq ?? this.syncedSeq,
       remoteOnly: remoteOnly ?? this.remoteOnly,
@@ -1850,6 +1942,13 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
     if (folderId.present) {
       map['folder_id'] = Variable<String>(folderId.value);
     }
+    if (autoFiledAt.present) {
+      map['auto_filed_at'] = Variable<int>(autoFiledAt.value);
+    }
+    if (autoFilePrevFolderId.present) {
+      map['auto_file_prev_folder_id'] =
+          Variable<String>(autoFilePrevFolderId.value);
+    }
     if (syncDirty.present) {
       map['sync_dirty'] = Variable<bool>(syncDirty.value);
     }
@@ -1933,6 +2032,8 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
           ..write('transcriptionCompletedAt: $transcriptionCompletedAt, ')
           ..write('transcriptionError: $transcriptionError, ')
           ..write('folderId: $folderId, ')
+          ..write('autoFiledAt: $autoFiledAt, ')
+          ..write('autoFilePrevFolderId: $autoFilePrevFolderId, ')
           ..write('syncDirty: $syncDirty, ')
           ..write('syncedSeq: $syncedSeq, ')
           ..write('remoteOnly: $remoteOnly, ')
@@ -8932,6 +9033,8 @@ typedef $$DumpsTableCreateCompanionBuilder = DumpsCompanion Function({
   Value<DateTime?> transcriptionCompletedAt,
   Value<String?> transcriptionError,
   Value<String?> folderId,
+  Value<int?> autoFiledAt,
+  Value<String?> autoFilePrevFolderId,
   Value<bool?> syncDirty,
   Value<int?> syncedSeq,
   Value<bool?> remoteOnly,
@@ -8974,6 +9077,8 @@ typedef $$DumpsTableUpdateCompanionBuilder = DumpsCompanion Function({
   Value<DateTime?> transcriptionCompletedAt,
   Value<String?> transcriptionError,
   Value<String?> folderId,
+  Value<int?> autoFiledAt,
+  Value<String?> autoFilePrevFolderId,
   Value<bool?> syncDirty,
   Value<int?> syncedSeq,
   Value<bool?> remoteOnly,
@@ -9096,6 +9201,13 @@ class $$DumpsTableFilterComposer extends Composer<_$LocalDb, $DumpsTable> {
 
   ColumnFilters<String> get folderId => $composableBuilder(
       column: $table.folderId, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get autoFiledAt => $composableBuilder(
+      column: $table.autoFiledAt, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get autoFilePrevFolderId => $composableBuilder(
+      column: $table.autoFilePrevFolderId,
+      builder: (column) => ColumnFilters(column));
 
   ColumnFilters<bool> get syncDirty => $composableBuilder(
       column: $table.syncDirty, builder: (column) => ColumnFilters(column));
@@ -9262,6 +9374,13 @@ class $$DumpsTableOrderingComposer extends Composer<_$LocalDb, $DumpsTable> {
   ColumnOrderings<String> get folderId => $composableBuilder(
       column: $table.folderId, builder: (column) => ColumnOrderings(column));
 
+  ColumnOrderings<int> get autoFiledAt => $composableBuilder(
+      column: $table.autoFiledAt, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get autoFilePrevFolderId => $composableBuilder(
+      column: $table.autoFilePrevFolderId,
+      builder: (column) => ColumnOrderings(column));
+
   ColumnOrderings<bool> get syncDirty => $composableBuilder(
       column: $table.syncDirty, builder: (column) => ColumnOrderings(column));
 
@@ -9399,6 +9518,12 @@ class $$DumpsTableAnnotationComposer extends Composer<_$LocalDb, $DumpsTable> {
   GeneratedColumn<String> get folderId =>
       $composableBuilder(column: $table.folderId, builder: (column) => column);
 
+  GeneratedColumn<int> get autoFiledAt => $composableBuilder(
+      column: $table.autoFiledAt, builder: (column) => column);
+
+  GeneratedColumn<String> get autoFilePrevFolderId => $composableBuilder(
+      column: $table.autoFilePrevFolderId, builder: (column) => column);
+
   GeneratedColumn<bool> get syncDirty =>
       $composableBuilder(column: $table.syncDirty, builder: (column) => column);
 
@@ -9517,6 +9642,8 @@ class $$DumpsTableTableManager extends RootTableManager<
             Value<DateTime?> transcriptionCompletedAt = const Value.absent(),
             Value<String?> transcriptionError = const Value.absent(),
             Value<String?> folderId = const Value.absent(),
+            Value<int?> autoFiledAt = const Value.absent(),
+            Value<String?> autoFilePrevFolderId = const Value.absent(),
             Value<bool?> syncDirty = const Value.absent(),
             Value<int?> syncedSeq = const Value.absent(),
             Value<bool?> remoteOnly = const Value.absent(),
@@ -9559,6 +9686,8 @@ class $$DumpsTableTableManager extends RootTableManager<
             transcriptionCompletedAt: transcriptionCompletedAt,
             transcriptionError: transcriptionError,
             folderId: folderId,
+            autoFiledAt: autoFiledAt,
+            autoFilePrevFolderId: autoFilePrevFolderId,
             syncDirty: syncDirty,
             syncedSeq: syncedSeq,
             remoteOnly: remoteOnly,
@@ -9601,6 +9730,8 @@ class $$DumpsTableTableManager extends RootTableManager<
             Value<DateTime?> transcriptionCompletedAt = const Value.absent(),
             Value<String?> transcriptionError = const Value.absent(),
             Value<String?> folderId = const Value.absent(),
+            Value<int?> autoFiledAt = const Value.absent(),
+            Value<String?> autoFilePrevFolderId = const Value.absent(),
             Value<bool?> syncDirty = const Value.absent(),
             Value<int?> syncedSeq = const Value.absent(),
             Value<bool?> remoteOnly = const Value.absent(),
@@ -9643,6 +9774,8 @@ class $$DumpsTableTableManager extends RootTableManager<
             transcriptionCompletedAt: transcriptionCompletedAt,
             transcriptionError: transcriptionError,
             folderId: folderId,
+            autoFiledAt: autoFiledAt,
+            autoFilePrevFolderId: autoFilePrevFolderId,
             syncDirty: syncDirty,
             syncedSeq: syncedSeq,
             remoteOnly: remoteOnly,

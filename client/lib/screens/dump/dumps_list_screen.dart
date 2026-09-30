@@ -546,6 +546,13 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
                                 name: name,
                                 db: ref.read(localDbProvider),
                               ),
+                              // Undo is deliberately quiet: the row moving
+                              // back and the chip vanishing ARE the
+                              // feedback, and the reverted filing pushes on
+                              // the next sync cycle like any other edit.
+                              onUndoAutoFile: (DumpRow dump) => ref
+                                  .read(localDbProvider)
+                                  .undoAutoFile(dump.id),
                               onEnter: (id) =>
                                   _change(() => _selection.enter(id)),
                               onToggle: (id) =>
@@ -1117,6 +1124,7 @@ class _DumpList extends StatefulWidget {
     this.onLongPressItem,
     this.folders = const <FolderSummary>[],
     this.onHeaderLongPress,
+    this.onUndoAutoFile,
     this.searchQuery = '',
     this.searchMatches = const <String, DumpSearchMatch>{},
   });
@@ -1134,6 +1142,10 @@ class _DumpList extends StatefulWidget {
 
   /// Long-press on a REAL folder header (never the 'No folder' one).
   final void Function(String folderId, String name)? onHeaderLongPress;
+
+  /// Undo on the `Auto-filed to …` chip (spec 2026-09-30, item #3):
+  /// moves the capture back to where it was before the server filed it.
+  final Future<void> Function(DumpRow)? onUndoAutoFile;
   final void Function(BuildContext, DumpRow)? onOpen;
   final DumpSelectionState selection;
   final Map<String, Eligibility> eligibility;
@@ -1249,6 +1261,16 @@ class _DumpListState extends State<_DumpList> {
       }
     }
     return ListView(children: children);
+  }
+
+  /// The folder name the chip shows, or null when no live chip: no marker,
+  /// unfiled, the folder is gone, or (during search) folders are not shown.
+  String? _autoFiledFolderName(DumpRow dump) {
+    if (dump.autoFiledAt == null || dump.folderId == null) return null;
+    for (final FolderSummary folder in widget.folders) {
+      if (folder.id == dump.folderId) return folder.name;
+    }
+    return null;
   }
 
   Widget _rowTile(DumpRow dump) {
@@ -1388,6 +1410,28 @@ class _DumpListState extends State<_DumpList> {
                       subtitle,
                     ],
                   );
+            // Auto-file receipt (spec 2026-09-30, item #3): visible only
+            // while the server-set marker is live AND the folder still
+            // exists. Undo moves the capture back; a vanished folder (or a
+            // search, whose results stay flat) simply shows no chip.
+            final String? autoFiledFolder = _autoFiledFolderName(dump);
+            final Widget subtitleWithChip = autoFiledFolder == null
+                ? subtitleBody
+                : Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      subtitleBody,
+                      const SizedBox(height: 4),
+                      _AutoFiledChip(
+                        dump: dump,
+                        folderName: autoFiledFolder,
+                        onUndo:
+                            widget.enabled && widget.onUndoAutoFile != null
+                                ? () => widget.onUndoAutoFile!(dump)
+                                : null,
+                      ),
+                    ],
+                  );
             // Desktop: right-click is this app's long-press. GestureDetector
             // wrapper because ListTile exposes no onSecondaryTap of its own.
             return GestureDetector(
@@ -1427,12 +1471,12 @@ class _DumpListState extends State<_DumpList> {
                     ? Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          subtitleBody,
+                          subtitleWithChip,
                           const SizedBox(height: 4),
                           pill,
                         ],
                       )
-                    : subtitleBody,
+                    : subtitleWithChip,
                 // The ⋮ button carries per-item actions, so long-press can stay
                 // multi-select. Hidden during selection: a menu that mutates one
                 // row while several are selected is ambiguous, and the toolbar
@@ -1795,6 +1839,71 @@ class _SummaryFailedPill extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// The `Auto-filed to … · Undo` chip (spec 2026-09-30, item #3). Shown only
+/// while the server-authored auto_filed_at marker is live; Undo moves the
+/// capture back to its pre-filing location and the reverted filing syncs,
+/// which retires the chip on every device. Unsure classifications never
+/// reach here — the server files nothing and no chip exists.
+class _AutoFiledChip extends StatelessWidget {
+  const _AutoFiledChip({
+    required this.dump,
+    required this.folderName,
+    this.onUndo,
+  });
+
+  final DumpRow dump;
+  final String folderName;
+  final VoidCallback? onUndo;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme colors = Theme.of(context).colorScheme;
+    final TextStyle? label = Theme.of(context).textTheme.labelMedium;
+    return Container(
+      key: ValueKey('auto-filed-chip-${dump.id}'),
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+      decoration: BoxDecoration(
+        color: colors.secondaryContainer,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.drive_file_move_outline,
+            size: 14,
+            color: colors.onSecondaryContainer,
+          ),
+          const SizedBox(width: 5),
+          Flexible(
+            child: Text(
+              'Auto-filed to $folderName',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: label?.copyWith(color: colors.onSecondaryContainer),
+            ),
+          ),
+          const SizedBox(width: 5),
+          Text('·', style: label?.copyWith(color: colors.onSecondaryContainer)),
+          const SizedBox(width: 5),
+          InkWell(
+            key: ValueKey('auto-filed-undo-${dump.id}'),
+            onTap: onUndo,
+            borderRadius: BorderRadius.circular(999),
+            child: Text(
+              'Undo',
+              style: label?.copyWith(
+                color: colors.primary,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

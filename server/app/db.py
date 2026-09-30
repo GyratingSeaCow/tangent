@@ -47,6 +47,15 @@ CREATE TABLE IF NOT EXISTS dumps (
     transcript_timings TEXT,
     timings_version INTEGER,
     audio_kept INTEGER NOT NULL DEFAULT 0,
+    -- v1.38: the SHARED folder this capture is filed under (same `folders`
+    -- table notebooks and todos point at). NULL means unfiled. Device-writable
+    -- via sync; the auto-file trigger writes it server-side too.
+    folder_id TEXT,
+    -- v1.38 auto-file markers (server-authored): when the server filed this
+    -- capture and what filing it replaced (for the client's Undo). Cleared
+    -- whenever a device pushes its own filing for the row.
+    auto_filed_at INTEGER,
+    auto_file_prev_folder_id TEXT,
     deleted_at INTEGER
 );
 
@@ -702,6 +711,20 @@ def _migrate_dumps_mode_check(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_dumps_folder_id(conn: sqlite3.Connection) -> None:
+    """Add filing + auto-file markers to pre-auto-file dumps. NULL means
+    unfiled / never auto-filed; nothing is republished (there is nothing to
+    announce until a filing actually changes)."""
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(dumps)")}
+    for name, declaration in (
+        ("folder_id", "TEXT"),
+        ("auto_filed_at", "INTEGER"),
+        ("auto_file_prev_folder_id", "TEXT"),
+    ):
+        if name not in cols:
+            conn.execute(f"ALTER TABLE dumps ADD COLUMN {name} {declaration}")
+
+
 def _migrate_notebooks_folder_id(conn: sqlite3.Connection) -> None:
     """Add folder_id to pre-folder-sync notebooks. NULL means unfiled."""
     columns = {row[1] for row in conn.execute("PRAGMA table_info(notebooks)")}
@@ -1097,6 +1120,7 @@ def init_db(data_dir: str) -> None:
         language_backfills = _migrate_dumps_language(conn)
         summary_status_backfills = _migrate_dumps_summary_status(conn)
         timing_backfills = _migrate_dumps_transcript_timings(conn)
+        _migrate_dumps_folder_id(conn)
         _migrate_notebooks_folder_id(conn)
         _migrate_todos_folder_id(conn)
         _migrate_todos_google_columns(conn)

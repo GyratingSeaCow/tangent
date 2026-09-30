@@ -51,7 +51,17 @@ class Dumps extends Table {
 
   /// Which folder this recording or note is filed in, or null when unfiled.
   /// Same metadata approach as notebooks: filing never moves the audio file.
+  /// v1.38: filing travels with the dump payload (null means unfiled), so a
+  /// move syncs across devices exactly like a notebook or to-do filing.
   TextColumn get folderId => text().nullable()();
+
+  /// v1.38 auto-file (server-authored, server→client only): unix seconds
+  /// when the SERVER filed this capture after transcription, and the filing
+  /// it replaced (null = it was unfiled). While [autoFiledAt] is set the
+  /// card shows the `Auto-filed to … · Undo` chip; an undo or any manual
+  /// re-file clears both here and, via the pushed filing, on the server.
+  IntColumn get autoFiledAt => integer().nullable()();
+  TextColumn get autoFilePrevFolderId => text().nullable()();
 
   /// Sync state, mirroring the notebook columns. [syncDirty] means this row
   /// has local metadata edits the server has not accepted yet; [syncedSeq]
@@ -485,7 +495,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   LocalDb.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 28;
+  int get schemaVersion => 29;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -1004,6 +1014,37 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
             ).get();
             if (table.isEmpty) await m.createTable(askSourceVisits);
           }
+          if (from < 29) {
+            // v1.38.0 auto-file: dump filing joins sync, plus the two
+            // server-authored auto-file marker columns. Ask the database,
+            // never the version number (the duplicate-column lesson from
+            // v8/v24).
+            final Set<String> dumpColumns = <String>{
+              for (final QueryRow row
+                  in await customSelect('PRAGMA table_info(dumps)').get())
+                row.read<String>('name'),
+            };
+            if (!dumpColumns.contains('auto_filed_at')) {
+              await m.addColumn(dumps, dumps.autoFiledAt);
+            }
+            if (!dumpColumns.contains('auto_file_prev_folder_id')) {
+              await m.addColumn(dumps, dumps.autoFilePrevFolderId);
+            }
+            // One-time filing re-push, the v14 notebook precedent: dumps
+            // filed BEFORE dump-filing sync existed are clean, so their
+            // folder_id never travels — and worse, the first post-upgrade
+            // pull would carry the server's authoritative folder_id: null
+            // and erase the local filing. Marking every filed, live dump
+            // dirty both pushes the filing up and shields it from that
+            // pull (the dirty-row guard). Harmless on fresh installs.
+            if (dumpColumns.contains('folder_id')) {
+              await customStatement(
+                'UPDATE dumps SET sync_dirty = 1 '
+                'WHERE folder_id IS NOT NULL '
+                'AND (remote_only IS NULL OR remote_only = 0)',
+              );
+            }
+          }
         },
       );
 
@@ -1297,14 +1338,15 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
 
   /// Recordings whose metadata the server has not accepted yet.
   ///
-  /// Remote-only rows are excluded: this device holds no authoritative copy
-  /// of them, so pushing one back would echo the peer's own change.
+  /// The dirty flag means THIS device authored an edit (pulls never set
+  /// it), so dirty remote-only rows push too — v1.38 made filing a
+  /// device-authored edit on any row, and a dirty row that never pushes is
+  /// wedged forever: the dirty-row guard skips every future pull for it.
+  /// Clean remote-only rows still never push back a peer's own change.
   Future<List<DumpRow>> dumpsNeedingMetadataPush() => (select(dumps)
         ..where(
-          // Null means "never touched by sync" => not dirty, not remote.
-          (d) =>
-              d.syncDirty.equals(true) &
-              (d.remoteOnly.equals(false) | d.remoteOnly.isNull()),
+          // Null means "never touched by sync" => not dirty.
+          (d) => d.syncDirty.equals(true),
         ))
       .get();
 
@@ -1389,7 +1431,25 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     Object? summaryStatus = absentSummaryField,
     Object? summaryError = absentSummaryField,
     Object? summaryQueuePosition = absentSummaryField,
+    // v1.38 filing: device-authored, but the same absent-vs-null wire rule
+    // as notebooks — an older server never sends the key (keep the local
+    // filing); a present null is an authoritative "unfiled".
+    Object? folderId = absentFolderId,
+    // v1.38 auto-file markers: server-authored, same contract as summary.
+    Object? autoFiledAt = absentSummaryField,
+    Object? autoFilePrevFolderId = absentSummaryField,
   }) async {
+    final Value<String?> folderIdValue = identical(folderId, absentFolderId)
+        ? const Value<String?>.absent()
+        : Value<String?>(folderId as String?);
+    final Value<int?> autoFiledAtValue =
+        identical(autoFiledAt, absentSummaryField)
+            ? const Value<int?>.absent()
+            : Value<int?>(autoFiledAt as int?);
+    final Value<String?> autoFilePrevFolderIdValue =
+        identical(autoFilePrevFolderId, absentSummaryField)
+            ? const Value<String?>.absent()
+            : Value<String?>(autoFilePrevFolderId as String?);
     final Value<String?> languageValue = identical(language, absentSummaryField)
         ? const Value<String?>.absent()
         : Value<String?>(language as String?);
@@ -1518,6 +1578,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
           summaryStatus: summaryStatusValue,
           summaryError: summaryErrorValue,
           summaryQueuePosition: summaryQueuePositionValue,
+          folderId: folderIdValue,
+          autoFiledAt: autoFiledAtValue,
+          autoFilePrevFolderId: autoFilePrevFolderIdValue,
           syncedSeq: Value(seq),
         ),
         mode: InsertMode.insertOrReplace,
@@ -1552,6 +1615,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
         summaryError: summaryErrorValue,
         summaryQueuePosition: summaryQueuePositionValue,
         summaryErrorDismissedAt: summaryErrorDismissedAtValue,
+        folderId: folderIdValue,
+        autoFiledAt: autoFiledAtValue,
+        autoFilePrevFolderId: autoFilePrevFolderIdValue,
         syncDirty: const Value<bool?>(false),
         syncedSeq: Value(seq),
       ),
@@ -2008,12 +2074,43 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   }
 
   /// Files a recording or note, or unfiles it when [folderId] is null.
+  ///
+  /// v1.38: filing travels with the dump payload, so a move marks the row
+  /// dirty and bumps `updated_at` (the newer-wins tiebreak on peers). A
+  /// manual move is also the user taking control: it spends any auto-file
+  /// markers, so the "Auto-filed · Undo" chip disappears.
   Future<void> moveDumpToFolder({
     required String dumpId,
     required String? folderId,
   }) async {
-    await (update(dumps)..where((t) => t.id.equals(dumpId)))
-        .write(DumpsCompanion(folderId: Value<String?>(folderId)));
+    await (update(dumps)..where((t) => t.id.equals(dumpId))).write(
+      DumpsCompanion(
+        folderId: Value<String?>(folderId),
+        autoFiledAt: const Value<int?>(null),
+        autoFilePrevFolderId: const Value<String?>(null),
+        updatedAt: Value(DateTime.now().toUtc()),
+        syncDirty: const Value<bool?>(true),
+      ),
+    );
+  }
+
+  /// Undoes a server auto-file: moves the recording back to where it was
+  /// before the server filed it (almost always unfiled) and spends the
+  /// markers. Marked dirty so the push carries the reverted filing, which
+  /// is what retires the chip on the server and every other device.
+  /// A no-op when the row is gone or was never auto-filed.
+  Future<void> undoAutoFile(String dumpId) async {
+    final DumpRow? row = await getDumpRow(dumpId);
+    if (row == null || row.autoFiledAt == null) return;
+    await (update(dumps)..where((t) => t.id.equals(dumpId))).write(
+      DumpsCompanion(
+        folderId: Value<String?>(row.autoFilePrevFolderId),
+        autoFiledAt: const Value<int?>(null),
+        autoFilePrevFolderId: const Value<String?>(null),
+        updatedAt: Value(DateTime.now().toUtc()),
+        syncDirty: const Value<bool?>(true),
+      ),
+    );
   }
 
   /// Renames a recording or note. Deliberately writes only the title, so a

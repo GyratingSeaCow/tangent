@@ -114,6 +114,11 @@ RemoteChange dumpChange({
   Object? summaryStatus = _absent,
   Object? summaryError = _absent,
   Object? summaryQueuePosition = _absent,
+  // v1.38 filing + auto-file markers: absent builds a pre-auto-file server
+  // payload (no folder keys), a value — null included — adds the key.
+  Object? folderId = _absent,
+  Object? autoFiledAt = _absent,
+  Object? autoFilePrevFolderId = _absent,
 }) {
   final int now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
   return RemoteChange(
@@ -152,6 +157,11 @@ RemoteChange dumpChange({
               'summary_error': summaryError,
             if (!identical(summaryQueuePosition, _absent))
               'summary_queue_position': summaryQueuePosition,
+            if (!identical(folderId, _absent)) 'folder_id': folderId,
+            if (!identical(autoFiledAt, _absent))
+              'auto_filed_at': autoFiledAt,
+            if (!identical(autoFilePrevFolderId, _absent))
+              'auto_file_prev_folder_id': autoFilePrevFolderId,
           },
   );
 }
@@ -906,6 +916,169 @@ void main() {
       );
 
       expect((await db.getDumpRow('dump-edit-2'))!.syncDirty, isTrue);
+    });
+  });
+  group('auto-file (v1.38): filing syncs, markers ride server to client', () {
+    test('a server auto-file lands: filing and both markers set', () async {
+      await seedLocal('dump-af-1');
+      final client = _ScriptedClient(
+        incoming: <RemoteChange>[
+          dumpChange(
+            id: 'dump-af-1',
+            folderId: 'folder-wood',
+            autoFiledAt: 1234,
+            autoFilePrevFolderId: null,
+          ),
+        ],
+      );
+
+      await build(client).syncNow();
+
+      final DumpRow row = (await db.getDumpRow('dump-af-1'))!;
+      expect(row.folderId, 'folder-wood');
+      expect(row.autoFiledAt, 1234);
+      expect(row.autoFilePrevFolderId, isNull);
+    });
+
+    test('a payload without folder_id keeps the local filing', () async {
+      // An older server's payload has no folder keys at all. Absence is
+      // not an eraser: the filing this device holds must survive the pull.
+      await seedLocal('dump-af-2');
+      await (db.update(db.dumps)..where((t) => t.id.equals('dump-af-2')))
+          .write(const DumpsCompanion(folderId: Value<String?>('folder-x')));
+
+      await build(
+        _ScriptedClient(incoming: <RemoteChange>[dumpChange(id: 'dump-af-2')]),
+      ).syncNow();
+
+      expect((await db.getDumpRow('dump-af-2'))!.folderId, 'folder-x');
+    });
+
+    test('a present-null folder_id is an authoritative unfile', () async {
+      await seedLocal('dump-af-3');
+      await (db.update(db.dumps)..where((t) => t.id.equals('dump-af-3')))
+          .write(const DumpsCompanion(folderId: Value<String?>('folder-x')));
+
+      await build(
+        _ScriptedClient(
+          incoming: <RemoteChange>[
+            dumpChange(id: 'dump-af-3', folderId: null),
+          ],
+        ),
+      ).syncNow();
+
+      expect((await db.getDumpRow('dump-af-3'))!.folderId, isNull);
+    });
+
+    test('the push payload carries folder_id, null included', () async {
+      await seedLocal('dump-af-4', dirty: true);
+
+      final _ScriptedClient client = _ScriptedClient();
+      await build(client).syncNow();
+
+      final Map<String, dynamic> change =
+          client.pushed.singleWhere((c) => c['entity_id'] == 'dump-af-4');
+      final Map<String, dynamic> payload =
+          change['payload'] as Map<String, dynamic>;
+      expect(
+        payload.containsKey('folder_id'),
+        isTrue,
+        reason: 'null is meaningful here: it says "unfiled"',
+      );
+      expect(payload['folder_id'], isNull);
+      expect(
+        payload.containsKey('auto_filed_at'),
+        isFalse,
+        reason: 'the markers are server-authored and never pushed',
+      );
+    });
+
+    test('a manual move spends the markers and queues a push', () async {
+      await seedLocal('dump-af-5');
+      await (db.update(db.dumps)..where((t) => t.id.equals('dump-af-5')))
+          .write(
+        const DumpsCompanion(
+          folderId: Value<String?>('folder-auto'),
+          autoFiledAt: Value<int?>(1234),
+        ),
+      );
+
+      await db.moveDumpToFolder(dumpId: 'dump-af-5', folderId: 'folder-b');
+
+      final DumpRow row = (await db.getDumpRow('dump-af-5'))!;
+      expect(row.folderId, 'folder-b');
+      expect(row.autoFiledAt, isNull, reason: 'the user took control');
+      expect(row.syncDirty, isTrue, reason: 'a move travels like any edit');
+    });
+
+    test('undoAutoFile moves the capture back and the push announces it',
+        () async {
+      await seedLocal('dump-af-6');
+      await (db.update(db.dumps)..where((t) => t.id.equals('dump-af-6')))
+          .write(
+        const DumpsCompanion(
+          folderId: Value<String?>('folder-auto'),
+          autoFiledAt: Value<int?>(1234),
+          autoFilePrevFolderId: Value<String?>(null),
+        ),
+      );
+
+      await db.undoAutoFile('dump-af-6');
+
+      final DumpRow row = (await db.getDumpRow('dump-af-6'))!;
+      expect(row.folderId, isNull, reason: 'back to where it was: unfiled');
+      expect(row.autoFiledAt, isNull);
+      expect(row.syncDirty, isTrue);
+
+      final _ScriptedClient client = _ScriptedClient();
+      await build(client).syncNow();
+      final Map<String, dynamic> payload = client.pushed
+              .singleWhere((c) => c['entity_id'] == 'dump-af-6')['payload']
+          as Map<String, dynamic>;
+      expect(payload.containsKey('folder_id'), isTrue);
+      expect(
+        payload['folder_id'],
+        isNull,
+        reason: 'the pushed unfile is what retires the chip everywhere',
+      );
+    });
+
+    test('undoAutoFile is a no-op on a row that was never auto-filed',
+        () async {
+      await seedLocal('dump-af-7');
+      await (db.update(db.dumps)..where((t) => t.id.equals('dump-af-7')))
+          .write(const DumpsCompanion(folderId: Value<String?>('folder-x')));
+
+      await db.undoAutoFile('dump-af-7');
+      await db.undoAutoFile('dump-af-missing');
+
+      final DumpRow row = (await db.getDumpRow('dump-af-7'))!;
+      expect(row.folderId, 'folder-x');
+      expect(row.syncDirty, isNot(true));
+    });
+
+    test('a dirty remote-only recording pushes its filing', () async {
+      // Filing a recording that arrived from a peer is a LOCAL edit; a
+      // dirty row that never pushes is wedged forever, because the
+      // dirty-row guard also skips every future pull for it.
+      await build(
+        _ScriptedClient(incoming: <RemoteChange>[dumpChange(id: 'dump-af-8')]),
+      ).syncNow();
+      expect((await db.getDumpRow('dump-af-8'))!.remoteOnly, isTrue);
+
+      await db.moveDumpToFolder(dumpId: 'dump-af-8', folderId: 'folder-w');
+
+      final _ScriptedClient client = _ScriptedClient();
+      await build(client).syncNow();
+      final Map<String, dynamic> payload = client.pushed
+              .singleWhere((c) => c['entity_id'] == 'dump-af-8')['payload']
+          as Map<String, dynamic>;
+      expect(payload['folder_id'], 'folder-w');
+      expect(
+        (await db.getDumpRow('dump-af-8'))!.syncDirty,
+        isNot(true),
+        reason: 'the accepted push must clear the flag',
+      );
     });
   });
 }

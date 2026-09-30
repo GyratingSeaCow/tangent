@@ -93,6 +93,12 @@ def _publish_dump_change(
             "timings_version": row["timings_version"],
             "duration_seconds": row["duration_seconds"],
             "audio_kept": bool(row["audio_kept"]),
+            # v1.38 filing + auto-file markers. folder_id null is an
+            # authoritative "unfiled" (present-null, never absent), matching
+            # the notebook/todo folder_id wire contract.
+            "folder_id": row["folder_id"],
+            "auto_filed_at": row["auto_filed_at"],
+            "auto_file_prev_folder_id": row["auto_file_prev_folder_id"],
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         },
