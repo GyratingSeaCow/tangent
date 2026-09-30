@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Generator
 from pathlib import Path
@@ -506,7 +507,11 @@ def _migrate_dumps_speaker_embeddings(conn: sqlite3.Connection) -> None:
 
 
 def _migrate_voice_book(conn: sqlite3.Connection) -> None:
-    """One remembered centroid per display name (v1.36.0)."""
+    """Create the voice book and migrate legacy unit centroids to sums.
+
+    Multiplying a legacy centroid by its sample count is the only bounded
+    approximation available.  Later teach/unteach operations are exact.
+    """
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS voice_book (
@@ -517,6 +522,38 @@ def _migrate_voice_book(conn: sqlite3.Connection) -> None:
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS voice_book_samples (
+            dump_id TEXT NOT NULL,
+            label TEXT NOT NULL,
+            name TEXT NOT NULL,
+            embedding TEXT NOT NULL,
+            PRIMARY KEY (dump_id, label)
+        )
+        """
+    )
+    migrated = conn.execute(
+        "SELECT value FROM app_settings WHERE key = 'voice_book_sum_format'"
+    ).fetchone()
+    if migrated is None:
+        rows = conn.execute("SELECT name, embedding, samples FROM voice_book").fetchall()
+        for name, raw, samples in rows:
+            try:
+                centroid = json.loads(raw)
+                summed = [float(value) * int(samples) for value in centroid]
+            except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                log.warning(
+                    "voice_book.sum_migration_skipped", name=name, error=str(exc)
+                )
+                continue  # preserve corrupt rows for normal validation to report
+            conn.execute(
+                "UPDATE voice_book SET embedding = ? WHERE name = ?",
+                (json.dumps(summed), name),
+            )
+        conn.execute(
+            "INSERT INTO app_settings (key, value) VALUES ('voice_book_sum_format', '1')"
+        )
 
 
 def _migrate_dumps_language(conn: sqlite3.Connection) -> list[str]:

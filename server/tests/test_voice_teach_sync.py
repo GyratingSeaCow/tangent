@@ -11,7 +11,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.api.sync import router as sync_router
+from app.api.sync import _teach_from_rename, router as sync_router
 from app.auth import generate_token, hash_token
 from app.db import init_db
 from app.services import voice_book as vb
@@ -86,22 +86,42 @@ def test_unchanged_pairs_do_not_bump_samples(authed_client, temp_data_dir):
     assert book["Jeff"].samples == 1 and book["Tom"].samples == 1
 
 
-def test_correction_unteaches_old_centroid_arithmetic(authed_client, temp_data_dir):
-    """Correcting one label removes that exact sample from the old mean."""
+def test_correction_removes_exact_taught_sample(authed_client, temp_data_dir):
     client, token = authed_client
     conn = _seed(temp_data_dir, {"Speaker 1": [1.0, 0.0]})
     vb.teach(conn, "Tom", [0.0, 1.0])
-    vb.teach(conn, "Tom", [1.0, 0.0])
+    conn.commit()
+    assert _push(
+        client, token, {"speaker_names": json.dumps({"Speaker 1": "Tom"})}
+    ).status_code == 200
+
+    assert _push(
+        client, token, {"speaker_names": json.dumps({"Speaker 1": "Dana"})}
+    ).status_code == 200
+    book = {e.name: e for e in vb.load_voice_book(conn)}
+    assert book["Tom"].embedding == pytest.approx([0.0, 1.0])
+    assert book["Tom"].samples == 1
+    assert book["Dana"].embedding == [1.0, 0.0] and book["Dana"].samples == 1
+
+
+def test_correction_teaches_new_name_leaves_old_alone(authed_client, temp_data_dir):
+    """An auto-name has no ledger entry, so its stored voice is untouched."""
+    client, token = authed_client
+    conn = _seed(temp_data_dir, {"Speaker 1": [1.0, 0.0]})
+    vb.teach(conn, "Tom", [0.0, 1.0])
     conn.execute(
         "UPDATE dumps SET speaker_names = ? WHERE id = ?",
         (json.dumps({"Speaker 1": "Tom"}), DUMP),
     )
     conn.commit()
-    _push(client, token, {"speaker_names": json.dumps({"Speaker 1": "Dana"})})
+
+    assert _push(
+        client, token, {"speaker_names": json.dumps({"Speaker 1": "Dana"})}
+    ).status_code == 200
     book = {e.name: e for e in vb.load_voice_book(conn)}
-    assert book["Tom"].embedding == pytest.approx([0.28108464, 0.95968298])
+    assert book["Tom"].embedding == [0.0, 1.0]
     assert book["Tom"].samples == 1
-    assert book["Dana"].embedding == [1.0, 0.0] and book["Dana"].samples == 1
+    assert book["Dana"].samples == 1
 
 
 def test_correction_deletes_old_name_when_last_sample_removed(
@@ -109,12 +129,9 @@ def test_correction_deletes_old_name_when_last_sample_removed(
 ):
     client, token = authed_client
     conn = _seed(temp_data_dir, {"Speaker 1": [1.0, 0.0]})
-    vb.teach(conn, "Wrong", [1.0, 0.0])
-    conn.execute(
-        "UPDATE dumps SET speaker_names = ? WHERE id = ?",
-        (json.dumps({"Speaker 1": "Wrong"}), DUMP),
-    )
-    conn.commit()
+    assert _push(
+        client, token, {"speaker_names": json.dumps({"Speaker 1": "Wrong"})}
+    ).status_code == 200
 
     _push(client, token, {"speaker_names": json.dumps({"Speaker 1": "Jeff"})})
 
@@ -138,3 +155,47 @@ def test_same_map_resent_teaches_nothing(authed_client, temp_data_dir):
     _push(client, token, {"title": "Edited"})
     _push(client, token, {"speaker_names": json.dumps({"Speaker 1": "Jeff"})})
     assert vb.load_voice_book(conn)[0].samples == 1
+
+
+def test_whitespace_only_change_does_not_reteach(authed_client, temp_data_dir):
+    client, token = authed_client
+    conn = _seed(temp_data_dir, {"Speaker 1": [1.0, 0.0]})
+    _push(client, token, {"speaker_names": json.dumps({"Speaker 1": " Jeff"})})
+    _push(client, token, {"speaker_names": json.dumps({"Speaker 1": "Jeff"})})
+    assert vb.load_voice_book(conn)[0].samples == 1
+
+
+def test_clearing_taught_name_unteaches_it(authed_client, temp_data_dir):
+    client, token = authed_client
+    conn = _seed(temp_data_dir, {"Speaker 1": [1.0, 0.0]})
+    _push(client, token, {"speaker_names": json.dumps({"Speaker 1": "Jeff"})})
+    r = _push(client, token, {"speaker_names": json.dumps({"Speaker 1": ""})})
+    assert r.status_code == 200
+    assert vb.load_voice_book(conn) == []
+    assert conn.execute("SELECT count(*) FROM voice_book_samples").fetchone()[0] == 0
+
+
+def test_null_stored_embedding_is_logged_and_skipped():
+    conn = sqlite3.connect(":memory:")
+    conn.execute(
+        "CREATE TABLE voice_book (name TEXT PRIMARY KEY, embedding TEXT, "
+        "samples INTEGER, updated_at TEXT)"
+    )
+    conn.execute(
+        "CREATE TABLE voice_book_samples (dump_id TEXT, label TEXT, name TEXT, "
+        "embedding TEXT, PRIMARY KEY (dump_id, label))"
+    )
+    conn.execute("INSERT INTO voice_book VALUES ('Tom', NULL, 1, 't')")
+    conn.execute(
+        "INSERT INTO voice_book_samples VALUES (?, ?, ?, ?)",
+        (DUMP, "Speaker 1", "Tom", json.dumps([1.0, 0.0])),
+    )
+    result = _teach_from_rename(
+        conn,
+        DUMP,
+        json.dumps({"Speaker 1": "Tom"}),
+        json.dumps({"Speaker 1": "Dana"}),
+        json.dumps({"Speaker 1": [1.0, 0.0]}),
+    )
+    assert result == ["Dana"]
+    assert conn.execute("SELECT samples FROM voice_book WHERE name = 'Dana'").fetchone() == (1,)

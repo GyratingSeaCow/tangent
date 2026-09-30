@@ -61,9 +61,8 @@ def test_teach_running_mean_renormalised(conn):
     vb.teach(conn, "Jeff", _unit(1, 0))
     entry = vb.load_voice_book(conn)[0]
     assert entry.samples == 3
-    # The specified update weights the stored, normalised centroid by samples.
-    prior = _unit(1, 1)
-    expected = vb.normalise([(prior[0] * 2 + 1) / 3, prior[1] * 2 / 3])
+    # The stored value is the exact unnormalised sum; matching normalises it.
+    expected = vb.normalise([2.0, 1.0])
     assert entry.embedding == pytest.approx(expected)
 
 

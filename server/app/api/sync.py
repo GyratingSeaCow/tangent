@@ -288,6 +288,7 @@ def _apply_dump(conn: sqlite3.Connection, change: SyncChange, now: int) -> None:
     if "speaker_names" in p:
         _teach_from_rename(
             conn,
+            change.entity_id,
             existing["speaker_names"] if existing is not None else None,
             p["speaker_names"],
             existing["speaker_embeddings"] if existing is not None else None,
@@ -296,14 +297,15 @@ def _apply_dump(conn: sqlite3.Connection, change: SyncChange, now: int) -> None:
 
 def _teach_from_rename(
     conn: sqlite3.Connection,
+    dump_id: str,
     stored_map: str | None,
     new_map: str | None,
     embeddings_json: str | None,
 ) -> list[str]:
-    """Teach new or changed device-authored label/name pairs."""
-    from app.services.voice_book import teach, unteach  # noqa: PLC0415
+    """Synchronise user-taught label/name pairs and their provenance ledger."""
+    from app.services.voice_book import normalise, teach, unteach  # noqa: PLC0415
 
-    if not new_map or not embeddings_json:
+    if new_map is None or not embeddings_json:
         return []
     try:
         new = json.loads(new_map) or {}
@@ -313,25 +315,42 @@ def _teach_from_rename(
         return []
     taught: list[str] = []
     untaught: list[str] = []
-    for label, name in new.items():
-        clean = (name or "").strip()
-        if not clean or old.get(label) == name or label not in embeddings:
-            continue
+    for label in dict.fromkeys((*old, *new)):
+        clean = (new.get(label) or "").strip()
         old_clean = (old.get(label) or "").strip()
-        if old_clean and old_clean != clean:
+        if old_clean == clean or label not in embeddings:
+            continue
+        taught_row = conn.execute(
+            "SELECT name, embedding FROM voice_book_samples "
+            "WHERE dump_id = ? AND label = ?",
+            (dump_id, label),
+        ).fetchone()
+        if taught_row is not None:
             try:
-                if unteach(conn, old_clean, embeddings[label]):
-                    untaught.append(old_clean)
-            except ValueError as exc:
+                if unteach(conn, taught_row[0], json.loads(taught_row[1])):
+                    untaught.append(taught_row[0])
+            except (TypeError, ValueError) as exc:
                 log.warning(
                     "voice_book.unteach_skipped",
-                    name=old_clean,
+                    name=taught_row[0],
                     error=str(exc),
                 )
+        conn.execute(
+            "DELETE FROM voice_book_samples WHERE dump_id = ? AND label = ?",
+            (dump_id, label),
+        )
+        if not clean:
+            continue
         try:
             teach(conn, clean, embeddings[label])
-        except ValueError:
-            continue  # a NaN centroid slipped into an old row: skip, never poison
+        except ValueError as exc:
+            log.warning("voice_book.teach_skipped", name=clean, error=str(exc))
+            continue
+        conn.execute(
+            "INSERT INTO voice_book_samples (dump_id, label, name, embedding) "
+            "VALUES (?, ?, ?, ?)",
+            (dump_id, label, clean, json.dumps(normalise(embeddings[label]))),
+        )
         taught.append(clean)
     if untaught:
         log.info("voice_book.untaught", names=untaught)

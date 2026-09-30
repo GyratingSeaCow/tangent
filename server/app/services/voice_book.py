@@ -52,7 +52,7 @@ def teach(
     *,
     now: str | None = None,
 ) -> None:
-    """Fold one centroid into ``name``'s running mean (re-normalised)."""
+    """Add one unit sample to ``name``'s unnormalised running sum."""
     clean = name.strip()
     if not clean:
         raise ValueError("voice name must not be empty")
@@ -70,13 +70,21 @@ def teach(
             (clean, json.dumps(incoming), stamp),
         )
         return
-    old = json.loads(row[0])
-    n = int(row[1])
-    mean = [(o * n + i) / (n + 1) for o, i in zip(old, incoming, strict=True)]
+    try:
+        old = json.loads(row[0])
+        n = int(row[1])
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise ValueError("stored voice sum must be valid with positive samples") from exc
+    if not is_finite(old) or n < 1:
+        raise ValueError("stored voice sum must be finite with positive samples")
+    try:
+        summed = [o + i for o, i in zip(old, incoming, strict=True)]
+    except (TypeError, ValueError) as exc:
+        raise ValueError("stored voice sum has the wrong dimension") from exc
     conn.execute(
         "UPDATE voice_book SET embedding = ?, samples = ?, updated_at = ? "
         "WHERE name = ?",
-        (json.dumps(normalise(mean)), n + 1, stamp, clean),
+        (json.dumps(summed), n + 1, stamp, clean),
     )
 
 
@@ -87,11 +95,10 @@ def unteach(
     *,
     now: str | None = None,
 ) -> bool:
-    """Remove one sample from ``name``'s running centroid.
+    """Remove one unit sample from ``name``'s unnormalised running sum.
 
     Returns false when the name is not present.  The final sample removes the
-    row; otherwise the inverse running-mean update is re-normalised just like
-    :func:`teach`.
+    row; otherwise subtraction is exact and order-independent.
     """
     clean = name.strip()
     if not clean:
@@ -104,27 +111,33 @@ def unteach(
     ).fetchone()
     if row is None:
         return False
-    old = json.loads(row[0])
-    n = int(row[1])
+    try:
+        old = json.loads(row[0])
+        n = int(row[1])
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise ValueError("stored voice sum must be valid with positive samples") from exc
     if not is_finite(old) or n < 1:
-        raise ValueError("stored voice centroid must be finite with positive samples")
+        raise ValueError("stored voice sum must be finite with positive samples")
     if n == 1:
         conn.execute("DELETE FROM voice_book WHERE name = ?", (clean,))
         return True
-    mean = [(o * n - i) / (n - 1) for o, i in zip(old, incoming, strict=True)]
-    if not is_finite(mean):
-        raise ValueError("resulting voice centroid must be finite and non-empty")
+    try:
+        summed = [o - i for o, i in zip(old, incoming, strict=True)]
+    except (TypeError, ValueError) as exc:
+        raise ValueError("stored voice sum has the wrong dimension") from exc
+    if not is_finite(summed):
+        raise ValueError("resulting voice sum must be finite and non-empty")
     conn.execute(
         "UPDATE voice_book SET embedding = ?, samples = ?, updated_at = ? "
         "WHERE name = ?",
-        (json.dumps(normalise(mean)), n - 1, now or _now(), clean),
+        (json.dumps(summed), n - 1, now or _now(), clean),
     )
     return True
 
 
 def load_voice_book(conn: sqlite3.Connection) -> list[VoiceEntry]:
     return [
-        VoiceEntry(r[0], json.loads(r[1]), int(r[2]), r[3])
+        VoiceEntry(r[0], normalise(json.loads(r[1])), int(r[2]), r[3])
         for r in conn.execute(
             "SELECT name, embedding, samples, updated_at FROM voice_book "
             "ORDER BY updated_at DESC, name"
