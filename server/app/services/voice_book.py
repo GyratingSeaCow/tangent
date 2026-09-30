@@ -80,6 +80,48 @@ def teach(
     )
 
 
+def unteach(
+    conn: sqlite3.Connection,
+    name: str,
+    embedding: Sequence[float],
+    *,
+    now: str | None = None,
+) -> bool:
+    """Remove one sample from ``name``'s running centroid.
+
+    Returns false when the name is not present.  The final sample removes the
+    row; otherwise the inverse running-mean update is re-normalised just like
+    :func:`teach`.
+    """
+    clean = name.strip()
+    if not clean:
+        raise ValueError("voice name must not be empty")
+    if not is_finite(embedding):
+        raise ValueError("voice embedding must be finite and non-empty")
+    incoming = normalise(embedding)
+    row = conn.execute(
+        "SELECT embedding, samples FROM voice_book WHERE name = ?", (clean,)
+    ).fetchone()
+    if row is None:
+        return False
+    old = json.loads(row[0])
+    n = int(row[1])
+    if not is_finite(old) or n < 1:
+        raise ValueError("stored voice centroid must be finite with positive samples")
+    if n == 1:
+        conn.execute("DELETE FROM voice_book WHERE name = ?", (clean,))
+        return True
+    mean = [(o * n - i) / (n - 1) for o, i in zip(old, incoming, strict=True)]
+    if not is_finite(mean):
+        raise ValueError("resulting voice centroid must be finite and non-empty")
+    conn.execute(
+        "UPDATE voice_book SET embedding = ?, samples = ?, updated_at = ? "
+        "WHERE name = ?",
+        (json.dumps(normalise(mean)), n - 1, now or _now(), clean),
+    )
+    return True
+
+
 def load_voice_book(conn: sqlite3.Connection) -> list[VoiceEntry]:
     return [
         VoiceEntry(r[0], json.loads(r[1]), int(r[2]), r[3])

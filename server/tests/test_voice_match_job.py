@@ -16,14 +16,27 @@ from app.services import voice_book as vb
 class _FakeService:
     def __init__(self, result: TranscriptionResult) -> None:
         self.result = result
+        self.diarize_calls: list[bool] = []
 
     def transcribe(
-        self, audio_path: str, *, hotwords: str | None = None, translate: bool = False
+        self,
+        audio_path: str,
+        *,
+        hotwords: str | None = None,
+        translate: bool = False,
+        diarize: bool = True,
     ) -> TranscriptionResult:
+        self.diarize_calls.append(diarize)
         return self.result
 
 
-def _seed(data_dir: Path, *, speaker_names: dict[str, str] | None = None) -> tuple[str, str]:
+def _seed(
+    data_dir: Path,
+    *,
+    speaker_names: dict[str, str] | None = None,
+    mode: str = "meeting",
+    duration_seconds: int = 6,
+) -> tuple[str, str]:
     init_db(str(data_dir))
     now = int(time.time())
     dump_id = "dump-voice-match"
@@ -31,9 +44,16 @@ def _seed(data_dir: Path, *, speaker_names: dict[str, str] | None = None) -> tup
     conn = sqlite3.connect(data_dir / "tangent.db")
     conn.execute(
         "INSERT INTO dumps (id, client_id, mode, duration_seconds, title, created_at, "
-        "updated_at, audio_kept, speaker_names) VALUES (?, 'single-user', 'meeting', 6, "
+        "updated_at, audio_kept, speaker_names) VALUES (?, 'single-user', ?, ?, "
         "'Voice match', ?, ?, 0, ?)",
-        (dump_id, now, now, json.dumps(speaker_names) if speaker_names is not None else None),
+        (
+            dump_id,
+            mode,
+            duration_seconds,
+            now,
+            now,
+            json.dumps(speaker_names) if speaker_names is not None else None,
+        ),
     )
     conn.execute(
         "INSERT INTO jobs (id, request_id, dump_id, status, model) "
@@ -78,6 +98,57 @@ def test_job_stores_speaker_embeddings(temp_data_dir: Path, monkeypatch) -> None
 def test_job_without_embeddings_stores_null(temp_data_dir: Path, monkeypatch) -> None:
     result = TranscriptionResult(text="hi", segments=[], speaker_embeddings=None)
     conn, row = _run(temp_data_dir, monkeypatch, result)
+    assert row["speaker_embeddings"] is None
+    conn.close()
+
+
+def test_long_brain_dump_gets_speaker_sections_and_embeddings(
+    temp_data_dir: Path, monkeypatch
+) -> None:
+    job_id, audio_path = _seed(
+        temp_data_dir, mode="brain_dump", duration_seconds=31
+    )
+    service = _FakeService(_voice_result())
+    monkeypatch.setattr(
+        "app.services.job_queue.get_transcription_service", lambda: service
+    )
+
+    run_job_inline(job_id, audio_path)
+
+    conn = sqlite3.connect(temp_data_dir / "tangent.db")
+    conn.row_factory = sqlite3.Row
+    row = conn.execute(
+        "SELECT * FROM dumps WHERE id = ?", ("dump-voice-match",)
+    ).fetchone()
+    assert service.diarize_calls == [True]
+    assert row["transcript"] == "## Speaker 1\n\nhello\n\n## Speaker 2\n\nthere"
+    assert json.loads(row["speaker_embeddings"]) == _voice_result().speaker_embeddings
+    conn.close()
+
+
+def test_thirty_second_brain_dump_stays_byte_identical_plain_text(
+    temp_data_dir: Path, monkeypatch
+) -> None:
+    job_id, audio_path = _seed(
+        temp_data_dir, mode="brain_dump", duration_seconds=30
+    )
+    result = _voice_result()
+    result.text = "hello  there\nexact bytes"
+    result.speaker_embeddings = None
+    service = _FakeService(result)
+    monkeypatch.setattr(
+        "app.services.job_queue.get_transcription_service", lambda: service
+    )
+
+    run_job_inline(job_id, audio_path)
+
+    conn = sqlite3.connect(temp_data_dir / "tangent.db")
+    conn.row_factory = sqlite3.Row
+    row = conn.execute(
+        "SELECT * FROM dumps WHERE id = ?", ("dump-voice-match",)
+    ).fetchone()
+    assert service.diarize_calls == [False]
+    assert row["transcript"] == "hello  there\nexact bytes"
     assert row["speaker_embeddings"] is None
     conn.close()
 

@@ -176,10 +176,28 @@ def run_job_inline(job_id: str, audio_path: str, translate: bool = False) -> Non
             if not os.path.exists(audio_path):
                 raise FileNotFoundError(f"Audio file not found at {audio_path}")
 
+            dump_row = db.execute(
+                "SELECT mode, duration_seconds FROM dumps WHERE id = "
+                "(SELECT dump_id FROM jobs WHERE id = ?)",
+                (job_id,),
+            ).fetchone()
+            should_diarize = bool(
+                dump_row
+                and (
+                    dump_row["mode"] == "meeting"
+                    or (
+                        dump_row["mode"] == "brain_dump"
+                        and dump_row["duration_seconds"] > 30
+                    )
+                )
+            )
             service = get_transcription_service()
             # Resolve at RUN time, not enqueue time: queued jobs use the most
             # recently saved global vocabulary.
-            transcribe_kwargs = {"hotwords": vocabulary.load_hotwords(db)}
+            transcribe_kwargs = {
+                "hotwords": vocabulary.load_hotwords(db),
+                "diarize": should_diarize,
+            }
             if translate:
                 transcribe_kwargs["translate"] = True
             result = service.transcribe(audio_path, **transcribe_kwargs)
@@ -195,19 +213,20 @@ def run_job_inline(job_id: str, audio_path: str, translate: bool = False) -> Non
             # speaker-digest format the client renders, so a synced
             # device and an on-device completion read identically. Segment
             # timings stay as transcribed either way.
-            dump_row = db.execute(
-                "SELECT mode FROM dumps WHERE id = "
-                "(SELECT dump_id FROM jobs WHERE id = ?)",
-                (job_id,),
-            ).fetchone()
-            if dump_row and dump_row["mode"] == "meeting":
+            if dump_row and (
+                dump_row["mode"] == "meeting"
+                or (
+                    dump_row["mode"] == "brain_dump"
+                    and dump_row["duration_seconds"] > 30
+                )
+            ):
                 from app.services.secretary import format_meeting_transcript
 
                 formatted = format_meeting_transcript(result.segments)
                 if formatted:
                     transcript = formatted
                 log.info(
-                    "job.meeting_formatted",
+                    "job.speaker_sections_formatted",
                     job_id=job_id,
                     formatted=formatted is not None,
                 )

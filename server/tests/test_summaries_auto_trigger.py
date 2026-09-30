@@ -36,7 +36,7 @@ class _FakeService:
         )
 
     def transcribe(
-        self, audio_path: str, *, hotwords: str | None = None
+        self, audio_path: str, *, hotwords: str | None = None, diarize: bool = True
     ) -> TranscriptionResult:
         return self.result
 

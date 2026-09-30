@@ -186,7 +186,12 @@ class TranscriptionService:
         log.info("transcription.model_loaded", model=target, device=device)
 
     def transcribe(
-        self, audio_path: str, *, hotwords: str | None = None, translate: bool = False
+        self,
+        audio_path: str,
+        *,
+        hotwords: str | None = None,
+        translate: bool = False,
+        diarize: bool = True,
     ) -> TranscriptionResult:
         """Transcribe an audio file.
 
@@ -247,16 +252,17 @@ class TranscriptionService:
 
         # Diarization is optional and must never break transcription.
         speaker_embeddings: dict[str, list[float]] | None = None
-        try:
-            collected, emb = diarize_segments_with_embeddings(audio_path, collected)
-            speaker_embeddings = emb or None
-        except Exception as exc:
-            log.warning(
-                "transcription.diarization_skipped",
-                error=str(exc),
-                error_type=type(exc).__name__,
-                audio=audio_path,
-            )
+        if diarize:
+            try:
+                collected, emb = diarize_segments_with_embeddings(audio_path, collected)
+                speaker_embeddings = emb or None
+            except Exception as exc:
+                log.warning(
+                    "transcription.diarization_skipped",
+                    error=str(exc),
+                    error_type=type(exc).__name__,
+                    audio=audio_path,
+                )
 
         log.info(
             "transcription.complete",

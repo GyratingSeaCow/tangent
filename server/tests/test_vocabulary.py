@@ -126,7 +126,9 @@ class _RecordingService:
     def __init__(self):
         self.calls: list[tuple[str, str | None]] = []
 
-    def transcribe(self, audio_path: str, *, hotwords: str | None = None):
+    def transcribe(
+        self, audio_path: str, *, hotwords: str | None = None, diarize: bool = True
+    ):
         self.calls.append((audio_path, hotwords))
         return TranscriptionResult(text="done")
 

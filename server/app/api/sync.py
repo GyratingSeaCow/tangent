@@ -301,7 +301,7 @@ def _teach_from_rename(
     embeddings_json: str | None,
 ) -> list[str]:
     """Teach new or changed device-authored label/name pairs."""
-    from app.services.voice_book import teach  # noqa: PLC0415
+    from app.services.voice_book import teach, unteach  # noqa: PLC0415
 
     if not new_map or not embeddings_json:
         return []
@@ -312,15 +312,29 @@ def _teach_from_rename(
     except (TypeError, ValueError):
         return []
     taught: list[str] = []
+    untaught: list[str] = []
     for label, name in new.items():
         clean = (name or "").strip()
         if not clean or old.get(label) == name or label not in embeddings:
             continue
+        old_clean = (old.get(label) or "").strip()
+        if old_clean and old_clean != clean:
+            try:
+                if unteach(conn, old_clean, embeddings[label]):
+                    untaught.append(old_clean)
+            except ValueError as exc:
+                log.warning(
+                    "voice_book.unteach_skipped",
+                    name=old_clean,
+                    error=str(exc),
+                )
         try:
             teach(conn, clean, embeddings[label])
         except ValueError:
             continue  # a NaN centroid slipped into an old row: skip, never poison
         taught.append(clean)
+    if untaught:
+        log.info("voice_book.untaught", names=untaught)
     if taught:
         log.info("voice_book.taught", names=taught)
     return taught

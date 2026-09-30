@@ -82,7 +82,7 @@ class _FakeService:
         self.result = result
 
     def transcribe(
-        self, _audio_path: str, *, hotwords: str | None = None
+        self, _audio_path: str, *, hotwords: str | None = None, diarize: bool = True
     ) -> TranscriptionResult:
         return self.result
 
@@ -167,7 +167,7 @@ def test_retranscribe_start_clears_stale_timings(temp_data_dir: Path, monkeypatc
 
     class InspectingService:
         def transcribe(
-            self, _audio_path: str, *, hotwords: str | None = None
+            self, _audio_path: str, *, hotwords: str | None = None, diarize: bool = True
         ) -> TranscriptionResult:
             conn = _connect(temp_data_dir)
             try:
