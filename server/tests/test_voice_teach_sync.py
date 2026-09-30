@@ -177,6 +177,19 @@ def test_clearing_last_taught_name_with_null_map_unteaches_it(
     assert conn.execute("SELECT count(*) FROM voice_book_samples").fetchone()[0] == 0
 
 
+def test_clearing_taught_name_with_blank_value_unteaches_it(
+    authed_client, temp_data_dir
+):
+    """The explicit '' clear shape must keep working alongside the null map."""
+    client, token = authed_client
+    conn = _seed(temp_data_dir, {"Speaker 1": [1.0, 0.0]})
+    _push(client, token, {"speaker_names": json.dumps({"Speaker 1": "Jeff"})})
+    r = _push(client, token, {"speaker_names": json.dumps({"Speaker 1": ""})})
+    assert r.status_code == 200
+    assert vb.load_voice_book(conn) == []
+    assert conn.execute("SELECT count(*) FROM voice_book_samples").fetchone()[0] == 0
+
+
 def test_null_stored_embedding_is_logged_and_skipped(temp_data_dir, caplog, capsys):
     init_db(str(temp_data_dir))
     conn = sqlite3.connect(temp_data_dir / "tangent.db")
@@ -259,3 +272,5 @@ def test_removed_embedding_label_deletes_ledger_row(authed_client, temp_data_dir
         "SELECT count(*) FROM voice_book_samples WHERE dump_id = ? AND label = 'Speaker 2'",
         (DUMP,),
     ).fetchone()[0] == 0
+    # The centroid must also be un-taught, not just the ledger row removed.
+    assert "Ann" not in {entry.name for entry in vb.load_voice_book(conn)}
