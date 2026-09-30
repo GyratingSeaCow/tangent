@@ -70,9 +70,14 @@ final class _ControllerAskVoiceRecorder implements AskVoiceRecorderPort {
       ref.read(recordingControllerProvider.notifier).stop();
 }
 
-final askVoiceRecorderProvider = Provider<AskVoiceRecorderPort>(
-  (ref) => _ControllerAskVoiceRecorder(ref),
-);
+final askVoiceRecorderProvider = Provider<AskVoiceRecorderPort>((ref) {
+  // The adapter's [state] getter uses ref.read, which does not subscribe.
+  // Watch the underlying controller here so widgets watching this provider
+  // rebuild when the recording state changes (idle -> recording -> saving);
+  // without this the mic/stop icon would freeze on first build.
+  ref.watch(recordingControllerProvider);
+  return _ControllerAskVoiceRecorder(ref);
+});
 
 final askVoiceTranscribeProvider = Provider<Future<String> Function(DumpRow)>(
   (ref) => (row) async {

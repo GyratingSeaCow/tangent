@@ -411,4 +411,52 @@ void main() {
       );
     });
   }
+
+  testWidgets('mic icon rebuilds when the real recorder adapter state changes',
+      (tester) async {
+    // Uses the REAL askVoiceRecorderProvider adapter (no overrideWithValue)
+    // over a fake state machine, pinning that the provider subscribes to
+    // recordingControllerProvider: without that watch the icon freezes on
+    // its first-build state and never shows the stop affordance.
+    final controller = _MutableRecordingController(RecordingState.idle);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: <Override>[
+          askHistoryProvider.overrideWith((ref) => Stream.value(const [])),
+          localDbProvider.overrideWithValue(_Db()),
+          recordingControllerProvider.overrideWith((ref) => controller),
+        ],
+        child: const MaterialApp(home: AskScreen()),
+      ),
+    );
+    await tester.pump();
+    expect(find.byIcon(Icons.stop), findsNothing);
+    controller.set(RecordingState.recording);
+    await tester.pump();
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('ask-mic')),
+        matching: find.byIcon(Icons.stop),
+      ),
+      findsOneWidget,
+    );
+  });
+}
+
+/// Fake state machine for the REAL adapter path: state can be driven by the
+/// test without standing up the recorder's seven collaborators.
+class _MutableRecordingController extends StateNotifier<RecordingState>
+    implements RecordingController {
+  _MutableRecordingController(super.initial);
+
+  void set(RecordingState next) => state = next;
+
+  @override
+  bool get isRecording => state == RecordingState.recording;
+
+  @override
+  int get elapsedSeconds => 0;
+
+  @override
+  noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
