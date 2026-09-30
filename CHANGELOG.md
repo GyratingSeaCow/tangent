@@ -5,6 +5,15 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.38.0 — 2026-09-30
+
+### Added
+- **Auto-file — a new recording finds its own folder.** After transcription the server picks the best matching *existing* folder for the capture; when it's confident the capture is filed and its card shows an **Auto-filed to ‹folder› · Undo** chip on every paired device — Undo quietly puts it back where it was. When it's unsure, nothing happens: no chip, no noise, and folders are never created. Matching is dependency-free TF-IDF against each folder's own content (accept 0.22 cosine with a 0.08 best-vs-runner-up margin and 3+ shared terms, calibrated like voice matching), and a capture you've already filed is never second-guessed. Settings → **Auto-file** turns it off (default on, stored on the server like the AI-summaries auto-trigger). Spec `docs/design/2026-09-30-ask-my-notes.md` (queued item #3).
+- **Filing a Brain Dump into a folder now syncs to every paired device** — filing used to be per-device only. Drift v29 with a one-time backfill that re-pushes existing filings and shields them from the first post-upgrade pull.
+
+### Fixed
+- An Ask answer that admits "I couldn't find that in your notes" no longer lists sources: an honest miss now ships zero citations, in both the response and the synced answer history, instead of up to 8 chips that contradicted it.
+
 ## 1.37.0 — 2026-09-30
 
 ### Added

@@ -50,13 +50,28 @@ ADH2/
 
 ## Status
 
-Shipping — **v1.37.0** (see CHANGELOG.md). Client and server are both
-implemented and tested (2709
-Flutter tests, 700 server tests, 129 Kotlin tests). The client runs
+Shipping — **v1.38.0** (see CHANGELOG.md). Client and server are both
+implemented and tested (2726
+Flutter tests, 718 server tests, 129 Kotlin tests). The client runs
 natively on Linux AND Windows (tray icon, global record hotkey,
 close-to-tray, single instance, right-click = long-press; AppImage and
 Inno Setup installer under `packaging/`) — verified on CachyOS/KDE
 Plasma Wayland and Windows 11; see the README's Desktop sections.
+
+v1.38.0 **auto-file** (ask-my-notes spec, queued item #3): after a
+transcript commits the server classifies the capture against live
+folders (dependency-free TF-IDF, folder name weighted 3x; ACCEPT 0.22 +
+0.08 best-vs-runner-up margin + 3 shared terms) and files it only when
+confident — unsure is completely silent, folders are never created, an
+existing filing is never second-guessed. Card shows a synced
+"Auto-filed to <folder> · Undo" chip; Undo restores the pre-filing spot
+via the prev-folder marker. Enabler: dump filing now syncs
+(server `dumps.folder_id` + auto-file markers, present-null payloads;
+client Drift v29 with a one-time dirty backfill protecting existing
+filings; dirty remote-only rows push). Settings toggle, default on,
+server-persisted (AI-summaries auto-trigger pattern). Ask fix: a
+model-declared honest miss ships zero citations (response + synced
+message).
 
 v1.37.0 **Ask My Notes**, spec docs/design/2026-09-30-ask-my-notes.md:
 ask a question in text or by voice and get a grounded answer with
