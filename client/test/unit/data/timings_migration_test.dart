@@ -77,7 +77,7 @@ void main() {
     addTearDown(db.close);
     await db.listDumps();
 
-    expect(raw.userVersion, 27);
+    expect(raw.userVersion, 28);
     expect(_columns(raw, 'dumps'), contains('transcript_timings'));
     final DumpRow row = (await db.getDump('old-dump'))!;
     expect(row.transcript, 'we talked', reason: 'existing data survives');
@@ -95,7 +95,7 @@ void main() {
     addTearDown(db.close);
     await db.listDumps();
 
-    expect(raw.userVersion, 27);
+    expect(raw.userVersion, 28);
     expect(_columns(raw, 'dumps'), contains('transcript_timings'));
   });
 

@@ -19,6 +19,25 @@ import 'package:tangent/screens/recording/recording_controller.dart';
 
 class _Db extends Mock implements LocalDb {}
 
+/// Default stubs for the local-only visited-citation bookkeeping, which every
+/// Ask render and every citation tap touches. Without these mocktail throws a
+/// MissingStub from inside `_openSource`, BEFORE navigation runs, so unrelated
+/// tests fail with a misleading "no destination opened".
+///
+/// [visits] lets a test declare which citations are already opened. `_app`
+/// applies the empty default only when a test has not stubbed the stream
+/// itself, so a per-test `when(...)` is never silently overwritten.
+void _stubVisits(_Db db, {Set<String> visits = const <String>{}}) {
+  when(() => db.watchAskSourceVisits())
+      .thenAnswer((_) => Stream<Set<String>>.value(visits));
+  when(
+    () => db.markAskSourceVisited(
+      messageId: any(named: 'messageId'),
+      sourceIndex: any(named: 'sourceIndex'),
+    ),
+  ).thenAnswer((_) async {});
+}
+
 class _Dump extends Mock implements DumpRow {}
 
 class _AskClient extends Mock implements AskClient {}
@@ -44,19 +63,30 @@ Widget _app({
   LocalDb? db,
   AskVoiceQuestion? voice,
   AskOpenDestination? openDestination,
-}) =>
-    ProviderScope(
-      overrides: <Override>[
-        askHistoryProvider.overrideWith((ref) => Stream.value(history)),
-        localDbProvider.overrideWithValue(db ?? _Db()),
-      ],
-      child: MaterialApp(
-        home: AskScreen(
-          voiceQuestion: voice ?? () async => null,
-          openDestination: openDestination,
-        ),
+}) {
+  final LocalDb resolved = db ?? _Db();
+  if (resolved is _Db) {
+    // Only supply the default when the test has not stubbed the stream, so a
+    // per-test `when(() => db.watchAskSourceVisits())` survives.
+    try {
+      resolved.watchAskSourceVisits();
+    } catch (_) {
+      _stubVisits(resolved);
+    }
+  }
+  return ProviderScope(
+    overrides: <Override>[
+      askHistoryProvider.overrideWith((ref) => Stream.value(history)),
+      localDbProvider.overrideWithValue(resolved),
+    ],
+    child: MaterialApp(
+      home: AskScreen(
+        voiceQuestion: voice ?? () async => null,
+        openDestination: openDestination,
       ),
-    );
+    ),
+  );
+}
 
 void main() {
   testWidgets('renders ordered user and assistant history with scoped citation',
@@ -161,6 +191,91 @@ void main() {
     expect(rects.first.width, greaterThan(200));
     // No chip cloud remains.
     expect(find.byType(ActionChip), findsNothing);
+  });
+
+  testWidgets('visited citation dims and shows a check; unvisited does not',
+      (tester) async {
+    final db = _Db();
+    // Source 1 has been opened before; source 0 has not.
+    _stubVisits(db, visits: const <String>{'a-v#1'});
+    final message = AskHistoryMessage(
+      id: 'a-v',
+      role: 'assistant',
+      text: 'Two sources',
+      sources: const <AskSource>[
+        AskSource(
+          entityType: 'dump',
+          entityId: 'd-0',
+          snippet: 'unvisited',
+          seekSeconds: 10,
+        ),
+        AskSource(
+          entityType: 'dump',
+          entityId: 'd-1',
+          snippet: 'visited',
+          seekSeconds: 20,
+        ),
+      ],
+      createdAt: DateTime.utc(2026, 9, 30),
+    );
+    await tester
+        .pumpWidget(_app(history: <AskHistoryMessage>[message], db: db));
+    await tester.pump();
+
+    final Finder unvisited = find.byKey(const Key('ask-source-a-v-0-dump-d-0'));
+    final Finder visited = find.byKey(const Key('ask-source-a-v-1-dump-d-1'));
+
+    // The visited row swaps its leading icon for a filled check.
+    expect(
+      find.descendant(of: visited, matching: find.byIcon(Icons.check_circle)),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: unvisited, matching: find.byIcon(Icons.check_circle)),
+      findsNothing,
+    );
+    expect(
+      find.descendant(of: unvisited, matching: find.byIcon(Icons.mic)),
+      findsOneWidget,
+    );
+
+    // ...and dims, so the distinction survives a monochrome/colourblind read.
+    double opacityOf(Finder row) => tester
+        .widgetList<Opacity>(
+          find.descendant(of: row, matching: find.byType(Opacity)),
+        )
+        .first
+        .opacity;
+    expect(opacityOf(visited), lessThan(opacityOf(unvisited)));
+    expect(opacityOf(unvisited), 1.0);
+  });
+
+  testWidgets('opening a citation records the visit', (tester) async {
+    final db = _Db();
+    _stubVisits(db);
+    when(() => db.getDumpRow('d-9')).thenAnswer((_) async => null);
+    final message = AskHistoryMessage(
+      id: 'a-mark',
+      role: 'assistant',
+      text: 'One source',
+      sources: const <AskSource>[
+        AskSource(
+          entityType: 'dump',
+          entityId: 'd-9',
+          snippet: 'tapped',
+          seekSeconds: 5,
+        ),
+      ],
+      createdAt: DateTime.utc(2026, 9, 30),
+    );
+    await tester
+        .pumpWidget(_app(history: <AskHistoryMessage>[message], db: db));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('ask-source-a-mark-0-dump-d-9')));
+    await tester.pump();
+    verify(
+      () => db.markAskSourceVisited(messageId: 'a-mark', sourceIndex: 0),
+    ).called(1);
   });
 
   testWidgets('missing citation remains visible and reports honest miss',

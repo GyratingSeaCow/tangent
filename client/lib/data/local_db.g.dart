@@ -8604,6 +8604,244 @@ class AskMessagesCompanion extends UpdateCompanion<AskMessageRow> {
   }
 }
 
+class $AskSourceVisitsTable extends AskSourceVisits
+    with TableInfo<$AskSourceVisitsTable, AskSourceVisitRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $AskSourceVisitsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _messageIdMeta =
+      const VerificationMeta('messageId');
+  @override
+  late final GeneratedColumn<String> messageId = GeneratedColumn<String>(
+      'message_id', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _sourceIndexMeta =
+      const VerificationMeta('sourceIndex');
+  @override
+  late final GeneratedColumn<int> sourceIndex = GeneratedColumn<int>(
+      'source_index', aliasedName, false,
+      type: DriftSqlType.int, requiredDuringInsert: true);
+  static const VerificationMeta _visitedAtMeta =
+      const VerificationMeta('visitedAt');
+  @override
+  late final GeneratedColumn<int> visitedAt = GeneratedColumn<int>(
+      'visited_at', aliasedName, false,
+      type: DriftSqlType.int, requiredDuringInsert: true);
+  @override
+  List<GeneratedColumn> get $columns => [messageId, sourceIndex, visitedAt];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'ask_source_visits';
+  @override
+  VerificationContext validateIntegrity(Insertable<AskSourceVisitRow> instance,
+      {bool isInserting = false}) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('message_id')) {
+      context.handle(_messageIdMeta,
+          messageId.isAcceptableOrUnknown(data['message_id']!, _messageIdMeta));
+    } else if (isInserting) {
+      context.missing(_messageIdMeta);
+    }
+    if (data.containsKey('source_index')) {
+      context.handle(
+          _sourceIndexMeta,
+          sourceIndex.isAcceptableOrUnknown(
+              data['source_index']!, _sourceIndexMeta));
+    } else if (isInserting) {
+      context.missing(_sourceIndexMeta);
+    }
+    if (data.containsKey('visited_at')) {
+      context.handle(_visitedAtMeta,
+          visitedAt.isAcceptableOrUnknown(data['visited_at']!, _visitedAtMeta));
+    } else if (isInserting) {
+      context.missing(_visitedAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {messageId, sourceIndex};
+  @override
+  AskSourceVisitRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return AskSourceVisitRow(
+      messageId: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}message_id'])!,
+      sourceIndex: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}source_index'])!,
+      visitedAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}visited_at'])!,
+    );
+  }
+
+  @override
+  $AskSourceVisitsTable createAlias(String alias) {
+    return $AskSourceVisitsTable(attachedDatabase, alias);
+  }
+}
+
+class AskSourceVisitRow extends DataClass
+    implements Insertable<AskSourceVisitRow> {
+  final String messageId;
+  final int sourceIndex;
+  final int visitedAt;
+  const AskSourceVisitRow(
+      {required this.messageId,
+      required this.sourceIndex,
+      required this.visitedAt});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['message_id'] = Variable<String>(messageId);
+    map['source_index'] = Variable<int>(sourceIndex);
+    map['visited_at'] = Variable<int>(visitedAt);
+    return map;
+  }
+
+  AskSourceVisitsCompanion toCompanion(bool nullToAbsent) {
+    return AskSourceVisitsCompanion(
+      messageId: Value(messageId),
+      sourceIndex: Value(sourceIndex),
+      visitedAt: Value(visitedAt),
+    );
+  }
+
+  factory AskSourceVisitRow.fromJson(Map<String, dynamic> json,
+      {ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return AskSourceVisitRow(
+      messageId: serializer.fromJson<String>(json['messageId']),
+      sourceIndex: serializer.fromJson<int>(json['sourceIndex']),
+      visitedAt: serializer.fromJson<int>(json['visitedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'messageId': serializer.toJson<String>(messageId),
+      'sourceIndex': serializer.toJson<int>(sourceIndex),
+      'visitedAt': serializer.toJson<int>(visitedAt),
+    };
+  }
+
+  AskSourceVisitRow copyWith(
+          {String? messageId, int? sourceIndex, int? visitedAt}) =>
+      AskSourceVisitRow(
+        messageId: messageId ?? this.messageId,
+        sourceIndex: sourceIndex ?? this.sourceIndex,
+        visitedAt: visitedAt ?? this.visitedAt,
+      );
+  AskSourceVisitRow copyWithCompanion(AskSourceVisitsCompanion data) {
+    return AskSourceVisitRow(
+      messageId: data.messageId.present ? data.messageId.value : this.messageId,
+      sourceIndex:
+          data.sourceIndex.present ? data.sourceIndex.value : this.sourceIndex,
+      visitedAt: data.visitedAt.present ? data.visitedAt.value : this.visitedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('AskSourceVisitRow(')
+          ..write('messageId: $messageId, ')
+          ..write('sourceIndex: $sourceIndex, ')
+          ..write('visitedAt: $visitedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(messageId, sourceIndex, visitedAt);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is AskSourceVisitRow &&
+          other.messageId == this.messageId &&
+          other.sourceIndex == this.sourceIndex &&
+          other.visitedAt == this.visitedAt);
+}
+
+class AskSourceVisitsCompanion extends UpdateCompanion<AskSourceVisitRow> {
+  final Value<String> messageId;
+  final Value<int> sourceIndex;
+  final Value<int> visitedAt;
+  final Value<int> rowid;
+  const AskSourceVisitsCompanion({
+    this.messageId = const Value.absent(),
+    this.sourceIndex = const Value.absent(),
+    this.visitedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  AskSourceVisitsCompanion.insert({
+    required String messageId,
+    required int sourceIndex,
+    required int visitedAt,
+    this.rowid = const Value.absent(),
+  })  : messageId = Value(messageId),
+        sourceIndex = Value(sourceIndex),
+        visitedAt = Value(visitedAt);
+  static Insertable<AskSourceVisitRow> custom({
+    Expression<String>? messageId,
+    Expression<int>? sourceIndex,
+    Expression<int>? visitedAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (messageId != null) 'message_id': messageId,
+      if (sourceIndex != null) 'source_index': sourceIndex,
+      if (visitedAt != null) 'visited_at': visitedAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  AskSourceVisitsCompanion copyWith(
+      {Value<String>? messageId,
+      Value<int>? sourceIndex,
+      Value<int>? visitedAt,
+      Value<int>? rowid}) {
+    return AskSourceVisitsCompanion(
+      messageId: messageId ?? this.messageId,
+      sourceIndex: sourceIndex ?? this.sourceIndex,
+      visitedAt: visitedAt ?? this.visitedAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (messageId.present) {
+      map['message_id'] = Variable<String>(messageId.value);
+    }
+    if (sourceIndex.present) {
+      map['source_index'] = Variable<int>(sourceIndex.value);
+    }
+    if (visitedAt.present) {
+      map['visited_at'] = Variable<int>(visitedAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('AskSourceVisitsCompanion(')
+          ..write('messageId: $messageId, ')
+          ..write('sourceIndex: $sourceIndex, ')
+          ..write('visitedAt: $visitedAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$LocalDb extends GeneratedDatabase {
   _$LocalDb(QueryExecutor e) : super(e);
   $LocalDbManager get managers => $LocalDbManager(this);
@@ -8631,6 +8869,8 @@ abstract class _$LocalDb extends GeneratedDatabase {
   late final $TodosTable todos = $TodosTable(this);
   late final $CalendarEventsTable calendarEvents = $CalendarEventsTable(this);
   late final $AskMessagesTable askMessages = $AskMessagesTable(this);
+  late final $AskSourceVisitsTable askSourceVisits =
+      $AskSourceVisitsTable(this);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -8652,7 +8892,8 @@ abstract class _$LocalDb extends GeneratedDatabase {
         localSettings,
         todos,
         calendarEvents,
-        askMessages
+        askMessages,
+        askSourceVisits
       ];
   @override
   StreamQueryUpdateRules get streamUpdateRules => const StreamQueryUpdateRules(
@@ -12873,6 +13114,149 @@ typedef $$AskMessagesTableProcessedTableManager = ProcessedTableManager<
     ),
     AskMessageRow,
     PrefetchHooks Function()>;
+typedef $$AskSourceVisitsTableCreateCompanionBuilder = AskSourceVisitsCompanion
+    Function({
+  required String messageId,
+  required int sourceIndex,
+  required int visitedAt,
+  Value<int> rowid,
+});
+typedef $$AskSourceVisitsTableUpdateCompanionBuilder = AskSourceVisitsCompanion
+    Function({
+  Value<String> messageId,
+  Value<int> sourceIndex,
+  Value<int> visitedAt,
+  Value<int> rowid,
+});
+
+class $$AskSourceVisitsTableFilterComposer
+    extends Composer<_$LocalDb, $AskSourceVisitsTable> {
+  $$AskSourceVisitsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get messageId => $composableBuilder(
+      column: $table.messageId, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get sourceIndex => $composableBuilder(
+      column: $table.sourceIndex, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get visitedAt => $composableBuilder(
+      column: $table.visitedAt, builder: (column) => ColumnFilters(column));
+}
+
+class $$AskSourceVisitsTableOrderingComposer
+    extends Composer<_$LocalDb, $AskSourceVisitsTable> {
+  $$AskSourceVisitsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get messageId => $composableBuilder(
+      column: $table.messageId, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get sourceIndex => $composableBuilder(
+      column: $table.sourceIndex, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get visitedAt => $composableBuilder(
+      column: $table.visitedAt, builder: (column) => ColumnOrderings(column));
+}
+
+class $$AskSourceVisitsTableAnnotationComposer
+    extends Composer<_$LocalDb, $AskSourceVisitsTable> {
+  $$AskSourceVisitsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get messageId =>
+      $composableBuilder(column: $table.messageId, builder: (column) => column);
+
+  GeneratedColumn<int> get sourceIndex => $composableBuilder(
+      column: $table.sourceIndex, builder: (column) => column);
+
+  GeneratedColumn<int> get visitedAt =>
+      $composableBuilder(column: $table.visitedAt, builder: (column) => column);
+}
+
+class $$AskSourceVisitsTableTableManager extends RootTableManager<
+    _$LocalDb,
+    $AskSourceVisitsTable,
+    AskSourceVisitRow,
+    $$AskSourceVisitsTableFilterComposer,
+    $$AskSourceVisitsTableOrderingComposer,
+    $$AskSourceVisitsTableAnnotationComposer,
+    $$AskSourceVisitsTableCreateCompanionBuilder,
+    $$AskSourceVisitsTableUpdateCompanionBuilder,
+    (
+      AskSourceVisitRow,
+      BaseReferences<_$LocalDb, $AskSourceVisitsTable, AskSourceVisitRow>
+    ),
+    AskSourceVisitRow,
+    PrefetchHooks Function()> {
+  $$AskSourceVisitsTableTableManager(_$LocalDb db, $AskSourceVisitsTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$AskSourceVisitsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$AskSourceVisitsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$AskSourceVisitsTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback: ({
+            Value<String> messageId = const Value.absent(),
+            Value<int> sourceIndex = const Value.absent(),
+            Value<int> visitedAt = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              AskSourceVisitsCompanion(
+            messageId: messageId,
+            sourceIndex: sourceIndex,
+            visitedAt: visitedAt,
+            rowid: rowid,
+          ),
+          createCompanionCallback: ({
+            required String messageId,
+            required int sourceIndex,
+            required int visitedAt,
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              AskSourceVisitsCompanion.insert(
+            messageId: messageId,
+            sourceIndex: sourceIndex,
+            visitedAt: visitedAt,
+            rowid: rowid,
+          ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ));
+}
+
+typedef $$AskSourceVisitsTableProcessedTableManager = ProcessedTableManager<
+    _$LocalDb,
+    $AskSourceVisitsTable,
+    AskSourceVisitRow,
+    $$AskSourceVisitsTableFilterComposer,
+    $$AskSourceVisitsTableOrderingComposer,
+    $$AskSourceVisitsTableAnnotationComposer,
+    $$AskSourceVisitsTableCreateCompanionBuilder,
+    $$AskSourceVisitsTableUpdateCompanionBuilder,
+    (
+      AskSourceVisitRow,
+      BaseReferences<_$LocalDb, $AskSourceVisitsTable, AskSourceVisitRow>
+    ),
+    AskSourceVisitRow,
+    PrefetchHooks Function()>;
 
 class $LocalDbManager {
   final _$LocalDb _db;
@@ -12911,4 +13295,6 @@ class $LocalDbManager {
       $$CalendarEventsTableTableManager(_db, _db.calendarEvents);
   $$AskMessagesTableTableManager get askMessages =>
       $$AskMessagesTableTableManager(_db, _db.askMessages);
+  $$AskSourceVisitsTableTableManager get askSourceVisits =>
+      $$AskSourceVisitsTableTableManager(_db, _db.askSourceVisits);
 }

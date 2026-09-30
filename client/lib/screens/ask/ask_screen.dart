@@ -36,6 +36,11 @@ final askHistoryProvider = StreamProvider<List<AskHistoryMessage>>(
   (ref) => ref.watch(askHistoryRepositoryProvider).watch(),
 );
 
+/// Opened citations, as `<messageId>#<sourceIndex>` keys. Local only.
+final askSourceVisitsProvider = StreamProvider<Set<String>>(
+  (ref) => ref.watch(localDbProvider).watchAskSourceVisits(),
+);
+
 final askClientProvider = FutureProvider<AskClient>((ref) async {
   ref.watch(transcriptionClientProvider);
   final store = ref.watch(secureStoreProvider);
@@ -269,7 +274,11 @@ class _AskScreenState extends ConsumerState<AskScreen> {
     }
   }
 
-  Future<void> _openSource(AskSource source) async {
+  Future<void> _openSource(AskSource source, String messageId, int index) async {
+    await ref.read(localDbProvider).markAskSourceVisited(
+          messageId: messageId,
+          sourceIndex: index,
+        );
     final db = ref.read(localDbProvider);
     Widget? destination;
     if (source.entityType == 'dump' || source.entityType == 'summary') {
@@ -312,6 +321,8 @@ class _AskScreenState extends ConsumerState<AskScreen> {
   @override
   Widget build(BuildContext context) {
     final history = ref.watch(askHistoryProvider);
+    final Set<String> visited =
+        ref.watch(askSourceVisitsProvider).valueOrNull ?? const <String>{};
     final RecordingState recordingState = widget.voiceQuestion == null
         ? ref.watch(askVoiceRecorderProvider).state
         : RecordingState.idle;
@@ -354,7 +365,14 @@ class _AskScreenState extends ConsumerState<AskScreen> {
                                     ),
                                     icon: _sourceIcon(entry.$2.entityType),
                                     label: _sourceLabel(entry.$2),
-                                    onTap: () => _openSource(entry.$2),
+                                    visited: visited.contains(
+                                      '${message.id}#${entry.$1}',
+                                    ),
+                                    onTap: () => _openSource(
+                                      entry.$2,
+                                      message.id,
+                                      entry.$1,
+                                    ),
                                   ),
                                 ),
                               ],
@@ -449,44 +467,61 @@ String _timestamp(double seconds) {
 
 /// One citation, rendered full-width on its own line so a list of sources
 /// reads as a single scannable column instead of a reflowing chip cloud.
+///
+/// A [visited] row dims and swaps its leading icon for a filled check, so a
+/// long source list shows what has already been opened without relying on
+/// colour alone.
 class _SourceRow extends StatelessWidget {
   const _SourceRow({
     super.key,
     required this.icon,
     required this.label,
     required this.onTap,
+    this.visited = false,
   });
 
   final IconData icon;
   final String label;
   final VoidCallback onTap;
+  final bool visited;
 
   @override
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
+    final TextStyle? base = Theme.of(context).textTheme.bodyMedium;
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(8),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
-        child: Row(
-          children: <Widget>[
-            Icon(icon, size: 18, color: scheme.primary),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.bodyMedium,
+      child: Opacity(
+        opacity: visited ? 0.55 : 1,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+          child: Row(
+            children: <Widget>[
+              Icon(
+                visited ? Icons.check_circle : icon,
+                key: ValueKey<bool>(visited),
+                size: 18,
+                color: visited ? scheme.onSurfaceVariant : scheme.primary,
               ),
-            ),
-            Icon(
-              Icons.chevron_right,
-              size: 18,
-              color: scheme.onSurfaceVariant,
-            ),
-          ],
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: visited
+                      ? base?.copyWith(color: scheme.onSurfaceVariant)
+                      : base,
+                ),
+              ),
+              Icon(
+                Icons.chevron_right,
+                size: 18,
+                color: scheme.onSurfaceVariant,
+              ),
+            ],
+          ),
         ),
       ),
     );

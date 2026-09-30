@@ -439,6 +439,24 @@ class AskMessages extends Table {
   Set<Column> get primaryKey => {id};
 }
 
+/// Which Ask citations have been opened, so a long source list shows what is
+/// already checked.
+///
+/// LOCAL ONLY and deliberately a separate table: `ask_messages` is pull-only,
+/// so a column there would be erased by the next server pull that rewrites
+/// the row. Keyed by message id + the citation's index within that message,
+/// which is the same identity the row keys already use.
+@DataClassName('AskSourceVisitRow')
+class AskSourceVisits extends Table {
+  @override
+  String get tableName => 'ask_source_visits';
+  TextColumn get messageId => text()();
+  IntColumn get sourceIndex => integer()();
+  IntColumn get visitedAt => integer()();
+  @override
+  Set<Column> get primaryKey => {messageId, sourceIndex};
+}
+
 @DriftDatabase(
   tables: [
     Dumps,
@@ -458,6 +476,7 @@ class AskMessages extends Table {
     Todos,
     CalendarEvents,
     AskMessages,
+    AskSourceVisits,
   ],
 )
 class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
@@ -466,7 +485,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   LocalDb.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 27;
+  int get schemaVersion => 28;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -978,6 +997,13 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
             ).get();
             if (table.isEmpty) await m.createTable(askMessages);
           }
+          if (from < 28) {
+            // v1.38.0: local-only record of which Ask citations were opened.
+            final List<QueryRow> table = await customSelect(
+              "SELECT name FROM sqlite_master WHERE type='table' AND name='ask_source_visits'",
+            ).get();
+            if (table.isEmpty) await m.createTable(askSourceVisits);
+          }
         },
       );
 
@@ -1163,6 +1189,32 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
           (t) => OrderingTerm.asc(t.serverSeq),
         ]))
       .get();
+
+  /// Watches the set of opened citations as `<messageId>#<sourceIndex>` keys.
+  Stream<Set<String>> watchAskSourceVisits() =>
+      select(askSourceVisits).watch().map(_visitKeys);
+
+  Future<Set<String>> askSourceVisitKeys() async =>
+      _visitKeys(await select(askSourceVisits).get());
+
+  static Set<String> _visitKeys(List<AskSourceVisitRow> rows) => <String>{
+        for (final AskSourceVisitRow row in rows)
+          '${row.messageId}#${row.sourceIndex}',
+      };
+
+  /// Records that a citation was opened. Idempotent: reopening a source keeps
+  /// the row visited rather than toggling it off.
+  Future<void> markAskSourceVisited({
+    required String messageId,
+    required int sourceIndex,
+  }) =>
+      into(askSourceVisits).insertOnConflictUpdate(
+        AskSourceVisitsCompanion.insert(
+          messageId: messageId,
+          sourceIndex: sourceIndex,
+          visitedAt: DateTime.now().toUtc().millisecondsSinceEpoch ~/ 1000,
+        ),
+      );
 
   Future<void> applyRemoteAskMessage({
     required String id,
