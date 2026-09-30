@@ -65,6 +65,7 @@ class DumpsListScreen extends ConsumerStatefulWidget {
 
 class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
   final _searchController = TextEditingController();
+  late final void Function() _clearSearchQuery;
   bool _searching = false;
   final _selection = DumpSelectionController();
   bool _batchBusy = false;
@@ -75,6 +76,16 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
   final _deletionRecovery = LocalDeletionRecoveryState();
   BulkDeletionResult? get _deleteResult => _deletionRecovery.latest;
   String? _deleteError;
+
+  @override
+  void initState() {
+    super.initState();
+    final query = ref.read(searchQueryProvider.notifier);
+    _clearSearchQuery = () {
+      if (query.state.isNotEmpty) query.state = '';
+    };
+  }
+
   Object _scope() {
     final r = ref.read(presentedDumpsProvider).valueOrNull;
     return (
@@ -284,7 +295,11 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
     return PopScope(
       canPop: !selection.active,
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop && selection.active) _change(_selection.cancel);
+        if (didPop) {
+          _clearSearchQuery();
+        } else if (selection.active) {
+          _change(_selection.cancel);
+        }
       },
       child: Scaffold(
         floatingActionButton: FloatingActionButton(
