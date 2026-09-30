@@ -45,8 +45,13 @@ void main() {
     expect(rows[0].captureFingerprint, rows[1].captureFingerprint);
   });
 
-  test('same transcript again → no new rows', () async {
+  test('same transcript fingerprint prevents re-add after Google edits', () async {
     await capture(two);
+    await db.customStatement(
+      "UPDATE calendar_events SET title = 'Dentist (edited in Google)' "
+      "WHERE id = 'ev-1'",
+    );
+
     expect(await capture(two), isEmpty);
     expect((await repo.eventsFromSource('dump-1')).length, 2);
   });
