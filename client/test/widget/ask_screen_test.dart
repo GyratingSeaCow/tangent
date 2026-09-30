@@ -15,6 +15,7 @@ import 'package:tangent/screens/home/home_screen.dart' show localDbProvider;
 import 'package:tangent/services/ask_client.dart';
 import 'package:tangent/services/document_sync_engine.dart';
 import 'package:tangent/models/api_exception.dart';
+import 'package:tangent/screens/recording/recording_controller.dart';
 
 class _Db extends Mock implements LocalDb {}
 
@@ -23,6 +24,20 @@ class _Dump extends Mock implements DumpRow {}
 class _AskClient extends Mock implements AskClient {}
 
 class _SyncEngine extends Mock implements DocumentSyncEngine {}
+
+class _VoiceRecorder implements AskVoiceRecorderPort {
+  _VoiceRecorder(this.row);
+  final DumpRow row;
+  @override
+  RecordingState state = RecordingState.recording;
+  @override
+  Future<void> start() async => state = RecordingState.recording;
+  @override
+  Future<DumpRow?> stop() async {
+    state = RecordingState.idle;
+    return row;
+  }
+}
 
 Widget _app({
   required List<AskHistoryMessage> history,
@@ -338,4 +353,62 @@ void main() {
     await tester.pump();
     expect(opened.map((screen) => screen.initialSeekSeconds), [1.0, 20.0]);
   });
+
+  for (final fixture in <({int seconds, bool discarded, String transcript})>[
+    (seconds: 24, discarded: true, transcript: 'Short Zephyr voice question'),
+    (seconds: 26, discarded: false, transcript: 'Long Juniper voice question'),
+  ]) {
+    testWidgets('real mic branch ${fixture.seconds}s retention path',
+        (tester) async {
+      final row = _Dump();
+      when(() => row.id).thenReturn('voice-${fixture.seconds}');
+      when(() => row.durationSeconds).thenReturn(fixture.seconds);
+      when(() => row.audioPath)
+          .thenReturn('content://media/external/audio/ask-probe');
+      final recorder = _VoiceRecorder(row);
+      final ask = _AskClient();
+      final engine = _SyncEngine();
+      final transcribed = <String>[];
+      final discarded = <String>[];
+      when(() => ask.ask(fixture.transcript)).thenAnswer(
+        (_) async => const AskResponse(answer: 'answer', sources: []),
+      );
+      when(() => engine.syncNow()).thenAnswer(
+        (_) async => const SyncReport(outcome: SyncOutcome.success),
+      );
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: <Override>[
+            askHistoryProvider.overrideWith((ref) => Stream.value(const [])),
+            localDbProvider.overrideWithValue(_Db()),
+            askClientProvider.overrideWith((ref) async => ask),
+            documentSyncEngineProvider.overrideWithValue(engine),
+            askVoiceRecorderProvider.overrideWithValue(recorder),
+            askVoiceTranscribeProvider.overrideWithValue((captured) async {
+              transcribed.add(captured.id);
+              return fixture.transcript;
+            }),
+            askVoiceDiscardProvider.overrideWithValue((captured) async {
+              expect(
+                captured.audioPath,
+                'content://media/external/audio/ask-probe',
+              );
+              discarded.add(captured.id);
+            }),
+          ],
+          child: const MaterialApp(home: AskScreen()),
+        ),
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('ask-mic')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 150));
+      expect(transcribed, <String>['voice-${fixture.seconds}']);
+      verify(() => ask.ask(fixture.transcript)).called(1);
+      expect(
+        discarded,
+        fixture.discarded ? <String>['voice-${fixture.seconds}'] : isEmpty,
+      );
+    });
+  }
 }

@@ -51,6 +51,59 @@ final askClientProvider = FutureProvider<AskClient>((ref) async {
 typedef AskVoiceQuestion = Future<String?> Function();
 typedef AskOpenDestination = Future<void> Function(Widget destination);
 
+abstract interface class AskVoiceRecorderPort {
+  RecordingState get state;
+  Future<void> start();
+  Future<DumpRow?> stop();
+}
+
+final class _ControllerAskVoiceRecorder implements AskVoiceRecorderPort {
+  const _ControllerAskVoiceRecorder(this.ref);
+  final Ref ref;
+  @override
+  RecordingState get state => ref.read(recordingControllerProvider);
+  @override
+  Future<void> start() =>
+      ref.read(recordingControllerProvider.notifier).start(mode: 'brain_dump');
+  @override
+  Future<DumpRow?> stop() =>
+      ref.read(recordingControllerProvider.notifier).stop();
+}
+
+final askVoiceRecorderProvider = Provider<AskVoiceRecorderPort>(
+  (ref) => _ControllerAskVoiceRecorder(ref),
+);
+
+final askVoiceTranscribeProvider = Provider<Future<String> Function(DumpRow)>(
+  (ref) => (row) async {
+    await ref.read(serverTranscriptionServiceProvider).transcribeDump(row.id);
+    return (await ref.read(localDbProvider).getDumpRow(row.id))?.transcript ??
+        '';
+  },
+);
+
+final askVoiceDiscardProvider = Provider<Future<void> Function(DumpRow)>(
+  (ref) => (row) async {
+    await ref.read(transcriptionClientProvider).deleteDump(row.id);
+    final deletion = ref.read(localDeletionServiceProvider);
+    final preview = switch (await deletion.preview(<String>{row.id})) {
+      Ok<DeletionPreview>(:final value) => value,
+      Fail<DeletionPreview>(:final problem) => throw StorageFault(problem),
+    };
+    switch (await deletion.deleteConfirmed(
+      (
+        operationId: const Uuid().v4(),
+        targets: preview.targets,
+      ),
+    )) {
+      case Ok<BulkDeletionResult>():
+        break;
+      case Fail<BulkDeletionResult>(:final problem):
+        throw StorageFault(problem);
+    }
+  },
+);
+
 Future<void> finishAskVoiceRecording({
   required int durationSeconds,
   required Future<String> Function() transcribe,
@@ -129,14 +182,14 @@ class _AskScreenState extends ConsumerState<AskScreen> {
       if (text != null && text.trim().isNotEmpty) await _submit(text);
       return;
     }
-    final controller = ref.read(recordingControllerProvider.notifier);
+    final controller = ref.read(askVoiceRecorderProvider);
     try {
-      if (ref.read(recordingControllerProvider) == RecordingState.idle) {
-        await controller.start(mode: 'brain_dump');
+      if (controller.state == RecordingState.idle) {
+        await controller.start();
         if (mounted) setState(() => _error = null);
         return;
       }
-      if (ref.read(recordingControllerProvider) != RecordingState.recording) {
+      if (controller.state != RecordingState.recording) {
         return;
       }
       final DumpRow? row = await controller.stop();
@@ -145,38 +198,10 @@ class _AskScreenState extends ConsumerState<AskScreen> {
         _pending = true;
         _error = null;
       });
-      final LocalDb db = ref.read(localDbProvider);
       await finishAskVoiceRecording(
         durationSeconds: row.durationSeconds,
-        transcribe: () async {
-          await ref
-              .read(serverTranscriptionServiceProvider)
-              .transcribeDump(row.id);
-          final DumpRow? transcribed = await db.getDumpRow(row.id);
-          return transcribed?.transcript ?? '';
-        },
-        discard: () async {
-          await ref.read(transcriptionClientProvider).deleteDump(row.id);
-          final LocalDeletionService deletion =
-              ref.read(localDeletionServiceProvider);
-          final DeletionPreview preview =
-              switch (await deletion.preview(<String>{row.id})) {
-            Ok<DeletionPreview>(:final value) => value,
-            Fail<DeletionPreview>(:final problem) =>
-              throw StorageFault(problem),
-          };
-          switch (await deletion.deleteConfirmed(
-            (
-              operationId: const Uuid().v4(),
-              targets: preview.targets,
-            ),
-          )) {
-            case Ok<BulkDeletionResult>():
-              break;
-            case Fail<BulkDeletionResult>(:final problem):
-              throw StorageFault(problem);
-          }
-        },
+        transcribe: () => ref.read(askVoiceTranscribeProvider)(row),
+        discard: () => ref.read(askVoiceDiscardProvider)(row),
         submit: (text) async {
           final client = await ref.read(askClientProvider.future);
           await client.ask(text);
@@ -242,7 +267,7 @@ class _AskScreenState extends ConsumerState<AskScreen> {
   Widget build(BuildContext context) {
     final history = ref.watch(askHistoryProvider);
     final RecordingState recordingState = widget.voiceQuestion == null
-        ? ref.watch(recordingControllerProvider)
+        ? ref.watch(askVoiceRecorderProvider).state
         : RecordingState.idle;
     return Scaffold(
       appBar: AppBar(title: const Text('Ask')),
