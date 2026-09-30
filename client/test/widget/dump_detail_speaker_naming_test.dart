@@ -176,6 +176,33 @@ void main() {
     await unmount(tester);
   });
 
+  testWidgets('Name speakers stays in the overflow after tapping into the '
+      'editor (Jeff, 2026-09-29: focusing the text field made the entry '
+      'vanish, leaving only Export / Send)', (tester) async {
+    await mountDetail(tester, 'spk-6', _rawSpeakers);
+    await tester.tap(find.byKey(const ValueKey('transcript-header-spk-6')));
+    await tester.pumpAndSettle();
+
+    final Finder editor = find.byKey(const ValueKey('transcript-editor-spk-6'));
+    await tester.tap(editor);
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<TextField>(editor).focusNode?.hasFocus ??
+          FocusManager.instance.primaryFocus != null,
+      isTrue,
+      reason: 'the editor must actually be focused for this repro',
+    );
+
+    expect(more, findsOneWidget);
+    await tester.tap(more);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('detail-name-speakers')), findsOneWidget);
+
+    await tester.tapAt(const Offset(5, 5));
+    await tester.pumpAndSettle();
+    await unmount(tester);
+  });
+
   testWidgets('no speaker headings: the Name speakers entry is absent',
       (tester) async {
     await mountDetail(tester, 'spk-2', _plain);

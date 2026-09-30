@@ -199,6 +199,8 @@ void openDumpFromLaunch(String dumpId) {
   );
 }
 
+/// Composes the app: single-instance/CLI handling, storage, database, and
+/// notification ports are all built here and injected into [runApp].
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
   // Tangent's own license belongs in the registry alongside the package
