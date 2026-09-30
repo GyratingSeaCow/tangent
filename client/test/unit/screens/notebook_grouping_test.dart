@@ -10,7 +10,13 @@ import 'package:tangent/screens/notebook/notebook_grouping.dart';
 /// was before folders existed. Nobody gets a "No folder" header imposed on a
 /// feature they never opted into.
 void main() {
-  Notebook nb(String id, {String? folderId, int updated = 0}) => Notebook(
+  Notebook nb(
+    String id, {
+    String? folderId,
+    int updated = 0,
+    bool pinned = false,
+  }) =>
+      Notebook(
         id: id,
         title: id,
         createdAt: DateTime.utc(2026, 1, 1),
@@ -18,6 +24,7 @@ void main() {
         document: const NotebookDocument.empty(),
         ink: const NotebookInk.empty(),
         folderId: folderId,
+        pinned: pinned,
       );
 
   group('notebook grouping', () {
@@ -33,7 +40,8 @@ void main() {
         isNull,
         reason: 'a user with no folders must not see folder chrome',
       );
-      expect(sections.single.notebooks.map((NotebookHeader n) => n.id), <String>[
+      expect(
+          sections.single.notebooks.map((NotebookHeader n) => n.id), <String>[
         'a',
         'b',
       ]);
@@ -90,11 +98,38 @@ void main() {
         ],
       );
 
-      expect(sections.single.notebooks.map((NotebookHeader n) => n.id), <String>[
+      expect(
+          sections.single.notebooks.map((NotebookHeader n) => n.id), <String>[
         'zeta',
         'alpha',
         'mid',
       ]);
+    });
+
+    test('pinned notebooks lead only their own group and unpin restores order',
+        () {
+      List<String> workIds({required bool secondPinned}) => groupNotebooks(
+            notebooks: <Notebook>[
+              nb('first', folderId: 'f-work'),
+              nb('second', folderId: 'f-work', pinned: secondPinned),
+              nb('third', folderId: 'f-work', pinned: true),
+              nb('loose', pinned: true),
+            ],
+            folders: const <FolderSummary>[
+              FolderSummary(id: 'f-work', name: 'Work'),
+            ],
+          ).first.notebooks.map((NotebookHeader n) => n.id).toList();
+
+      expect(
+        workIds(secondPinned: true),
+        <String>['second', 'third', 'first'],
+        reason: 'pins lead the Work folder without stealing loose notebooks',
+      );
+      expect(
+        workIds(secondPinned: false),
+        <String>['third', 'first', 'second'],
+        reason: 'unpin restores the existing caller order among unpinned rows',
+      );
     });
 
     test('the unfiled section is omitted when everything is filed', () {

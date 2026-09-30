@@ -22,8 +22,7 @@ class FakeNotebookRepository extends NotebookRepository {
     }
   }
 
-  static final LocalDb _unusedDb =
-      LocalDb.forTesting(NativeDatabase.memory());
+  static final LocalDb _unusedDb = LocalDb.forTesting(NativeDatabase.memory());
 
   final Map<String, Notebook> _notebooks = <String, Notebook>{};
   final StreamController<List<Notebook>> _changes =
@@ -65,6 +64,7 @@ class FakeNotebookRepository extends NotebookRepository {
             title: n.title,
             updatedAt: n.updatedAt,
             folderId: n.folderId,
+            pinned: n.pinned,
           ),
         )
         .toList(growable: false);
@@ -104,6 +104,25 @@ class FakeNotebookRepository extends NotebookRepository {
     _emit();
   }
 
+  @override
+  Future<void> setPinned(String id, bool pinned) async {
+    final Notebook? notebook = _notebooks[id];
+    if (notebook == null) return;
+    _notebooks[id] = Notebook(
+      id: notebook.id,
+      title: notebook.title,
+      createdAt: notebook.createdAt,
+      updatedAt: notebook.updatedAt,
+      document: notebook.document,
+      ink: notebook.ink,
+      folderId: notebook.folderId,
+      pinned: pinned,
+      ruling: notebook.ruling,
+      lastPenStyle: notebook.lastPenStyle,
+    );
+    _emit();
+  }
+
   void _emit() {
     if (_changes.isClosed) return;
     _changes.add(snapshot);
@@ -118,6 +137,7 @@ Notebook testNotebook({
   List<InkStroke> strokes = const <InkStroke>[],
   DateTime? updatedAt,
   String? folderId,
+  bool pinned = false,
   NotebookRuling ruling = NotebookRuling.medium,
 }) {
   final DateTime at = updatedAt ?? DateTime.utc(2026, 9, 17, 12);
@@ -129,6 +149,7 @@ Notebook testNotebook({
     document: NotebookDocument(blocks),
     ink: NotebookInk(strokes),
     folderId: folderId,
+    pinned: pinned,
     ruling: ruling,
   );
 }

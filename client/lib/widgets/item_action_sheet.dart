@@ -22,6 +22,8 @@ enum ItemAction {
   open,
   rename,
   move,
+  pin,
+  unpin,
   duplicate,
   share,
 
@@ -67,6 +69,8 @@ const List<ItemAction> _canonicalOrder = <ItemAction>[
   ItemAction.rename,
   ItemAction.nameSpeakers,
   ItemAction.move,
+  ItemAction.pin,
+  ItemAction.unpin,
   ItemAction.duplicate,
   ItemAction.share,
   ItemAction.exportPdf,
@@ -114,6 +118,10 @@ class ItemActionSheet extends StatelessWidget {
         return 'Rename';
       case ItemAction.move:
         return 'Move to folder';
+      case ItemAction.pin:
+        return 'Pin';
+      case ItemAction.unpin:
+        return 'Unpin';
       case ItemAction.duplicate:
         return 'Duplicate';
       case ItemAction.share:
@@ -145,6 +153,10 @@ class ItemActionSheet extends StatelessWidget {
         return Icons.drive_file_rename_outline;
       case ItemAction.move:
         return Icons.drive_file_move_outline;
+      case ItemAction.pin:
+        return Icons.push_pin_outlined;
+      case ItemAction.unpin:
+        return Icons.push_pin;
       case ItemAction.duplicate:
         return Icons.copy_all_outlined;
       case ItemAction.share:

@@ -309,10 +309,11 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
       context,
       title: notebook.title.isEmpty ? '(untitled)' : notebook.title,
       subtitle: formatNotebookUpdated(notebook.updatedAt),
-      actions: const <ItemAction>[
+      actions: <ItemAction>[
         ItemAction.open,
         ItemAction.rename,
         ItemAction.move,
+        notebook.pinned ? ItemAction.unpin : ItemAction.pin,
         ItemAction.exportPdf,
         ItemAction.delete,
       ],
@@ -325,6 +326,12 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
         await _rename(notebook);
       case ItemAction.move:
         await _move(notebook);
+      case ItemAction.pin:
+        await ref.read(notebookRepositoryProvider).setPinned(notebook.id, true);
+      case ItemAction.unpin:
+        await ref
+            .read(notebookRepositoryProvider)
+            .setPinned(notebook.id, false);
       case ItemAction.exportPdf:
         await _exportPdf(notebook);
       case ItemAction.delete:
@@ -955,10 +962,24 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
                   ),
                 )
               : const Icon(Icons.menu_book),
-          title: Text(
-            notebook.title.isEmpty ? '(untitled)' : notebook.title,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
+          title: Row(
+            children: <Widget>[
+              if (notebook.pinned) ...<Widget>[
+                Icon(
+                  Icons.push_pin,
+                  key: ValueKey<String>('notebook-pin-${notebook.id}'),
+                  size: 14,
+                ),
+                const SizedBox(width: 6),
+              ],
+              Expanded(
+                child: Text(
+                  notebook.title.isEmpty ? '(untitled)' : notebook.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
           ),
           // While a search is live the subtitle answers the searcher's
           // question — how many hits, and of what — instead of the resting

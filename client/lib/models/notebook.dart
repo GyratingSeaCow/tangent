@@ -19,6 +19,7 @@ abstract interface class NotebookHeader {
   String get title;
   DateTime get updatedAt;
   String? get folderId;
+  bool get pinned;
 }
 
 class Notebook implements NotebookHeader {
@@ -30,6 +31,7 @@ class Notebook implements NotebookHeader {
     required this.document,
     required this.ink,
     this.folderId,
+    this.pinned = false,
     this.ruling = NotebookRuling.medium,
     this.lastPenStyle,
   });
@@ -50,6 +52,10 @@ class Notebook implements NotebookHeader {
   /// published file, so a reorganise cannot half-fail across storage.
   @override
   final String? folderId;
+
+  /// Whether this notebook leads its current folder on the list screen.
+  @override
+  final bool pinned;
 
   /// How the page is ruled.
   ///
@@ -83,6 +89,7 @@ class Notebook implements NotebookHeader {
         document: document ?? this.document,
         ink: ink ?? this.ink,
         folderId: folderId,
+        pinned: pinned,
         ruling: ruling ?? this.ruling,
         lastPenStyle: lastPenStyle ?? this.lastPenStyle,
       );

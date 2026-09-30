@@ -278,6 +278,14 @@ class $DumpsTable extends Dumps with TableInfo<$DumpsTable, DumpRow> {
   late final GeneratedColumn<int> summaryErrorDismissedAt =
       GeneratedColumn<int>('summary_error_dismissed_at', aliasedName, true,
           type: DriftSqlType.int, requiredDuringInsert: false);
+  static const VerificationMeta _pinnedMeta = const VerificationMeta('pinned');
+  @override
+  late final GeneratedColumn<bool> pinned = GeneratedColumn<bool>(
+      'pinned', aliasedName, true,
+      type: DriftSqlType.bool,
+      requiredDuringInsert: false,
+      defaultConstraints:
+          GeneratedColumn.constraintIsAlways('CHECK ("pinned" IN (0, 1))'));
   @override
   List<GeneratedColumn> get $columns => [
         id,
@@ -320,7 +328,8 @@ class $DumpsTable extends Dumps with TableInfo<$DumpsTable, DumpRow> {
         summaryStatus,
         summaryError,
         summaryQueuePosition,
-        summaryErrorDismissedAt
+        summaryErrorDismissedAt,
+        pinned
       ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -575,6 +584,10 @@ class $DumpsTable extends Dumps with TableInfo<$DumpsTable, DumpRow> {
               data['summary_error_dismissed_at']!,
               _summaryErrorDismissedAtMeta));
     }
+    if (data.containsKey('pinned')) {
+      context.handle(_pinnedMeta,
+          pinned.isAcceptableOrUnknown(data['pinned']!, _pinnedMeta));
+    }
     return context;
   }
 
@@ -672,6 +685,8 @@ class $DumpsTable extends Dumps with TableInfo<$DumpsTable, DumpRow> {
       summaryErrorDismissedAt: attachedDatabase.typeMapping.read(
           DriftSqlType.int,
           data['${effectivePrefix}summary_error_dismissed_at']),
+      pinned: attachedDatabase.typeMapping
+          .read(DriftSqlType.bool, data['${effectivePrefix}pinned']),
     );
   }
 
@@ -713,7 +728,7 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
   /// v1.38 auto-file (server-authored, server→client only): unix seconds
   /// when the SERVER filed this capture after transcription, and the filing
   /// it replaced (null = it was unfiled). While [autoFiledAt] is set the
-  /// card shows "Auto-filed to <folder> · Undo"; an undo or any manual
+  /// card shows the `Auto-filed to … · Undo` chip; an undo or any manual
   /// re-file clears both here and, via the pushed filing, on the server.
   final int? autoFiledAt;
   final String? autoFilePrevFolderId;
@@ -810,6 +825,10 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
   /// [LocalDb.applyRemoteDump] when the summary succeeds or a new attempt
   /// starts, so the line returns on the next failure.
   final int? summaryErrorDismissedAt;
+
+  /// User pin. Nullable so every pre-v30 row keeps the old unpinned
+  /// appearance without a rewrite; null reads exactly like false.
+  final bool? pinned;
   const DumpRow(
       {required this.id,
       required this.createdAt,
@@ -851,7 +870,8 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
       this.summaryStatus,
       this.summaryError,
       this.summaryQueuePosition,
-      this.summaryErrorDismissedAt});
+      this.summaryErrorDismissedAt,
+      this.pinned});
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -959,6 +979,9 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
       map['summary_error_dismissed_at'] =
           Variable<int>(summaryErrorDismissedAt);
     }
+    if (!nullToAbsent || pinned != null) {
+      map['pinned'] = Variable<bool>(pinned);
+    }
     return map;
   }
 
@@ -1063,6 +1086,8 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
       summaryErrorDismissedAt: summaryErrorDismissedAt == null && nullToAbsent
           ? const Value.absent()
           : Value(summaryErrorDismissedAt),
+      pinned:
+          pinned == null && nullToAbsent ? const Value.absent() : Value(pinned),
     );
   }
 
@@ -1123,6 +1148,7 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
           serializer.fromJson<int?>(json['summaryQueuePosition']),
       summaryErrorDismissedAt:
           serializer.fromJson<int?>(json['summaryErrorDismissedAt']),
+      pinned: serializer.fromJson<bool?>(json['pinned']),
     );
   }
   @override
@@ -1175,6 +1201,7 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
       'summaryQueuePosition': serializer.toJson<int?>(summaryQueuePosition),
       'summaryErrorDismissedAt':
           serializer.toJson<int?>(summaryErrorDismissedAt),
+      'pinned': serializer.toJson<bool?>(pinned),
     };
   }
 
@@ -1219,7 +1246,8 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
           Value<String?> summaryStatus = const Value.absent(),
           Value<String?> summaryError = const Value.absent(),
           Value<int?> summaryQueuePosition = const Value.absent(),
-          Value<int?> summaryErrorDismissedAt = const Value.absent()}) =>
+          Value<int?> summaryErrorDismissedAt = const Value.absent(),
+          Value<bool?> pinned = const Value.absent()}) =>
       DumpRow(
         id: id ?? this.id,
         createdAt: createdAt ?? this.createdAt,
@@ -1294,6 +1322,7 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
         summaryErrorDismissedAt: summaryErrorDismissedAt.present
             ? summaryErrorDismissedAt.value
             : this.summaryErrorDismissedAt,
+        pinned: pinned.present ? pinned.value : this.pinned,
       );
   DumpRow copyWithCompanion(DumpsCompanion data) {
     return DumpRow(
@@ -1393,6 +1422,7 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
       summaryErrorDismissedAt: data.summaryErrorDismissedAt.present
           ? data.summaryErrorDismissedAt.value
           : this.summaryErrorDismissedAt,
+      pinned: data.pinned.present ? data.pinned.value : this.pinned,
     );
   }
 
@@ -1439,7 +1469,8 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
           ..write('summaryStatus: $summaryStatus, ')
           ..write('summaryError: $summaryError, ')
           ..write('summaryQueuePosition: $summaryQueuePosition, ')
-          ..write('summaryErrorDismissedAt: $summaryErrorDismissedAt')
+          ..write('summaryErrorDismissedAt: $summaryErrorDismissedAt, ')
+          ..write('pinned: $pinned')
           ..write(')'))
         .toString();
   }
@@ -1486,7 +1517,8 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
         summaryStatus,
         summaryError,
         summaryQueuePosition,
-        summaryErrorDismissedAt
+        summaryErrorDismissedAt,
+        pinned
       ]);
   @override
   bool operator ==(Object other) =>
@@ -1532,7 +1564,8 @@ class DumpRow extends DataClass implements Insertable<DumpRow> {
           other.summaryStatus == this.summaryStatus &&
           other.summaryError == this.summaryError &&
           other.summaryQueuePosition == this.summaryQueuePosition &&
-          other.summaryErrorDismissedAt == this.summaryErrorDismissedAt);
+          other.summaryErrorDismissedAt == this.summaryErrorDismissedAt &&
+          other.pinned == this.pinned);
 }
 
 class DumpsCompanion extends UpdateCompanion<DumpRow> {
@@ -1577,6 +1610,7 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
   final Value<String?> summaryError;
   final Value<int?> summaryQueuePosition;
   final Value<int?> summaryErrorDismissedAt;
+  final Value<bool?> pinned;
   final Value<int> rowid;
   const DumpsCompanion({
     this.id = const Value.absent(),
@@ -1620,6 +1654,7 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
     this.summaryError = const Value.absent(),
     this.summaryQueuePosition = const Value.absent(),
     this.summaryErrorDismissedAt = const Value.absent(),
+    this.pinned = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   DumpsCompanion.insert({
@@ -1664,6 +1699,7 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
     this.summaryError = const Value.absent(),
     this.summaryQueuePosition = const Value.absent(),
     this.summaryErrorDismissedAt = const Value.absent(),
+    this.pinned = const Value.absent(),
     this.rowid = const Value.absent(),
   })  : id = Value(id),
         createdAt = Value(createdAt),
@@ -1716,6 +1752,7 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
     Expression<String>? summaryError,
     Expression<int>? summaryQueuePosition,
     Expression<int>? summaryErrorDismissedAt,
+    Expression<bool>? pinned,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -1771,6 +1808,7 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
         'summary_queue_position': summaryQueuePosition,
       if (summaryErrorDismissedAt != null)
         'summary_error_dismissed_at': summaryErrorDismissedAt,
+      if (pinned != null) 'pinned': pinned,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -1817,6 +1855,7 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
       Value<String?>? summaryError,
       Value<int?>? summaryQueuePosition,
       Value<int?>? summaryErrorDismissedAt,
+      Value<bool?>? pinned,
       Value<int>? rowid}) {
     return DumpsCompanion(
       id: id ?? this.id,
@@ -1865,6 +1904,7 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
       summaryQueuePosition: summaryQueuePosition ?? this.summaryQueuePosition,
       summaryErrorDismissedAt:
           summaryErrorDismissedAt ?? this.summaryErrorDismissedAt,
+      pinned: pinned ?? this.pinned,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -2001,6 +2041,9 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
       map['summary_error_dismissed_at'] =
           Variable<int>(summaryErrorDismissedAt.value);
     }
+    if (pinned.present) {
+      map['pinned'] = Variable<bool>(pinned.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -2051,6 +2094,7 @@ class DumpsCompanion extends UpdateCompanion<DumpRow> {
           ..write('summaryError: $summaryError, ')
           ..write('summaryQueuePosition: $summaryQueuePosition, ')
           ..write('summaryErrorDismissedAt: $summaryErrorDismissedAt, ')
+          ..write('pinned: $pinned, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -5096,6 +5140,14 @@ class $NotebooksTable extends Notebooks
   late final GeneratedColumn<int> deletedAt = GeneratedColumn<int>(
       'deleted_at', aliasedName, true,
       type: DriftSqlType.int, requiredDuringInsert: false);
+  static const VerificationMeta _pinnedMeta = const VerificationMeta('pinned');
+  @override
+  late final GeneratedColumn<bool> pinned = GeneratedColumn<bool>(
+      'pinned', aliasedName, true,
+      type: DriftSqlType.bool,
+      requiredDuringInsert: false,
+      defaultConstraints:
+          GeneratedColumn.constraintIsAlways('CHECK ("pinned" IN (0, 1))'));
   @override
   List<GeneratedColumn> get $columns => [
         id,
@@ -5109,7 +5161,8 @@ class $NotebooksTable extends Notebooks
         lastPenStyle,
         syncDirty,
         syncedSeq,
-        deletedAt
+        deletedAt,
+        pinned
       ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -5182,6 +5235,10 @@ class $NotebooksTable extends Notebooks
       context.handle(_deletedAtMeta,
           deletedAt.isAcceptableOrUnknown(data['deleted_at']!, _deletedAtMeta));
     }
+    if (data.containsKey('pinned')) {
+      context.handle(_pinnedMeta,
+          pinned.isAcceptableOrUnknown(data['pinned']!, _pinnedMeta));
+    }
     return context;
   }
 
@@ -5215,6 +5272,8 @@ class $NotebooksTable extends Notebooks
           .read(DriftSqlType.int, data['${effectivePrefix}synced_seq']),
       deletedAt: attachedDatabase.typeMapping
           .read(DriftSqlType.int, data['${effectivePrefix}deleted_at']),
+      pinned: attachedDatabase.typeMapping
+          .read(DriftSqlType.bool, data['${effectivePrefix}pinned']),
     );
   }
 
@@ -5274,6 +5333,9 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
   /// another device — or a slip of the finger — is recoverable from
   /// Settings → Trash.
   final int? deletedAt;
+
+  /// User pin. Nullable for an additive, appearance-preserving migration.
+  final bool? pinned;
   const NotebookRow(
       {required this.id,
       required this.title,
@@ -5286,7 +5348,8 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
       this.lastPenStyle,
       required this.syncDirty,
       this.syncedSeq,
-      this.deletedAt});
+      this.deletedAt,
+      this.pinned});
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -5311,6 +5374,9 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
     }
     if (!nullToAbsent || deletedAt != null) {
       map['deleted_at'] = Variable<int>(deletedAt);
+    }
+    if (!nullToAbsent || pinned != null) {
+      map['pinned'] = Variable<bool>(pinned);
     }
     return map;
   }
@@ -5338,6 +5404,8 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
       deletedAt: deletedAt == null && nullToAbsent
           ? const Value.absent()
           : Value(deletedAt),
+      pinned:
+          pinned == null && nullToAbsent ? const Value.absent() : Value(pinned),
     );
   }
 
@@ -5357,6 +5425,7 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
       syncDirty: serializer.fromJson<bool>(json['syncDirty']),
       syncedSeq: serializer.fromJson<int?>(json['syncedSeq']),
       deletedAt: serializer.fromJson<int?>(json['deletedAt']),
+      pinned: serializer.fromJson<bool?>(json['pinned']),
     );
   }
   @override
@@ -5375,6 +5444,7 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
       'syncDirty': serializer.toJson<bool>(syncDirty),
       'syncedSeq': serializer.toJson<int?>(syncedSeq),
       'deletedAt': serializer.toJson<int?>(deletedAt),
+      'pinned': serializer.toJson<bool?>(pinned),
     };
   }
 
@@ -5390,7 +5460,8 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
           Value<String?> lastPenStyle = const Value.absent(),
           bool? syncDirty,
           Value<int?> syncedSeq = const Value.absent(),
-          Value<int?> deletedAt = const Value.absent()}) =>
+          Value<int?> deletedAt = const Value.absent(),
+          Value<bool?> pinned = const Value.absent()}) =>
       NotebookRow(
         id: id ?? this.id,
         title: title ?? this.title,
@@ -5405,6 +5476,7 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
         syncDirty: syncDirty ?? this.syncDirty,
         syncedSeq: syncedSeq.present ? syncedSeq.value : this.syncedSeq,
         deletedAt: deletedAt.present ? deletedAt.value : this.deletedAt,
+        pinned: pinned.present ? pinned.value : this.pinned,
       );
   NotebookRow copyWithCompanion(NotebooksCompanion data) {
     return NotebookRow(
@@ -5422,6 +5494,7 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
       syncDirty: data.syncDirty.present ? data.syncDirty.value : this.syncDirty,
       syncedSeq: data.syncedSeq.present ? data.syncedSeq.value : this.syncedSeq,
       deletedAt: data.deletedAt.present ? data.deletedAt.value : this.deletedAt,
+      pinned: data.pinned.present ? data.pinned.value : this.pinned,
     );
   }
 
@@ -5439,14 +5512,27 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
           ..write('lastPenStyle: $lastPenStyle, ')
           ..write('syncDirty: $syncDirty, ')
           ..write('syncedSeq: $syncedSeq, ')
-          ..write('deletedAt: $deletedAt')
+          ..write('deletedAt: $deletedAt, ')
+          ..write('pinned: $pinned')
           ..write(')'))
         .toString();
   }
 
   @override
-  int get hashCode => Object.hash(id, title, createdAt, updatedAt, docJson,
-      inkJson, folderId, ruling, lastPenStyle, syncDirty, syncedSeq, deletedAt);
+  int get hashCode => Object.hash(
+      id,
+      title,
+      createdAt,
+      updatedAt,
+      docJson,
+      inkJson,
+      folderId,
+      ruling,
+      lastPenStyle,
+      syncDirty,
+      syncedSeq,
+      deletedAt,
+      pinned);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -5462,7 +5548,8 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
           other.lastPenStyle == this.lastPenStyle &&
           other.syncDirty == this.syncDirty &&
           other.syncedSeq == this.syncedSeq &&
-          other.deletedAt == this.deletedAt);
+          other.deletedAt == this.deletedAt &&
+          other.pinned == this.pinned);
 }
 
 class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
@@ -5478,6 +5565,7 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
   final Value<bool> syncDirty;
   final Value<int?> syncedSeq;
   final Value<int?> deletedAt;
+  final Value<bool?> pinned;
   final Value<int> rowid;
   const NotebooksCompanion({
     this.id = const Value.absent(),
@@ -5492,6 +5580,7 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
     this.syncDirty = const Value.absent(),
     this.syncedSeq = const Value.absent(),
     this.deletedAt = const Value.absent(),
+    this.pinned = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   NotebooksCompanion.insert({
@@ -5507,6 +5596,7 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
     this.syncDirty = const Value.absent(),
     this.syncedSeq = const Value.absent(),
     this.deletedAt = const Value.absent(),
+    this.pinned = const Value.absent(),
     this.rowid = const Value.absent(),
   })  : id = Value(id),
         title = Value(title),
@@ -5527,6 +5617,7 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
     Expression<bool>? syncDirty,
     Expression<int>? syncedSeq,
     Expression<int>? deletedAt,
+    Expression<bool>? pinned,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -5542,6 +5633,7 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
       if (syncDirty != null) 'sync_dirty': syncDirty,
       if (syncedSeq != null) 'synced_seq': syncedSeq,
       if (deletedAt != null) 'deleted_at': deletedAt,
+      if (pinned != null) 'pinned': pinned,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -5559,6 +5651,7 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
       Value<bool>? syncDirty,
       Value<int?>? syncedSeq,
       Value<int?>? deletedAt,
+      Value<bool?>? pinned,
       Value<int>? rowid}) {
     return NotebooksCompanion(
       id: id ?? this.id,
@@ -5573,6 +5666,7 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
       syncDirty: syncDirty ?? this.syncDirty,
       syncedSeq: syncedSeq ?? this.syncedSeq,
       deletedAt: deletedAt ?? this.deletedAt,
+      pinned: pinned ?? this.pinned,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -5616,6 +5710,9 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
     if (deletedAt.present) {
       map['deleted_at'] = Variable<int>(deletedAt.value);
     }
+    if (pinned.present) {
+      map['pinned'] = Variable<bool>(pinned.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -5637,6 +5734,7 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
           ..write('syncDirty: $syncDirty, ')
           ..write('syncedSeq: $syncedSeq, ')
           ..write('deletedAt: $deletedAt, ')
+          ..write('pinned: $pinned, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -6910,6 +7008,14 @@ class $TodosTable extends Todos with TableInfo<$TodosTable, TodoRow> {
   late final GeneratedColumn<String> captureFingerprint =
       GeneratedColumn<String>('capture_fingerprint', aliasedName, true,
           type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _pinnedMeta = const VerificationMeta('pinned');
+  @override
+  late final GeneratedColumn<bool> pinned = GeneratedColumn<bool>(
+      'pinned', aliasedName, true,
+      type: DriftSqlType.bool,
+      requiredDuringInsert: false,
+      defaultConstraints:
+          GeneratedColumn.constraintIsAlways('CHECK ("pinned" IN (0, 1))'));
   @override
   List<GeneratedColumn> get $columns => [
         id,
@@ -6924,7 +7030,8 @@ class $TodosTable extends Todos with TableInfo<$TodosTable, TodoRow> {
         syncDirty,
         syncedSeq,
         folderId,
-        captureFingerprint
+        captureFingerprint,
+        pinned
       ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -6997,6 +7104,10 @@ class $TodosTable extends Todos with TableInfo<$TodosTable, TodoRow> {
           captureFingerprint.isAcceptableOrUnknown(
               data['capture_fingerprint']!, _captureFingerprintMeta));
     }
+    if (data.containsKey('pinned')) {
+      context.handle(_pinnedMeta,
+          pinned.isAcceptableOrUnknown(data['pinned']!, _pinnedMeta));
+    }
     return context;
   }
 
@@ -7032,6 +7143,8 @@ class $TodosTable extends Todos with TableInfo<$TodosTable, TodoRow> {
           .read(DriftSqlType.string, data['${effectivePrefix}folder_id']),
       captureFingerprint: attachedDatabase.typeMapping.read(
           DriftSqlType.string, data['${effectivePrefix}capture_fingerprint']),
+      pinned: attachedDatabase.typeMapping
+          .read(DriftSqlType.bool, data['${effectivePrefix}pinned']),
     );
   }
 
@@ -7083,6 +7196,9 @@ class TodoRow extends DataClass implements Insertable<TodoRow> {
   /// pushed, never read from a pull (same pattern as `summary_requested_at`).
   /// Null on manual rows and on rows that arrived from a peer.
   final String? captureFingerprint;
+
+  /// User pin. Nullable for an additive, appearance-preserving migration.
+  final bool? pinned;
   const TodoRow(
       {required this.id,
       required this.body,
@@ -7096,7 +7212,8 @@ class TodoRow extends DataClass implements Insertable<TodoRow> {
       required this.syncDirty,
       this.syncedSeq,
       this.folderId,
-      this.captureFingerprint});
+      this.captureFingerprint,
+      this.pinned});
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -7126,6 +7243,9 @@ class TodoRow extends DataClass implements Insertable<TodoRow> {
     }
     if (!nullToAbsent || captureFingerprint != null) {
       map['capture_fingerprint'] = Variable<String>(captureFingerprint);
+    }
+    if (!nullToAbsent || pinned != null) {
+      map['pinned'] = Variable<bool>(pinned);
     }
     return map;
   }
@@ -7158,6 +7278,8 @@ class TodoRow extends DataClass implements Insertable<TodoRow> {
       captureFingerprint: captureFingerprint == null && nullToAbsent
           ? const Value.absent()
           : Value(captureFingerprint),
+      pinned:
+          pinned == null && nullToAbsent ? const Value.absent() : Value(pinned),
     );
   }
 
@@ -7179,6 +7301,7 @@ class TodoRow extends DataClass implements Insertable<TodoRow> {
       folderId: serializer.fromJson<String?>(json['folderId']),
       captureFingerprint:
           serializer.fromJson<String?>(json['captureFingerprint']),
+      pinned: serializer.fromJson<bool?>(json['pinned']),
     );
   }
   @override
@@ -7198,6 +7321,7 @@ class TodoRow extends DataClass implements Insertable<TodoRow> {
       'syncedSeq': serializer.toJson<int?>(syncedSeq),
       'folderId': serializer.toJson<String?>(folderId),
       'captureFingerprint': serializer.toJson<String?>(captureFingerprint),
+      'pinned': serializer.toJson<bool?>(pinned),
     };
   }
 
@@ -7214,7 +7338,8 @@ class TodoRow extends DataClass implements Insertable<TodoRow> {
           bool? syncDirty,
           Value<int?> syncedSeq = const Value.absent(),
           Value<String?> folderId = const Value.absent(),
-          Value<String?> captureFingerprint = const Value.absent()}) =>
+          Value<String?> captureFingerprint = const Value.absent(),
+          Value<bool?> pinned = const Value.absent()}) =>
       TodoRow(
         id: id ?? this.id,
         body: body ?? this.body,
@@ -7231,6 +7356,7 @@ class TodoRow extends DataClass implements Insertable<TodoRow> {
         captureFingerprint: captureFingerprint.present
             ? captureFingerprint.value
             : this.captureFingerprint,
+        pinned: pinned.present ? pinned.value : this.pinned,
       );
   TodoRow copyWithCompanion(TodosCompanion data) {
     return TodoRow(
@@ -7249,6 +7375,7 @@ class TodoRow extends DataClass implements Insertable<TodoRow> {
       captureFingerprint: data.captureFingerprint.present
           ? data.captureFingerprint.value
           : this.captureFingerprint,
+      pinned: data.pinned.present ? data.pinned.value : this.pinned,
     );
   }
 
@@ -7267,7 +7394,8 @@ class TodoRow extends DataClass implements Insertable<TodoRow> {
           ..write('syncDirty: $syncDirty, ')
           ..write('syncedSeq: $syncedSeq, ')
           ..write('folderId: $folderId, ')
-          ..write('captureFingerprint: $captureFingerprint')
+          ..write('captureFingerprint: $captureFingerprint, ')
+          ..write('pinned: $pinned')
           ..write(')'))
         .toString();
   }
@@ -7286,7 +7414,8 @@ class TodoRow extends DataClass implements Insertable<TodoRow> {
       syncDirty,
       syncedSeq,
       folderId,
-      captureFingerprint);
+      captureFingerprint,
+      pinned);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -7303,7 +7432,8 @@ class TodoRow extends DataClass implements Insertable<TodoRow> {
           other.syncDirty == this.syncDirty &&
           other.syncedSeq == this.syncedSeq &&
           other.folderId == this.folderId &&
-          other.captureFingerprint == this.captureFingerprint);
+          other.captureFingerprint == this.captureFingerprint &&
+          other.pinned == this.pinned);
 }
 
 class TodosCompanion extends UpdateCompanion<TodoRow> {
@@ -7320,6 +7450,7 @@ class TodosCompanion extends UpdateCompanion<TodoRow> {
   final Value<int?> syncedSeq;
   final Value<String?> folderId;
   final Value<String?> captureFingerprint;
+  final Value<bool?> pinned;
   final Value<int> rowid;
   const TodosCompanion({
     this.id = const Value.absent(),
@@ -7335,6 +7466,7 @@ class TodosCompanion extends UpdateCompanion<TodoRow> {
     this.syncedSeq = const Value.absent(),
     this.folderId = const Value.absent(),
     this.captureFingerprint = const Value.absent(),
+    this.pinned = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   TodosCompanion.insert({
@@ -7351,6 +7483,7 @@ class TodosCompanion extends UpdateCompanion<TodoRow> {
     this.syncedSeq = const Value.absent(),
     this.folderId = const Value.absent(),
     this.captureFingerprint = const Value.absent(),
+    this.pinned = const Value.absent(),
     this.rowid = const Value.absent(),
   })  : id = Value(id),
         body = Value(body),
@@ -7370,6 +7503,7 @@ class TodosCompanion extends UpdateCompanion<TodoRow> {
     Expression<int>? syncedSeq,
     Expression<String>? folderId,
     Expression<String>? captureFingerprint,
+    Expression<bool>? pinned,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -7386,6 +7520,7 @@ class TodosCompanion extends UpdateCompanion<TodoRow> {
       if (syncedSeq != null) 'synced_seq': syncedSeq,
       if (folderId != null) 'folder_id': folderId,
       if (captureFingerprint != null) 'capture_fingerprint': captureFingerprint,
+      if (pinned != null) 'pinned': pinned,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -7404,6 +7539,7 @@ class TodosCompanion extends UpdateCompanion<TodoRow> {
       Value<int?>? syncedSeq,
       Value<String?>? folderId,
       Value<String?>? captureFingerprint,
+      Value<bool?>? pinned,
       Value<int>? rowid}) {
     return TodosCompanion(
       id: id ?? this.id,
@@ -7419,6 +7555,7 @@ class TodosCompanion extends UpdateCompanion<TodoRow> {
       syncedSeq: syncedSeq ?? this.syncedSeq,
       folderId: folderId ?? this.folderId,
       captureFingerprint: captureFingerprint ?? this.captureFingerprint,
+      pinned: pinned ?? this.pinned,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -7465,6 +7602,9 @@ class TodosCompanion extends UpdateCompanion<TodoRow> {
     if (captureFingerprint.present) {
       map['capture_fingerprint'] = Variable<String>(captureFingerprint.value);
     }
+    if (pinned.present) {
+      map['pinned'] = Variable<bool>(pinned.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -7487,6 +7627,7 @@ class TodosCompanion extends UpdateCompanion<TodoRow> {
           ..write('syncedSeq: $syncedSeq, ')
           ..write('folderId: $folderId, ')
           ..write('captureFingerprint: $captureFingerprint, ')
+          ..write('pinned: $pinned, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -9052,6 +9193,7 @@ typedef $$DumpsTableCreateCompanionBuilder = DumpsCompanion Function({
   Value<String?> summaryError,
   Value<int?> summaryQueuePosition,
   Value<int?> summaryErrorDismissedAt,
+  Value<bool?> pinned,
   Value<int> rowid,
 });
 typedef $$DumpsTableUpdateCompanionBuilder = DumpsCompanion Function({
@@ -9096,6 +9238,7 @@ typedef $$DumpsTableUpdateCompanionBuilder = DumpsCompanion Function({
   Value<String?> summaryError,
   Value<int?> summaryQueuePosition,
   Value<int?> summaryErrorDismissedAt,
+  Value<bool?> pinned,
   Value<int> rowid,
 });
 
@@ -9264,6 +9407,9 @@ class $$DumpsTableFilterComposer extends Composer<_$LocalDb, $DumpsTable> {
   ColumnFilters<int> get summaryErrorDismissedAt => $composableBuilder(
       column: $table.summaryErrorDismissedAt,
       builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<bool> get pinned => $composableBuilder(
+      column: $table.pinned, builder: (column) => ColumnFilters(column));
 
   Expression<bool> syncQueueRefs(
       Expression<bool> Function($$SyncQueueTableFilterComposer f) f) {
@@ -9442,6 +9588,9 @@ class $$DumpsTableOrderingComposer extends Composer<_$LocalDb, $DumpsTable> {
   ColumnOrderings<int> get summaryErrorDismissedAt => $composableBuilder(
       column: $table.summaryErrorDismissedAt,
       builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<bool> get pinned => $composableBuilder(
+      column: $table.pinned, builder: (column) => ColumnOrderings(column));
 }
 
 class $$DumpsTableAnnotationComposer extends Composer<_$LocalDb, $DumpsTable> {
@@ -9575,6 +9724,9 @@ class $$DumpsTableAnnotationComposer extends Composer<_$LocalDb, $DumpsTable> {
   GeneratedColumn<int> get summaryErrorDismissedAt => $composableBuilder(
       column: $table.summaryErrorDismissedAt, builder: (column) => column);
 
+  GeneratedColumn<bool> get pinned =>
+      $composableBuilder(column: $table.pinned, builder: (column) => column);
+
   Expression<T> syncQueueRefs<T extends Object>(
       Expression<T> Function($$SyncQueueTableAnnotationComposer a) f) {
     final $$SyncQueueTableAnnotationComposer composer = $composerBuilder(
@@ -9661,6 +9813,7 @@ class $$DumpsTableTableManager extends RootTableManager<
             Value<String?> summaryError = const Value.absent(),
             Value<int?> summaryQueuePosition = const Value.absent(),
             Value<int?> summaryErrorDismissedAt = const Value.absent(),
+            Value<bool?> pinned = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               DumpsCompanion(
@@ -9705,6 +9858,7 @@ class $$DumpsTableTableManager extends RootTableManager<
             summaryError: summaryError,
             summaryQueuePosition: summaryQueuePosition,
             summaryErrorDismissedAt: summaryErrorDismissedAt,
+            pinned: pinned,
             rowid: rowid,
           ),
           createCompanionCallback: ({
@@ -9749,6 +9903,7 @@ class $$DumpsTableTableManager extends RootTableManager<
             Value<String?> summaryError = const Value.absent(),
             Value<int?> summaryQueuePosition = const Value.absent(),
             Value<int?> summaryErrorDismissedAt = const Value.absent(),
+            Value<bool?> pinned = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               DumpsCompanion.insert(
@@ -9793,6 +9948,7 @@ class $$DumpsTableTableManager extends RootTableManager<
             summaryError: summaryError,
             summaryQueuePosition: summaryQueuePosition,
             summaryErrorDismissedAt: summaryErrorDismissedAt,
+            pinned: pinned,
             rowid: rowid,
           ),
           withReferenceMapper: (p0) => p0
@@ -11491,6 +11647,7 @@ typedef $$NotebooksTableCreateCompanionBuilder = NotebooksCompanion Function({
   Value<bool> syncDirty,
   Value<int?> syncedSeq,
   Value<int?> deletedAt,
+  Value<bool?> pinned,
   Value<int> rowid,
 });
 typedef $$NotebooksTableUpdateCompanionBuilder = NotebooksCompanion Function({
@@ -11506,6 +11663,7 @@ typedef $$NotebooksTableUpdateCompanionBuilder = NotebooksCompanion Function({
   Value<bool> syncDirty,
   Value<int?> syncedSeq,
   Value<int?> deletedAt,
+  Value<bool?> pinned,
   Value<int> rowid,
 });
 
@@ -11553,6 +11711,9 @@ class $$NotebooksTableFilterComposer
 
   ColumnFilters<int> get deletedAt => $composableBuilder(
       column: $table.deletedAt, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<bool> get pinned => $composableBuilder(
+      column: $table.pinned, builder: (column) => ColumnFilters(column));
 }
 
 class $$NotebooksTableOrderingComposer
@@ -11600,6 +11761,9 @@ class $$NotebooksTableOrderingComposer
 
   ColumnOrderings<int> get deletedAt => $composableBuilder(
       column: $table.deletedAt, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<bool> get pinned => $composableBuilder(
+      column: $table.pinned, builder: (column) => ColumnOrderings(column));
 }
 
 class $$NotebooksTableAnnotationComposer
@@ -11646,6 +11810,9 @@ class $$NotebooksTableAnnotationComposer
 
   GeneratedColumn<int> get deletedAt =>
       $composableBuilder(column: $table.deletedAt, builder: (column) => column);
+
+  GeneratedColumn<bool> get pinned =>
+      $composableBuilder(column: $table.pinned, builder: (column) => column);
 }
 
 class $$NotebooksTableTableManager extends RootTableManager<
@@ -11683,6 +11850,7 @@ class $$NotebooksTableTableManager extends RootTableManager<
             Value<bool> syncDirty = const Value.absent(),
             Value<int?> syncedSeq = const Value.absent(),
             Value<int?> deletedAt = const Value.absent(),
+            Value<bool?> pinned = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               NotebooksCompanion(
@@ -11698,6 +11866,7 @@ class $$NotebooksTableTableManager extends RootTableManager<
             syncDirty: syncDirty,
             syncedSeq: syncedSeq,
             deletedAt: deletedAt,
+            pinned: pinned,
             rowid: rowid,
           ),
           createCompanionCallback: ({
@@ -11713,6 +11882,7 @@ class $$NotebooksTableTableManager extends RootTableManager<
             Value<bool> syncDirty = const Value.absent(),
             Value<int?> syncedSeq = const Value.absent(),
             Value<int?> deletedAt = const Value.absent(),
+            Value<bool?> pinned = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               NotebooksCompanion.insert(
@@ -11728,6 +11898,7 @@ class $$NotebooksTableTableManager extends RootTableManager<
             syncDirty: syncDirty,
             syncedSeq: syncedSeq,
             deletedAt: deletedAt,
+            pinned: pinned,
             rowid: rowid,
           ),
           withReferenceMapper: (p0) => p0
@@ -12415,6 +12586,7 @@ typedef $$TodosTableCreateCompanionBuilder = TodosCompanion Function({
   Value<int?> syncedSeq,
   Value<String?> folderId,
   Value<String?> captureFingerprint,
+  Value<bool?> pinned,
   Value<int> rowid,
 });
 typedef $$TodosTableUpdateCompanionBuilder = TodosCompanion Function({
@@ -12431,6 +12603,7 @@ typedef $$TodosTableUpdateCompanionBuilder = TodosCompanion Function({
   Value<int?> syncedSeq,
   Value<String?> folderId,
   Value<String?> captureFingerprint,
+  Value<bool?> pinned,
   Value<int> rowid,
 });
 
@@ -12481,6 +12654,9 @@ class $$TodosTableFilterComposer extends Composer<_$LocalDb, $TodosTable> {
   ColumnFilters<String> get captureFingerprint => $composableBuilder(
       column: $table.captureFingerprint,
       builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<bool> get pinned => $composableBuilder(
+      column: $table.pinned, builder: (column) => ColumnFilters(column));
 }
 
 class $$TodosTableOrderingComposer extends Composer<_$LocalDb, $TodosTable> {
@@ -12530,6 +12706,9 @@ class $$TodosTableOrderingComposer extends Composer<_$LocalDb, $TodosTable> {
   ColumnOrderings<String> get captureFingerprint => $composableBuilder(
       column: $table.captureFingerprint,
       builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<bool> get pinned => $composableBuilder(
+      column: $table.pinned, builder: (column) => ColumnOrderings(column));
 }
 
 class $$TodosTableAnnotationComposer extends Composer<_$LocalDb, $TodosTable> {
@@ -12578,6 +12757,9 @@ class $$TodosTableAnnotationComposer extends Composer<_$LocalDb, $TodosTable> {
 
   GeneratedColumn<String> get captureFingerprint => $composableBuilder(
       column: $table.captureFingerprint, builder: (column) => column);
+
+  GeneratedColumn<bool> get pinned =>
+      $composableBuilder(column: $table.pinned, builder: (column) => column);
 }
 
 class $$TodosTableTableManager extends RootTableManager<
@@ -12616,6 +12798,7 @@ class $$TodosTableTableManager extends RootTableManager<
             Value<int?> syncedSeq = const Value.absent(),
             Value<String?> folderId = const Value.absent(),
             Value<String?> captureFingerprint = const Value.absent(),
+            Value<bool?> pinned = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               TodosCompanion(
@@ -12632,6 +12815,7 @@ class $$TodosTableTableManager extends RootTableManager<
             syncedSeq: syncedSeq,
             folderId: folderId,
             captureFingerprint: captureFingerprint,
+            pinned: pinned,
             rowid: rowid,
           ),
           createCompanionCallback: ({
@@ -12648,6 +12832,7 @@ class $$TodosTableTableManager extends RootTableManager<
             Value<int?> syncedSeq = const Value.absent(),
             Value<String?> folderId = const Value.absent(),
             Value<String?> captureFingerprint = const Value.absent(),
+            Value<bool?> pinned = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               TodosCompanion.insert(
@@ -12664,6 +12849,7 @@ class $$TodosTableTableManager extends RootTableManager<
             syncedSeq: syncedSeq,
             folderId: folderId,
             captureFingerprint: captureFingerprint,
+            pinned: pinned,
             rowid: rowid,
           ),
           withReferenceMapper: (p0) => p0

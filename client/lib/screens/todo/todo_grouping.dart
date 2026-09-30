@@ -60,8 +60,15 @@ List<TodoRow> sortTodosByDue(List<TodoRow> rows) {
       final int c = da.compareTo(db);
       return c != 0 ? c : a.compareTo(b);
     });
-  return <TodoRow>[for (final int i in order) out[i]];
+  final List<TodoRow> dueSorted = <TodoRow>[for (final int i in order) out[i]];
+  return _pinnedFirst(dueSorted);
 }
+
+/// Stable partition used after the existing order has been established.
+List<TodoRow> _pinnedFirst(Iterable<TodoRow> rows) => <TodoRow>[
+      ...rows.where((TodoRow row) => row.pinned == true),
+      ...rows.where((TodoRow row) => row.pinned != true),
+    ];
 
 /// Arranges [todos] into sections.
 ///
@@ -141,7 +148,7 @@ List<TodoSectionGroup> groupTodos({
       TodoSectionGroup(
         title: kTodoDoneSectionTitle,
         isDone: true,
-        todos: List<TodoRow>.from(done),
+        todos: _pinnedFirst(done),
       ),
     );
   }

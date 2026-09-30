@@ -32,8 +32,7 @@ class TodoListScreen extends ConsumerStatefulWidget {
   static const Key quickAddDateChipKey = Key('todo-quick-add-date-chip');
   static const Key doneHeaderKey = Key('todo-section-done');
   static const Key unfiledHeaderKey = Key('todo-section-unfiled');
-  static Key folderHeaderKey(String folderId) =>
-      Key('todo-section-$folderId');
+  static Key folderHeaderKey(String folderId) => Key('todo-section-$folderId');
 
   static const Key selectCancelKey = Key('todo-select-cancel');
   static const Key selectAllKey = Key('todo-select-all');
@@ -182,7 +181,9 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
   /// Runs the shared picker and resolves the destination, creating the
   /// folder when the user typed a new one. Null means "nothing moves"
   /// (dismissed); an explicit "No folder" arrives as a present null id.
-  Future<({String? folderId})?> _pickDestination(String? currentFolderId) async {
+  Future<({String? folderId})?> _pickDestination(
+    String? currentFolderId,
+  ) async {
     final LocalDb db = ref.read(localDbProvider);
     final List<Folder> folders =
         ref.read(foldersProvider).valueOrNull ?? const <Folder>[];
@@ -205,7 +206,9 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
     try {
       final ({String? folderId})? dest = await _pickDestination(todo.folderId);
       if (dest == null) return;
-      await ref.read(todoRepositoryProvider).moveToFolder(todo.id, dest.folderId);
+      await ref
+          .read(todoRepositoryProvider)
+          .moveToFolder(todo.id, dest.folderId);
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -218,9 +221,10 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
     final ItemAction? action = await showItemActionSheet(
       context,
       title: todo.body,
-      actions: const <ItemAction>[
+      actions: <ItemAction>[
         ItemAction.move,
         ItemAction.rename,
+        todo.pinned == true ? ItemAction.unpin : ItemAction.pin,
         ItemAction.delete,
       ],
       labelOverrides: const <ItemAction, String>{ItemAction.rename: 'Edit'},
@@ -231,6 +235,10 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
         await _move(todo);
       case ItemAction.rename:
         _startEdit(todo);
+      case ItemAction.pin:
+        await ref.read(todoRepositoryProvider).setPinned(todo.id, true);
+      case ItemAction.unpin:
+        await ref.read(todoRepositoryProvider).setPinned(todo.id, false);
       case ItemAction.delete:
         await _delete(todo);
       case ItemAction.open:
@@ -293,7 +301,9 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
     try {
       final ({String? folderId})? dest = await _pickDestination(null);
       if (dest == null || !mounted) return;
-      await ref.read(todoRepositoryProvider).moveManyToFolder(ids, dest.folderId);
+      await ref
+          .read(todoRepositoryProvider)
+          .moveManyToFolder(ids, dest.folderId);
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -350,7 +360,9 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
       ..showSnackBar(
         SnackBar(
           content: Text(
-            ids.length == 1 ? 'Deleted 1 to-do' : 'Deleted ${ids.length} to-dos',
+            ids.length == 1
+                ? 'Deleted 1 to-do'
+                : 'Deleted ${ids.length} to-dos',
           ),
           duration: const Duration(seconds: 5),
           action: SnackBarAction(
@@ -407,8 +419,7 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
               child: todos.when(
                 data: (List<TodoRow> data) =>
                     _buildSections(context, data, folders),
-                loading: () =>
-                    const Center(child: CircularProgressIndicator()),
+                loading: () => const Center(child: CircularProgressIndicator()),
                 error: (Object e, _) =>
                     Center(child: Text('Could not load: $e')),
               ),
@@ -563,7 +574,9 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
     final String? due = todo.dueDate;
     if (due == null) return null;
     final String today = todoDateKey(now);
-    if (due.compareTo(today) < 0) return (label: 'Overdue · $due', overdue: true);
+    if (due.compareTo(today) < 0) {
+      return (label: 'Overdue · $due', overdue: true);
+    }
     if (due == today) return (label: 'Today', overdue: false);
     return (label: due, overdue: false);
   }
@@ -573,9 +586,26 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
     final bool selected = _selected.contains(todo.id);
     final TodoRepository repo = ref.read(todoRepositoryProvider);
     final ({String label, bool overdue})? chip = _chipFor(todo, now);
-    final Widget body = Text(
-      todo.body,
-      style: done ? const TextStyle(decoration: TextDecoration.lineThrough) : null,
+    final Widget body = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        if (todo.pinned == true) ...<Widget>[
+          Icon(
+            Icons.push_pin,
+            key: Key('todo-pin-${todo.id}'),
+            size: 14,
+          ),
+          const SizedBox(width: 6),
+        ],
+        Flexible(
+          child: Text(
+            todo.body,
+            style: done
+                ? const TextStyle(decoration: TextDecoration.lineThrough)
+                : null,
+          ),
+        ),
+      ],
     );
     // v1.25.0: a to-do the server pulled from Google Tasks wears a tiny "G"
     // so its origin is visible; 'manual' and 'voice' rows are unchanged.

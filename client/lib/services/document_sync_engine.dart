@@ -425,6 +425,9 @@ class DocumentSyncEngine extends ChangeNotifier {
       autoFilePrevFolderId: payload.containsKey('auto_file_prev_folder_id')
           ? payload['auto_file_prev_folder_id'] as String?
           : LocalDb.absentSummaryField,
+      pinned: payload.containsKey('pinned')
+          ? payload['pinned']
+          : LocalDb.absentPinnedField,
       seq: change.seq,
     );
     await _reportSummaryLanded(change.entityId, local, payload);
@@ -622,6 +625,9 @@ class DocumentSyncEngine extends ChangeNotifier {
       folderId: payload.containsKey('folder_id')
           ? payload['folder_id'] as String?
           : LocalDb.absentTodoField,
+      pinned: payload.containsKey('pinned')
+          ? payload['pinned']
+          : LocalDb.absentPinnedField,
       seq: change.seq,
     );
     await _dedupeVoiceTodo(change.entityId);
@@ -802,6 +808,9 @@ class DocumentSyncEngine extends ChangeNotifier {
       folderId: payload.containsKey('folder_id')
           ? payload['folder_id'] as String?
           : LocalDb.absentFolderId,
+      pinned: payload.containsKey('pinned')
+          ? payload['pinned']
+          : LocalDb.absentPinnedField,
       seq: seq,
     );
   }
@@ -853,6 +862,7 @@ class DocumentSyncEngine extends ChangeNotifier {
             // Filing travels with the notebook. Null is meaningful here —
             // it says "unfiled", and the server stores it verbatim.
             'folder_id': row.folderId,
+            'pinned': row.pinned == true,
           },
         },
       for (final DumpRow row in dirtyDumps)
@@ -874,6 +884,7 @@ class DocumentSyncEngine extends ChangeNotifier {
             // v1.38: filing travels with the dump, todo-style — null is
             // always meaningful (unfiled), so the key is always present.
             'folder_id': row.folderId,
+            'pinned': row.pinned == true,
             // audio_kept is deliberately absent: whether the SERVER holds the
             // audio is the server's own fact, and sending our view of it
             // would let a device that never uploaded clear the flag.
@@ -904,6 +915,7 @@ class DocumentSyncEngine extends ChangeNotifier {
             'deleted_at': row.deletedAt,
             // v1.24.0: filing travels with the item; null means unfiled.
             'folder_id': row.folderId,
+            'pinned': row.pinned == true,
           },
         },
       for (final CalendarEventRow row in dirtyEvents)

@@ -263,6 +263,29 @@ void main() {
     await unmount(tester);
   });
 
+  testWidgets('a pin is visible and the row action unpins it', (tester) async {
+    final TodoRepository repo = await mount(tester);
+    final TodoRow todo = await repo.add('Pinned task');
+    await repo.setPinned(todo.id, true);
+    await settle(tester);
+
+    expect(find.byKey(Key('todo-pin-${todo.id}')), findsOneWidget);
+    await tester.tap(find.byKey(Key('todo-menu-${todo.id}')));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(ItemActionSheet.keyFor(ItemAction.unpin)),
+      findsOneWidget,
+    );
+    expect(find.byKey(ItemActionSheet.keyFor(ItemAction.pin)), findsNothing);
+
+    await tester.tap(find.byKey(ItemActionSheet.keyFor(ItemAction.unpin)));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(Key('todo-pin-${todo.id}')), findsNothing);
+    expect((await db.getTodoRow(todo.id))!.pinned, isFalse);
+    await unmount(tester);
+  });
+
   testWidgets(
       '⋮ → Delete is soft with a 5 s undo snackbar, and Undo '
       'restores the item', (tester) async {
@@ -929,7 +952,12 @@ void syncButtonTests() {
       // AFTER this press. A hook that ran first would forward the stale row.
       expect(
         _callLog,
-        <String>['device-pull', 'device-push', 'google-status', 'google-sync-now'],
+        <String>[
+          'device-pull',
+          'device-push',
+          'google-status',
+          'google-sync-now',
+        ],
         reason: 'device sync completes before any Google call',
       );
       expect(find.text('Synced: sent 1 · Google updated'), findsOneWidget);
@@ -970,7 +998,9 @@ void syncButtonTests() {
         ),
       );
       expect(
-        find.text('Synced: sent 1 · Google: HTTP 503 from tasks.googleapis.com'),
+        find.text(
+          'Synced: sent 1 · Google: HTTP 503 from tasks.googleapis.com',
+        ),
         findsOneWidget,
       );
       await unmount(tester);

@@ -13,6 +13,7 @@ void main() {
     String? folderId,
     String? dueDate,
     bool done = false,
+    bool pinned = false,
   }) {
     final String stamp = '2026-09-${(counter++).toString().padLeft(2, '0')}';
     return TodoRow(
@@ -28,6 +29,7 @@ void main() {
       syncDirty: true,
       syncedSeq: null,
       folderId: folderId,
+      pinned: pinned,
     );
   }
 
@@ -70,7 +72,8 @@ void main() {
     expect(sections[1].isEmpty, isTrue);
   });
 
-  test('rule 4: No folder comes last (before Done) and is omitted when '
+  test(
+      'rule 4: No folder comes last (before Done) and is omitted when '
       'empty', () {
     final withUnfiled = groupTodos(
       todos: <TodoRow>[todo('a', folderId: 'f-shop'), todo('loose')],
@@ -87,7 +90,8 @@ void main() {
     expect(allFiled.map((s) => s.title), isNot(contains('No folder')));
   });
 
-  test('rule 5: caller order is kept for equal due dates (never re-sorted '
+  test(
+      'rule 5: caller order is kept for equal due dates (never re-sorted '
       'beyond the due-date rule)', () {
     final sections = groupTodos(
       todos: <TodoRow>[todo('first'), todo('second'), todo('third')],
@@ -96,7 +100,8 @@ void main() {
     expect(bodies(sections.last), <String>['first', 'second', 'third']);
   });
 
-  test('rule 6: a row whose folder vanished surfaces as unfiled, never '
+  test(
+      'rule 6: a row whose folder vanished surfaces as unfiled, never '
       'dropped', () {
     final sections = groupTodos(
       todos: <TodoRow>[
@@ -118,7 +123,8 @@ void main() {
     expect(bodies(flat.single), <String>['orphan2']);
   });
 
-  test('done rows are extracted FIRST into one trailing Done section across '
+  test(
+      'done rows are extracted FIRST into one trailing Done section across '
       'all folders, omitted when empty', () {
     final sections = groupTodos(
       todos: <TodoRow>[
@@ -154,7 +160,8 @@ void main() {
     expect(none.map((s) => s.isDone), everyElement(isFalse));
   });
 
-  test('within a folder: dated first ascending, undated after, then created '
+  test(
+      'within a folder: dated first ascending, undated after, then created '
       'order', () {
     final sections = groupTodos(
       todos: <TodoRow>[
@@ -179,7 +186,51 @@ void main() {
       ],
     );
   });
-  test('a voice-captured todo with a due date lands in the dated order too '
+
+  test('pins lead within open and Done groups while preserving due order', () {
+    final sections = groupTodos(
+      todos: <TodoRow>[
+        todo('early', folderId: 'f-shop', dueDate: '2026-09-28'),
+        todo(
+          'pinned later',
+          folderId: 'f-shop',
+          dueDate: '2026-10-05',
+          pinned: true,
+        ),
+        todo(
+          'pinned early',
+          folderId: 'f-shop',
+          dueDate: '2026-09-29',
+          pinned: true,
+        ),
+        todo('done normal', done: true),
+        todo('done pinned', done: true, pinned: true),
+      ],
+      folders: const <FolderSummary>[shop],
+    );
+
+    expect(
+      bodies(sections.first),
+      <String>['pinned early', 'pinned later', 'early'],
+    );
+    expect(bodies(sections.last), <String>['done pinned', 'done normal']);
+
+    final unpinned = groupTodos(
+      todos: <TodoRow>[
+        todo('early', folderId: 'f-shop', dueDate: '2026-09-28'),
+        todo('later', folderId: 'f-shop', dueDate: '2026-10-05'),
+      ],
+      folders: const <FolderSummary>[shop],
+    );
+    expect(
+      bodies(unpinned.first),
+      <String>['early', 'later'],
+      reason: 'with no pins the existing due-date order is unchanged',
+    );
+  });
+
+  test(
+      'a voice-captured todo with a due date lands in the dated order too '
       '(nothing filters by source)', () {
     final TodoRow voice = TodoRow(
       id: 'id-voice',

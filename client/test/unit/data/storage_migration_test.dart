@@ -145,7 +145,7 @@ void main() {
       expect(queue, hasLength(10));
       expect(sql.userVersion, version);
       await db.listDumps();
-      expect(sql.userVersion, 29);
+      expect(sql.userVersion, 30);
       final after = sqlRows(sql, 'dumps');
       expect(after, hasLength(before.length));
       for (var i = 0; i < before.length; i++) {
@@ -236,8 +236,7 @@ void main() {
   });
   test('file-backed v4 upgrade and v6 reopen preserve rows and catalog state',
       () async {
-    final dir =
-        createResolvedTempSync('storage-migration-fixture-');
+    final dir = createResolvedTempSync('storage-migration-fixture-');
     final file = File('${dir.path}/fixture.sqlite');
     final sql = oldStorageDatabase(4, path: file.path);
     final before = sqlRows(sql, 'dumps');
@@ -258,7 +257,7 @@ void main() {
           .data
           .values
           .single,
-      29,
+      30,
     );
     expect(
       (await db

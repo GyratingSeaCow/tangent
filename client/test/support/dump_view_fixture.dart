@@ -2,7 +2,7 @@
 import 'package:drift/drift.dart' show Value;
 import 'package:tangent/data/local_db.dart';
 
-DumpRow viewRow(String id) => DumpRow(
+DumpRow viewRow(String id, {bool pinned = false}) => DumpRow(
       id: id,
       createdAt: DateTime.utc(2030),
       updatedAt: DateTime.utc(2030),
@@ -15,6 +15,7 @@ DumpRow viewRow(String id) => DumpRow(
       syncAttempts: 0,
       transcriptionStatus: 'not_transcribed',
       transcriptionAttempt: 0,
+      pinned: pinned,
     );
 
 /// A row filed into [folderId], for folder-grouping tests.

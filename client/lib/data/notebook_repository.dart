@@ -49,6 +49,7 @@ class NotebookRepository {
         _db.notebooks.title,
         _db.notebooks.updatedAt,
         _db.notebooks.folderId,
+        _db.notebooks.pinned,
       ])
       ..where(_db.notebooks.deletedAt.isNull())
       ..orderBy([OrderingTerm.desc(_db.notebooks.updatedAt)]);
@@ -63,6 +64,7 @@ class NotebookRepository {
                     isUtc: true,
                   ),
                   folderId: row.read(_db.notebooks.folderId),
+                  pinned: row.read(_db.notebooks.pinned) == true,
                 ),
               )
               .toList(growable: false),
@@ -173,6 +175,10 @@ class NotebookRepository {
     await _db.trashNotebook(id);
   }
 
+  /// Pins or unpins one notebook without decoding or rewriting its content.
+  Future<void> setPinned(String id, bool pinned) =>
+      _db.setNotebookPinned(id, pinned);
+
   Notebook _fromRow(NotebookRow row) => Notebook(
         id: row.id,
         title: row.title,
@@ -183,6 +189,7 @@ class NotebookRepository {
         document: NotebookDocument.decode(row.docJson),
         ink: NotebookInk.decode(row.inkJson),
         folderId: row.folderId,
+        pinned: row.pinned == true,
         // Null is a notebook written before ruling existed. It reads as blank,
         // NOT as the new-notebook default: an existing page must not silently
         // gain lines the user never asked for.
@@ -218,6 +225,7 @@ class NotebookListEntry implements NotebookHeader {
     required this.title,
     required this.updatedAt,
     required this.folderId,
+    this.pinned = false,
   });
 
   @override
@@ -228,6 +236,8 @@ class NotebookListEntry implements NotebookHeader {
   final DateTime updatedAt;
   @override
   final String? folderId;
+  @override
+  final bool pinned;
 
   @override
   bool operator ==(Object other) =>
@@ -235,10 +245,11 @@ class NotebookListEntry implements NotebookHeader {
       other.id == id &&
       other.title == title &&
       other.updatedAt == updatedAt &&
-      other.folderId == folderId;
+      other.folderId == folderId &&
+      other.pinned == pinned;
 
   @override
-  int get hashCode => Object.hash(id, title, updatedAt, folderId);
+  int get hashCode => Object.hash(id, title, updatedAt, folderId, pinned);
 }
 
 /// Header stream for the notebooks list screen (see [NotebookListEntry]).

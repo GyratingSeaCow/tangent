@@ -26,6 +26,8 @@ const _todoColumns = [
   // v25 (re-transcription guard, v1.28.0): LOCAL-ONLY fingerprint of the
   // voice parse that made the row. Never pushed, never read from a pull.
   'capture_fingerprint',
+  // v29: user pin; nullable means old rows remain visually unpinned.
+  'pinned',
 ];
 
 List<Object?> _columnNames(Database db, String table) =>
@@ -39,8 +41,8 @@ void main() {
 
     await db.listDumps();
 
-    expect(db.schemaVersion, 29);
-    expect(sql.userVersion, 29);
+    expect(db.schemaVersion, 30);
+    expect(sql.userVersion, 30);
     expect(_columnNames(sql, 'todos'), _todoColumns);
     sql.execute(
       'INSERT INTO todos(id,text,created_at,updated_at) '
@@ -71,7 +73,7 @@ void main() {
 
     await db.listDumps();
 
-    expect(sql.userVersion, 29);
+    expect(sql.userVersion, 30);
     expect(_columnNames(sql, 'todos'), _todoColumns);
     expect(
       sqlRows(sql, 'dumps')
@@ -85,7 +87,8 @@ void main() {
     );
   });
 
-  test('the migration is guarded: a database that somehow already has a '
+  test(
+      'the migration is guarded: a database that somehow already has a '
       'todos table upgrades without error and keeps its rows', () async {
     final sql = oldStorageDatabase(4);
     // Simulate a partial earlier run (or a sideways build) that created
@@ -116,7 +119,7 @@ void main() {
 
     await db.listDumps();
 
-    expect(sql.userVersion, 29);
+    expect(sql.userVersion, 30);
     expect(_columnNames(sql, 'todos'), _todoColumns);
     expect(
       sql.select("SELECT text FROM todos WHERE id='kept'").single['text'],
@@ -155,7 +158,7 @@ void main() {
 
     await db.listDumps();
 
-    expect(sql.userVersion, 29);
+    expect(sql.userVersion, 30);
     expect(_columnNames(sql, 'todos'), _todoColumns);
     final rows = sql.select('SELECT id, text, due_date, folder_id FROM todos '
         'ORDER BY id');
@@ -204,7 +207,7 @@ void main() {
 
     await db.listDumps();
 
-    expect(sql.userVersion, 29);
+    expect(sql.userVersion, 30);
     expect(_columnNames(sql, 'todos'), _todoColumns);
     final rows = sqlRows(sql, 'todos');
     expect(rows.length, 2, reason: 'no row is lost by the upgrade');
@@ -250,7 +253,7 @@ void main() {
 
     await expectLater(db.listDumps(), completes);
 
-    expect(sql.userVersion, 29);
+    expect(sql.userVersion, 30);
     expect(_columnNames(sql, 'todos'), _todoColumns);
   });
 }

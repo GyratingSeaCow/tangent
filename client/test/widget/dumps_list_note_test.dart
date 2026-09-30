@@ -34,6 +34,7 @@ DumpRow _row(
   int duration = 9,
   String status = 'not_transcribed',
   String? transcript,
+  bool pinned = false,
 }) =>
     DumpRow(
       id: id,
@@ -51,6 +52,7 @@ DumpRow _row(
       syncAttempts: 0,
       transcriptionStatus: status,
       transcriptionAttempt: 0,
+      pinned: pinned,
     );
 
 DumpRow _noteRow(String id, String title, {String? body}) => _row(
@@ -65,8 +67,7 @@ DumpRow _noteRow(String id, String title, {String? body}) => _row(
 /// Records every component deletion the scripted backend performs so the
 /// test can prove exactly which durable files each flow destroyed.
 final class _CountingBackend extends ScriptedStorageBackend {
-  final calls =
-      <({BoundRecording binding, RecordingComponent component})>[];
+  final calls = <({BoundRecording binding, RecordingComponent component})>[];
   @override
   IoOperation<ComponentResult> deleteComponent(
     BoundRecording binding,
@@ -224,8 +225,7 @@ void main() {
           reason: 'notes are terminal not_applicable under $transcript',
         );
         expect(
-          filterDumps(rows, DumpModeFilter.all, transcript)
-              .map((r) => r.id),
+          filterDumps(rows, DumpModeFilter.all, transcript).map((r) => r.id),
           isNot(contains('note-1')),
         );
       }
@@ -265,13 +265,26 @@ void main() {
       expect(noteHits.single.mode, 'text_note');
 
       container.read(searchQueryProvider.notifier).state = 'budget';
-      final recordingHits =
-          await container.read(searchResultsProvider.future);
+      final recordingHits = await container.read(searchResultsProvider.future);
       expect(recordingHits.map((r) => r.id), ['2']);
     });
   });
 
   group('dumps list presentation', () {
+    testWidgets('a pinned recording shows the small row indicator',
+        (tester) async {
+      _useTaskViewport(tester);
+      await _mountPresentation(
+        tester,
+        <DumpRow>[_row('rec-pinned', 'Pinned recording', pinned: true)],
+      );
+
+      expect(
+        find.byKey(const ValueKey<String>('dump-pin-rec-pinned')),
+        findsOneWidget,
+      );
+    });
+
     testWidgets('note rows show edit_note where recordings show duration',
         (tester) async {
       _useTaskViewport(tester);

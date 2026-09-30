@@ -34,6 +34,13 @@ class NotebookSection {
 /// Label for notebooks that are not in any folder.
 const String kUnfiledSectionTitle = 'No folder';
 
+/// Stable partition: pinned rows lead, while both sides retain caller order.
+List<NotebookHeader> _pinnedFirst(Iterable<NotebookHeader> rows) =>
+    <NotebookHeader>[
+      ...rows.where((NotebookHeader row) => row.pinned),
+      ...rows.where((NotebookHeader row) => !row.pinned),
+    ];
+
 /// Arranges [notebooks] into sections.
 ///
 /// Rules, in order of how much they matter:
@@ -56,7 +63,7 @@ List<NotebookSection> groupNotebooks({
     // Rule 1. Note this deliberately also covers notebooks whose folder was
     // deleted: they land here rather than vanishing.
     return <NotebookSection>[
-      NotebookSection(title: null, notebooks: List<NotebookHeader>.from(notebooks)),
+      NotebookSection(title: null, notebooks: _pinnedFirst(notebooks)),
     ];
   }
 
@@ -74,18 +81,18 @@ List<NotebookSection> groupNotebooks({
       NotebookSection(
         title: folder.name,
         folderId: folder.id,
-        notebooks: notebooks
-            .where((NotebookHeader n) => n.folderId == folder.id)
-            .toList(growable: false),
+        notebooks: _pinnedFirst(
+          notebooks.where((NotebookHeader n) => n.folderId == folder.id),
+        ),
       ),
   ];
 
-  final List<NotebookHeader> unfiled = notebooks
-      .where(
-        (NotebookHeader n) =>
-            n.folderId == null || !knownFolderIds.contains(n.folderId),
-      )
-      .toList(growable: false);
+  final List<NotebookHeader> unfiled = _pinnedFirst(
+    notebooks.where(
+      (NotebookHeader n) =>
+          n.folderId == null || !knownFolderIds.contains(n.folderId),
+    ),
+  );
 
   if (unfiled.isNotEmpty) {
     sections.add(

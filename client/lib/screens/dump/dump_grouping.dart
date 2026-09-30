@@ -37,6 +37,12 @@ class DumpSection {
 /// notebooks list on purpose.
 const String kUnfiledDumpSectionTitle = 'No folder';
 
+/// Stable partition: pinned rows lead, while both sides retain caller order.
+List<DumpRow> _pinnedFirst(Iterable<DumpRow> rows) => <DumpRow>[
+      ...rows.where((DumpRow row) => row.pinned == true),
+      ...rows.where((DumpRow row) => row.pinned != true),
+    ];
+
 List<DumpSection> groupDumps({
   required List<DumpRow> dumps,
   required List<FolderSummary> folders,
@@ -45,7 +51,7 @@ List<DumpSection> groupDumps({
     // Rule 1 — also covers rows whose folder was deleted: they land here
     // rather than vanishing.
     return <DumpSection>[
-      DumpSection(title: null, dumps: List<DumpRow>.from(dumps)),
+      DumpSection(title: null, dumps: _pinnedFirst(dumps)),
     ];
   }
 
@@ -63,18 +69,17 @@ List<DumpSection> groupDumps({
       DumpSection(
         title: folder.name,
         folderId: folder.id,
-        dumps: dumps
-            .where((DumpRow d) => d.folderId == folder.id)
-            .toList(growable: false),
+        dumps: _pinnedFirst(
+          dumps.where((DumpRow d) => d.folderId == folder.id),
+        ),
       ),
   ];
 
-  final List<DumpRow> unfiled = dumps
-      .where(
-        (DumpRow d) =>
-            d.folderId == null || !knownFolderIds.contains(d.folderId),
-      )
-      .toList(growable: false);
+  final List<DumpRow> unfiled = _pinnedFirst(
+    dumps.where(
+      (DumpRow d) => d.folderId == null || !knownFolderIds.contains(d.folderId),
+    ),
+  );
 
   if (unfiled.isNotEmpty) {
     sections.add(DumpSection(title: kUnfiledDumpSectionTitle, dumps: unfiled));

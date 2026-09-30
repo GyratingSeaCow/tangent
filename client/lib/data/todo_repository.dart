@@ -173,6 +173,11 @@ class TodoRepository {
     await _write(id, TodosCompanion(folderId: Value(folderId)));
   }
 
+  /// Pins or unpins one item as a normal synced edit.
+  Future<void> setPinned(String id, bool pinned) async {
+    await _write(id, TodosCompanion(pinned: Value<bool?>(pinned)));
+  }
+
   /// [moveToFolder] for a multi-select set, one transaction.
   Future<void> moveManyToFolder(Iterable<String> ids, String? folderId) async {
     await _db.transaction(() async {

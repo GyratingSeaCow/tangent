@@ -156,6 +156,10 @@ class Dumps extends Table {
   /// starts, so the line returns on the next failure.
   IntColumn get summaryErrorDismissedAt => integer().nullable()();
 
+  /// User pin. Nullable so every pre-v30 row keeps the old unpinned
+  /// appearance without a rewrite; null reads exactly like false.
+  BoolColumn get pinned => boolean().nullable()();
+
   @override
   Set<Column> get primaryKey => {id};
 }
@@ -265,6 +269,9 @@ class Notebooks extends Table {
   /// another device — or a slip of the finger — is recoverable from
   /// Settings → Trash.
   IntColumn get deletedAt => integer().nullable()();
+
+  /// User pin. Nullable for an additive, appearance-preserving migration.
+  BoolColumn get pinned => boolean().nullable()();
   @override
   Set<Column> get primaryKey => {id};
 }
@@ -385,11 +392,14 @@ class Todos extends Table {
   /// pushed, never read from a pull (same pattern as `summary_requested_at`).
   /// Null on manual rows and on rows that arrived from a peer.
   TextColumn get captureFingerprint => text().nullable()();
+
+  /// User pin. Nullable for an additive, appearance-preserving migration.
+  BoolColumn get pinned => boolean().nullable()();
   @override
   Set<Column> get primaryKey => {id};
 }
 
-/// v1.35.0: calendar events spoken in a recording ("add this to my
+/// v1.35.0: calendar events spoken in a recording
 /// calendar …"). Same sync spine as [Todos]; the three `google*` columns are
 /// SERVER-authored and arrive only through a pull — a device push never
 /// carries them (see the sync engine's projection).
@@ -495,7 +505,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   LocalDb.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 29;
+  int get schemaVersion => 30;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -1045,6 +1055,37 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
               );
             }
           }
+          if (from < 30) {
+            // v30: one nullable pin flag on each pinnable entity (v28 was
+            // Ask citation visits, v29 the auto-file columns). Ask
+            // sqlite_master first, then table_info: an empty PRAGMA is
+            // ambiguous (missing table vs no columns), and a sideways
+            // build may already carry the column.
+            Future<void> addPinnedIfMissing(
+              String tableName,
+              TableInfo<Table, dynamic> table,
+              GeneratedColumn<bool> column,
+            ) async {
+              final bool exists = (await customSelect(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+                variables: <Variable<Object>>[
+                  Variable<String>(tableName),
+                ],
+              ).get())
+                  .isNotEmpty;
+              if (!exists) return;
+              final List<QueryRow> columns =
+                  await customSelect('PRAGMA table_info($tableName)').get();
+              final bool hasPinned = columns.any(
+                (QueryRow row) => row.data['name'] == 'pinned',
+              );
+              if (!hasPinned) await m.addColumn(table, column);
+            }
+
+            await addPinnedIfMissing('dumps', dumps, dumps.pinned);
+            await addPinnedIfMissing('notebooks', notebooks, notebooks.pinned);
+            await addPinnedIfMissing('todos', todos, todos.pinned);
+          }
         },
       );
 
@@ -1438,6 +1479,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     // v1.38 auto-file markers: server-authored, same contract as summary.
     Object? autoFiledAt = absentSummaryField,
     Object? autoFilePrevFolderId = absentSummaryField,
+    Object? pinned = absentPinnedField,
   }) async {
     final Value<String?> folderIdValue = identical(folderId, absentFolderId)
         ? const Value<String?>.absent()
@@ -1492,6 +1534,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
         identical(summarizedAt, absentSummaryField)
             ? const Value<int?>.absent()
             : Value<int?>(summarizedAt as int?);
+    final Value<bool?> pinnedValue = identical(pinned, absentPinnedField)
+        ? const Value<bool?>.absent()
+        : Value<bool?>(_wireBool(pinned));
     final DumpRow? existing = await getDumpRow(id);
     // Summary-in-progress: the server answered. When the incoming
     // summarized_at is at least as new as what this device asked for, the
@@ -1581,6 +1626,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
           folderId: folderIdValue,
           autoFiledAt: autoFiledAtValue,
           autoFilePrevFolderId: autoFilePrevFolderIdValue,
+          pinned: pinnedValue,
           syncedSeq: Value(seq),
         ),
         mode: InsertMode.insertOrReplace,
@@ -1618,6 +1664,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
         folderId: folderIdValue,
         autoFiledAt: autoFiledAtValue,
         autoFilePrevFolderId: autoFilePrevFolderIdValue,
+        pinned: pinnedValue,
         syncDirty: const Value<bool?>(false),
         syncedSeq: Value(seq),
       ),
@@ -1653,6 +1700,10 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   /// server — keep the stored map) from "present null" (cleared) for
   /// [applyRemoteDump].
   static const Object absentSpeakerNamesField = Object();
+
+  /// Sentinel for the additive `pinned` wire field on all three item types.
+  /// An older peer omits it, which must preserve the local pin.
+  static const Object absentPinnedField = Object();
 
   /// Writes the speaker name map for one recording (spec §4): [names] null
   /// or empty clears the column. Bumps `updated_at` and marks the row dirty
@@ -1813,6 +1864,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     String? ruling,
     String? lastPenStyle,
     Object? folderId = absentFolderId,
+    Object? pinned = absentPinnedField,
   }) async {
     // insertOrReplace rewrites the whole row, so a null ruling here would
     // erase a value this device already holds whenever the peer is an older
@@ -1830,6 +1882,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     final String? effectiveFolderId = identical(folderId, absentFolderId)
         ? existing?.folderId
         : folderId as String?;
+    final bool? effectivePinned = identical(pinned, absentPinnedField)
+        ? existing?.pinned
+        : _wireBool(pinned);
 
     await into(notebooks).insert(
       NotebooksCompanion.insert(
@@ -1842,6 +1897,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
         ruling: Value<String?>(effectiveRuling),
         lastPenStyle: Value<String?>(effectivePenStyle),
         folderId: Value<String?>(effectiveFolderId),
+        pinned: Value<bool?>(effectivePinned),
         syncDirty: const Value(false),
         syncedSeq: Value(seq),
         // An arriving upsert means the notebook lives; a copy sitting in
@@ -1922,6 +1978,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     Object? sourceRef = absentTodoField,
     Object? deletedAt = absentTodoField,
     Object? folderId = absentTodoField,
+    Object? pinned = absentPinnedField,
   }) async {
     final TodoRow? existing = await getTodoRow(id);
     String? resolve(Object? incoming, String? held) =>
@@ -1938,6 +1995,11 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
         sourceRef: Value(resolve(sourceRef, existing?.sourceRef)),
         deletedAt: Value(resolve(deletedAt, existing?.deletedAt)),
         folderId: Value(resolve(folderId, existing?.folderId)),
+        pinned: Value<bool?>(
+          identical(pinned, absentPinnedField)
+              ? existing?.pinned
+              : _wireBool(pinned),
+        ),
         // Local-only: a pull never carries it, so the held value survives.
         captureFingerprint: Value(existing?.captureFingerprint),
         syncDirty: const Value(false),
@@ -2073,6 +2135,25 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     );
   }
 
+  /// Pins or unpins a notebook as a normal synced metadata edit.
+  Future<void> setNotebookPinned(
+    String id,
+    bool pinned, {
+    DateTime? now,
+  }) async {
+    final int count =
+        await (update(notebooks)..where((t) => t.id.equals(id))).write(
+      NotebooksCompanion(
+        pinned: Value<bool?>(pinned),
+        updatedAt: Value(
+          (now ?? DateTime.now()).toUtc().millisecondsSinceEpoch,
+        ),
+        syncDirty: const Value(true),
+      ),
+    );
+    if (count != 1) throw StateError('Notebook not found: $id');
+  }
+
   /// Files a recording or note, or unfiles it when [folderId] is null.
   ///
   /// v1.38: filing travels with the dump payload, so a move marks the row
@@ -2111,6 +2192,21 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
         syncDirty: const Value<bool?>(true),
       ),
     );
+  }
+
+  /// Pins or unpins a recording/note as a normal synced metadata edit.
+  Future<void> setDumpPinned(String id, bool pinned, {DateTime? now}) async {
+    await transaction(() async {
+      final int count =
+          await (update(dumps)..where((t) => t.id.equals(id))).write(
+        DumpsCompanion(
+          pinned: Value<bool?>(pinned),
+          updatedAt: Value((now ?? DateTime.now()).toUtc()),
+        ),
+      );
+      if (count != 1) throw StateError('Dump not found: $id');
+      await markDumpDirty(id);
+    });
   }
 
   /// Renames a recording or note. Deliberately writes only the title, so a

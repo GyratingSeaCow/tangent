@@ -352,6 +352,143 @@ void main() {
     });
   });
 
+  group('pin sync', () {
+    test('all pinnable entities push and pull the pin field', () async {
+      await db.applyRemoteDump(
+        id: 'dump-pin',
+        mode: 'brain_dump',
+        title: 'Recording',
+        transcript: null,
+        meetingNotes: null,
+        durationSeconds: 3,
+        audioOnServer: false,
+        createdAt: DateTime.utc(2026, 1, 1),
+        updatedAt: DateTime.utc(2026, 1, 1),
+        seq: 1,
+      );
+      await db.setDumpPinned(
+        'dump-pin',
+        true,
+        now: DateTime.utc(2026, 1, 2),
+      );
+      await db.into(db.notebooks).insert(
+            NotebooksCompanion.insert(
+              id: 'notebook-pin',
+              title: 'Notebook',
+              createdAt: 1,
+              updatedAt: 2,
+              docJson: '{}',
+              inkJson: '{}',
+              pinned: const Value<bool?>(true),
+            ),
+          );
+      await db.into(db.todos).insert(
+            TodosCompanion.insert(
+              id: 'todo-pin',
+              body: 'Todo',
+              createdAt: '2026-01-01T00:00:00Z',
+              updatedAt: '2026-01-02T00:00:00Z',
+              pinned: const Value<bool?>(true),
+            ),
+          );
+      client.pushResults = const <PushResult>[
+        PushResult(
+          entityId: 'dump-pin',
+          entityType: 'dump',
+          seq: 2,
+          applied: true,
+        ),
+        PushResult(
+          entityId: 'notebook-pin',
+          entityType: 'notebook',
+          seq: 3,
+          applied: true,
+        ),
+        PushResult(
+          entityId: 'todo-pin',
+          entityType: 'todo',
+          seq: 4,
+          applied: true,
+        ),
+      ];
+      final DocumentSyncEngine engine = build(label: () async => 'test');
+
+      await engine.syncNow();
+
+      for (final String type in <String>['dump', 'notebook', 'todo']) {
+        final Map<String, dynamic> change = client.pushedChanges!.singleWhere(
+          (Map<String, dynamic> row) => row['entity_type'] == type,
+        );
+        expect(change['payload']['pinned'], isTrue, reason: '$type push');
+      }
+
+      client.pushResults = const <PushResult>[];
+      client.pullPages = <SyncPullPage>[
+        const SyncPullPage(
+          changes: <RemoteChange>[
+            RemoteChange(
+              entityType: 'dump',
+              entityId: 'dump-pin',
+              op: SyncOp.upsert,
+              payload: <String, dynamic>{
+                'mode': 'brain_dump',
+                'title': 'Recording',
+                'duration_seconds': 3,
+                'created_at': 1767225600,
+                'updated_at': 1893456000,
+                'pinned': false,
+              },
+              seq: 10,
+              deviceId: 'peer-device',
+            ),
+            RemoteChange(
+              entityType: 'notebook',
+              entityId: 'notebook-pin',
+              op: SyncOp.upsert,
+              payload: <String, dynamic>{
+                'title': 'Notebook',
+                'created_at': 1,
+                'updated_at': 2000000000000,
+                'doc': '{}',
+                'ink': '{}',
+                'pinned': false,
+              },
+              seq: 11,
+              deviceId: 'peer-device',
+            ),
+            RemoteChange(
+              entityType: 'todo',
+              entityId: 'todo-pin',
+              op: SyncOp.upsert,
+              payload: <String, dynamic>{
+                'text': 'Todo',
+                'created_at': '2026-01-01T00:00:00Z',
+                'updated_at': '2030-01-01T00:00:00Z',
+                'pinned': false,
+              },
+              seq: 12,
+              deviceId: 'peer-device',
+            ),
+          ],
+          headSeq: 12,
+          hasMore: false,
+        ),
+      ];
+
+      await engine.syncNow();
+
+      expect((await db.getDumpRow('dump-pin'))!.pinned, isFalse);
+      expect(
+        (await (db.select(db.notebooks)
+                  ..where((table) => table.id.equals('notebook-pin')))
+                .getSingle())
+            .pinned,
+        isFalse,
+      );
+      expect((await db.getTodoRow('todo-pin'))!.pinned, isFalse);
+    });
+  });
+
   group('ink index sync', () {
     /// One ink_index upsert as the server builds it at pull time: the
     /// notebook's ENTIRE current index, to be applied as a replace-set.

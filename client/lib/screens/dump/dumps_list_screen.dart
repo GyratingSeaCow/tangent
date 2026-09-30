@@ -370,67 +370,71 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
                         child: Wrap(
                           alignment: WrapAlignment.end,
                           children: [
-                        Semantics(
-                          label: 'Select all returned results',
-                          excludeSemantics: true,
-                          button: true,
-                          enabled: ready && !_batchBusy,
-                          onTap: ready && !_batchBusy
-                              ? () => _change(_selection.toggleAll)
-                              : null,
-                          checked: selection.selectedIds.isNotEmpty &&
-                              selection.selectedIds.containsAll(selectableIds),
-                          mixed: selection.selectedIds.isNotEmpty &&
-                              !selection.selectedIds.containsAll(selectableIds),
-                          child: IconButton(
-                            key: const ValueKey('selection-all'),
-                            tooltip: 'Select all returned results',
-                            onPressed: ready && !_batchBusy
-                                ? () => _change(_selection.toggleAll)
-                                : null,
-                            icon: const Icon(Icons.select_all),
-                          ),
-                        ),
-                        IconButton(
-                          key: const ValueKey('selection-download'),
-                          tooltip: 'Download audio for selected',
-                          onPressed: ready &&
-                                  !_batchBusy &&
-                                  selection.selectedIds.isNotEmpty
-                              ? _downloadSelected
-                              : null,
-                          icon: const Icon(Icons.download_for_offline_outlined),
-                        ),
-                        IconButton(
-                          key: const ValueKey('selection-transcribe'),
-                          tooltip: 'Transcribe selected',
-                          onPressed: ready &&
-                                  !_batchBusy &&
-                                  selection.selectedIds.isNotEmpty
-                              ? _transcribeSelected
-                              : null,
-                          icon: const Icon(Icons.text_snippet_outlined),
-                        ),
-                        IconButton(
-                          key: const ValueKey('selection-send-to-notebook'),
-                          tooltip: 'Send selected to notebook',
-                          onPressed: ready &&
-                                  !_batchBusy &&
-                                  selection.selectedIds.isNotEmpty
-                              ? _sendSelectedToNotebook
-                              : null,
-                          icon: const Icon(Icons.menu_book_outlined),
-                        ),
-                        IconButton(
-                          key: const ValueKey('selection-delete'),
-                          tooltip: 'Delete selected local recordings',
-                          onPressed: ready &&
-                                  !_batchBusy &&
-                                  selection.selectedIds.isNotEmpty
-                              ? _deleteSelected
-                              : null,
-                          icon: const Icon(Icons.delete_outline),
-                        ),
+                            Semantics(
+                              label: 'Select all returned results',
+                              excludeSemantics: true,
+                              button: true,
+                              enabled: ready && !_batchBusy,
+                              onTap: ready && !_batchBusy
+                                  ? () => _change(_selection.toggleAll)
+                                  : null,
+                              checked: selection.selectedIds.isNotEmpty &&
+                                  selection.selectedIds
+                                      .containsAll(selectableIds),
+                              mixed: selection.selectedIds.isNotEmpty &&
+                                  !selection.selectedIds
+                                      .containsAll(selectableIds),
+                              child: IconButton(
+                                key: const ValueKey('selection-all'),
+                                tooltip: 'Select all returned results',
+                                onPressed: ready && !_batchBusy
+                                    ? () => _change(_selection.toggleAll)
+                                    : null,
+                                icon: const Icon(Icons.select_all),
+                              ),
+                            ),
+                            IconButton(
+                              key: const ValueKey('selection-download'),
+                              tooltip: 'Download audio for selected',
+                              onPressed: ready &&
+                                      !_batchBusy &&
+                                      selection.selectedIds.isNotEmpty
+                                  ? _downloadSelected
+                                  : null,
+                              icon: const Icon(
+                                Icons.download_for_offline_outlined,
+                              ),
+                            ),
+                            IconButton(
+                              key: const ValueKey('selection-transcribe'),
+                              tooltip: 'Transcribe selected',
+                              onPressed: ready &&
+                                      !_batchBusy &&
+                                      selection.selectedIds.isNotEmpty
+                                  ? _transcribeSelected
+                                  : null,
+                              icon: const Icon(Icons.text_snippet_outlined),
+                            ),
+                            IconButton(
+                              key: const ValueKey('selection-send-to-notebook'),
+                              tooltip: 'Send selected to notebook',
+                              onPressed: ready &&
+                                      !_batchBusy &&
+                                      selection.selectedIds.isNotEmpty
+                                  ? _sendSelectedToNotebook
+                                  : null,
+                              icon: const Icon(Icons.menu_book_outlined),
+                            ),
+                            IconButton(
+                              key: const ValueKey('selection-delete'),
+                              tooltip: 'Delete selected local recordings',
+                              onPressed: ready &&
+                                      !_batchBusy &&
+                                      selection.selectedIds.isNotEmpty
+                                  ? _deleteSelected
+                                  : null,
+                              icon: const Icon(Icons.delete_outline),
+                            ),
                           ],
                         ),
                       ),
@@ -691,6 +695,7 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
         ItemAction.rename,
         if (nameable) ItemAction.nameSpeakers,
         ItemAction.move,
+        dump.pinned == true ? ItemAction.unpin : ItemAction.pin,
         if (exportable) ItemAction.exportMarkdown,
         if (sendable) ItemAction.sendToNotebook,
         ItemAction.select,
@@ -732,6 +737,10 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
         await showNameSpeakersSheet(context, ref, dump);
       case ItemAction.move:
         await _moveDump(dump);
+      case ItemAction.pin:
+        await ref.read(localDbProvider).setDumpPinned(dump.id, true);
+      case ItemAction.unpin:
+        await ref.read(localDbProvider).setDumpPinned(dump.id, false);
       case ItemAction.select:
         _change(() => _selection.enter(dump.id));
       case ItemAction.delete:
@@ -785,9 +794,8 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
       context,
       client: ref.read(summariesClientProvider.future),
       dump: dump,
-      onAccepted: (String id) => ref
-          .read(localDbProvider)
-          .recordRequestedSummaryTemplate(dump.id, id),
+      onAccepted: (String id) =>
+          ref.read(localDbProvider).recordRequestedSummaryTemplate(dump.id, id),
     );
   }
 
@@ -1298,8 +1306,7 @@ class _DumpListState extends State<_DumpList> {
             final bool showSummaryPill =
                 summaryPending(dump, now: summaryPendingNow());
             // A Retry in flight outranks the failure it retries.
-            final bool showFailedPill =
-                !showSummaryPill && summaryFailed(dump);
+            final bool showFailedPill = !showSummaryPill && summaryFailed(dump);
             final Widget pill =
                 showSummaryPill || showFailedPill || hasLanguageTag
                     ? Row(
@@ -1462,10 +1469,24 @@ class _DumpListState extends State<_DumpList> {
                         ),
                       )
                     : null,
-                title: Text(
-                  dump.title.isEmpty ? '(untitled)' : dump.title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                title: Row(
+                  children: <Widget>[
+                    if (dump.pinned == true) ...<Widget>[
+                      Icon(
+                        Icons.push_pin,
+                        key: ValueKey<String>('dump-pin-${dump.id}'),
+                        size: 14,
+                      ),
+                      const SizedBox(width: 6),
+                    ],
+                    Expanded(
+                      child: Text(
+                        dump.title.isEmpty ? '(untitled)' : dump.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
                 ),
                 subtitle: compact
                     ? Column(

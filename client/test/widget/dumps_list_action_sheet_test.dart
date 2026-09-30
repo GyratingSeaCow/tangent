@@ -31,6 +31,11 @@ void main() {
       findsOneWidget,
       reason: 'recordings get the same menu as every other list',
     );
+    expect(
+      find.byKey(ItemActionSheet.keyFor(ItemAction.pin)),
+      findsOneWidget,
+      reason: 'an unpinned recording offers Pin on its row action surface',
+    );
   });
 
   testWidgets('long-press still enters multi-select, not the sheet',
@@ -72,7 +77,18 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('dump-more-fixture-a')));
     await pumpSelection(tester);
-    await tester.tap(find.byKey(ItemActionSheet.keyFor(ItemAction.select)));
+    final Finder selectRow =
+        find.byKey(ItemActionSheet.keyFor(ItemAction.select));
+    await tester.scrollUntilVisible(
+      selectRow,
+      60,
+      scrollable: find.descendant(
+        of: find.byType(ItemActionSheet),
+        matching: find.byType(Scrollable),
+      ),
+    );
+    await pumpSelection(tester);
+    await tester.tap(selectRow);
     await pumpSelection(tester);
 
     expect(

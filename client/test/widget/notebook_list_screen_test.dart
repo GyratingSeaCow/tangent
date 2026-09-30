@@ -205,6 +205,39 @@ void main() {
     await unmount(tester);
   });
 
+  testWidgets('a pin is visible and the row action unpins it', (tester) async {
+    await mountList(
+      tester,
+      seed: <Notebook>[
+        testNotebook(id: 'nb-pinned', title: 'Pinned notes', pinned: true),
+      ],
+    );
+
+    expect(
+      find.byKey(const ValueKey<String>('notebook-pin-nb-pinned')),
+      findsOneWidget,
+    );
+    await tester.tap(
+      find.byKey(const ValueKey<String>('notebook-menu-nb-pinned')),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(ItemActionSheet.keyFor(ItemAction.unpin)),
+      findsOneWidget,
+    );
+    expect(find.byKey(ItemActionSheet.keyFor(ItemAction.pin)), findsNothing);
+
+    await tester.tap(find.byKey(ItemActionSheet.keyFor(ItemAction.unpin)));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey<String>('notebook-pin-nb-pinned')),
+      findsNothing,
+    );
+    expect((await repository.getNotebook('nb-pinned'))!.pinned, isFalse);
+    await unmount(tester);
+  });
+
   testWidgets('an empty library reads "No notebooks yet"', (tester) async {
     await mountList(tester);
 
@@ -449,8 +482,8 @@ void main() {
       contains('Q4 planning'),
       reason: 'rename must persist through the notebook persistence layer',
     );
-    final Notebook renamed = repository.saved
-        .lastWhere((Notebook n) => n.title == 'Q4 planning');
+    final Notebook renamed =
+        repository.saved.lastWhere((Notebook n) => n.title == 'Q4 planning');
     expect(
       renamed.document.blocks.whereType<NotebookTextBlock>().single.text,
       'keep me',
@@ -1362,7 +1395,8 @@ void main() {
         'meeting',
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey<String>('notebook-row-nb-hit')));
+      await tester
+          .tap(find.byKey(const ValueKey<String>('notebook-row-nb-hit')));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
 

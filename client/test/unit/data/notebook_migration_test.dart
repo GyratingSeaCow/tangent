@@ -32,6 +32,8 @@ const _notebookColumns = [
   // v13: notebook trash. Deletion parks the row here for 7 days before
   // purge, so a synced-in (or fat-fingered) delete is recoverable.
   'deleted_at',
+  // v29: user pin; nullable means old rows remain visually unpinned.
+  'pinned',
 ];
 
 const _insertNotebook =
@@ -50,8 +52,8 @@ void main() {
 
     await db.listDumps();
 
-    expect(db.schemaVersion, 29);
-    expect(sql.userVersion, 29);
+    expect(db.schemaVersion, 30);
+    expect(sql.userVersion, 30);
     expect(_columnNames(sql, 'notebooks'), _notebookColumns);
     expect(
       sql.select('PRAGMA foreign_key_list(notebooks)'),
@@ -77,7 +79,7 @@ void main() {
 
     await db.listDumps();
 
-    expect(sql.userVersion, 29);
+    expect(sql.userVersion, 30);
     expect(_columnNames(sql, 'notebooks'), _notebookColumns);
     // v8 adds folder_id to dumps, so compare the columns the fixture had:
     // this test is about existing rows surviving, not about the column list.
@@ -131,7 +133,7 @@ void main() {
 
     sql = sqlite3.open(file.path);
     addTearDown(sql.dispose);
-    expect(sql.userVersion, 29);
+    expect(sql.userVersion, 30);
     expect(_columnNames(sql, 'notebooks'), _notebookColumns);
     // v8 adds folder_id to dumps, so compare the columns the fixture had:
     // this test is about existing rows surviving, not about the column list.
@@ -153,7 +155,9 @@ void main() {
     expect(sqlRows(sql, 'sync_queue'), queue);
     expect(sqlRows(sql, 'storage_locations'), locations);
     expect(
-      sql.select('SELECT revision FROM storage_catalog_state').single['revision'],
+      sql
+          .select('SELECT revision FROM storage_catalog_state')
+          .single['revision'],
       9,
       reason: 'The v6 step must not re-run catalog bootstrap',
     );
@@ -187,7 +191,7 @@ void main() {
     addTearDown(db.close);
     await db.listDumps();
 
-    expect(sql.userVersion, 29);
+    expect(sql.userVersion, 30);
     final rows = <String, int>{
       for (final r in sql.select('SELECT id, sync_dirty FROM notebooks'))
         r['id'] as String: r['sync_dirty'] as int,
@@ -222,7 +226,7 @@ void main() {
     addTearDown(db.close);
     await db.listDumps();
 
-    expect(sql.userVersion, 29);
+    expect(sql.userVersion, 30);
     expect(
       sql.select(
         "SELECT name FROM sqlite_master WHERE type='table' "
