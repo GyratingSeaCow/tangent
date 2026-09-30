@@ -729,6 +729,8 @@ def sync_push(
                 # The index is server-generated. Accepting a client's rows
                 # would let a stale device overwrite fresher OCR output.
                 raise ValueError("ink_index is server-generated; push rejected")
+            if change.entity_type == "ask_message":
+                raise ValueError("ask_message is server-generated; push rejected")
             if change.entity_type == "dump":
                 _apply_dump(db, change, now)
                 # Republish what the server now HOLDS, not what the device

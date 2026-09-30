@@ -96,7 +96,7 @@ CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at DESC);
 CREATE TABLE IF NOT EXISTS change_log (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
     entity_type TEXT NOT NULL
-        CHECK (entity_type IN ('dump', 'notebook', 'note', 'folder', 'ink_index', 'todo', 'calendar_event')),
+        CHECK (entity_type IN ('dump', 'notebook', 'note', 'folder', 'ink_index', 'todo', 'calendar_event', 'ask_message')),
     entity_id TEXT NOT NULL,
     op TEXT NOT NULL CHECK (op IN ('upsert', 'delete')),
     -- Who authored it, so a client can skip the echo of its own push.
@@ -260,6 +260,17 @@ CREATE TABLE IF NOT EXISTS calendar_events (
 
 CREATE INDEX IF NOT EXISTS idx_calendar_events_updated_at
     ON calendar_events(updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS ask_messages (
+    id TEXT PRIMARY KEY,
+    role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+    text TEXT NOT NULL,
+    sources_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_ask_messages_created_at
+    ON ask_messages(created_at, id);
 
 -- One household-wide Google Tasks connection. Credentials and tokens never
 -- enter the device sync feed; authenticated APIs expose only status metadata.
@@ -921,6 +932,45 @@ def _migrate_change_log_calendar_event_entity(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_change_log_ask_message_entity(conn: sqlite3.Connection) -> None:
+    """Rebuild change_log to admit server-authored ask messages."""
+    ddl = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='change_log'"
+    ).fetchone()
+    if ddl is None or "'ask_message'" in (ddl[0] or ""):
+        return
+    conn.executescript(
+        """
+        PRAGMA foreign_keys = OFF;
+        CREATE TABLE change_log_new (
+            seq INTEGER PRIMARY KEY AUTOINCREMENT,
+            entity_type TEXT NOT NULL CHECK (entity_type IN
+                ('dump', 'notebook', 'note', 'folder', 'ink_index', 'todo',
+                 'calendar_event', 'ask_message')),
+            entity_id TEXT NOT NULL,
+            op TEXT NOT NULL CHECK (op IN ('upsert', 'delete')),
+            device_id TEXT NOT NULL,
+            payload TEXT,
+            created_at INTEGER NOT NULL
+        );
+        INSERT INTO change_log_new
+            (seq, entity_type, entity_id, op, device_id, payload, created_at)
+            SELECT seq, entity_type, entity_id, op, device_id, payload,
+                   created_at FROM change_log;
+        DROP TABLE change_log;
+        ALTER TABLE change_log_new RENAME TO change_log;
+        CREATE INDEX IF NOT EXISTS idx_change_log_seq ON change_log(seq);
+        CREATE INDEX IF NOT EXISTS idx_change_log_entity
+            ON change_log(entity_type, entity_id);
+        PRAGMA foreign_keys = ON;
+        """
+    )
+    conn.execute(
+        "INSERT OR REPLACE INTO sqlite_sequence (name, seq) "
+        "SELECT 'change_log', COALESCE(MAX(seq), 0) FROM change_log"
+    )
+
+
 def _migrate_notebooks_ink(conn: sqlite3.Connection) -> None:
     """Add notebooks.ink and backfill it from the change feed.
 
@@ -1055,6 +1105,7 @@ def init_db(data_dir: str) -> None:
         _migrate_change_log_ink_index_entity(conn)
         _migrate_change_log_todo_entity(conn)
         _migrate_change_log_calendar_event_entity(conn)
+        _migrate_change_log_ask_message_entity(conn)
         _migrate_notebooks_ink(conn)
         _normalize_notebooks_ink(conn)
         _reconcile_audio_kept(conn, data_dir)

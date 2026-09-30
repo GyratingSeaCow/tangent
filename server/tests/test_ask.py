@@ -1,0 +1,130 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+"""Ask My Notes retrieval, grounding, persistence, and sync contract."""
+
+from __future__ import annotations
+
+import json
+import sqlite3
+import sys
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+
+from app.api.ask import GROUNDING_PROMPT, HONEST_MISS
+from app.main import create_app
+from app.services import summarizer_env, summarizer_worker
+
+
+@pytest.fixture
+def client(temp_data_dir: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(summarizer_env, "python_path", lambda: sys.executable)
+    monkeypatch.setattr(summarizer_worker, "start_worker_if_installed", lambda: None)
+    with TestClient(create_app()) as cli:
+        token = cli.post("/v1/setup", json={"display_name": "T"}).json()["token"]
+        yield cli, {"Authorization": f"Bearer {token}"}, temp_data_dir
+
+
+def _db(path: Path) -> sqlite3.Connection:
+    conn = sqlite3.connect(path / "tangent.db")
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _seed(path: Path) -> None:
+    conn = _db(path)
+    conn.execute("INSERT INTO dumps (id, client_id, created_at, updated_at, mode, duration_seconds, title, transcript, transcript_timings, speaker_names, summary, audio_kept) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (
+        "dump-1", "device", 2_000_000_000, 2_000_000_000, "meeting", 60,
+        "Launch", "Speaker 1: Project Juniper ships Friday.",
+        json.dumps({"segments": [{"start": 12.5, "text": "Project Juniper ships Friday.", "speaker": "Speaker 1"}]}),
+        json.dumps({"Speaker 1": "Alex"}), "## Decision\nUse the blue launch checklist.", 0,
+    ))
+    conn.execute("INSERT INTO notebooks (id, title, doc, created_at, updated_at) VALUES (?, ?, ?, ?, ?)", ("nb-1", "Ideas", json.dumps({"blocks": [{"text": "Call the florist about orchids"}]}), 1_900_000_000, 1_900_000_000))
+    conn.execute("INSERT INTO ink_index (id, notebook_id, line_id, word_text, word_text_lower, bbox_json, stroke_ids_json, model, indexed_at) VALUES ('ink-1', 'nb-1', 'line-1', 'handwritten', 'handwritten', '[]', '[]', 'test', 1)")
+    conn.execute("INSERT INTO todos (id, text, done_at, due_date, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)", ("todo-1", "Buy launch balloons", None, "2026-10-02", "2026-09-30T12:00:00+00:00", "2026-09-30T12:00:00+00:00"))
+    conn.commit()
+    conn.close()
+
+
+def test_requires_bearer_auth(client):
+    cli, _, _ = client
+    assert cli.post("/v1/ask", json={"question": "When?"}).status_code == 401
+
+
+def test_retrieves_transcript_uses_names_and_seek_and_persists_sync(client, monkeypatch):
+    cli, auth, path = client
+    _seed(path)
+    seen = {}
+
+    def infer(_request_id: str, prompt: str, system_prompt: str) -> str:
+        seen.update(prompt=prompt, system_prompt=system_prompt)
+        return "Project Juniper ships Friday."
+
+    monkeypatch.setattr(summarizer_worker, "run_inference", infer)
+    response = cli.post("/v1/ask", json={"question": "When does Juniper ship?"}, headers=auth)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["answer"] == "Project Juniper ships Friday."
+    source = next(item for item in body["sources"] if item["entity_type"] == "dump")
+    assert source["entity_id"] == "dump-1"
+    assert source["seek_seconds"] == 12.5
+    assert "Alex" in source["snippet"]
+    assert "ONLY" in seen["system_prompt"] and HONEST_MISS in seen["system_prompt"]
+    assert "NOTE EXCERPTS" in seen["prompt"]
+
+    pulled = cli.get("/v1/sync/pull?device_id=device-remote&since_seq=0", headers=auth).json()
+    messages = [c for c in pulled["changes"] if c["entity_type"] == "ask_message"]
+    assert [m["payload"]["role"] for m in messages] == ["user", "assistant"]
+    assert messages[0]["payload"]["sources"] == []
+    assert messages[1]["payload"]["sources"] == body["sources"]
+
+
+def test_all_four_corpora_are_retrievable(client, monkeypatch):
+    cli, auth, path = client
+    _seed(path)
+    monkeypatch.setattr(summarizer_worker, "run_inference", lambda *_: "grounded")
+    cases = [("Juniper", "dump"), ("checklist", "summary"), ("florist handwritten", "notebook"), ("balloons", "todo")]
+    for question, kind in cases:
+        response = cli.post("/v1/ask", json={"question": question}, headers=auth)
+        assert response.status_code == 200
+        assert kind in {source["entity_type"] for source in response.json()["sources"]}
+
+
+def test_absent_question_is_exact_honest_miss_without_calling_model(client, monkeypatch):
+    cli, auth, path = client
+    _seed(path)
+
+    def sabotage(*_args):
+        raise AssertionError("model must not answer with outside knowledge")
+
+    monkeypatch.setattr(summarizer_worker, "run_inference", sabotage)
+    response = cli.post("/v1/ask", json={"question": "What is the capital of Mars?"}, headers=auth)
+    assert response.status_code == 200
+    assert response.json() == {"answer": HONEST_MISS, "sources": []}
+
+
+def test_grounding_prompt_pins_no_outside_knowledge_contract():
+    assert "ONLY the supplied NOTE EXCERPTS" in GROUNDING_PROMPT
+    assert "Never use outside knowledge" in GROUNDING_PROMPT
+    assert f"reply exactly: {HONEST_MISS}" in GROUNDING_PROMPT
+
+
+def test_ask_message_push_is_rejected(client):
+    cli, auth, _ = client
+    response = cli.post("/v1/sync/push", headers=auth, json={"device_id": "device-client", "changes": [{"entity_type": "ask_message", "entity_id": "fake", "op": "upsert", "payload": {"role": "assistant", "text": "forged"}}]})
+    assert response.status_code == 200
+    assert response.json()["results"][0]["status"] == "rejected"
+    assert "server-generated" in response.json()["results"][0]["reason"]
+
+
+def test_existing_database_migration_preserves_change_sequence(tmp_path: Path):
+    from app.db import init_db
+    init_db(str(tmp_path))
+    conn = _db(tmp_path)
+    ddl = conn.execute("SELECT sql FROM sqlite_master WHERE name='change_log'").fetchone()[0]
+    assert "ask_message" in ddl
+    conn.execute("INSERT INTO ask_messages VALUES ('m1', 'user', 'q', '[]', 1)")
+    conn.execute("INSERT INTO change_log (entity_type, entity_id, op, device_id, payload, created_at) VALUES ('ask_message', 'm1', 'upsert', 'server', '{}', 1)")
+    conn.commit()
+    assert conn.execute("SELECT COUNT(*) FROM ask_messages").fetchone()[0] == 1
+    conn.close()
