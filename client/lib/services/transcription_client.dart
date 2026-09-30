@@ -588,3 +588,10 @@ class TranscriptionClient {
     }
   }
 }
+
+extension ServerDumpDeletion on TranscriptionClient {
+  /// Delete a server dump and publish its authoritative sync tombstone.
+  Future<void> deleteDump(String dumpId) async {
+    await _fetch('/v1/dumps/$dumpId', method: 'DELETE');
+  }
+}

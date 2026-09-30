@@ -2,10 +2,10 @@
 library;
 
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:uuid/uuid.dart';
 
 import '../../data/ask_history_repository.dart';
 import '../../data/local_db.dart';
@@ -13,7 +13,11 @@ import '../../data/notebook_repository.dart';
 import '../../services/ask_client.dart';
 import '../../services/server_defaults.dart';
 import '../../services/document_sync_engine.dart';
+import '../../services/transcription_client.dart';
 import '../../models/api_exception.dart';
+import '../../data/storage/storage_contract.dart';
+import '../../data/storage/storage_providers.dart'
+    show localDeletionServiceProvider;
 import '../dump/dump_detail_screen.dart';
 import '../home/home_providers.dart'
     show documentSyncEngineProvider, serverTranscriptionServiceProvider;
@@ -48,15 +52,22 @@ typedef AskVoiceQuestion = Future<String?> Function();
 typedef AskOpenDestination = Future<void> Function(Widget destination);
 
 Future<void> finishAskVoiceRecording({
-  required double durationSeconds,
+  required int durationSeconds,
   required Future<String> Function() transcribe,
   required Future<void> Function() discard,
   required Future<void> Function(String transcript) submit,
+  Future<void> Function(Object error)? onCleanupError,
 }) async {
   final String transcript = (await transcribe()).trim();
   if (transcript.isEmpty) throw StateError('Transcription returned no text');
-  if (durationSeconds < 25.0) await discard();
   await submit(transcript);
+  if (durationSeconds < 25) {
+    try {
+      await discard();
+    } catch (error) {
+      if (onCleanupError != null) await onCleanupError(error);
+    }
+  }
 }
 
 class AskScreen extends ConsumerStatefulWidget {
@@ -135,17 +146,8 @@ class _AskScreenState extends ConsumerState<AskScreen> {
         _error = null;
       });
       final LocalDb db = ref.read(localDbProvider);
-      final bool discard = row.durationSeconds < 25.0;
-      if (discard) {
-        // Prevent the auto-sync watcher from observing this temporary row
-        // while the existing transcription path extracts its text.
-        await db.customStatement(
-          'UPDATE dumps SET sync_dirty = 0 WHERE id = ?',
-          <Object?>[row.id],
-        );
-      }
       await finishAskVoiceRecording(
-        durationSeconds: row.durationSeconds.toDouble(),
+        durationSeconds: row.durationSeconds,
         transcribe: () async {
           await ref
               .read(serverTranscriptionServiceProvider)
@@ -154,12 +156,38 @@ class _AskScreenState extends ConsumerState<AskScreen> {
           return transcribed?.transcript ?? '';
         },
         discard: () async {
-          await db.applyRemoteDumpDeletion(row.id);
-          final File audio = File(row.audioPath);
-          if (await audio.exists()) await audio.delete();
+          await ref.read(transcriptionClientProvider).deleteDump(row.id);
+          final LocalDeletionService deletion =
+              ref.read(localDeletionServiceProvider);
+          final DeletionPreview preview =
+              switch (await deletion.preview(<String>{row.id})) {
+            Ok<DeletionPreview>(:final value) => value,
+            Fail<DeletionPreview>(:final problem) =>
+              throw StorageFault(problem),
+          };
+          switch (await deletion.deleteConfirmed(
+            (
+              operationId: const Uuid().v4(),
+              targets: preview.targets,
+            ),
+          )) {
+            case Ok<BulkDeletionResult>():
+              break;
+            case Fail<BulkDeletionResult>(:final problem):
+              throw StorageFault(problem);
+          }
         },
-        submit: (text) => _submit(text, true),
+        submit: (text) async {
+          final client = await ref.read(askClientProvider.future);
+          await client.ask(text);
+        },
+        onCleanupError: (error) async {
+          if (mounted) {
+            setState(() => _error = 'Voice cleanup failed: $error');
+          }
+        },
       );
+      await ref.read(documentSyncEngineProvider).syncNow();
     } catch (_) {
       if (mounted) {
         setState(() {
