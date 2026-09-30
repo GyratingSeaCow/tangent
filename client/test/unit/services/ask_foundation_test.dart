@@ -236,4 +236,58 @@ void main() {
       ),
     );
   });
+
+  test('server tombstone prevents discarded Ask recording resurrection',
+      () async {
+    final LocalDb db = LocalDb.forTesting(NativeDatabase.memory());
+    addTearDown(db.close);
+    const id = 'ask-voice-short';
+    await db.applyRemoteDumpDeletion(id);
+    final _Client client = _Client();
+    client.pages = <SyncPullPage>[
+      SyncPullPage(
+        changes: <RemoteChange>[
+          RemoteChange(
+            seq: 301,
+            entityType: 'dump',
+            entityId: id,
+            op: SyncOp.upsert,
+            deviceId: 'server',
+            payload: <String, dynamic>{
+              'mode': 'brain_dump',
+              'title': 'Temporary Ask voice',
+              'transcript': 'Where is Zephyr?',
+              'duration_seconds': 24,
+              'audio_kept': true,
+              'created_at': 1700000000,
+              'updated_at': 1700000024,
+            },
+          ),
+          const RemoteChange(
+            seq: 302,
+            entityType: 'dump',
+            entityId: id,
+            op: SyncOp.delete,
+            deviceId: 'server',
+            payload: null,
+          ),
+        ],
+        headSeq: 302,
+        hasMore: false,
+      ),
+    ];
+    final engine = DocumentSyncEngine(
+      db: () => db,
+      client: () => client,
+      connectivity: _Online(),
+      deviceLabel: () async => 'test',
+      newDeviceId: 'device-ask-discard',
+    );
+    await engine.syncNow();
+    expect(await db.getDumpRow(id), isNull);
+    expect(
+      await db.listDumps(),
+      isNot(contains(predicate((DumpRow row) => row.id == id))),
+    );
+  });
 }
