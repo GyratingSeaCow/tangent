@@ -5,6 +5,14 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.36.1 — 2026-09-30
+
+### Fixed
+- **Google Calendar sync no longer fails with "Invalid time zone definition" on Linux.** flutter_timezone has no Linux implementation, so events captured on Linux stored an OS abbreviation ("EDT") instead of an IANA name and Google rejected every push with a 400 — Retry could never succeed because the bad zone was stored on the event. The client now resolves the IANA zone from `$TZ` or the `/etc/localtime` symlink, and the server sanitizes legacy abbreviation rows at push time (EDT → America/New_York, unknown → UTC), so events captured by old clients sync without manual repair.
+- Recording on the Linux AppImage no longer dies at the encode step: bundled libva from the ffmpeg dependency closure shadowed the system libva that the spawned system `ffmpeg` needed (`vaMapBuffer2` symbol lookup error). libva/libvdpau are now excluded from the bundle and resolve from the host.
+- A calendar push that fails partway no longer misreports the number of events already pushed.
+- Leaving the recordings list now clears its search, so coming back doesn't show a stale filter.
+
 ## 1.36.0 — 2026-09-30
 
 ### Added
