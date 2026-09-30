@@ -9,12 +9,19 @@ import 'package:tangent/data/ask_history_repository.dart';
 import 'package:tangent/data/local_db.dart';
 import 'package:tangent/screens/ask/ask_screen.dart';
 import 'package:tangent/screens/dump/dump_detail_screen.dart';
+import 'package:tangent/screens/home/home_providers.dart'
+    show documentSyncEngineProvider;
 import 'package:tangent/screens/home/home_screen.dart' show localDbProvider;
 import 'package:tangent/services/ask_client.dart';
+import 'package:tangent/services/document_sync_engine.dart';
 
 class _Db extends Mock implements LocalDb {}
 
 class _Dump extends Mock implements DumpRow {}
+
+class _AskClient extends Mock implements AskClient {}
+
+class _SyncEngine extends Mock implements DocumentSyncEngine {}
 
 Widget _app({
   required List<AskHistoryMessage> history,
@@ -153,5 +160,70 @@ void main() {
     completer.complete('Where is project Zephyr?');
     await tester.pump();
     expect(find.byKey(const Key('ask-pending')), findsOneWidget);
+  });
+
+  testWidgets('successful ask triggers a sync pull; failed ask does not',
+      (tester) async {
+    final ask = _AskClient();
+    final engine = _SyncEngine();
+    when(() => ask.ask('Where did we leave the Zephyr build?')).thenAnswer(
+      (_) async => const AskResponse(answer: 'On the bench PC', sources: []),
+    );
+    when(() => engine.syncNow()).thenAnswer(
+      (_) async => const SyncReport(outcome: SyncOutcome.success, pulled: 2),
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: <Override>[
+          askHistoryProvider.overrideWith(
+            (ref) => Stream.value(const <AskHistoryMessage>[]),
+          ),
+          localDbProvider.overrideWithValue(_Db()),
+          askClientProvider.overrideWith((ref) async => ask),
+          documentSyncEngineProvider.overrideWithValue(engine),
+        ],
+        child: MaterialApp(home: AskScreen(voiceQuestion: () async => null)),
+      ),
+    );
+    await tester.pump();
+    await tester.enterText(
+      find.byKey(const Key('ask-question')),
+      'Where did we leave the Zephyr build?',
+    );
+    await tester.tap(find.byKey(const Key('ask-send')));
+    await tester.pumpAndSettle();
+    // The server-authored history rows only arrive via the pull: a successful
+    // ask that skips syncNow leaves the answer invisible until next resume.
+    verify(() => engine.syncNow()).called(1);
+
+    // Failure path: the pull must NOT run when the ask itself failed.
+    final failingAsk = _AskClient();
+    final idleEngine = _SyncEngine();
+    when(() => failingAsk.ask(any())).thenThrow(Exception('unreachable'));
+    when(() => idleEngine.syncNow()).thenAnswer(
+      (_) async => const SyncReport(outcome: SyncOutcome.success),
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: <Override>[
+          askHistoryProvider.overrideWith(
+            (ref) => Stream.value(const <AskHistoryMessage>[]),
+          ),
+          localDbProvider.overrideWithValue(_Db()),
+          askClientProvider.overrideWith((ref) async => failingAsk),
+          documentSyncEngineProvider.overrideWithValue(idleEngine),
+        ],
+        child: MaterialApp(home: AskScreen(voiceQuestion: () async => null)),
+      ),
+    );
+    await tester.pump();
+    await tester.enterText(
+      find.byKey(const Key('ask-question')),
+      'Anything at all?',
+    );
+    await tester.tap(find.byKey(const Key('ask-send')));
+    await tester.pumpAndSettle();
+    expect(find.text('Server unreachable. Try again.'), findsOneWidget);
+    verifyNever(() => idleEngine.syncNow());
   });
 }
