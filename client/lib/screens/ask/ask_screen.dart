@@ -2,6 +2,7 @@
 library;
 
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -46,6 +47,18 @@ final askClientProvider = FutureProvider<AskClient>((ref) async {
 typedef AskVoiceQuestion = Future<String?> Function();
 typedef AskOpenDestination = Future<void> Function(Widget destination);
 
+Future<void> finishAskVoiceRecording({
+  required double durationSeconds,
+  required Future<String> Function() transcribe,
+  required Future<void> Function() discard,
+  required Future<void> Function(String transcript) submit,
+}) async {
+  final String transcript = (await transcribe()).trim();
+  if (transcript.isEmpty) throw StateError('Transcription returned no text');
+  if (durationSeconds < 25.0) await discard();
+  await submit(transcript);
+}
+
 class AskScreen extends ConsumerStatefulWidget {
   const AskScreen({super.key, this.voiceQuestion, this.openDestination});
   final AskVoiceQuestion? voiceQuestion;
@@ -66,9 +79,9 @@ class _AskScreenState extends ConsumerState<AskScreen> {
     super.dispose();
   }
 
-  Future<void> _submit([String? spoken]) async {
+  Future<void> _submit([String? spoken, bool allowWhilePending = false]) async {
     final String text = (spoken ?? _question.text).trim();
-    if (text.isEmpty || _pending) return;
+    if (text.isEmpty || (_pending && !allowWhilePending)) return;
     setState(() {
       _pending = true;
       _error = null;
@@ -121,12 +134,32 @@ class _AskScreenState extends ConsumerState<AskScreen> {
         _pending = true;
         _error = null;
       });
-      await ref.read(serverTranscriptionServiceProvider).transcribeDump(row.id);
-      final DumpRow? transcribed =
-          await ref.read(localDbProvider).getDumpRow(row.id);
-      final String text = transcribed?.transcript?.trim() ?? '';
-      if (text.isEmpty) throw StateError('Transcription returned no text');
-      await _submit(text);
+      final LocalDb db = ref.read(localDbProvider);
+      final bool discard = row.durationSeconds < 25.0;
+      if (discard) {
+        // Prevent the auto-sync watcher from observing this temporary row
+        // while the existing transcription path extracts its text.
+        await db.customStatement(
+          'UPDATE dumps SET sync_dirty = 0 WHERE id = ?',
+          <Object?>[row.id],
+        );
+      }
+      await finishAskVoiceRecording(
+        durationSeconds: row.durationSeconds.toDouble(),
+        transcribe: () async {
+          await ref
+              .read(serverTranscriptionServiceProvider)
+              .transcribeDump(row.id);
+          final DumpRow? transcribed = await db.getDumpRow(row.id);
+          return transcribed?.transcript ?? '';
+        },
+        discard: () async {
+          await db.applyRemoteDumpDeletion(row.id);
+          final File audio = File(row.audioPath);
+          if (await audio.exists()) await audio.delete();
+        },
+        submit: (text) => _submit(text, true),
+      );
     } catch (_) {
       if (mounted) {
         setState(() {
