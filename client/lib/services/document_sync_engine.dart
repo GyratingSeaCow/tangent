@@ -242,6 +242,8 @@ class DocumentSyncEngine extends ChangeNotifier {
       return false;
     }
     if (change.entityType == 'ask_message') {
+      // Ask history is server-authored and its protocol never emits deletes;
+      // unlike ink_index, ignore one defensively for forward compatibility.
       if (change.op == SyncOp.delete) return false;
       final Map<String, dynamic> payload = change.payload ?? const {};
       await _db.applyRemoteAskMessage(

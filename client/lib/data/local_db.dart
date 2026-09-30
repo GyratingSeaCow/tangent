@@ -1149,7 +1149,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     });
   }
 
-  /// Replaces a notebook's mirrored index rows with a freshly pulled set.
+  /// Watches server-authored Ask history in stable conversational order.
   Stream<List<AskMessageRow>> watchAskHistory() => (select(askMessages)
         ..orderBy(<OrderingTerm Function($AskMessagesTable)>[
           (t) => OrderingTerm.asc(t.createdAt),

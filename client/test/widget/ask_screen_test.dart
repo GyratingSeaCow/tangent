@@ -14,6 +14,7 @@ import 'package:tangent/screens/home/home_providers.dart'
 import 'package:tangent/screens/home/home_screen.dart' show localDbProvider;
 import 'package:tangent/services/ask_client.dart';
 import 'package:tangent/services/document_sync_engine.dart';
+import 'package:tangent/models/api_exception.dart';
 
 class _Db extends Mock implements LocalDb {}
 
@@ -72,7 +73,7 @@ void main() {
     await tester.pump();
     expect(find.text('When was lunch?'), findsOneWidget);
     expect(find.text('Lunch was at 12:45.'), findsOneWidget);
-    final chip = find.byKey(const Key('ask-source-a-17-dump-dump-42'));
+    final chip = find.byKey(const Key('ask-source-a-17-0-dump-dump-42'));
     expect(
       find.descendant(of: chip, matching: find.text('Recording 0:42')),
       findsOneWidget,
@@ -103,7 +104,7 @@ void main() {
     await tester
         .pumpWidget(_app(history: <AskHistoryMessage>[message], db: db));
     await tester.pump();
-    await tester.tap(find.byKey(const Key('ask-source-a-miss-dump-gone-73')));
+    await tester.tap(find.byKey(const Key('ask-source-a-miss-0-dump-gone-73')));
     await tester.pump();
     expect(
       find.text('Source no longer exists: deleted passage'),
@@ -142,7 +143,7 @@ void main() {
       ),
     );
     await tester.pump();
-    final chip = find.byKey(const Key('ask-source-a-route-dump-dump-42'));
+    final chip = find.byKey(const Key('ask-source-a-route-0-dump-dump-42'));
     await tester.tap(chip);
     await tester.pump();
     final screen = opened! as DumpDetailScreen;
@@ -152,14 +153,35 @@ void main() {
 
   testWidgets('mic transcription auto-submits and exposes pending state',
       (tester) async {
-    final completer = Completer<String?>();
-    await tester
-        .pumpWidget(_app(history: const [], voice: () => completer.future));
+    final ask = _AskClient();
+    final engine = _SyncEngine();
+    final response = Completer<AskResponse>();
+    when(() => ask.ask('Where is project Zephyr?'))
+        .thenAnswer((_) => response.future);
+    when(() => engine.syncNow()).thenAnswer(
+      (_) async => const SyncReport(outcome: SyncOutcome.success),
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: <Override>[
+          askHistoryProvider.overrideWith((ref) => Stream.value(const [])),
+          localDbProvider.overrideWithValue(_Db()),
+          askClientProvider.overrideWith((ref) async => ask),
+          documentSyncEngineProvider.overrideWithValue(engine),
+        ],
+        child: MaterialApp(
+          home:
+              AskScreen(voiceQuestion: () async => 'Where is project Zephyr?'),
+        ),
+      ),
+    );
     await tester.pump();
     await tester.tap(find.byKey(const Key('ask-mic')));
-    completer.complete('Where is project Zephyr?');
     await tester.pump();
     expect(find.byKey(const Key('ask-pending')), findsOneWidget);
+    verify(() => ask.ask('Where is project Zephyr?')).called(1);
+    response.complete(const AskResponse(answer: 'On desk', sources: []));
+    await tester.pumpAndSettle();
   });
 
   testWidgets('successful ask triggers a sync pull; failed ask does not',
@@ -169,9 +191,13 @@ void main() {
     when(() => ask.ask('Where did we leave the Zephyr build?')).thenAnswer(
       (_) async => const AskResponse(answer: 'On the bench PC', sources: []),
     );
-    when(() => engine.syncNow()).thenAnswer(
-      (_) async => const SyncReport(outcome: SyncOutcome.success, pulled: 2),
-    );
+    var syncCalls = 0;
+    when(() => engine.syncNow()).thenAnswer((_) async {
+      syncCalls++;
+      return syncCalls == 1
+          ? const SyncReport(outcome: SyncOutcome.alreadyRunning)
+          : const SyncReport(outcome: SyncOutcome.success, pulled: 2);
+    });
     await tester.pumpWidget(
       ProviderScope(
         overrides: <Override>[
@@ -194,7 +220,7 @@ void main() {
     await tester.pumpAndSettle();
     // The server-authored history rows only arrive via the pull: a successful
     // ask that skips syncNow leaves the answer invisible until next resume.
-    verify(() => engine.syncNow()).called(1);
+    verify(() => engine.syncNow()).called(2);
 
     // Failure path: the pull must NOT run when the ask itself failed.
     final failingAsk = _AskClient();
@@ -225,5 +251,91 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Server unreachable. Try again.'), findsOneWidget);
     verifyNever(() => idleEngine.syncNow());
+  });
+
+  testWidgets('409 renders install guidance rather than unreachable',
+      (tester) async {
+    final ask = _AskClient();
+    final engine = _SyncEngine();
+    when(() => ask.ask(any())).thenThrow(
+      const ApiException(
+        statusCode: 409,
+        code: 'http_error',
+        message: 'Summarizer environment is not installed',
+      ),
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: <Override>[
+          askHistoryProvider.overrideWith((ref) => Stream.value(const [])),
+          localDbProvider.overrideWithValue(_Db()),
+          askClientProvider.overrideWith((ref) async => ask),
+          documentSyncEngineProvider.overrideWithValue(engine),
+        ],
+        child: MaterialApp(home: AskScreen(voiceQuestion: () async => null)),
+      ),
+    );
+    await tester.pump();
+    await tester.enterText(find.byKey(const Key('ask-question')), 'Use AI?');
+    await tester.tap(find.byKey(const Key('ask-send')));
+    await tester.pumpAndSettle();
+    expect(find.text('Install AI summaries in Settings first'), findsOneWidget);
+    expect(find.text('Server unreachable. Try again.'), findsNothing);
+    verifyNever(() => engine.syncNow());
+  });
+
+  testWidgets('same recording can render and open two independent seeks',
+      (tester) async {
+    final db = _Db();
+    final dump = _Dump();
+    when(() => dump.id).thenReturn('dump-1');
+    when(() => dump.audioPath).thenReturn('C:/recordings/two.m4a');
+    when(() => dump.durationSeconds).thenReturn(90);
+    when(() => db.getDumpRow('dump-1')).thenAnswer((_) async => dump);
+    final opened = <DumpDetailScreen>[];
+    final message = AskHistoryMessage(
+      id: 'multi',
+      role: 'assistant',
+      text: 'Two moments',
+      sources: const [
+        AskSource(
+          entityType: 'dump',
+          entityId: 'dump-1',
+          snippet: 'first',
+          seekSeconds: 1.0,
+        ),
+        AskSource(
+          entityType: 'dump',
+          entityId: 'dump-1',
+          snippet: 'second',
+          seekSeconds: 20.0,
+        ),
+      ],
+      createdAt: DateTime.utc(2026, 9, 30),
+    );
+    await tester.pumpWidget(
+      _app(
+        history: [message],
+        db: db,
+        openDestination: (widget) async =>
+            opened.add(widget as DumpDetailScreen),
+      ),
+    );
+    await tester.pump();
+    final first = find.byKey(const Key('ask-source-multi-0-dump-dump-1'));
+    final second = find.byKey(const Key('ask-source-multi-1-dump-dump-1'));
+    expect(
+      find.descendant(of: first, matching: find.text('Recording 0:01')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: second, matching: find.text('Recording 0:20')),
+      findsOneWidget,
+    );
+    await tester.tap(first);
+    await tester.pump();
+    await tester.tap(second);
+    await tester.pump();
+    expect(opened.map((screen) => screen.initialSeekSeconds), [1.0, 20.0]);
   });
 }

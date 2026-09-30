@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from app.api.ask import GROUNDING_PROMPT, HONEST_MISS
+from app.api.ask import GROUNDING_PROMPT, HONEST_MISS, retrieve
 from app.main import create_app
 from app.services import summarizer_env, summarizer_worker
 
@@ -39,7 +39,7 @@ def _seed(path: Path) -> None:
         json.dumps({"segments": [{"start": 12.5, "text": "Project Juniper ships Friday.", "speaker": "Speaker 1"}]}),
         json.dumps({"Speaker 1": "Alex"}), "## Decision\nUse the blue launch checklist.", 0,
     ))
-    conn.execute("INSERT INTO notebooks (id, title, doc, created_at, updated_at) VALUES (?, ?, ?, ?, ?)", ("nb-1", "Ideas", json.dumps({"blocks": [{"text": "Call the florist about orchids"}]}), 1_900_000_000, 1_900_000_000))
+    conn.execute("INSERT INTO notebooks (id, title, doc, created_at, updated_at) VALUES (?, ?, ?, ?, ?)", ("nb-1", "Ideas", json.dumps({"blocks": [{"text": "Call the florist about orchids"}]}), 1_900_000_000_000, 1_900_000_000_000))
     conn.execute("INSERT INTO ink_index (id, notebook_id, line_id, word_text, word_text_lower, bbox_json, stroke_ids_json, model, indexed_at) VALUES ('ink-1', 'nb-1', 'line-1', 'handwritten', 'handwritten', '[]', '[]', 'test', 1)")
     conn.execute("INSERT INTO todos (id, text, done_at, due_date, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)", ("todo-1", "Buy launch balloons", None, "2026-10-02", "2026-09-30T12:00:00+00:00", "2026-09-30T12:00:00+00:00"))
     conn.commit()
@@ -107,6 +107,20 @@ def test_grounding_prompt_pins_no_outside_knowledge_contract():
     assert "ONLY the supplied NOTE EXCERPTS" in GROUNDING_PROMPT
     assert "Never use outside knowledge" in GROUNDING_PROMPT
     assert f"reply exactly: {HONEST_MISS}" in GROUNDING_PROMPT
+
+
+def test_old_millisecond_notebook_does_not_outrank_fresh_dump(client):
+    _, _, path = client
+    conn = _db(path)
+    now = int(__import__("time").time())
+    conn.execute("INSERT INTO dumps (id, client_id, created_at, updated_at, mode, duration_seconds, title, transcript, audio_kept) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 ("fresh", "device", now - 86400, now, "meeting", 1, "Fresh", "sharedword", 0))
+    conn.execute("INSERT INTO notebooks (id, title, doc, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                 ("old", "Old", '{"text":"sharedword"}', 1475421000000, 1475421000000))
+    conn.commit()
+    results = retrieve(conn, "sharedword")
+    conn.close()
+    assert results[0].entity_id == "fresh"
 
 
 def test_ask_message_push_is_rejected(client):

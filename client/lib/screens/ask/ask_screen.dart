@@ -11,6 +11,8 @@ import '../../data/local_db.dart';
 import '../../data/notebook_repository.dart';
 import '../../services/ask_client.dart';
 import '../../services/server_defaults.dart';
+import '../../services/document_sync_engine.dart';
+import '../../models/api_exception.dart';
 import '../dump/dump_detail_screen.dart';
 import '../home/home_providers.dart'
     show documentSyncEngineProvider, serverTranscriptionServiceProvider;
@@ -75,7 +77,20 @@ class _AskScreenState extends ConsumerState<AskScreen> {
       final client = await ref.read(askClientProvider.future);
       await client.ask(text);
       _question.clear();
-      await ref.read(documentSyncEngineProvider).syncNow();
+      final SyncReport report =
+          await ref.read(documentSyncEngineProvider).syncNow();
+      if (report.outcome == SyncOutcome.alreadyRunning) {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        await ref.read(documentSyncEngineProvider).syncNow();
+      }
+    } on ApiException catch (error) {
+      if (mounted) {
+        setState(
+          () => _error = error.statusCode == 409
+              ? 'Install AI summaries in Settings first'
+              : error.message,
+        );
+      }
     } catch (_) {
       if (mounted) setState(() => _error = 'Server unreachable. Try again.');
     } finally {
@@ -111,7 +126,6 @@ class _AskScreenState extends ConsumerState<AskScreen> {
           await ref.read(localDbProvider).getDumpRow(row.id);
       final String text = transcribed?.transcript?.trim() ?? '';
       if (text.isEmpty) throw StateError('Transcription returned no text');
-      if (mounted) setState(() => _pending = false);
       await _submit(text);
     } catch (_) {
       if (mounted) {
@@ -200,18 +214,18 @@ class _AskScreenState extends ConsumerState<AskScreen> {
                             Wrap(
                               spacing: 6,
                               runSpacing: 6,
-                              children: message.sources
+                              children: message.sources.indexed
                                   .map(
-                                    (source) => ActionChip(
+                                    (entry) => ActionChip(
                                       key: Key(
-                                        'ask-source-${message.id}-${source.entityType}-${source.entityId}',
+                                        'ask-source-${message.id}-${entry.$1}-${entry.$2.entityType}-${entry.$2.entityId}',
                                       ),
                                       avatar: Icon(
-                                        _sourceIcon(source.entityType),
+                                        _sourceIcon(entry.$2.entityType),
                                         size: 16,
                                       ),
-                                      label: Text(_sourceLabel(source)),
-                                      onPressed: () => _openSource(source),
+                                      label: Text(_sourceLabel(entry.$2)),
+                                      onPressed: () => _openSource(entry.$2),
                                     ),
                                   )
                                   .toList(growable: false),

@@ -180,7 +180,7 @@ void main() {
           RemoteChange(
             seq: 202,
             entityType: 'ask_message',
-            entityId: 'phantom-delete',
+            entityId: 'keep-me',
             op: SyncOp.delete,
             deviceId: 'server',
             payload: null,
@@ -199,7 +199,7 @@ void main() {
     );
     await engine.syncNow();
     final List<AskHistoryMessage> rows = await AskHistoryRepository(db).list();
-    // The delete op must neither materialize a row nor disturb history.
+    // The delete op must not remove the already-materialized server row.
     expect(rows.map((r) => r.id), <String>['keep-me']);
     expect(rows.single.text, 'kept answer');
   });

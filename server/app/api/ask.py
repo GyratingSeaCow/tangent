@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 import re
 import sqlite3
 import time
@@ -110,11 +111,14 @@ def _all_chunks(db: sqlite3.Connection) -> list[_Chunk]:
         ink = " ".join(r[0] for r in db.execute("SELECT word_text FROM ink_index WHERE notebook_id = ? ORDER BY line_id, id", (row["id"],)))
         text = "\n".join(part for part in (row["title"], typed, ink) if part and part.strip())
         if text:
-            chunks.append(_Chunk("notebook", row["id"], text, row["created_at"]))
+            created_at = row["created_at"]
+            if created_at and created_at > 100_000_000_000:
+                created_at //= 1000
+            chunks.append(_Chunk("notebook", row["id"], text, created_at))
     for row in db.execute("SELECT id, text, done_at, due_date, created_at FROM todos WHERE deleted_at IS NULL"):
         detail = f"{row['text']} (done: {'yes' if row['done_at'] else 'no'}; due: {row['due_date'] or 'none'})"
         try:
-            created = int(__import__("datetime").datetime.fromisoformat(row["created_at"].replace("Z", "+00:00")).timestamp())
+            created = int(datetime.fromisoformat(row["created_at"].replace("Z", "+00:00")).timestamp())
         except (TypeError, ValueError):
             created = 0
         chunks.append(_Chunk("todo", row["id"], detail, created))
