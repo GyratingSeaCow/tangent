@@ -101,7 +101,8 @@ void main() {
           )
           .map((IconButton button) => button.tooltip)
           .toList(),
-      <String>['Sync now', 'Recordings', 'Notebooks', 'To Do', 'Settings'],
+      // v1.37.0: Ask joined as the fourth content destination after To Do.
+      <String>['Sync now', 'Recordings', 'Notebooks', 'To Do', 'Ask', 'Settings'],
     );
     expect(tester.takeException(), isNull);
 
