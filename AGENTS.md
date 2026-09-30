@@ -50,13 +50,23 @@ ADH2/
 
 ## Status
 
-Shipping — **v1.36.0** (see CHANGELOG.md). Client and server are both
-implemented and tested (2683
-Flutter tests, 688 server tests, 129 Kotlin tests). The client runs
+Shipping — **v1.37.0** (see CHANGELOG.md). Client and server are both
+implemented and tested (2709
+Flutter tests, 700 server tests, 129 Kotlin tests). The client runs
 natively on Linux AND Windows (tray icon, global record hotkey,
 close-to-tray, single instance, right-click = long-press; AppImage and
 Inno Setup installer under `packaging/`) — verified on CachyOS/KDE
 Plasma Wayland and Windows 11; see the README's Desktop sections.
+
+v1.37.0 **Ask My Notes**, spec docs/design/2026-09-30-ask-my-notes.md:
+ask a question in text or by voice and get a grounded answer with
+tappable citations (recordings seek to the cited moment). Server-side
+retrieval + answer over dumps/summaries/notebooks/todos (POST /v1/ask,
+recency-boosted, ms/s timestamp normalization), client Ask screen as the
+fourth destination (Drift v27 ask_messages, pull-only sync, tombstone
+guard against resurrection). Voice questions under 25 s are transcribed,
+asked, then fully discarded (server tombstone + SAF-aware local
+cleanup); 25 s+ persist as recordings.
 
 v1.36.0 **voice matching** (community item #4), spec
 docs/design/2026-09-29-voice-matching.md + calibration table. One server

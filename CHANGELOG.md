@@ -5,6 +5,17 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.37.0 — 2026-09-30
+
+### Added
+- **Ask My Notes.** A new **Ask** destination: ask a question in text or by voice and get an answer grounded in your own recordings, summaries, notebooks, and to-dos. Answers cite their sources as tappable chips — a cited recording opens seeked to the exact moment that backs the answer; honest misses say so instead of guessing. Question/answer history syncs read-only to every paired device (Drift v27, pull-only). Spec `docs/design/2026-09-30-ask-my-notes.md`.
+- **Voice questions under 25 seconds are asked and then fully discarded** — transcribed, submitted, and removed from the library, the server (authoritative delete + tombstone), and local storage (SAF-aware). Questions 25 s and longer persist as normal recordings.
+
+### Fixed
+- Retrieval recency no longer misranks notebooks: notebook timestamps sync in milliseconds and the server assumed seconds, so a years-old notebook could outrank yesterday's recording.
+- A deleted recording can no longer be resurrected by a transcription/summarize job finishing after the delete (the server no longer publishes sync upserts for deleted recordings).
+- The Ask screen recovers after a successful voice question (busy spinner previously never cleared), maps server errors to real guidance (409 → install AI summaries) instead of a generic failure, retries the post-ask sync pull when a sync is already running, and surfaces incomplete local cleanup instead of silently keeping audio.
+
 ## 1.36.1 — 2026-09-30
 
 ### Fixed
