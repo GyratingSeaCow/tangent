@@ -156,6 +156,54 @@ void main() {
     });
   });
 
+  test('remote ask delete ops are ignored: no fabricated row, history intact',
+      () async {
+    final LocalDb db = LocalDb.forTesting(NativeDatabase.memory());
+    addTearDown(db.close);
+    final _Client client = _Client();
+    client.pages = <SyncPullPage>[
+      SyncPullPage(
+        changes: <RemoteChange>[
+          RemoteChange(
+            seq: 201,
+            entityType: 'ask_message',
+            entityId: 'keep-me',
+            op: SyncOp.upsert,
+            deviceId: 'server',
+            payload: <String, dynamic>{
+              'role': 'assistant',
+              'text': 'kept answer',
+              'sources': <dynamic>[],
+              'created_at': 300,
+            },
+          ),
+          RemoteChange(
+            seq: 202,
+            entityType: 'ask_message',
+            entityId: 'phantom-delete',
+            op: SyncOp.delete,
+            deviceId: 'server',
+            payload: null,
+          ),
+        ],
+        headSeq: 202,
+        hasMore: false,
+      ),
+    ];
+    final DocumentSyncEngine engine = DocumentSyncEngine(
+      db: () => db,
+      client: () => client,
+      connectivity: _Online(),
+      deviceLabel: () async => 'test',
+      newDeviceId: 'device-ask-3',
+    );
+    await engine.syncNow();
+    final List<AskHistoryMessage> rows = await AskHistoryRepository(db).list();
+    // The delete op must neither materialize a row nor disturb history.
+    expect(rows.map((r) => r.id), <String>['keep-me']);
+    expect(rows.single.text, 'kept answer');
+  });
+
   test('engine never pushes ask messages or ask tombstones', () async {
     final LocalDb db = LocalDb.forTesting(NativeDatabase.memory());
     addTearDown(db.close);
