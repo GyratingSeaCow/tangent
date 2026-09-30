@@ -308,7 +308,10 @@ def pull_events(db: sqlite3.Connection, access_token: str) -> int:
 
 
 def run_calendar_cycle(
-    db: sqlite3.Connection, access_token: str
+    db: sqlite3.Connection,
+    access_token: str,
+    *,
+    stats: CalendarStats | None = None,
 ) -> CalendarStats:
     """Run delete, push, then pull after enforcing the exact Calendar scope."""
     row = db.execute("SELECT * FROM google_tasks_link WHERE id = 1").fetchone()
@@ -319,8 +322,8 @@ def run_calendar_cycle(
             (CALENDAR_PERMISSION_ERROR, CALENDAR_PERMISSION_ERROR),
         )
         db.commit()
-        return CalendarStats()
-    stats = CalendarStats()
+        return stats or CalendarStats()
+    stats = stats or CalendarStats()
     stats.deleted = delete_events(db, access_token)
     stats.pushed = push_events(db, access_token)
     stats.pulled = pull_events(db, access_token)

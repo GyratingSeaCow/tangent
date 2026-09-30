@@ -489,3 +489,45 @@ def test_tasks_keep_running_while_calendar_waits_for_reconnect(
         0,
         0,
     )
+
+
+def test_successful_calendar_push_count_survives_later_pull_failure(
+    tmp_path: Path, monkeypatch
+) -> None:
+    conn = _db(tmp_path)
+    _seed(conn)
+    conn.execute(
+        "INSERT OR REPLACE INTO google_tasks_link "
+        "(id, client_id, client_secret, refresh_token, access_token, "
+        "access_expires_at, tasklist_id, status, granted_scope) VALUES "
+        "(1, 'c', 's', 'refresh', 'access', 2000000000, 'list-1', "
+        "'connected', ?)",
+        (f"https://www.googleapis.com/auth/tasks {w.CALENDAR_SCOPE}",),
+    )
+    conn.commit()
+    monkeypatch.setattr(
+        tasks_worker, "ensure_lists", lambda *_args, **_kwargs: {"list-1": None}
+    )
+    monkeypatch.setattr(tasks_worker, "_push", lambda *_args, **_kwargs: (0, []))
+    monkeypatch.setattr(tasks_worker, "_pull_all", lambda *_args, **_kwargs: 0)
+
+    def calendar_request(method: str, _url: str, **_kwargs: Any) -> Response:
+        if method == "POST":
+            return Response(
+                {
+                    "id": "g1",
+                    "htmlLink": "https://cal/g1",
+                    "updated": "2026-09-28T20:00:05Z",
+                },
+                200,
+            )
+        raise tasks_worker.GoogleTasksError("calendar pull failed")
+
+    monkeypatch.setattr(w, "_request", calendar_request)
+
+    assert tasks_worker.run_cycle(conn) == (0, 0)
+    row = conn.execute(
+        "SELECT status, last_cal_pushed, last_cal_pulled FROM google_tasks_link "
+        "WHERE id=1"
+    ).fetchone()
+    assert tuple(row) == ("error", 1, 0)

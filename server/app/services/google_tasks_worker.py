@@ -1010,7 +1010,12 @@ def run_cycle(db: sqlite3.Connection) -> tuple[int, int]:
             from app.services import google_calendar_worker
 
             calendar_started = True
-            calendar_stats = google_calendar_worker.run_calendar_cycle(db, access_token)
+            # Keep the mutable stats object even if a later Calendar phase
+            # raises, so a successful push is not reported as zero.
+            calendar_stats = google_calendar_worker.CalendarStats()
+            google_calendar_worker.run_calendar_cycle(
+                db, access_token, stats=calendar_stats
+            )
             if google_calendar_worker.has_calendar_scope(row):
                 db.execute(
                     """
