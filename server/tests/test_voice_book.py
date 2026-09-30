@@ -135,6 +135,36 @@ def test_forget_removes_exactly_one_row(conn):
     assert [e.name for e in vb.load_voice_book(conn)] == ["Jeff"]
 
 
+def test_forget_removes_provenance_ledger_rows(conn):
+    vb.teach(conn, "Tom", _unit(1, 0))
+    conn.execute(
+        "INSERT INTO voice_book_samples VALUES (?, ?, ?, ?)",
+        ("dump-1", "Speaker 1", "Tom", "[1.0, 0.0]"),
+    )
+    assert vb.forget(conn, "Tom") is True
+    assert conn.execute(
+        "SELECT count(*) FROM voice_book_samples WHERE name = 'Tom'"
+    ).fetchone()[0] == 0
+
+
+def test_sum_migration_skips_nonpositive_sample_rows(temp_data_dir: Path, caplog, capsys):
+    init_db(str(temp_data_dir))
+    c = sqlite3.connect(temp_data_dir / "tangent.db")
+    c.execute("DELETE FROM app_settings WHERE key = 'voice_book_sum_format'")
+    c.execute("INSERT INTO voice_book VALUES ('Bad', '[1.0, 0.0]', 0, 't')")
+    c.commit()
+    c.close()
+
+    init_db(str(temp_data_dir))
+
+    c = sqlite3.connect(temp_data_dir / "tangent.db")
+    assert c.execute(
+        "SELECT embedding, samples FROM voice_book WHERE name = 'Bad'"
+    ).fetchone() == ("[1.0, 0.0]", 0)
+    captured = caplog.text + capsys.readouterr().out
+    assert "voice_book.sum_migration_skipped" in captured
+
+
 def test_nan_embedding_is_rejected_by_teach_and_skipped_by_match(conn):
     """pyannote returns NaN centroids for near-empty recordings; they must
     never enter the book or produce a match (calibration 2026-09-29)."""

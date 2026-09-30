@@ -305,10 +305,10 @@ def _teach_from_rename(
     """Synchronise user-taught label/name pairs and their provenance ledger."""
     from app.services.voice_book import normalise, teach, unteach  # noqa: PLC0415
 
-    if new_map is None or not embeddings_json:
+    if not embeddings_json:
         return []
     try:
-        new = json.loads(new_map) or {}
+        new = json.loads(new_map) if new_map else {}
         old = json.loads(stored_map) if stored_map else {}
         embeddings = json.loads(embeddings_json) or {}
     except (TypeError, ValueError):
@@ -318,7 +318,7 @@ def _teach_from_rename(
     for label in dict.fromkeys((*old, *new)):
         clean = (new.get(label) or "").strip()
         old_clean = (old.get(label) or "").strip()
-        if old_clean == clean or label not in embeddings:
+        if old_clean == clean:
             continue
         taught_row = conn.execute(
             "SELECT name, embedding FROM voice_book_samples "
@@ -339,11 +339,11 @@ def _teach_from_rename(
             "DELETE FROM voice_book_samples WHERE dump_id = ? AND label = ?",
             (dump_id, label),
         )
-        if not clean:
+        if not clean or label not in embeddings:
             continue
         try:
             teach(conn, clean, embeddings[label])
-        except ValueError as exc:
+        except (TypeError, ValueError) as exc:
             log.warning("voice_book.teach_skipped", name=clean, error=str(exc))
             continue
         conn.execute(

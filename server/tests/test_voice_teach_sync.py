@@ -165,26 +165,33 @@ def test_whitespace_only_change_does_not_reteach(authed_client, temp_data_dir):
     assert vb.load_voice_book(conn)[0].samples == 1
 
 
-def test_clearing_taught_name_unteaches_it(authed_client, temp_data_dir):
+def test_clearing_last_taught_name_with_null_map_unteaches_it(
+    authed_client, temp_data_dir
+):
     client, token = authed_client
     conn = _seed(temp_data_dir, {"Speaker 1": [1.0, 0.0]})
     _push(client, token, {"speaker_names": json.dumps({"Speaker 1": "Jeff"})})
-    r = _push(client, token, {"speaker_names": json.dumps({"Speaker 1": ""})})
+    r = _push(client, token, {"speaker_names": None})
     assert r.status_code == 200
     assert vb.load_voice_book(conn) == []
     assert conn.execute("SELECT count(*) FROM voice_book_samples").fetchone()[0] == 0
 
 
-def test_null_stored_embedding_is_logged_and_skipped():
-    conn = sqlite3.connect(":memory:")
+def test_null_stored_embedding_is_logged_and_skipped(temp_data_dir, caplog, capsys):
+    init_db(str(temp_data_dir))
+    conn = sqlite3.connect(temp_data_dir / "tangent.db")
+    # Simulate a legacy/corrupt database; current schema correctly forbids NULL.
+    conn.execute("PRAGMA writable_schema = ON")
+    schema = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'voice_book'"
+    ).fetchone()[0]
     conn.execute(
-        "CREATE TABLE voice_book (name TEXT PRIMARY KEY, embedding TEXT, "
-        "samples INTEGER, updated_at TEXT)"
+        "UPDATE sqlite_master SET sql = ? WHERE type = 'table' AND name = 'voice_book'",
+        (schema.replace("embedding TEXT NOT NULL", "embedding TEXT"),),
     )
-    conn.execute(
-        "CREATE TABLE voice_book_samples (dump_id TEXT, label TEXT, name TEXT, "
-        "embedding TEXT, PRIMARY KEY (dump_id, label))"
-    )
+    version = conn.execute("PRAGMA schema_version").fetchone()[0]
+    conn.execute(f"PRAGMA schema_version = {version + 1}")
+    conn.execute("PRAGMA writable_schema = OFF")
     conn.execute("INSERT INTO voice_book VALUES ('Tom', NULL, 1, 't')")
     conn.execute(
         "INSERT INTO voice_book_samples VALUES (?, ?, ?, ?)",
@@ -199,3 +206,56 @@ def test_null_stored_embedding_is_logged_and_skipped():
     )
     assert result == ["Dana"]
     assert conn.execute("SELECT samples FROM voice_book WHERE name = 'Dana'").fetchone() == (1,)
+    captured = caplog.text + capsys.readouterr().out
+    assert "voice_book.unteach_skipped" in captured
+
+
+def test_forget_reteach_then_correct_does_not_unteach_stale_sample(temp_data_dir):
+    init_db(str(temp_data_dir))
+    conn = sqlite3.connect(temp_data_dir / "tangent.db")
+    d1_embedding = json.dumps({"Speaker 1": [1.0, 0.0]})
+    d2_embedding = json.dumps({"Speaker 2": [0.0, 1.0]})
+    tom_d1 = json.dumps({"Speaker 1": "Tom"})
+    tom_d2 = json.dumps({"Speaker 2": "Tom"})
+
+    _teach_from_rename(conn, "D1", None, tom_d1, d1_embedding)
+    assert vb.forget(conn, "Tom") is True
+    _teach_from_rename(conn, "D2", None, tom_d2, d2_embedding)
+    _teach_from_rename(
+        conn,
+        "D1",
+        tom_d1,
+        json.dumps({"Speaker 1": "Dana"}),
+        d1_embedding,
+    )
+
+    book = {entry.name: entry for entry in vb.load_voice_book(conn)}
+    assert book["Tom"].samples == 1
+    assert book["Tom"].embedding == [0.0, 1.0]
+    assert book["Dana"].samples == 1
+
+
+def test_removed_embedding_label_deletes_ledger_row(authed_client, temp_data_dir):
+    client, token = authed_client
+    conn = _seed(
+        temp_data_dir,
+        {"Speaker 1": [1.0, 0.0], "Speaker 2": [0.0, 1.0]},
+    )
+    assert _push(
+        client,
+        token,
+        {"speaker_names": json.dumps({"Speaker 1": "Tom", "Speaker 2": "Ann"})},
+    ).status_code == 200
+    conn.execute(
+        "UPDATE dumps SET speaker_embeddings = ? WHERE id = ?",
+        (json.dumps({"Speaker 1": [1.0, 0.0]}), DUMP),
+    )
+    conn.commit()
+
+    assert _push(
+        client, token, {"speaker_names": json.dumps({"Speaker 1": "Tom"})}
+    ).status_code == 200
+    assert conn.execute(
+        "SELECT count(*) FROM voice_book_samples WHERE dump_id = ? AND label = 'Speaker 2'",
+        (DUMP,),
+    ).fetchone()[0] == 0

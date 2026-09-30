@@ -146,7 +146,9 @@ def load_voice_book(conn: sqlite3.Connection) -> list[VoiceEntry]:
 
 
 def forget(conn: sqlite3.Connection, name: str) -> bool:
-    cur = conn.execute("DELETE FROM voice_book WHERE name = ?", (name.strip(),))
+    clean = name.strip()
+    cur = conn.execute("DELETE FROM voice_book WHERE name = ?", (clean,))
+    conn.execute("DELETE FROM voice_book_samples WHERE name = ?", (clean,))
     return cur.rowcount == 1
 
 

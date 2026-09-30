@@ -540,6 +540,8 @@ def _migrate_voice_book(conn: sqlite3.Connection) -> None:
         rows = conn.execute("SELECT name, embedding, samples FROM voice_book").fetchall()
         for name, raw, samples in rows:
             try:
+                if int(samples) < 1:
+                    raise ValueError("samples must be positive")
                 centroid = json.loads(raw)
                 summed = [float(value) * int(samples) for value in centroid]
             except (TypeError, ValueError, json.JSONDecodeError) as exc:
