@@ -409,8 +409,54 @@ void main() {
         discarded,
         fixture.discarded ? <String>['voice-${fixture.seconds}'] : isEmpty,
       );
+      expect(find.byKey(const Key('ask-pending')), findsNothing);
+      expect(
+        tester.widget<IconButton>(find.byKey(const Key('ask-mic'))).onPressed,
+        isNotNull,
+      );
+      expect(
+        tester.widget<IconButton>(find.byKey(const Key('ask-send'))).onPressed,
+        isNotNull,
+      );
     });
   }
+
+  testWidgets('real mic 409 renders summaries installation guidance',
+      (tester) async {
+    final row = _Dump();
+    when(() => row.id).thenReturn('voice-409');
+    when(() => row.durationSeconds).thenReturn(26);
+    final ask = _AskClient();
+    when(() => ask.ask('Voice asks for unavailable summaries')).thenThrow(
+      const ApiException(
+        statusCode: 409,
+        code: 'summarizer_missing',
+        message: 'summarizer missing',
+      ),
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: <Override>[
+          askHistoryProvider.overrideWith((ref) => Stream.value(const [])),
+          localDbProvider.overrideWithValue(_Db()),
+          askClientProvider.overrideWith((ref) async => ask),
+          askVoiceRecorderProvider.overrideWithValue(_VoiceRecorder(row)),
+          askVoiceTranscribeProvider.overrideWithValue(
+            (_) async => 'Voice asks for unavailable summaries',
+          ),
+        ],
+        child: const MaterialApp(home: AskScreen()),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('ask-mic')));
+    await tester.pump();
+    expect(
+      find.text('Install AI summaries in Settings first'),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('ask-pending')), findsNothing);
+  });
 
   testWidgets('mic icon rebuilds when the real recorder adapter state changes',
       (tester) async {

@@ -12,6 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.api.ask import GROUNDING_PROMPT, HONEST_MISS, retrieve
+from app.api.dumps import _publish_dump_change
 from app.main import create_app
 from app.services import summarizer_env, summarizer_worker
 
@@ -129,6 +130,37 @@ def test_ask_message_push_is_rejected(client):
     assert response.status_code == 200
     assert response.json()["results"][0]["status"] == "rejected"
     assert "server-generated" in response.json()["results"][0]["reason"]
+
+
+def test_deleted_dump_cannot_publish_late_upsert(client):
+    cli, auth, path = client
+    created = cli.post(
+        "/v1/dumps",
+        headers=auth,
+        json={
+            "id": "late-job-dump",
+            "client_id": "ask-probe",
+            "mode": "brain_dump",
+            "created_at": 1_700_000_000,
+            "duration_seconds": 24,
+            "title": "Temporary Ask voice",
+        },
+    )
+    assert created.status_code == 201
+    assert cli.delete("/v1/dumps/late-job-dump", headers=auth).status_code == 204
+    conn = _db(path)
+    tombstone_seq = conn.execute(
+        "SELECT MAX(seq) FROM change_log WHERE entity_type='dump' AND entity_id=? AND op='delete'",
+        ("late-job-dump",),
+    ).fetchone()[0]
+    _publish_dump_change(conn, "late-job-dump", None, op="upsert")
+    conn.commit()
+    late_upserts = conn.execute(
+        "SELECT COUNT(*) FROM change_log WHERE seq > ? AND entity_type='dump' AND entity_id=? AND op='upsert'",
+        (tombstone_seq, "late-job-dump"),
+    ).fetchone()[0]
+    conn.close()
+    assert late_upserts == 0
 
 
 def test_existing_database_migration_preserves_change_sequence(tmp_path: Path):

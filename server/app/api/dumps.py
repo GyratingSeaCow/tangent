@@ -63,7 +63,7 @@ def _publish_dump_change(
         )
         return
     row = db.execute(
-        "SELECT * FROM dumps WHERE id = ?", (dump_id,)
+        "SELECT * FROM dumps WHERE id = ? AND deleted_at IS NULL", (dump_id,)
     ).fetchone()
     if row is None:
         return

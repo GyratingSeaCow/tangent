@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:dio/dio.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:tangent/screens/ask/ask_screen.dart';
+import 'package:tangent/data/storage/storage_contract.dart';
 import 'package:tangent/services/transcription_client.dart';
 
 class _Dio extends Mock implements Dio {}
@@ -69,6 +70,28 @@ void main() {
     );
     expect(asked, <String>['Keep my question']);
     expect(cleanupError, isA<StateError>());
+  });
+
+  test('skipped local deletion is surfaced as cleanup failure', () {
+    const component = (state: ComponentState.pending, problem: null);
+    expect(
+      () => ensureAskVoiceDeletionComplete(
+        (
+          replayed: false,
+          items: <DeletionItemResult>[
+            (
+              id: 'voice-busy',
+              state: DeleteState.skipped,
+              audio: component,
+              metadata: component,
+              ticketId: null,
+              problem: null,
+            ),
+          ],
+        ),
+      ),
+      throwsA(isA<StorageFault>()),
+    );
   });
 
   test('short cleanup issues authoritative server DELETE', () async {

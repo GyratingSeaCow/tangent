@@ -87,25 +87,49 @@ final askVoiceTranscribeProvider = Provider<Future<String> Function(DumpRow)>(
   },
 );
 
+void ensureAskVoiceDeletionComplete(BulkDeletionResult result) {
+  for (final item in result.items) {
+    if (item.state != DeleteState.deleted) {
+      throw StorageFault(
+        item.problem ??
+            const (
+              code: ProblemCode.busy,
+              message: 'Recording is still in use',
+            ),
+      );
+    }
+  }
+}
+
 final askVoiceDiscardProvider = Provider<Future<void> Function(DumpRow)>(
   (ref) => (row) async {
     await ref.read(transcriptionClientProvider).deleteDump(row.id);
     final deletion = ref.read(localDeletionServiceProvider);
-    final preview = switch (await deletion.preview(<String>{row.id})) {
+    var preview = switch (await deletion.preview(<String>{row.id})) {
       Ok<DeletionPreview>(:final value) => value,
       Fail<DeletionPreview>(:final problem) => throw StorageFault(problem),
     };
-    switch (await deletion.deleteConfirmed(
+    if (preview.targets
+        .any((target) => target.eligibility != Eligibility.eligible)) {
+      await deletion
+          .watchEligibility()
+          .firstWhere((snapshot) => snapshot[row.id] == Eligibility.eligible)
+          .timeout(const Duration(seconds: 5));
+      preview = switch (await deletion.preview(<String>{row.id})) {
+        Ok<DeletionPreview>(:final value) => value,
+        Fail<DeletionPreview>(:final problem) => throw StorageFault(problem),
+      };
+    }
+    final result = switch (await deletion.deleteConfirmed(
       (
         operationId: const Uuid().v4(),
         targets: preview.targets,
       ),
     )) {
-      case Ok<BulkDeletionResult>():
-        break;
-      case Fail<BulkDeletionResult>(:final problem):
-        throw StorageFault(problem);
-    }
+      Ok<BulkDeletionResult>(:final value) => value,
+      Fail<BulkDeletionResult>(:final problem) => throw StorageFault(problem),
+    };
+    ensureAskVoiceDeletionComplete(result);
   },
 );
 
@@ -203,21 +227,38 @@ class _AskScreenState extends ConsumerState<AskScreen> {
         _pending = true;
         _error = null;
       });
-      await finishAskVoiceRecording(
-        durationSeconds: row.durationSeconds,
-        transcribe: () => ref.read(askVoiceTranscribeProvider)(row),
-        discard: () => ref.read(askVoiceDiscardProvider)(row),
-        submit: (text) async {
-          final client = await ref.read(askClientProvider.future);
-          await client.ask(text);
-        },
-        onCleanupError: (error) async {
-          if (mounted) {
-            setState(() => _error = 'Voice cleanup failed: $error');
-          }
-        },
-      );
-      await ref.read(documentSyncEngineProvider).syncNow();
+      try {
+        await finishAskVoiceRecording(
+          durationSeconds: row.durationSeconds,
+          transcribe: () => ref.read(askVoiceTranscribeProvider)(row),
+          discard: () => ref.read(askVoiceDiscardProvider)(row),
+          submit: (text) async {
+            final client = await ref.read(askClientProvider.future);
+            await client.ask(text);
+          },
+          onCleanupError: (error) async {
+            if (mounted) {
+              setState(() => _error = 'Voice cleanup failed: $error');
+            }
+          },
+        );
+        final report = await ref.read(documentSyncEngineProvider).syncNow();
+        if (report.outcome == SyncOutcome.alreadyRunning) {
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+          await ref.read(documentSyncEngineProvider).syncNow();
+        }
+      } finally {
+        if (mounted) setState(() => _pending = false);
+      }
+    } on ApiException catch (error) {
+      if (mounted) {
+        setState(() {
+          _pending = false;
+          _error = error.statusCode == 409
+              ? 'Install AI summaries in Settings first'
+              : error.message;
+        });
+      }
     } catch (_) {
       if (mounted) {
         setState(() {
