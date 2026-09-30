@@ -5,6 +5,22 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.36.0 — 2026-09-30
+
+### Added
+- **Voice matching — Tangent learns who's speaking.** (community request #4) Rename *Speaker 1* to a person once and the server remembers their voice; the next recording they're in comes back already named. One voice book on the server (works from every device), silent auto-naming only when you haven't named anyone on that recording yourself, and a per-person **Forget** in Settings → Voices — no wipe-all. Spec `docs/design/2026-09-29-voice-matching.md`.
+- **Brain Dumps over 30 seconds now get speaker sections** (`## Speaker N`) and the Name-speakers flow, exactly like Meetings — so voice matching works there too. Short dumps (≤ 30 s) stay plain text.
+- Settings → **Voices**: the names the server knows, each with sample count and Forget.
+
+### Changed
+- Matching thresholds are calibrated on real recordings (accept 0.60 cosine with a best-vs-second margin, minimum 15 s of summed speech per speaker before a voice is matched or taught — short snippets are too unreliable to trust).
+- Correcting a name (rename or clear) now *un-teaches* the old name exactly: the voice book stores unnormalised sums with a per-recording provenance ledger, so only samples you actually taught are ever removed, removal is mathematically exact, and the auto-matcher's own guesses can never poison a stored voice. Forgetting a voice also clears its ledger.
+
+### Fixed
+- Meeting transcripts stopped losing their speaker embeddings on real recordings (the diarization output was read from the wrong layer, so voice data was silently empty).
+- Near-silent recordings can no longer poison a stored voice with NaN centroids; invalid stored rows are skipped loudly instead of corrupting a push.
+- "Name speakers" no longer disappears from the ⋮ menu after tapping into the transcript editor.
+
 ## 1.35.0 — 2026-09-28
 
 ### Added

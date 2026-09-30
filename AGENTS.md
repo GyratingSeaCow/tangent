@@ -50,13 +50,33 @@ ADH2/
 
 ## Status
 
-Shipping — **v1.35.0** (see CHANGELOG.md). Client and server are both
-implemented and tested (2669
-Flutter tests, 636 server tests, 129 Kotlin tests). The client runs
+Shipping — **v1.36.0** (see CHANGELOG.md). Client and server are both
+implemented and tested (2683
+Flutter tests, 688 server tests, 129 Kotlin tests). The client runs
 natively on Linux AND Windows (tray icon, global record hotkey,
 close-to-tray, single instance, right-click = long-press; AppImage and
 Inno Setup installer under `packaging/`) — verified on CachyOS/KDE
 Plasma Wayland and Windows 11; see the README's Desktop sections.
+
+v1.36.0 **voice matching** (community item #4), spec
+docs/design/2026-09-29-voice-matching.md + calibration table. One server
+voice book: unnormalised running SUM + count per name (`voice_book`,
+normalised at match time — teach/unteach are exact and order-independent),
+per-dump/label provenance ledger (`voice_book_samples`) so only pairs a
+user actually taught can ever be un-taught (auto-matcher guesses are
+immune); teach on device rename, un-teach on rename correction and on
+clear (the client wires an empty map as JSON null — handled), `forget()`
+purges its ledger rows. Matching: pyannote 4.0.7 `speaker_embeddings`
+centroids, cosine, VOICE_ACCEPT 0.60 + VOICE_MARGIN, VOICE_MIN_SPEECH_S
+15.0 (sum of a speaker's turns; calibrated leave-one-out: Jeff ≥15 s
+0.76–0.85, non-Jeff ≤0.28). Silent auto-naming only into an empty name
+map. Brain Dumps with duration_seconds > 30 get the full Meeting speaker
+treatment (`## Speaker N`, embeddings, matching); ≤30 s stay plain.
+Client: `ServerInfo.diarization`, `listVoices`/`forgetVoice`, Settings →
+Voices (per-name Forget, no wipe-all). Three review rounds (Vera):
+provenance ledger, sum-storage arithmetic, null-map clear, stale-ledger
+purge on forget all came out of review — see commits 8c0e46d, b573ecf,
+cd1d4b1, 0be0584.
 
 v1.35.0 **voice → Google Calendar events + Meeting capture restored**, spec
 docs/design/2026-09-28-voice-calendar-events.md, plan `…-plan.md`. Client:
