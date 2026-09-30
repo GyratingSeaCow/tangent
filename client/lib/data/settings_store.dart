@@ -33,6 +33,7 @@ class SettingsStore {
   static const _micGainKey = 'microphone_gain';
   static const _handwritingSearchKey = 'handwriting_search_enabled';
   static const _aiSummariesKey = 'ai_summaries_enabled';
+  static const _autoFileKey = 'auto_file_enabled';
   static const _autoBluetoothKey = 'auto_bluetooth_audio';
   static const _whisperModelKey = 'whisper_model';
   static const _obsidianTimestampsKey = 'obsidian_export_timestamps';
@@ -103,6 +104,13 @@ class SettingsStore {
   /// itself lives server-side (it changes behavior for every device).
   bool aiSummariesEnabled;
 
+  /// Auto-file: the server files a freshly transcribed capture into the
+  /// best matching existing folder. ON by default (it costs nothing and
+  /// ships with an Undo). This is the LOCAL mirror used to seed the
+  /// toggle; the gate itself lives server-side (it changes behavior for
+  /// every device), same as [aiSummariesEnabled].
+  bool autoFileEnabled;
+
   /// The Whisper model this device last saw the server transcribing with.
   ///
   /// A LOCAL MIRROR only — the active model is server state (one answer for
@@ -163,6 +171,7 @@ class SettingsStore {
     this.micGain = defaultMicGain,
     this.handwritingSearchEnabled = false,
     this.aiSummariesEnabled = false,
+    this.autoFileEnabled = true,
     this.whisperModel = defaultWhisperModel,
     this.obsidianExportTimestamps = false,
     this.obsidianExportSummary = true,
@@ -198,6 +207,7 @@ class SettingsStore {
       handwritingSearchEnabled:
           preferences.getBool(_handwritingSearchKey) ?? false,
       aiSummariesEnabled: preferences.getBool(_aiSummariesKey) ?? false,
+      autoFileEnabled: preferences.getBool(_autoFileKey) ?? true,
       whisperModel:
           preferences.getString(_whisperModelKey) ?? defaultWhisperModel,
       obsidianExportTimestamps:
@@ -262,6 +272,11 @@ class SettingsStore {
   Future<void> setAiSummariesEnabled(bool value) async {
     aiSummariesEnabled = value;
     await _preferences?.setBool(_aiSummariesKey, value);
+  }
+
+  Future<void> setAutoFileEnabled(bool value) async {
+    autoFileEnabled = value;
+    await _preferences?.setBool(_autoFileKey, value);
   }
 
   /// Remembers the active Whisper model so an offline Settings screen can

@@ -14,6 +14,7 @@ import 'obsidian_export_section.dart';
 import 'reminders_section.dart';
 import 'handwriting_search_section.dart';
 import 'ai_summaries_section.dart';
+import 'auto_file_section.dart';
 import 'google_tasks_section.dart';
 import 'voices_section.dart';
 import 'input_device_section.dart';
@@ -223,6 +224,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           const HandwritingSearchSection(),
           const Divider(),
           const AiSummariesSection(),
+          const Divider(),
+          const AutoFileSection(),
           const Divider(),
           const GoogleTasksSection(),
           // v1.36.0: reuses the info fetched above — no second round trip.

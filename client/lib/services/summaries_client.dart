@@ -69,6 +69,20 @@ final class SummarySettings {
   final bool customConfigured;
 }
 
+/// GET/POST /v1/auto-file/settings — the server-side auto-file toggle
+/// (gates the post-transcription trigger for every device, like the
+/// auto-summarize gate in [SummarySettings.enabled]).
+@immutable
+final class AutoFileSettings {
+  const AutoFileSettings({required this.enabled});
+
+  factory AutoFileSettings.fromJson(Map<String, dynamic> json) =>
+      // Absent on a server predating the toggle → the feature's default: ON.
+      AutoFileSettings(enabled: json['enabled'] != false);
+
+  final bool enabled;
+}
+
 /// One entry from GET /v1/summaries/templates.
 @immutable
 final class SummaryTemplate {
@@ -445,6 +459,32 @@ class SummariesClient {
   Future<void> uninstall() async {
     final resp = await _dio.post<dynamic>('/v1/summaries/uninstall');
     _checkStatus(resp);
+  }
+
+  // ---- auto-file (/v1/auto-file/settings) -----------------------------------
+  //
+  // Same bearer auth and status conventions; the toggle is server-side
+  // (one gate for every device), so these are thin verbs over it.
+
+  /// GET /v1/auto-file/settings — the server-side auto-file toggle.
+  Future<AutoFileSettings> getAutoFileSettings() async {
+    final resp = await _dio.get<dynamic>('/v1/auto-file/settings');
+    _checkStatus(resp);
+    return AutoFileSettings.fromJson(
+      (resp.data as Map<String, dynamic>?) ?? const {},
+    );
+  }
+
+  /// POST the server-side auto-file toggle. Returns the fresh state.
+  Future<AutoFileSettings> setAutoFileEnabled(bool enabled) async {
+    final resp = await _dio.post<dynamic>(
+      '/v1/auto-file/settings',
+      data: <String, dynamic>{'enabled': enabled},
+    );
+    _checkStatus(resp);
+    return AutoFileSettings.fromJson(
+      (resp.data as Map<String, dynamic>?) ?? const {},
+    );
   }
 
   // ---- Google Tasks (/v1/google-tasks/*) ------------------------------------

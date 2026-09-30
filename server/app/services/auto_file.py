@@ -28,6 +28,13 @@ from app.logging_config import get_logger
 
 log = get_logger(__name__)
 
+#: app_settings key for the server-side auto-file toggle. The toggle gates a
+#: SERVER trigger (job_queue's post-transcription hook), so it persists
+#: server-side — not in a client's storage (summarizer_worker.SETTINGS_KEY
+#: precedent). Unlike summaries, auto-file costs nothing to run, so it
+#: defaults ON: an absent row means enabled.
+SETTINGS_KEY = "auto_file_enabled"
+
 #: Minimum cosine similarity the best folder must reach. Below it the match
 #: is a guess, and the spec says a guess does nothing.
 ACCEPT = 0.22
@@ -55,6 +62,26 @@ STOP_WORDS = frozenset({
     "how", "i", "in", "is", "it", "my", "of", "on", "or", "the", "to", "was",
     "what", "when", "where", "which", "who", "why", "with",
 })
+
+
+# --- toggle -------------------------------------------------------------------
+
+
+def auto_file_enabled(db: sqlite3.Connection) -> bool:
+    """The persisted auto-file toggle. Defaults to ON (no install, no cost —
+    the confidence gates below are the real safety net)."""
+    row = db.execute(
+        "SELECT value FROM app_settings WHERE key = ?", (SETTINGS_KEY,)
+    ).fetchone()
+    return row is None or row[0] == "1"
+
+
+def set_auto_file_enabled(db: sqlite3.Connection, enabled: bool) -> None:
+    db.execute(
+        "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)",
+        (SETTINGS_KEY, "1" if enabled else "0"),
+    )
+    db.commit()
 
 
 def _tokens(text: str) -> list[str]:
@@ -173,13 +200,17 @@ def maybe_auto_file(db: sqlite3.Connection, dump_id: str) -> str | None:
     """File one freshly transcribed dump, or do nothing. Returns the folder id
     it was filed into, or None.
 
-    Gates: the dump must exist, be live, carry a transcript, and be UNFILED —
-    a filing the user (or an earlier trigger) already chose is never second-
-    guessed. On a confident match the filing, the auto-file markers and the
-    change_log entry announcing them commit in the SAME transaction
-    (summarizer_worker's persist rule), so no device is ever told about a
-    filing the server does not hold.
+    Gates: the toggle must be enabled (summaries precedent: the gate lives in
+    the service the trigger calls, not in job_queue), and the dump must
+    exist, be live, carry a transcript, and be UNFILED — a filing the user
+    (or an earlier trigger) already chose is never second-guessed. On a
+    confident match the filing, the auto-file markers and the change_log
+    entry announcing them commit in the SAME transaction (summarizer_worker's
+    persist rule), so no device is ever told about a filing the server does
+    not hold.
     """
+    if not auto_file_enabled(db):
+        return None
     row = db.execute(
         "SELECT transcript, title, folder_id, deleted_at FROM dumps WHERE id = ?",
         (dump_id,),
