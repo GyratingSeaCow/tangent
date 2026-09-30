@@ -104,6 +104,26 @@ def test_absent_question_is_exact_honest_miss_without_calling_model(client, monk
     assert response.json() == {"answer": HONEST_MISS, "sources": []}
 
 
+@pytest.mark.parametrize("model_reply", [HONEST_MISS, HONEST_MISS + ".", f"{HONEST_MISS}, sorry.", ""])
+def test_model_declared_miss_suppresses_sources(client, monkeypatch, model_reply):
+    """Regression: the answer said "couldn't find" while 8 sources were listed.
+
+    When retrieval finds chunks but the model declares an honest miss (or
+    returns nothing), the response and the persisted assistant message must
+    not carry citations that contradict the answer.
+    """
+    cli, auth, path = client
+    _seed(path)
+    monkeypatch.setattr(summarizer_worker, "run_inference", lambda *_: model_reply)
+    response = cli.post("/v1/ask", json={"question": "When does Juniper ship?"}, headers=auth)
+    assert response.status_code == 200
+    assert response.json() == {"answer": HONEST_MISS, "sources": []}
+
+    pulled = cli.get("/v1/sync/pull?device_id=device-miss&since_seq=0", headers=auth).json()
+    assistant = [c for c in pulled["changes"] if c["entity_type"] == "ask_message" and c["payload"]["role"] == "assistant"]
+    assert assistant and assistant[-1]["payload"]["sources"] == []
+
+
 def test_grounding_prompt_pins_no_outside_knowledge_contract():
     assert "ONLY the supplied NOTE EXCERPTS" in GROUNDING_PROMPT
     assert "Never use outside knowledge" in GROUNDING_PROMPT

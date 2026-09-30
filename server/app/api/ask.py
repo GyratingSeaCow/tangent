@@ -188,8 +188,10 @@ def ask(
             answer = summarizer_worker.run_inference(str(uuid.uuid4()), prompt, GROUNDING_PROMPT).strip()
         except RuntimeError as exc:
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"Ask inference failed: {exc}") from exc
-        if not answer:
+        if not answer or answer.lower().startswith(HONEST_MISS.lower()):
+            # A model-declared miss must not ship contradictory citations.
             answer = HONEST_MISS
+            sources = []
     now = int(time.time())
     source_dicts = [source.model_dump() for source in sources]
     _store_message(db, "user", question, [], now)
