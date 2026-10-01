@@ -98,15 +98,16 @@ final StreamProvider<Map<String, AskSourceEntity>> askSourceEntitiesProvider =
   return out.stream;
 });
 
-/// True only for a recording the server has never held: no confirmed sync
-/// sequence, not server-sourced, no server audio, and neither synced nor
-/// mid-upload. Any doubt counts as "has synced".
+/// True only for a recording that never even ATTEMPTED an upload: zero
+/// sync attempts, no confirmed sync sequence, not server-sourced, no server
+/// audio, and still local_only. An attempt whose reply was lost may have
+/// landed server-side, so any attempt fails closed.
 bool askDumpNeverSynced(DumpRow row) =>
+    row.syncAttempts == 0 &&
     row.syncedSeq == null &&
     row.remoteOnly != true &&
     row.audioOnServer != true &&
-    row.syncStatus != 'synced' &&
-    row.syncStatus != 'syncing';
+    row.syncStatus == 'local_only';
 
 /// Authoritative server delete (publishes the sync tombstone). A seam so
 /// tests can record ordering; production is [ServerDumpDeletion.deleteDump].

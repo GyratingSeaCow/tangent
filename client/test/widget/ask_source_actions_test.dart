@@ -70,6 +70,7 @@ void main() {
     bool pinned = false,
     String syncStatus = 'synced',
     int? syncedSeq,
+    int syncAttempts = 0,
   }) =>
       db.into(db.dumps).insert(
             DumpsCompanion.insert(
@@ -83,6 +84,7 @@ void main() {
               audioSizeBytes: 2048,
               syncStatus: syncStatus,
               syncedSeq: Value(syncedSeq),
+              syncAttempts: Value(syncAttempts),
               pinned: Value(pinned),
             ),
           );
@@ -384,6 +386,23 @@ void main() {
     await insertDump('d-404s', 'Synced one', syncedSeq: 41);
     await deleteVia404(tester, 'd-404s');
     expect(log, <String>['server-delete:d-404s:previews=0']);
+    expect(deletion.previews, isEmpty);
+    expect(deletion.deletes, isEmpty);
+    expect(find.textContaining('Could not delete'), findsOneWidget);
+    await unmount(tester);
+  });
+
+  testWidgets(
+      'upload attempted but unconfirmed + server 404: keeps local copy, error',
+      (tester) async {
+    await insertDump(
+      'd-404a',
+      'Timed-out upload',
+      syncStatus: 'failed',
+      syncAttempts: 1,
+    );
+    await deleteVia404(tester, 'd-404a');
+    expect(log, <String>['server-delete:d-404a:previews=0']);
     expect(deletion.previews, isEmpty);
     expect(deletion.deletes, isEmpty);
     expect(find.textContaining('Could not delete'), findsOneWidget);
