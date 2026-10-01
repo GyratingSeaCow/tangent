@@ -22,6 +22,7 @@ import '../../widgets/signal_bars.dart';
 import '../../widgets/sync_button.dart';
 import '../home/home_providers.dart' show documentSyncEngineProvider;
 import '../../services/bulk_dump_actions.dart';
+import '../../services/deletion_eligibility_text.dart';
 import '../../services/markdown_export.dart';
 import '../../services/server_transcription_service.dart';
 import '../../models/speaker_names.dart';
@@ -1598,24 +1599,6 @@ String renderSnippetSpeakerNames(String snippet, SpeakerNames names) {
   }
   return renderSpeakerNames(snippet, names);
 }
-
-/// Shared by the list rows and the long-press sheet, so the wording a user
-/// sees for an ineligible recording is identical in both places.
-String eligibilityReason(Eligibility? eligibility) => switch (eligibility) {
-      Eligibility.eligible => 'Available for local deletion',
-      Eligibility.nonterminal => 'Transcription in progress',
-      Eligibility.syncing => 'Sync in progress',
-      Eligibility.publicationPending => 'Saving transcript or metadata',
-      Eligibility.busy => 'Recording is in use',
-      Eligibility.retryOnly =>
-        'Local deletion pending; open recording to retry',
-      Eligibility.deleting => 'Local deletion in progress',
-      Eligibility.denied => 'Storage permission denied',
-      Eligibility.unresolved => 'Original storage is unresolved',
-      Eligibility.retired => 'Recording already removed',
-      Eligibility.missing => 'Recording unavailable',
-      null => 'Checking availability',
-    };
 
 String dumpSubtitle(DumpRow dump) {
   final date = dump.createdAt.toLocal().toString().split('.').first;

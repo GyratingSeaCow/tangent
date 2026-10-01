@@ -34,7 +34,7 @@ import '../../services/notebook_persistence.dart'
 import '../../widgets/folder_picker.dart';
 import '../../widgets/item_action_sheet.dart';
 import '../home/home_screen.dart' show localDbProvider;
-import '../dump/dumps_list_screen.dart' show eligibilityReason;
+import '../../services/deletion_eligibility_text.dart';
 import '../server/server_connection_screen.dart'
     show transcriptionClientProvider;
 
