@@ -326,6 +326,15 @@ CREATE TABLE IF NOT EXISTS app_settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+-- v1.41 Morning Brief: one cached AI brief per server-local date
+-- (YYYY-MM-DD). Server-only; never on the sync feed — clients GET it.
+CREATE TABLE IF NOT EXISTS morning_briefs (
+    date TEXT PRIMARY KEY,
+    brief_md TEXT NOT NULL,
+    model TEXT NOT NULL,
+    generated_at INTEGER NOT NULL
+);
 """
 
 

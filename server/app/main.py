@@ -13,6 +13,7 @@ from app.api.dumps import router as dumps_router
 from app.api.google_tasks import router as google_tasks_router
 from app.api.jobs import router as jobs_router
 from app.api.models import router as models_router
+from app.api.morning_brief import router as morning_brief_router
 from app.api.ocr import router as ocr_router
 from app.api.pairing import router as pairing_router
 from app.api.ask import router as ask_router
@@ -76,6 +77,14 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         from app.services import google_tasks_worker
 
         google_tasks_worker.start_worker()
+        # Morning Brief scheduler (~05:00 server-local, idempotent per date).
+        # Guarded: the brief is additive and must never block startup.
+        try:
+            from app.services import morning_brief
+
+            morning_brief.start_scheduler()
+        except Exception:
+            log.exception("morning_brief.start_failed")
         if not is_setup_complete(db):
             print("")
             print("=" * 60)
@@ -117,6 +126,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     summarizer_env.set_on_installed(None)
     summarizer_worker.stop_worker()
     google_tasks_worker.stop_worker()
+    from app.services import morning_brief
+
+    morning_brief.stop_scheduler()
     log.info("server.stopping")
 
 
@@ -141,6 +153,7 @@ def create_app() -> FastAPI:
     app.include_router(auto_file_router)  # /v1/auto-file/settings
     app.include_router(ocr_router)    # /v1/ocr/*
     app.include_router(summaries_router)  # /v1/summaries/*, /v1/dumps/{id}/summarize
+    app.include_router(morning_brief_router)  # /v1/morning-brief
     app.include_router(transcription_models_router)  # /v1/transcription/model(s)
     app.include_router(google_tasks_router)  # /v1/google-tasks/*
     app.include_router(voices_router)  # /v1/voices
