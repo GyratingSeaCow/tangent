@@ -341,12 +341,16 @@ class _MorningReviewScreenState extends ConsumerState<MorningReviewScreen> {
     final MediaQueryData media = MediaQuery.of(context);
 
     return AnnotatedRegion<SystemUiOverlayStyle>(
-      // Daybreak blue is light: dark status/navigation icons over it, in
-      // either app theme.
-      value: SystemUiOverlayStyle.dark.copyWith(
+      // STATUS BAR ONLY: dark icons over the light daybreak blue. Built
+      // from scratch, never from SystemUiOverlayStyle.dark/.light — those
+      // presets also carry systemNavigationBar* values, and Flutter only
+      // ever sends NON-null fields, so a nav-bar value set here is never
+      // reverted by any other screen (nothing else in the app sets one) and
+      // sticks app-wide. Nav-bar fields stay null = the platform default.
+      value: const SystemUiOverlayStyle(
         statusBarColor: Colors.transparent,
-        systemNavigationBarColor: TangentColors.daybreak,
-        systemNavigationBarIconBrightness: Brightness.dark,
+        statusBarIconBrightness: Brightness.dark,
+        statusBarBrightness: Brightness.light,
       ),
       child: Scaffold(
         key: MorningReviewScreen.screenKey,

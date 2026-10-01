@@ -304,6 +304,12 @@ void main() {
     );
     expect(region.value.statusBarIconBrightness, Brightness.dark);
     expect(region.value.statusBarBrightness, Brightness.light);
+    // Route-scoped status bar only: any nav-bar field here would never be
+    // reverted (Flutter sends only non-null fields) and leaks app-wide.
+    expect(region.value.systemNavigationBarColor, isNull);
+    expect(region.value.systemNavigationBarIconBrightness, isNull);
+    expect(region.value.systemNavigationBarDividerColor, isNull);
+    expect(region.value.systemNavigationBarContrastEnforced, isNull);
     await unmount(tester, c);
   });
 
