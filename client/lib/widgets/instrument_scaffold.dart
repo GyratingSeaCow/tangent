@@ -31,7 +31,14 @@ class InstrumentScaffold extends ConsumerWidget {
     required this.body,
     this.showCreateFab = true,
     this.floatingActionButton,
+    this.maxContentWidth,
   });
+
+  /// Wide-screen reading measure (Fold open, tablets, desktop). When set,
+  /// the body is centred and capped at this width once the window is wider
+  /// than it; narrower windows are untouched. Lists that WANT the full
+  /// width (the Recordings/Notebooks/To Do roots) leave it null.
+  static const double readingWidth = 700;
 
   /// Which rail destination this screen belongs to.
   final TangentRoot root;
@@ -48,6 +55,8 @@ class InstrumentScaffold extends ConsumerWidget {
   /// A screen-specific FAB override; mutually exclusive with
   /// [showCreateFab].
   final Widget? floatingActionButton;
+
+  final double? maxContentWidth;
 
   static const Key createFabKey = Key('global-create-fab');
 
@@ -79,7 +88,18 @@ class InstrumentScaffold extends ConsumerWidget {
                 child: appBar!,
               ),
             ),
-          Expanded(child: body),
+          Expanded(
+            child: maxContentWidth == null
+                ? body
+                : Align(
+                    alignment: Alignment.topCenter,
+                    child: ConstrainedBox(
+                      constraints:
+                          BoxConstraints(maxWidth: maxContentWidth!),
+                      child: body,
+                    ),
+                  ),
+          ),
         ],
       ),
       floatingActionButton: floatingActionButton ??

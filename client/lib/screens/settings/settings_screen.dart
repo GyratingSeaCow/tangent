@@ -186,6 +186,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         root: TangentRoot.settings,
         // Settings is a form, not a place you create things from.
         showCreateFab: false,
+        maxContentWidth: InstrumentScaffold.readingWidth,
         appBar: AppBar(
           leading: category == null
               ? null

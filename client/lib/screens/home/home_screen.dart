@@ -293,6 +293,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
     return InstrumentScaffold(
       root: TangentRoot.capture,
+      maxContentWidth: InstrumentScaffold.readingWidth,
       appBar: AppBar(
         title: const Text('Tangent'),
         actions: [

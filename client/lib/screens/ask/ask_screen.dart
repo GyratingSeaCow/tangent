@@ -343,6 +343,7 @@ class _AskScreenState extends ConsumerState<AskScreen> {
       root: TangentRoot.ask,
       // The ask box owns the bottom edge: a create key would cover Send.
       showCreateFab: false,
+      maxContentWidth: InstrumentScaffold.readingWidth,
       appBar: AppBar(title: const Text('Ask')),
       body: Column(
         children: <Widget>[

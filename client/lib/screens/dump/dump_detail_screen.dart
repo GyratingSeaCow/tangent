@@ -1180,6 +1180,7 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
       // A pushed detail screen still belongs to Recordings: the rail shows
       // where you are, not how you got here.
       root: TangentRoot.recordings,
+      maxContentWidth: InstrumentScaffold.readingWidth,
       appBar: AppBar(
         title: Text(_modeTitle(currentRow)),
         actions: [
