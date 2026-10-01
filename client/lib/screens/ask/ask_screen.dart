@@ -18,6 +18,7 @@ import '../../models/api_exception.dart';
 import '../../data/storage/storage_contract.dart';
 import '../../data/storage/storage_providers.dart'
     show localDeletionServiceProvider;
+import '../../theme/tangent_tokens.dart';
 import '../dump/dump_detail_screen.dart';
 import '../home/home_providers.dart'
     show documentSyncEngineProvider, serverTranscriptionServiceProvider;
@@ -367,12 +368,31 @@ class _AskScreenState extends ConsumerState<AskScreen> {
                       ),
                       child: Card(
                         key: Key('ask-message-${message.id}'),
+                        // Jeff's sent questions sit in the palette's one green
+                        // (signal lime) as a rounded chat bubble; answers keep
+                        // the default panel card. Dark-only app: chassis ink
+                        // on lime is the readable pairing.
+                        color: user ? TangentColors.signal : null,
+                        shape: user
+                            ? const RoundedRectangleBorder(
+                                borderRadius: BorderRadius.all(
+                                  Radius.circular(16),
+                                ),
+                              )
+                            : null,
                         child: Padding(
                           padding: const EdgeInsets.all(12),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: <Widget>[
-                              Text(message.text),
+                              Text(
+                                message.text,
+                                style: user
+                                    ? const TextStyle(
+                                        color: TangentColors.sunken,
+                                      )
+                                    : null,
+                              ),
                               if (message.sources.isNotEmpty) ...<Widget>[
                                 const SizedBox(height: 4),
                                 ...message.sources.indexed.map(

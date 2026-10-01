@@ -8,6 +8,7 @@ import 'package:mocktail/mocktail.dart';
 import 'package:tangent/data/ask_history_repository.dart';
 import 'package:tangent/data/local_db.dart';
 import 'package:tangent/screens/ask/ask_screen.dart';
+import 'package:tangent/theme/tangent_tokens.dart';
 import 'package:tangent/screens/dump/dump_detail_screen.dart';
 import 'package:tangent/screens/home/home_providers.dart'
     show documentSyncEngineProvider;
@@ -132,6 +133,20 @@ void main() {
         .getTopLeft(find.byKey(const ValueKey<String>('ask-message-a-17')))
         .dy;
     expect(userY, lessThan(answerY));
+    // Sent question: green (signal) bubble, dark readable text. Answer: the
+    // default card, untouched.
+    final Card userCard = tester
+        .widget<Card>(find.byKey(const ValueKey<String>('ask-message-u-17')));
+    final Card answerCard = tester
+        .widget<Card>(find.byKey(const ValueKey<String>('ask-message-a-17')));
+    expect(userCard.color, TangentColors.signal);
+    expect(answerCard.color, isNull);
+    expect(answerCard.shape, isNull);
+    expect(
+      tester.widget<Text>(find.text('When was lunch?')).style?.color,
+      TangentColors.sunken,
+    );
+    expect(tester.widget<Text>(find.text('Lunch was at 12:45.')).style, isNull);
   });
 
   testWidgets('opens on the NEWEST message of a multi-screen history',
@@ -155,8 +170,10 @@ void main() {
     final Rect view =
         tester.getRect(find.byKey(const ValueKey<String>('ask-history')));
     final Rect newest = tester.getRect(find.text('Message number 39'));
-    expect(view.contains(newest.topLeft) && view.contains(newest.bottomRight),
-        isTrue,);
+    expect(
+      view.contains(newest.topLeft) && view.contains(newest.bottomRight),
+      isTrue,
+    );
     expect(tester.takeException(), isNull);
   });
 
