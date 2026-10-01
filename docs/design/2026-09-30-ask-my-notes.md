@@ -61,15 +61,19 @@ show up. (Decision: keep v1 dependency-free and honest about misses.)
 
 ## Queued behind this arc (order fixed by Jeff)
 
-1. **Pinnable items** — pin recordings / notebooks / To Dos to the top of
-   their lists (pinned section above everything, long-press → Pin per the
-   list-screen contract, synced).
-2. **Morning review** — at a set time (default 8:00, Settings →
-   Reminders): a notification AND a light-blue card at the top of Home
-   that stays until viewed, then tucks away. Contents v1: **yesterday's
-   captures only** (recordings + notes, one-line summaries). Light blue
-   = start-of-day signal; "presented beautifully" is a design
-   requirement, not decoration.
+1. **Pinnable items** — pin recordings / notebooks / To Dos. REVISED by
+   Jeff (2026-09-30, in build): a pinned item sorts to the top of **its
+   own category/folder group**, NOT a global pinned section at the top
+   of the page. Long-press → Pin per the list-screen contract, synced,
+   pin indicator on the row.
+2. **Morning review** — REVISED by Jeff (2026-09-30, in build): Settings
+   → Reminders gets a **toggle to enable/disable** morning review plus a
+   **time picker** (default 8:00). When enabled, at the set time: a
+   notification AND a light-blue card at the top of Home that stays
+   until viewed, then tucks away. Contents v1: **yesterday's captures
+   only** (recordings + notes, one-line summaries). Light blue =
+   start-of-day signal; "presented beautifully" is a design
+   requirement, not decoration. Toggle off = no notification, no card.
 3. **Auto-file** — after transcription the server picks the best matching
    EXISTING folder; when confident, files it and the card shows
    "Auto-filed to <folder> · Undo"; when not confident, does nothing

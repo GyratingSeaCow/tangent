@@ -50,13 +50,29 @@ ADH2/
 
 ## Status
 
-Shipping — **v1.39.0** (see CHANGELOG.md). Client and server are both
-implemented and tested (2783
+Shipping — **v1.40.0** (see CHANGELOG.md). Client and server are both
+implemented and tested (2798
 Flutter tests, 733 server tests, 129 Kotlin tests). The client runs
 natively on Linux AND Windows (tray icon, global record hotkey,
 close-to-tray, single instance, right-click = long-press; AppImage and
 Inno Setup installer under `packaging/`) — verified on CachyOS/KDE
 Plasma Wayland and Windows 11; see the README's Desktop sections.
+
+v1.40.0 **Ask source actions + full-screen morning review** (ask-my-notes
+arc follow-up). Ask: long-press any source chip to move/rename/delete/
+pin the underlying entity (pins propagate to origin lists; summary chips
+offer no Delete; server-delete 404s fail closed whenever any upload was
+ever attempted; eligibility is checked before the server tombstone);
+the thread opens on the newest message (reversed list) and sent
+questions render in signal-green bubbles (deliberate palette exception).
+Morning review: the Home card is replaced by a full-screen daybreak
+review (all of yesterday's captures uncapped, due-today + overdue
+sections, pinned items) that auto-presents over Home once per day and
+reopens from a sun icon beside Settings — both strictly gated on the
+Reminders toggle; system-bar styling is route-scoped (status bar only).
+Ledgered for v1.41: TOCTOU deletion lease, redundant presenter fields,
+eligibilityReason import location, morning-brief spec
+(docs/design/2026-10-01-morning-brief.md).
 
 v1.39.0 **pinning + morning review** (ask-my-notes spec, queued items
 #1–2). Pinning: long-press or action-sheet Pin on recordings, notebooks

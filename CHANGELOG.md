@@ -5,6 +5,33 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.40.0 — 2026-10-01
+
+### Added
+- **Act on Ask sources directly.** Long-press any source chip under an Ask
+  answer — recording, notebook or To Do — to move, rename, delete, or
+  pin/unpin the underlying item. Pins made from Ask show up everywhere the
+  item lives (Recordings, Notebooks, To Dos). Deleting is fail-safe: a
+  recording that has ever attempted an upload is never removed locally on a
+  server miss, and items busy transcribing refuse deletion cleanly.
+- **Morning review is now a full screen.** The daybreak-blue review takes
+  over the whole screen with every one of yesterday's captures (no more
+  5-item cap), today's due To Dos with overdue items in their own section,
+  and your pinned items. It auto-opens on the first launch of the day and
+  can be reopened anytime from the new sun icon next to Settings on Home —
+  both appear only while morning reviews are enabled in Settings.
+
+### Changed
+- **Ask opens on your latest message** and reads newest-backwards, staying
+  pinned to new answers as they arrive.
+- **Your Ask questions now sit in signal-green bubbles**, visually distinct
+  from Tangent's answers.
+- The morning review Home card is replaced by the full-screen review.
+
+### Fixed
+- The morning review no longer tints the Android navigation bar daybreak
+  blue across the whole app; its styling is scoped to its own screen.
+
 ## 1.39.0 — 2026-10-01
 
 ### Added
