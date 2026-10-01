@@ -5,6 +5,14 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.41.0 — 2026-10-01
+
+### Changed
+- **New look: Instrument.** The whole app moves from the Blackout palette to the Instrument design language — a field-recorder chassis in two finishes: **Anodized** (dark, the default) and **Aluminium** (light), following the system setting. The select colour is now **#C4EC42 lime** in both themes, with text and icons on lime always near-black; the record/delete colour is **#FF4F1F**; and everything carries a small radius on the approved 4/8/12/18 scale — tags and checkboxes 4, keys/buttons/inputs/rows 8, panels and cards 12, sheets and dialogs 18. No more pills, no more stadium chips.
+- Theme-aware colours are exposed to widgets as a `TangentPalette` ThemeExtension (`TangentPalette.of(context)`); the legacy `TangentColors` statics remain, remapped to Anodized, while screens migrate.
+- Error text no longer renders red on lime surfaces — the Instrument hot colour measures ~2.4:1 on lime, so content on a lime fill always uses the dark on-colour.
+- Notebook ruling and handwriting ink nudged to the Instrument warm greys (ruling `#615E56`, ~2.9:1 against the page; ink `#F2EFE6`).
+
 ## 1.40.0 — 2026-10-01
 
 ### Added

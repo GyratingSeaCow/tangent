@@ -4,57 +4,99 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:tangent/theme/tangent_theme.dart';
 import 'package:tangent/theme/tangent_tokens.dart';
 
+double _contrast(Color a, Color b) {
+  final la = a.computeLuminance(), lb = b.computeLuminance();
+  final hi = la > lb ? la : lb, lo = la > lb ? lb : la;
+  return (hi + 0.05) / (lo + 0.05);
+}
+
 void main() {
-  group('Blackout tokens', () {
-    test('signal lime is the accent, and record red is distinct from it', () {
-      expect(TangentColors.signal, const Color(0xFFD4FF47));
-      expect(TangentColors.record, const Color(0xFFFF3B30));
-      expect(TangentColors.signal, isNot(TangentColors.record));
-    });
+  group('Instrument palettes', () {
+    const palettes = <String, TangentPalette>{
+      'aluminium': TangentPalette.aluminium,
+      'anodized': TangentPalette.anodized,
+    };
 
-    test('handwriting ink is white, never the signal colour', () {
-      // Deliberate product decision: lime ink fights the transcript.
-      expect(TangentColors.ink, const Color(0xFFEDF1F3));
-      expect(TangentColors.ink, isNot(TangentColors.signal));
-      final ink = TangentColors.ink;
-      expect(ink.r, greaterThan(0.87));
-      expect(ink.g, greaterThan(0.87));
-      expect(ink.b, greaterThan(0.87));
-    });
-
-    test('surfaces step darker from panel to sunken', () {
-      double lum(Color c) => c.computeLuminance();
-      expect(lum(TangentColors.panel), greaterThan(lum(TangentColors.surface)));
-      expect(lum(TangentColors.surface), greaterThan(lum(TangentColors.sunken)));
-    });
-
-    test('body text clears WCAG AA on the app surface', () {
-      double contrast(Color a, Color b) {
-        final la = a.computeLuminance(), lb = b.computeLuminance();
-        final hi = la > lb ? la : lb, lo = la > lb ? lb : la;
-        return (hi + 0.05) / (lo + 0.05);
+    test('select is #C4EC42 lime in BOTH themes, hot is distinct', () {
+      for (final p in palettes.values) {
+        expect(p.select, const Color(0xFFC4EC42));
+        expect(p.hot, const Color(0xFFFF4F1F));
+        expect(p.select, isNot(p.hot));
       }
+    });
 
+    test('text and icons on a lime fill are always near-black', () {
+      for (final entry in palettes.entries) {
+        final p = entry.value;
+        expect(p.onSelect, const Color(0xFF111111));
+        expect(
+          _contrast(p.onSelect, p.select),
+          greaterThanOrEqualTo(4.5),
+          reason: '${entry.key}: onSelect must clear AA on the select fill',
+        );
+      }
+    });
+
+    test('primary ink clears WCAG AA on chassis and panel in both themes',
+        () {
+      for (final entry in palettes.entries) {
+        final p = entry.value;
+        expect(
+          _contrast(p.ink, p.chassis),
+          greaterThanOrEqualTo(4.5),
+          reason: '${entry.key}: ink on chassis',
+        );
+        expect(
+          _contrast(p.ink, p.panel),
+          greaterThanOrEqualTo(4.5),
+          reason: '${entry.key}: ink on panel',
+        );
+      }
+    });
+
+    test('the display window is near-black in both themes', () {
+      for (final p in palettes.values) {
+        expect(p.display.computeLuminance(), lessThan(0.01));
+        expect(_contrast(p.displayDot, p.display), greaterThanOrEqualTo(7));
+      }
+    });
+
+    test('aluminium is light, anodized is dark', () {
+      expect(TangentPalette.aluminium.brightness, Brightness.light);
+      expect(TangentPalette.anodized.brightness, Brightness.dark);
       expect(
-        contrast(TangentColors.text, TangentColors.surface),
-        greaterThanOrEqualTo(4.5),
-      );
-      expect(
-        contrast(TangentColors.signal, TangentColors.surface),
-        greaterThanOrEqualTo(4.5),
+        TangentPalette.aluminium.chassis.computeLuminance(),
+        greaterThan(TangentPalette.anodized.chassis.computeLuminance()),
       );
     });
 
-    test('hardware shapes: panels are squared, pills are round', () {
-      expect(TangentShapes.panelRadius, 7.0);
-      expect(TangentShapes.sheetRadius, 14.0);
-      expect(TangentShapes.pillRadius, greaterThanOrEqualTo(999.0));
+    test('variant() maps the enum to the matching palette', () {
+      expect(
+        TangentPalette.variant(TangentVariant.aluminium),
+        same(TangentPalette.aluminium),
+      );
+      expect(
+        TangentPalette.variant(TangentVariant.anodized),
+        same(TangentPalette.anodized),
+      );
+    });
+  });
+
+  group('Instrument shapes', () {
+    test('radius scale is the approved 4 / 8 / 12 / 18', () {
+      expect(TangentShapes.radiusTag, 4.0);
+      expect(TangentShapes.radiusControl, 8.0);
+      expect(TangentShapes.radiusPanel, 12.0);
+      expect(TangentShapes.radiusSheet, 18.0);
+    });
+
+    test('legacy aliases resolve inside the approved scale (no pills)', () {
+      expect(TangentShapes.panelRadius, TangentShapes.radiusControl);
+      expect(TangentShapes.sheetRadius, TangentShapes.radiusSheet);
     });
 
     test('elevation is a hard drop with no blur', () {
-      final drop = TangentShapes.hardDrop;
-      expect(drop, isNotEmpty);
-      for (final shadow in drop) {
+      for (final shadow in TangentShapes.hardDrop) {
         expect(
           shadow.blurRadius,
           0,
@@ -65,67 +107,120 @@ void main() {
   });
 
   group('tangentTheme', () {
-    test('is dark and built on the Blackout surfaces', () {
+    test('defaults to Anodized', () {
       final theme = tangentTheme();
       expect(theme.brightness, Brightness.dark);
-      expect(theme.scaffoldBackgroundColor, TangentColors.surface);
-      expect(theme.colorScheme.primary, TangentColors.signal);
-      expect(theme.colorScheme.surface, TangentColors.surface);
-      expect(theme.useMaterial3, isTrue);
-    });
-
-    test('cards use the panel colour and the panel radius', () {
-      final theme = tangentTheme();
-      expect(theme.cardTheme.color, TangentColors.panel);
-      final shape = theme.cardTheme.shape as RoundedRectangleBorder;
       expect(
-        shape.borderRadius,
-        BorderRadius.circular(TangentShapes.panelRadius),
+        theme.scaffoldBackgroundColor,
+        TangentPalette.anodized.chassis,
       );
     });
 
-    test('the FAB is the record key: record red, fully round', () {
-      final theme = tangentTheme();
-      expect(
-        theme.floatingActionButtonTheme.backgroundColor,
-        TangentColors.record,
-      );
-      final shape =
-          theme.floatingActionButtonTheme.shape as RoundedRectangleBorder;
-      expect(
-        shape.borderRadius,
-        BorderRadius.circular(TangentShapes.pillRadius),
-      );
-    });
+    for (final variant in TangentVariant.values) {
+      final p = TangentPalette.variant(variant);
 
-    test('error colour is the record red so destructive reads as live', () {
-      expect(tangentTheme().colorScheme.error, TangentColors.record);
-    });
+      group(variant.name, () {
+        final theme = tangentTheme(variant);
 
-    test('selected chips fill with signal, unselected stay outlined', () {
-      final theme = tangentTheme();
-      expect(theme.chipTheme.selectedColor, TangentColors.signal);
-      expect(theme.chipTheme.backgroundColor, Colors.transparent);
-    });
+        test('registers its palette as a theme extension', () {
+          expect(theme.extension<TangentPalette>(), same(p));
+        });
+
+        test('is built on the chassis with lime as primary', () {
+          expect(theme.brightness, p.brightness);
+          expect(theme.scaffoldBackgroundColor, p.chassis);
+          expect(theme.colorScheme.primary, p.select);
+          expect(theme.colorScheme.onPrimary, p.onSelect);
+          expect(theme.useMaterial3, isTrue);
+        });
+
+        test('cards use the panel colour and the panel radius', () {
+          expect(theme.cardTheme.color, p.panel);
+          final shape = theme.cardTheme.shape as RoundedRectangleBorder;
+          expect(
+            shape.borderRadius,
+            BorderRadius.circular(TangentShapes.radiusPanel),
+          );
+        });
+
+        test('the FAB is the record key: hot, rounded, never a pill', () {
+          expect(theme.floatingActionButtonTheme.backgroundColor, p.hot);
+          final shape =
+              theme.floatingActionButtonTheme.shape as RoundedRectangleBorder;
+          expect(
+            shape.borderRadius,
+            BorderRadius.circular(TangentShapes.radiusPanel),
+          );
+        });
+
+        test('error colour is hot so destructive reads as live', () {
+          expect(theme.colorScheme.error, p.hot);
+        });
+
+        test('selected chips fill lime with black content, 4px radius', () {
+          expect(theme.chipTheme.selectedColor, p.select);
+          expect(theme.chipTheme.backgroundColor, Colors.transparent);
+          expect(theme.chipTheme.secondaryLabelStyle?.color, p.onSelect);
+          final shape = theme.chipTheme.shape as RoundedRectangleBorder;
+          expect(
+            shape.borderRadius,
+            BorderRadius.circular(TangentShapes.radiusTag),
+            reason: 'never square, never pills',
+          );
+        });
+
+        test('filled buttons put black on lime', () {
+          final style = theme.filledButtonTheme.style!;
+          expect(
+            style.backgroundColor!.resolve(const <WidgetState>{}),
+            p.select,
+          );
+          expect(
+            style.foregroundColor!.resolve(const <WidgetState>{}),
+            p.onSelect,
+          );
+        });
+      });
+    }
   });
 
   group('applied to a real widget tree', () {
-    testWidgets('scaffold paints the Blackout surface', (tester) async {
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: tangentTheme(),
-          home: const Scaffold(body: Text('x')),
-        ),
-      );
-      final scaffold = tester.widget<Material>(
-        find
-            .descendant(
-              of: find.byType(Scaffold),
-              matching: find.byType(Material),
-            )
-            .first,
-      );
-      expect(scaffold.color, TangentColors.surface);
-    });
+    for (final variant in TangentVariant.values) {
+      testWidgets('scaffold paints the ${variant.name} chassis',
+          (tester) async {
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: tangentTheme(variant),
+            home: const Scaffold(body: Text('x')),
+          ),
+        );
+        final scaffold = tester.widget<Material>(
+          find
+              .descendant(
+                of: find.byType(Scaffold),
+                matching: find.byType(Material),
+              )
+              .first,
+        );
+        expect(scaffold.color, TangentPalette.variant(variant).chassis);
+      });
+
+      testWidgets('TangentPalette.of resolves the ${variant.name} palette',
+          (tester) async {
+        late TangentPalette resolved;
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: tangentTheme(variant),
+            home: Builder(
+              builder: (context) {
+                resolved = TangentPalette.of(context);
+                return const SizedBox.shrink();
+              },
+            ),
+          ),
+        );
+        expect(resolved, same(TangentPalette.variant(variant)));
+      });
+    }
   });
 }

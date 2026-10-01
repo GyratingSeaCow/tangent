@@ -8,6 +8,7 @@ import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'theme/tangent_theme.dart';
+import 'theme/tangent_tokens.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 
@@ -630,11 +631,13 @@ class TangentApp extends StatelessWidget {
           // debug builds are self-evident to us without it.
           debugShowCheckedModeBanner: false,
           title: 'Tangent',
-          // Tangent ships one theme: an instrument does not restyle itself
-          // with the system setting.
-          theme: tangentTheme(),
-          darkTheme: tangentTheme(),
-          themeMode: ThemeMode.dark,
+          // Two chassis finishes: Aluminium (light) and Anodized (dark).
+          // Anodized is the default; until a Settings toggle exists the
+          // variant follows the system setting, which resolves to Anodized
+          // on a dark desktop.
+          theme: tangentTheme(TangentVariant.aluminium),
+          darkTheme: tangentTheme(TangentVariant.anodized),
+          themeMode: ThemeMode.system,
           home: const _Router(),
           routes: {'/home': (_) => const HomeScreen()},
         ),

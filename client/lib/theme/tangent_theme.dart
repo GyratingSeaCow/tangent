@@ -3,212 +3,216 @@ import 'package:flutter/material.dart';
 
 import 'tangent_tokens.dart';
 
-/// The Blackout theme.
+/// The Instrument theme.
 ///
-/// Tangent ships one theme. The app is a recording instrument, and an
-/// instrument does not change colour with the system setting — so there is no
-/// light variant and [ThemeMode.dark] is pinned in `main.dart`.
-ThemeData tangentTheme() {
-  const scheme = ColorScheme.dark(
-    primary: TangentColors.signal,
-    onPrimary: TangentColors.sunken,
-    secondary: TangentColors.signal,
-    onSecondary: TangentColors.sunken,
-    surface: TangentColors.surface,
-    onSurface: TangentColors.text,
-    error: TangentColors.record,
-    onError: TangentColors.text,
-    outline: TangentColors.edge,
+/// Two chassis finishes exist — Aluminium (light) and Anodized (dark) — and
+/// both use the same lime [TangentPalette.select] and red-orange
+/// [TangentPalette.hot]. Anodized is the default. `tangentTheme()` with no
+/// argument keeps the legacy single-theme call sites working.
+ThemeData tangentTheme([TangentVariant variant = TangentVariant.anodized]) {
+  final p = TangentPalette.variant(variant);
+  final dark = p.brightness == Brightness.dark;
+
+  final scheme = ColorScheme(
+    brightness: p.brightness,
+    primary: p.select,
+    onPrimary: p.onSelect,
+    secondary: p.select,
+    onSecondary: p.onSelect,
+    secondaryContainer: p.select,
+    onSecondaryContainer: p.onSelect,
+    surface: p.chassis,
+    onSurface: p.ink,
+    surfaceContainerHighest: p.panel,
+    error: p.hot,
+    onError: dark ? p.ink : const Color(0xFFFFFFFF),
+    outline: p.seam,
   );
 
   final base = ThemeData(
     useMaterial3: true,
-    brightness: Brightness.dark,
+    brightness: p.brightness,
     colorScheme: scheme,
   );
 
+  RoundedRectangleBorder rounded(double r, [BorderSide side = BorderSide.none]) =>
+      RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(r),
+        side: side,
+      );
+
   return base.copyWith(
-    scaffoldBackgroundColor: TangentColors.surface,
-    canvasColor: TangentColors.surface,
-    dividerColor: TangentColors.edge,
-    dividerTheme: const DividerThemeData(
-      color: TangentColors.edge,
+    extensions: <ThemeExtension<dynamic>>[p],
+    scaffoldBackgroundColor: p.chassis,
+    canvasColor: p.chassis,
+    // Dividers exist only between major regions (sidebar / list / detail).
+    // Never put one between list items — use spacing and group headers.
+    dividerColor: p.seam,
+    dividerTheme: DividerThemeData(
+      color: p.seam,
       thickness: TangentShapes.edgeWidth,
       space: TangentShapes.edgeWidth,
     ),
-    appBarTheme: const AppBarTheme(
-      backgroundColor: TangentColors.sunken,
-      foregroundColor: TangentColors.text,
+    // Headers sit directly on the chassis; the seam below is the only line.
+    appBarTheme: AppBarTheme(
+      backgroundColor: p.chassis,
+      foregroundColor: p.ink,
       surfaceTintColor: Colors.transparent,
       elevation: 0,
       scrolledUnderElevation: 0,
       shape: Border(
-        bottom: BorderSide(
-          color: TangentColors.edge,
-          width: TangentShapes.edgeWidth,
-        ),
+        bottom: BorderSide(color: p.seam, width: TangentShapes.edgeWidth),
       ),
     ),
     cardTheme: CardThemeData(
-      color: TangentColors.panel,
+      color: p.panel,
       surfaceTintColor: Colors.transparent,
       elevation: 0,
       margin: EdgeInsets.zero,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(TangentShapes.panelRadius),
-        side: const BorderSide(
-          color: TangentColors.edge,
-          width: TangentShapes.edgeWidth,
-        ),
+      shape: rounded(
+        TangentShapes.radiusPanel,
+        BorderSide(color: p.seam, width: TangentShapes.edgeWidth),
       ),
     ),
-    // The record key. Red, fully round, and the only FAB in the app.
+    // The record key. Hot, and the only FAB in the app. Rounded, not a pill.
     floatingActionButtonTheme: FloatingActionButtonThemeData(
-      backgroundColor: TangentColors.record,
-      foregroundColor: TangentColors.sunken,
+      backgroundColor: p.hot,
+      foregroundColor: const Color(0xFFFFFFFF),
       elevation: 0,
       focusElevation: 0,
       hoverElevation: 0,
       highlightElevation: 0,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(TangentShapes.pillRadius),
-        side: const BorderSide(
-          color: TangentColors.edge,
-          width: TangentShapes.bezelWidth,
-        ),
-      ),
+      shape: rounded(TangentShapes.radiusPanel),
     ),
+    // Tags/chips: 4px radius, never stadium.
     chipTheme: ChipThemeData(
       backgroundColor: Colors.transparent,
-      selectedColor: TangentColors.signal,
-      checkmarkColor: TangentColors.sunken,
-      labelStyle: const TextStyle(
-        color: TangentColors.textDim,
+      selectedColor: p.select,
+      checkmarkColor: p.onSelect,
+      labelStyle: TextStyle(
+        color: p.inkMuted,
         fontSize: 12,
         fontWeight: FontWeight.w600,
       ),
-      secondaryLabelStyle: const TextStyle(
-        color: TangentColors.sunken,
+      secondaryLabelStyle: TextStyle(
+        color: p.onSelect,
         fontSize: 12,
         fontWeight: FontWeight.w700,
       ),
-      side: const BorderSide(color: TangentColors.edge),
-      shape: const StadiumBorder(),
+      side: BorderSide(color: p.seam),
+      shape: rounded(TangentShapes.radiusTag),
       showCheckmark: false,
     ),
-    listTileTheme: const ListTileThemeData(
-      textColor: TangentColors.text,
-      iconColor: TangentColors.textDim,
-      selectedColor: TangentColors.signal,
+    listTileTheme: ListTileThemeData(
+      textColor: p.ink,
+      iconColor: p.inkMuted,
+      selectedColor: p.select,
+      shape: rounded(TangentShapes.radiusControl),
     ),
-    iconTheme: const IconThemeData(color: TangentColors.textDim),
+    iconTheme: IconThemeData(color: p.inkMuted),
     textButtonTheme: TextButtonThemeData(
-      style: TextButton.styleFrom(foregroundColor: TangentColors.signal),
+      style: TextButton.styleFrom(
+        foregroundColor: p.ink,
+        shape: rounded(TangentShapes.radiusControl),
+      ),
     ),
     filledButtonTheme: FilledButtonThemeData(
       style: FilledButton.styleFrom(
-        backgroundColor: TangentColors.signal,
-        foregroundColor: TangentColors.sunken,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(TangentShapes.panelRadius),
-        ),
+        backgroundColor: p.select,
+        foregroundColor: p.onSelect,
+        shape: rounded(TangentShapes.radiusControl),
       ),
     ),
     outlinedButtonTheme: OutlinedButtonThemeData(
       style: OutlinedButton.styleFrom(
-        foregroundColor: TangentColors.signal,
-        side: const BorderSide(color: TangentColors.edge),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(TangentShapes.panelRadius),
-        ),
+        foregroundColor: p.ink,
+        side: BorderSide(color: p.seam),
+        shape: rounded(TangentShapes.radiusControl),
       ),
     ),
-    bottomSheetTheme: const BottomSheetThemeData(
-      backgroundColor: TangentColors.sunken,
+    bottomSheetTheme: BottomSheetThemeData(
+      backgroundColor: p.panel,
       surfaceTintColor: Colors.transparent,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(
-          top: Radius.circular(TangentShapes.sheetRadius),
+          top: Radius.circular(TangentShapes.radiusSheet),
         ),
       ),
     ),
     dialogTheme: DialogThemeData(
-      backgroundColor: TangentColors.panel,
+      backgroundColor: p.panel,
       surfaceTintColor: Colors.transparent,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(TangentShapes.sheetRadius),
-      ),
+      shape: rounded(TangentShapes.radiusSheet),
     ),
     snackBarTheme: SnackBarThemeData(
-      backgroundColor: TangentColors.panel,
-      contentTextStyle: const TextStyle(color: TangentColors.text),
-      actionTextColor: TangentColors.signal,
+      backgroundColor: p.panel,
+      contentTextStyle: TextStyle(color: p.ink),
+      actionTextColor: p.select,
       behavior: SnackBarBehavior.floating,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(TangentShapes.panelRadius),
-      ),
+      shape: rounded(TangentShapes.radiusControl),
     ),
-    progressIndicatorTheme: const ProgressIndicatorThemeData(
-      color: TangentColors.signal,
-      linearTrackColor: TangentColors.edge,
-      circularTrackColor: TangentColors.edge,
+    progressIndicatorTheme: ProgressIndicatorThemeData(
+      color: p.select,
+      linearTrackColor: p.chassisDeep,
+      circularTrackColor: p.chassisDeep,
     ),
-    sliderTheme: const SliderThemeData(
-      activeTrackColor: TangentColors.signal,
-      inactiveTrackColor: TangentColors.edge,
-      thumbColor: TangentColors.signal,
+    sliderTheme: SliderThemeData(
+      activeTrackColor: p.select,
+      inactiveTrackColor: p.chassisDeep,
+      thumbColor: p.select,
       trackHeight: 3,
       overlayColor: Colors.transparent,
     ),
     switchTheme: SwitchThemeData(
       thumbColor: WidgetStateProperty.resolveWith(
-        (states) => states.contains(WidgetState.selected)
-            ? TangentColors.signal
-            : TangentColors.textDim,
+        (states) =>
+            states.contains(WidgetState.selected) ? p.onSelect : p.inkMuted,
       ),
       trackColor: WidgetStateProperty.resolveWith(
+        (states) =>
+            states.contains(WidgetState.selected) ? p.select : p.chassisDeep,
+      ),
+      trackOutlineColor: WidgetStateProperty.resolveWith(
         (states) => states.contains(WidgetState.selected)
-            ? TangentColors.signal.withValues(alpha: 0.28)
-            : TangentColors.edge,
+            ? Colors.transparent
+            : p.seam,
       ),
     ),
     checkboxTheme: CheckboxThemeData(
       fillColor: WidgetStateProperty.resolveWith(
         (states) => states.contains(WidgetState.selected)
-            ? TangentColors.signal
+            ? p.select
             : Colors.transparent,
       ),
-      checkColor: WidgetStateProperty.all(TangentColors.sunken),
-      side: const BorderSide(color: TangentColors.edge, width: 1.5),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(3),
-      ),
+      checkColor: WidgetStateProperty.all(p.onSelect),
+      side: BorderSide(color: p.inkFaint, width: 1.5),
+      shape: rounded(TangentShapes.radiusTag),
     ),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
-      fillColor: TangentColors.sunken,
-      hintStyle: const TextStyle(color: TangentColors.textDim),
+      fillColor: p.panel,
+      hintStyle: TextStyle(color: p.inkFaint),
       border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(TangentShapes.panelRadius),
-        borderSide: const BorderSide(color: TangentColors.edge),
+        borderRadius: BorderRadius.circular(TangentShapes.radiusControl),
+        borderSide: BorderSide(color: p.seam),
       ),
       enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(TangentShapes.panelRadius),
-        borderSide: const BorderSide(color: TangentColors.edge),
+        borderRadius: BorderRadius.circular(TangentShapes.radiusControl),
+        borderSide: BorderSide(color: p.seam),
       ),
       focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(TangentShapes.panelRadius),
-        borderSide: const BorderSide(color: TangentColors.signal),
+        borderRadius: BorderRadius.circular(TangentShapes.radiusControl),
+        borderSide: BorderSide(color: p.select),
       ),
     ),
     textTheme: base.textTheme
         .apply(
-          bodyColor: TangentColors.text,
-          displayColor: TangentColors.text,
+          bodyColor: p.ink,
+          displayColor: p.ink,
         )
         .copyWith(
-          labelSmall: const TextStyle(
-            color: TangentColors.textDim,
+          labelSmall: TextStyle(
+            color: p.inkFaint,
             fontSize: 10,
             letterSpacing: 1.2,
             fontWeight: FontWeight.w600,

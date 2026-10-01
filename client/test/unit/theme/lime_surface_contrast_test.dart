@@ -47,14 +47,25 @@ void main() {
       );
     });
 
-    test('the error code stays red and remains legible on lime', () {
+    test('error text must NOT sit directly on lime — use onSelect instead',
+        () {
+      // Instrument rule: text and icons on a lime fill are ALWAYS black
+      // (onSecondaryContainer). The Blackout-era red-on-lime error code is
+      // retired because the Instrument hot (#FF4F1F) only measures ~2.4:1
+      // on the lime — illegible. A failure banner on lime renders its code
+      // in the dark on-colour like everything else on that surface.
       final scheme = tangentTheme().colorScheme;
 
       expect(scheme.error, TangentColors.record);
       expect(
         contrast(scheme.error, scheme.secondaryContainer),
-        greaterThanOrEqualTo(3.0),
-        reason: 'red on lime is a deliberate product choice; keep it readable',
+        lessThan(4.5),
+        reason: 'documents WHY hot text is banned on lime fills',
+      );
+      expect(
+        contrast(scheme.onSecondaryContainer, scheme.secondaryContainer),
+        greaterThanOrEqualTo(4.5),
+        reason: 'the on-colour is what error text on lime must use',
       );
     });
   });
