@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tangent/widgets/folder_picker.dart';
+import 'package:tangent/widgets/sheet_drag_handle.dart';
 
 /// The destination step of Move.
 ///
@@ -172,5 +173,24 @@ void main() {
 
     expect(find.byKey(FolderPicker.newFolderKey), findsOneWidget);
     expect(find.byKey(FolderPicker.noFolderKey), findsOneWidget);
+  });
+
+  testWidgets('wears the house drag handle over 52px-minimum rows',
+      (tester) async {
+    await open(tester, folders: twoFolders);
+
+    expect(find.byKey(SheetDragHandle.handleKey), findsOneWidget);
+    final Size bar = tester.getSize(find.byKey(SheetDragHandle.barKey));
+    expect(bar.width, 40);
+    expect(bar.height, 3);
+
+    expect(
+      tester.getSize(find.byKey(FolderPicker.folderKey('f-work'))).height,
+      greaterThanOrEqualTo(52),
+    );
+    expect(
+      tester.getSize(find.byKey(FolderPicker.noFolderKey)).height,
+      greaterThanOrEqualTo(52),
+    );
   });
 }

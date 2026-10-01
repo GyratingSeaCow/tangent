@@ -9,6 +9,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/notebook_repository.dart';
 import '../models/notebook.dart';
+import 'sheet_drag_handle.dart';
 
 /// Shows the picker and resolves to the chosen notebook's id, or null when
 /// dismissed. "New notebook" creates one titled [suggestedTitle] through the
@@ -90,8 +91,9 @@ class _NotebookPickerSheetState extends ConsumerState<_NotebookPickerSheet> {
         height: MediaQuery.sizeOf(context).height * 0.7,
         child: Column(
           children: <Widget>[
+            const SheetDragHandle(),
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
               child: TextField(
                 key: const ValueKey<String>('notebook-picker-search'),
                 controller: _query,
@@ -106,6 +108,7 @@ class _NotebookPickerSheetState extends ConsumerState<_NotebookPickerSheet> {
             ),
             ListTile(
               key: const ValueKey<String>('notebook-picker-new'),
+              minTileHeight: 52,
               leading: const Icon(Icons.add),
               title: const Text('New notebook'),
               subtitle: Text(
@@ -139,6 +142,7 @@ class _NotebookPickerSheetState extends ConsumerState<_NotebookPickerSheet> {
                             key: ValueKey<String>(
                               'notebook-picker-${entry.id}',
                             ),
+                            minTileHeight: 52,
                             leading: const Icon(Icons.menu_book_outlined),
                             title: Text(
                               entry.title.isEmpty ? '(untitled)' : entry.title,

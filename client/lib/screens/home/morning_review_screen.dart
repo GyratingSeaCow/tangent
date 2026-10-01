@@ -705,43 +705,63 @@ class _Line extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final TextTheme theme = Theme.of(context).textTheme;
-    return InkWell(
-      borderRadius: BorderRadius.circular(12),
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 11),
-        child: Row(
-          children: <Widget>[
-            Icon(icon, size: 18, color: TangentColors.daybreakInkDim),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                text,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: theme.bodyLarge?.copyWith(
-                  color: TangentColors.daybreakInk,
-                  height: 1.2,
-                ),
+    // IC v2 source cards: a rounded, hairline-bordered panel per item —
+    // same card language as the dark chassis, in daybreak's own values.
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(2, 0, 2, 6),
+      child: Container(
+        constraints: const BoxConstraints(minHeight: 58),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.5),
+          borderRadius: BorderRadius.circular(TangentShapes.panelRadius),
+          border: Border.all(
+            color: TangentColors.daybreakEdge,
+            width: TangentShapes.edgeWidth,
+          ),
+        ),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(TangentShapes.panelRadius),
+            onTap: onTap,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+              child: Row(
+                children: <Widget>[
+                  Icon(icon, size: 18, color: TangentColors.daybreakInkDim),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      text,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.bodyLarge?.copyWith(
+                        color: TangentColors.daybreakInk,
+                        height: 1.2,
+                      ),
+                    ),
+                  ),
+                  if (trailing != null) ...<Widget>[
+                    const SizedBox(width: 12),
+                    Text(
+                      trailing!,
+                      style: theme.bodySmall?.copyWith(
+                        color: trailingEmphasis
+                            ? const Color(0xFFB4532A)
+                            : TangentColors.daybreakInkDim,
+                        fontWeight: trailingEmphasis
+                            ? FontWeight.w600
+                            : FontWeight.w400,
+                        fontFeatures: const <FontFeature>[
+                          FontFeature.tabularFigures(),
+                        ],
+                      ),
+                    ),
+                  ],
+                ],
               ),
             ),
-            if (trailing != null) ...<Widget>[
-              const SizedBox(width: 12),
-              Text(
-                trailing!,
-                style: theme.bodySmall?.copyWith(
-                  color: trailingEmphasis
-                      ? const Color(0xFFB4532A)
-                      : TangentColors.daybreakInkDim,
-                  fontWeight:
-                      trailingEmphasis ? FontWeight.w600 : FontWeight.w400,
-                  fontFeatures: const <FontFeature>[
-                    FontFeature.tabularFigures(),
-                  ],
-                ),
-              ),
-            ],
-          ],
+          ),
         ),
       ),
     );
