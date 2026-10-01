@@ -170,6 +170,58 @@ void main() {
 
       await unmountHome(tester, db);
     });
+
+    testWidgets(
+        'jumping list-to-list never shows Capture in between (one atomic '
+        'navigator transaction)', (tester) async {
+      final LocalDb db = await mountHome(tester);
+
+      await tester.tap(find.byKey(railKey(TangentRoot.todo)));
+      await settle(tester);
+      expect(find.byType(TodoListScreen), findsOneWidget);
+
+      // Tap the rail ON the To Do screen and pump ONE frame at a time: at no
+      // point may Capture be the visible top-of-stack. Before the fix,
+      // popUntil(root) landed Home for a frame, then push animated the
+      // next list in — the "flash back to Home" seen on-device.
+      await tester.tap(find.byKey(railKey(TangentRoot.notebooks)).last);
+      await tester.pump();
+      // Mid-transition (the page route animates for 300ms): the screen we
+      // left must STILL be mounted beneath the incoming one, and the
+      // navigator must hold exactly [root, To Do, Notebooks] — never a bare
+      // [root, Notebooks] with Home showing through. With popUntil+push the
+      // To Do route was torn out before the push animated.
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.byType(NotebookListScreen), findsOneWidget);
+      expect(
+        find.byType(TodoListScreen),
+        findsOneWidget,
+        reason: 'the exiting list must stay beneath the transition',
+      );
+      final ModalRoute<dynamic>? todoRoute = ModalRoute.of(
+        tester.element(find.byType(TodoListScreen)),
+      );
+      expect(todoRoute, isNotNull);
+      // The discriminator: a popped route animates OUT (reverse) and Home
+      // shows through beneath it; a route removed by pushAndRemoveUntil
+      // sits still (completed) under the incoming page until it is
+      // disposed after the transition.
+      expect(
+        todoRoute!.animation!.status,
+        AnimationStatus.completed,
+        reason: 'popUntil would be animating To Do OUT (reverse)',
+      );
+      await settle(tester);
+      expect(find.byType(NotebookListScreen), findsOneWidget);
+      expect(find.byType(TodoListScreen), findsNothing);
+      // The stack is still root + destination: back walks out through Capture.
+      Navigator.of(tester.element(find.byType(NotebookListScreen))).pop();
+      await settle(tester);
+      expect(find.byType(HomeScreen), findsOneWidget);
+      expect(tester.takeException(), isNull);
+
+      await unmountHome(tester, db);
+    });
   });
 
   group('global create FAB', () {

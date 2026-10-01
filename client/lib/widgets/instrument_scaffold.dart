@@ -129,18 +129,27 @@ Future<void> goToRoot(
 ) async {
   final NavigatorState nav = Navigator.of(context);
   final CreateRequests requests = ref.read(createRequestsProvider);
-  nav.popUntil((route) => route.isFirst);
+  // ONE navigator transaction: push the destination and remove everything
+  // between it and the root. Flutter disposes the removed routes only after
+  // the new route has finished animating, so the screen you were on stays
+  // beneath the transition and Capture never flashes through. (popUntil
+  // followed by push tore the old route out first and showed Home for the
+  // length of the push animation.) The resulting stack is still
+  // root + destination, so Android back walks out through Capture.
+  bool rootOnly(Route<dynamic> route) => route.isFirst;
   switch (dest) {
     case TangentRoot.capture:
-      break; // Capture IS the root.
+      nav.popUntil(rootOnly); // Capture IS the root: a plain pop home.
     case TangentRoot.recordings:
       // The Recordings list can pop with a create action (its long-standing
       // contract); forward it into the create funnel the Capture screen
       // listens on, exactly as its FAB flow always behaved.
-      final DumpsCreateAction? action = await nav.push<DumpsCreateAction?>(
+      final DumpsCreateAction? action =
+          await nav.pushAndRemoveUntil<DumpsCreateAction?>(
         MaterialPageRoute<DumpsCreateAction?>(
           builder: (_) => const DumpsListScreen(),
         ),
+        rootOnly,
       );
       switch (action) {
         case DumpsCreateAction.textNote:
@@ -153,20 +162,24 @@ Future<void> goToRoot(
           break;
       }
     case TangentRoot.notebooks:
-      await nav.push<void>(
+      await nav.pushAndRemoveUntil<void>(
         MaterialPageRoute<void>(builder: (_) => const NotebookListScreen()),
+        rootOnly,
       );
     case TangentRoot.todo:
-      await nav.push<void>(
+      await nav.pushAndRemoveUntil<void>(
         MaterialPageRoute<void>(builder: (_) => const TodoListScreen()),
+        rootOnly,
       );
     case TangentRoot.ask:
-      await nav.push<void>(
+      await nav.pushAndRemoveUntil<void>(
         MaterialPageRoute<void>(builder: (_) => const AskScreen()),
+        rootOnly,
       );
     case TangentRoot.settings:
-      await nav.push<void>(
+      await nav.pushAndRemoveUntil<void>(
         MaterialPageRoute<void>(builder: (_) => const SettingsScreen()),
+        rootOnly,
       );
   }
 }

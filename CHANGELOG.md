@@ -5,6 +5,15 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.42.1 — 2026-10-01
+
+### Fixed
+- **No more Capture flash when jumping between screens.** Tapping a rail key
+  from a list screen used to pop to Capture first and then push the new
+  screen, so Capture showed for the length of the transition. The jump is now
+  one navigator transaction: the screen you were on stays beneath the
+  transition until the new one has landed. Back still walks out through
+  Capture.
 ## 1.42.0 — 2026-10-01
 
 ### Changed
