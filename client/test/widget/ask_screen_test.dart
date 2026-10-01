@@ -8,6 +8,7 @@ import 'package:mocktail/mocktail.dart';
 import 'package:tangent/data/ask_history_repository.dart';
 import 'package:tangent/data/local_db.dart';
 import 'package:tangent/screens/ask/ask_screen.dart';
+import 'package:tangent/theme/tangent_tokens.dart';
 import 'package:tangent/screens/dump/dump_detail_screen.dart';
 import 'package:tangent/screens/home/home_providers.dart'
     show documentSyncEngineProvider;
@@ -123,9 +124,57 @@ void main() {
       find.descendant(of: chip, matching: find.text('Recording 0:42')),
       findsOneWidget,
     );
-    final cards = tester.widgetList<Card>(find.byType(Card)).toList();
-    expect((cards[0].key as Key).toString(), contains('u-17'));
-    expect((cards[1].key as Key).toString(), contains('a-17'));
+    // Visual order: the question sits ABOVE its answer (the list is built
+    // newest-first under reverse: true, so assert positions, not build order).
+    final double userY = tester
+        .getTopLeft(find.byKey(const ValueKey<String>('ask-message-u-17')))
+        .dy;
+    final double answerY = tester
+        .getTopLeft(find.byKey(const ValueKey<String>('ask-message-a-17')))
+        .dy;
+    expect(userY, lessThan(answerY));
+    // Sent question: green (signal) bubble, dark readable text. Answer: the
+    // default card, untouched.
+    final Card userCard = tester
+        .widget<Card>(find.byKey(const ValueKey<String>('ask-message-u-17')));
+    final Card answerCard = tester
+        .widget<Card>(find.byKey(const ValueKey<String>('ask-message-a-17')));
+    expect(userCard.color, TangentColors.signal);
+    expect(answerCard.color, isNull);
+    expect(answerCard.shape, isNull);
+    expect(
+      tester.widget<Text>(find.text('When was lunch?')).style?.color,
+      TangentColors.sunken,
+    );
+    expect(tester.widget<Text>(find.text('Lunch was at 12:45.')).style, isNull);
+  });
+
+  testWidgets('opens on the NEWEST message of a multi-screen history',
+      (tester) async {
+    final List<AskHistoryMessage> messages = <AskHistoryMessage>[
+      for (int i = 0; i < 40; i++)
+        AskHistoryMessage(
+          id: 'm-$i',
+          role: i.isEven ? 'user' : 'assistant',
+          text: 'Message number $i',
+          sources: const [],
+          createdAt: DateTime.utc(2026, 9, 29, 8).add(Duration(minutes: i)),
+        ),
+    ];
+    await tester.pumpWidget(_app(history: messages));
+    await tester.pump();
+    // No scrolling at all: the latest answer is on screen, the oldest is not.
+    expect(find.text('Message number 39'), findsOneWidget);
+    expect(find.text('Message number 38'), findsOneWidget);
+    expect(find.text('Message number 0'), findsNothing);
+    final Rect view =
+        tester.getRect(find.byKey(const ValueKey<String>('ask-history')));
+    final Rect newest = tester.getRect(find.text('Message number 39'));
+    expect(
+      view.contains(newest.topLeft) && view.contains(newest.bottomRight),
+      isTrue,
+    );
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('citations stack one per line in a single left-aligned column',
