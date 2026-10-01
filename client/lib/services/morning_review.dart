@@ -1,27 +1,28 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-/// The morning review as plain data (Ask-arc queued item 2, spec
-/// 2026-09-30): at the chosen time, a notification AND a light-blue card
-/// at the top of Home that stays until viewed, then tucks away. Contents
-/// v1 are YESTERDAY'S captures only — recordings and notes, one line each.
+/// The morning review as plain data. v1.40: a notification at the chosen
+/// time plus a FULL-SCREEN daybreak-blue briefing over Home (once per
+/// morning, re-openable from the sun icon) — yesterday's captures (all of
+/// them), today's due and overdue to-dos, and pinned items.
 ///
 /// Pure and unit-tested like `due_digest.dart`: everything that decides
-/// WHAT the review shows and WHEN the card is visible lives here, because
-/// none of it is reachable once entangled with the notification plugin or
-/// the widget tree. The platform layer posts what this returns — and posts
-/// NOTHING when it returns null. Zero captures yesterday means zero noise:
-/// no notification, no empty-shell card.
+/// WHAT the review shows and WHEN it presents lives here, because none of
+/// it is reachable once entangled with the notification plugin or the
+/// widget tree. The NOTIFICATION posts nothing when [buildMorningReview]
+/// returns null (zero captures yesterday = no noise); the screen itself
+/// still presents with its calm empty state.
 library;
 
 import '../data/local_db.dart';
 import 'due_digest.dart';
 
 /// How many capture titles the NOTIFICATION body spells out before
-/// "and N more" (the card itself lists every item).
+/// "and N more" (the screen lists every item).
 const int kMorningReviewNamedItems = 3;
 
-/// The review that belongs to the morning of [reviewDay]: what the card
-/// shows and what the notification says. [items] are yesterday's captures
-/// relative to that morning, oldest first — the order the day happened.
+/// The review that belongs to the morning of [reviewDay]: the captures
+/// section of the screen and what the notification says. [items] are
+/// yesterday's captures relative to that morning, oldest first — the order
+/// the day happened.
 class MorningReview {
   const MorningReview({
     required this.reviewDay,
@@ -73,19 +74,6 @@ MorningReview? buildMorningReview(List<DumpRow> dumps, DateTime reviewDay) {
 
 bool _sameLocalDay(DateTime at, DateTime day) =>
     at.year == day.year && at.month == day.month && at.day == day.day;
-
-/// Whether the Home card stands right now. True only while the feature is
-/// on, the day before the current review morning produced captures, and
-/// that morning has not been viewed yet ([viewedDay] is the `YYYY-MM-DD`
-/// last recorded by the card's own tuck action; '' when never).
-bool morningReviewCardVisible({
-  required bool enabled,
-  required String viewedDay,
-  required MorningReview? review,
-}) {
-  if (!enabled || review == null) return false;
-  return viewedDay != isoDate(review.reviewDay);
-}
 
 /// What a pinned row is, so the briefing can pick its icon and route.
 enum MorningPinKind { recording, note, notebook, todo }

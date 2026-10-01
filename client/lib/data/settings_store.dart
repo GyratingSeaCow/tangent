@@ -157,8 +157,8 @@ class SettingsStore {
   /// the missed digest once per day and never twice for the same day.
   String lastReminderShownDay;
 
-  /// Morning review (Ask-arc queued item 2): a notification plus a
-  /// light-blue Home card with yesterday's captures. OFF by default for
+  /// Morning review: a notification plus (v1.40) a full-screen daybreak
+  /// briefing over Home and the sun icon. OFF by default for
   /// the same reason as [remindersEnabled] — it asks for the notification
   /// permission, so it only ever turns on by hand.
   bool morningReviewEnabled;
@@ -174,10 +174,10 @@ class SettingsStore {
   /// once per day and never twice for the same day.
   String lastMorningReviewShownDay;
 
-  /// `YYYY-MM-DD` of the review day the user last VIEWED the Home card
-  /// for; '' when never. The card stays — across launches — until its
-  /// review day is recorded here, then tucks away (spec: "stays until
-  /// viewed"). LOCAL-ONLY, in preferences on purpose: viewing is
+  /// `YYYY-MM-DD` of the review day the user last VIEWED the full-screen
+  /// review for; '' when never. The screen auto-presents once per review
+  /// day until that day is recorded here (spec: "first app open of the
+  /// day"). LOCAL-ONLY, in preferences on purpose: viewing is
   /// per-device presentation state, not data, so it takes no schema
   /// change and never syncs.
   String morningReviewViewedDay;

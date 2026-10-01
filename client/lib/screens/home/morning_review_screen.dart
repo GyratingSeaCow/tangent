@@ -16,6 +16,7 @@ library;
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show SystemUiOverlayStyle;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/local_db.dart';
@@ -124,11 +125,14 @@ final StreamProvider<MorningBriefing?> morningBriefingProvider =
   return out.stream;
 });
 
+/// Route name of the full-screen review.
+const String kMorningReviewRouteName = 'morning-review';
+
 /// Opens the full-screen review and records the morning as viewed.
 Future<void> openMorningReview(BuildContext context) =>
     Navigator.of(context).push<void>(
       PageRouteBuilder<void>(
-        settings: const RouteSettings(name: 'morning-review'),
+        settings: const RouteSettings(name: kMorningReviewRouteName),
         transitionDuration: const Duration(milliseconds: 420),
         reverseTransitionDuration: const Duration(milliseconds: 280),
         pageBuilder: (_, __, ___) => const MorningReviewScreen(),
@@ -176,7 +180,10 @@ class MorningReviewSunButton extends ConsumerWidget {
 }
 
 /// Invisible Home companion: presents the review once per review morning,
-/// including AT the fire time when Home is already open.
+/// including AT the fire time when Home is already open — but ONLY while
+/// Home's own route is the current one. Over any other screen (a recording,
+/// Settings, or the review itself, opened from the sun icon) it waits; the
+/// [ModalRoute] dependency rebuilds it when Home is uncovered again.
 class MorningReviewAutoPresenter extends ConsumerStatefulWidget {
   const MorningReviewAutoPresenter({super.key});
 
@@ -188,7 +195,9 @@ class MorningReviewAutoPresenter extends ConsumerStatefulWidget {
 class _MorningReviewAutoPresenterState
     extends ConsumerState<MorningReviewAutoPresenter> {
   Timer? _boundary;
+  bool? _armedFor;
   String? _presentedDay;
+  bool _presenting = false;
 
   @override
   void dispose() {
@@ -196,7 +205,11 @@ class _MorningReviewAutoPresenterState
     super.dispose();
   }
 
-  void _armBoundaryTimer(bool enabled) {
+  /// Arms the fire-time re-check only when [enabled] changes (or after it
+  /// fires) — never on every rebuild.
+  void _syncBoundaryTimer(bool enabled) {
+    if (_armedFor == enabled) return;
+    _armedFor = enabled;
     _boundary?.cancel();
     _boundary = null;
     if (!enabled) return;
@@ -209,14 +222,15 @@ class _MorningReviewAutoPresenterState
       next.difference(now),
       () {
         if (!mounted) return;
+        _armedFor = null;
         ref.invalidate(morningBriefingProvider);
-        _armBoundaryTimer(ref.read(morningReviewEnabledProvider));
+        _syncBoundaryTimer(ref.read(morningReviewEnabledProvider));
       },
     );
   }
 
-  void _maybePresent(MorningBriefing? briefing) {
-    if (briefing == null) return;
+  void _maybePresent(MorningBriefing? briefing, {required bool homeOnTop}) {
+    if (briefing == null || _presenting || !homeOnTop) return;
     final String day = isoDate(briefing.reviewDay);
     if (_presentedDay == day) return;
     if (!morningReviewShouldAutoPresent(
@@ -227,16 +241,29 @@ class _MorningReviewAutoPresenterState
       return;
     }
     _presentedDay = day;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) openMorningReview(context);
+    _presenting = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      // Re-check after the frame: a route may have been pushed meanwhile.
+      if (!mounted || ModalRoute.of(context)?.isCurrent == false) {
+        _presentedDay = null;
+        _presenting = false;
+        return;
+      }
+      await openMorningReview(context);
+      _presenting = false;
     });
   }
 
   @override
   Widget build(BuildContext context) {
     final bool enabled = ref.watch(morningReviewEnabledProvider);
-    _armBoundaryTimer(enabled);
-    _maybePresent(ref.watch(morningBriefingProvider).valueOrNull);
+    // Null outside any route (bare widget tests): treat as on top.
+    final bool homeOnTop = ModalRoute.of(context)?.isCurrent ?? true;
+    _syncBoundaryTimer(enabled);
+    _maybePresent(
+      ref.watch(morningBriefingProvider).valueOrNull,
+      homeOnTop: homeOnTop,
+    );
     return const SizedBox.shrink();
   }
 }
@@ -248,6 +275,7 @@ class MorningReviewScreen extends ConsumerStatefulWidget {
   static const Key closeKey = Key('morning-review-close');
   static const Key capturesKey = Key('morning-review-captures');
   static const Key dueKey = Key('morning-review-due');
+  static const Key overdueKey = Key('morning-review-overdue');
   static const Key pinnedKey = Key('morning-review-pinned');
   static const Key emptyKey = Key('morning-review-empty');
 
@@ -262,15 +290,17 @@ class MorningReviewScreen extends ConsumerStatefulWidget {
 }
 
 class _MorningReviewScreenState extends ConsumerState<MorningReviewScreen> {
-  bool _recorded = false;
+  /// Review day already recorded by this open screen. Per DAY, not once:
+  /// a screen left open across the next fire time shows (and so has
+  /// viewed) the new morning too.
+  String? _recordedDay;
 
   void _recordView(MorningBriefing briefing) {
-    if (_recorded) return;
-    _recorded = true;
+    final String day = isoDate(briefing.reviewDay);
+    if (_recordedDay == day) return;
+    _recordedDay = day;
     unawaited(
-      ref
-          .read(settingsStoreProvider)
-          .setMorningReviewViewedDay(isoDate(briefing.reviewDay)),
+      ref.read(settingsStoreProvider).setMorningReviewViewedDay(day),
     );
   }
 
@@ -310,99 +340,119 @@ class _MorningReviewScreenState extends ConsumerState<MorningReviewScreen> {
     final DateTime now = ref.watch(morningReviewClockProvider)();
     final MediaQueryData media = MediaQuery.of(context);
 
-    return Scaffold(
-      key: MorningReviewScreen.screenKey,
-      backgroundColor: TangentColors.daybreak,
-      body: DecoratedBox(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            stops: <double>[0, 0.45],
-            colors: <Color>[TangentColors.daybreakEdge, TangentColors.daybreak],
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      // Daybreak blue is light: dark status/navigation icons over it, in
+      // either app theme.
+      value: SystemUiOverlayStyle.dark.copyWith(
+        statusBarColor: Colors.transparent,
+        systemNavigationBarColor: TangentColors.daybreak,
+        systemNavigationBarIconBrightness: Brightness.dark,
+      ),
+      child: Scaffold(
+        key: MorningReviewScreen.screenKey,
+        backgroundColor: TangentColors.daybreak,
+        body: DecoratedBox(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              stops: <double>[0, 0.45],
+              colors: <Color>[
+                TangentColors.daybreakEdge,
+                TangentColors.daybreak,
+              ],
+            ),
           ),
-        ),
-        child: SafeArea(
-          bottom: false,
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 640),
-              child: CustomScrollView(
-                slivers: <Widget>[
-                  SliverToBoxAdapter(child: _header(context, now, briefing)),
-                  if (briefing == null)
-                    const SliverFillRemaining(
-                      hasScrollBody: false,
-                      child: Center(
-                        child: CircularProgressIndicator(
-                          color: TangentColors.daybreakInkDim,
+          child: SafeArea(
+            bottom: false,
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 640),
+                child: CustomScrollView(
+                  slivers: <Widget>[
+                    SliverToBoxAdapter(child: _header(context, now, briefing)),
+                    if (briefing == null)
+                      const SliverFillRemaining(
+                        hasScrollBody: false,
+                        child: Center(
+                          child: CircularProgressIndicator(
+                            color: TangentColors.daybreakInkDim,
+                          ),
                         ),
-                      ),
-                    )
-                  else if (briefing.isEmpty)
-                    SliverFillRemaining(
-                      hasScrollBody: false,
-                      child: _empty(context),
-                    )
-                  else ...<Widget>[
-                    if (briefing.captures.isNotEmpty)
-                      _section(
-                        key: MorningReviewScreen.capturesKey,
-                        icon: Icons.history_rounded,
-                        title: morningReviewDayLabel(briefing.review!, now),
-                        caption: morningReviewCountLine(briefing.review!),
-                        rows: <Widget>[
-                          for (final DumpRow d in briefing.captures)
-                            _Line(
-                              key: MorningReviewScreen.captureKey(d.id),
-                              icon: d.mode == 'text_note'
-                                  ? Icons.sticky_note_2_outlined
-                                  : Icons.mic_none_rounded,
-                              text: morningReviewLine(d),
-                              trailing: MaterialLocalizations.of(context)
-                                  .formatTimeOfDay(
-                                TimeOfDay.fromDateTime(d.createdAt.toLocal()),
+                      )
+                    else if (briefing.isEmpty)
+                      SliverFillRemaining(
+                        hasScrollBody: false,
+                        child: _empty(context),
+                      )
+                    else ...<Widget>[
+                      if (briefing.captures.isNotEmpty)
+                        _section(
+                          key: MorningReviewScreen.capturesKey,
+                          icon: Icons.history_rounded,
+                          title: morningReviewDayLabel(briefing.review!, now),
+                          caption: morningReviewCountLine(briefing.review!),
+                          rows: <Widget>[
+                            for (final DumpRow d in briefing.captures)
+                              _Line(
+                                key: MorningReviewScreen.captureKey(d.id),
+                                icon: d.mode == 'text_note'
+                                    ? Icons.sticky_note_2_outlined
+                                    : Icons.mic_none_rounded,
+                                text: morningReviewLine(d),
+                                trailing: MaterialLocalizations.of(context)
+                                    .formatTimeOfDay(
+                                  TimeOfDay.fromDateTime(d.createdAt.toLocal()),
+                                ),
+                                onTap: () => _openDump(d.id),
                               ),
-                              onTap: () => _openDump(d.id),
-                            ),
-                        ],
+                          ],
+                        ),
+                      if (briefing.dueToday.isNotEmpty)
+                        _section(
+                          key: MorningReviewScreen.dueKey,
+                          icon: Icons.event_available_rounded,
+                          title: 'Due today',
+                          caption: '${briefing.dueToday.length}',
+                          rows: <Widget>[
+                            for (final TodoRow t in briefing.dueToday)
+                              _todoLine(t, overdue: false),
+                          ],
+                        ),
+                      if (briefing.overdue.isNotEmpty)
+                        _section(
+                          key: MorningReviewScreen.overdueKey,
+                          icon: Icons.schedule_rounded,
+                          title: 'Overdue',
+                          caption: '${briefing.overdue.length}',
+                          rows: <Widget>[
+                            for (final TodoRow t in briefing.overdue)
+                              _todoLine(t, overdue: true),
+                          ],
+                        ),
+                      if (briefing.pinned.isNotEmpty)
+                        _section(
+                          key: MorningReviewScreen.pinnedKey,
+                          icon: Icons.push_pin_outlined,
+                          title: 'Pinned',
+                          caption:
+                              '${briefing.pinned.length} item${briefing.pinned.length == 1 ? '' : 's'}',
+                          rows: <Widget>[
+                            for (final MorningPin p in briefing.pinned)
+                              _Line(
+                                key: MorningReviewScreen.pinKey(p.id),
+                                icon: _pinIcon(p.kind),
+                                text: p.title.isEmpty ? '(untitled)' : p.title,
+                                onTap: () => _openPin(p),
+                              ),
+                          ],
+                        ),
+                      SliverToBoxAdapter(
+                        child: SizedBox(height: media.padding.bottom + 40),
                       ),
-                    if (briefing.dueToday.isNotEmpty ||
-                        briefing.overdue.isNotEmpty)
-                      _section(
-                        key: MorningReviewScreen.dueKey,
-                        icon: Icons.event_available_rounded,
-                        title: 'Due today',
-                        caption: _dueCaption(briefing),
-                        rows: <Widget>[
-                          for (final TodoRow t in briefing.dueToday)
-                            _todoLine(t, overdue: false),
-                          for (final TodoRow t in briefing.overdue)
-                            _todoLine(t, overdue: true),
-                        ],
-                      ),
-                    if (briefing.pinned.isNotEmpty)
-                      _section(
-                        key: MorningReviewScreen.pinnedKey,
-                        icon: Icons.push_pin_outlined,
-                        title: 'Pinned',
-                        caption:
-                            '${briefing.pinned.length} item${briefing.pinned.length == 1 ? '' : 's'}',
-                        rows: <Widget>[
-                          for (final MorningPin p in briefing.pinned)
-                            _Line(
-                              key: MorningReviewScreen.pinKey(p.id),
-                              icon: _pinIcon(p.kind),
-                              text: p.title.isEmpty ? '(untitled)' : p.title,
-                              onTap: () => _openPin(p),
-                            ),
-                        ],
-                      ),
-                    SliverToBoxAdapter(
-                      child: SizedBox(height: media.padding.bottom + 40),
-                    ),
+                    ],
                   ],
-                ],
+                ),
               ),
             ),
           ),
@@ -563,17 +613,31 @@ class _MorningReviewScreenState extends ConsumerState<MorningReviewScreen> {
         key: MorningReviewScreen.todoKey(t.id),
         icon: Icons.check_box_outline_blank_rounded,
         text: t.body.trim(),
-        trailing: overdue ? 'Overdue' : null,
+        // Overdue rows say how late, quietly emphasised.
+        trailing: overdue && t.dueDate != null ? _dueLabel(t.dueDate!) : null,
         trailingEmphasis: overdue,
         onTap: () => _push(const TodoListScreen()),
       );
 
-  static String _dueCaption(MorningBriefing b) {
-    final List<String> parts = <String>[
-      if (b.dueToday.isNotEmpty) '${b.dueToday.length} today',
-      if (b.overdue.isNotEmpty) '${b.overdue.length} overdue',
+  /// 'Sep 27' from an ISO date; the raw string if it does not parse.
+  static String _dueLabel(String iso) {
+    final DateTime? d = DateTime.tryParse(iso);
+    if (d == null) return iso;
+    const List<String> months = <String>[
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
     ];
-    return parts.join(' \u00B7 ');
+    return '${months[d.month - 1]} ${d.day}';
   }
 
   static IconData _pinIcon(MorningPinKind kind) => switch (kind) {

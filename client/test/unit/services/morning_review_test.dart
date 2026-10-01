@@ -112,61 +112,6 @@ void main() {
     });
   });
 
-  group('morningReviewCardVisible', () {
-    MorningReview review() => buildMorningReview(
-          <DumpRow>[dump('x', createdAt: DateTime(2026, 9, 29, 12))],
-          DateTime(2026, 9, 30),
-        )!;
-
-    test('stands while enabled and unviewed', () {
-      expect(
-        morningReviewCardVisible(
-          enabled: true,
-          viewedDay: '',
-          review: review(),
-        ),
-        isTrue,
-      );
-    });
-
-    test('an older viewed day does not satisfy this morning', () {
-      expect(
-        morningReviewCardVisible(
-          enabled: true,
-          viewedDay: '2026-09-29',
-          review: review(),
-        ),
-        isTrue,
-      );
-    });
-
-    test('tucked once its own day is viewed', () {
-      expect(
-        morningReviewCardVisible(
-          enabled: true,
-          viewedDay: '2026-09-30',
-          review: review(),
-        ),
-        isFalse,
-      );
-    });
-
-    test('never stands while off, and never without captures', () {
-      expect(
-        morningReviewCardVisible(
-          enabled: false,
-          viewedDay: '',
-          review: review(),
-        ),
-        isFalse,
-      );
-      expect(
-        morningReviewCardVisible(enabled: true, viewedDay: '', review: null),
-        isFalse,
-      );
-    });
-  });
-
   group('presentation lines', () {
     test('day label says Yesterday while the review is current', () {
       final MorningReview review = buildMorningReview(

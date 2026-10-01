@@ -4,6 +4,7 @@ import 'dart:async';
 import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show SystemUiOverlayStyle;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tangent/data/local_db.dart';
@@ -37,9 +38,13 @@ void main() {
   /// The morning of 2026-09-30, after the default 08:00.
   final DateTime morning = DateTime(2026, 9, 30, 9);
 
+  /// The injected clock reads this, so a test can roll to the next morning.
+  late DateTime clockNow;
+
   setUp(() {
     db = LocalDb.forTesting(NativeDatabase.memory());
     store = SettingsStore(morningReviewEnabled: true);
+    clockNow = morning;
   });
 
   Future<void> insertDump(
@@ -89,7 +94,7 @@ void main() {
       overrides: <Override>[
         localDbProvider.overrideWithValue(db),
         settingsStoreProvider.overrideWithValue(store),
-        morningReviewClockProvider.overrideWithValue(() => morning),
+        morningReviewClockProvider.overrideWithValue(() => clockNow),
         morningReviewTimerFactoryProvider
             .overrideWithValue((_, __) => _NeverTimer()),
       ],
@@ -253,7 +258,23 @@ void main() {
           find.descendant(of: screen(), matching: find.byType(Scrollable)),
     );
     expect(find.byKey(MorningReviewScreen.todoKey('t-due')), findsOneWidget);
-    expect(find.text('Overdue'), findsOneWidget);
+    // Overdue is its own section, not filed under "Due today".
+    expect(find.text('OVERDUE'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(MorningReviewScreen.overdueKey),
+        matching: find.byKey(MorningReviewScreen.todoKey('t-late')),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(MorningReviewScreen.dueKey),
+        matching: find.byKey(MorningReviewScreen.todoKey('t-late')),
+      ),
+      findsNothing,
+    );
+    expect(find.text('Sep 27'), findsOneWidget);
     expect(find.byKey(MorningReviewScreen.todoKey('t-later')), findsNothing);
 
     await tester.scrollUntilVisible(
@@ -267,6 +288,72 @@ void main() {
       findsOneWidget,
     );
     expect(tester.takeException(), isNull);
+    await unmount(tester, c);
+  });
+
+  testWidgets('dark status-bar icons over daybreak blue', (tester) async {
+    final ProviderContainer c = await mount(tester);
+    final AnnotatedRegion<SystemUiOverlayStyle> region =
+        tester.widget<AnnotatedRegion<SystemUiOverlayStyle>>(
+      find
+          .ancestor(
+            of: screen(),
+            matching: find.byType(AnnotatedRegion<SystemUiOverlayStyle>),
+          )
+          .first,
+    );
+    expect(region.value.statusBarIconBrightness, Brightness.dark);
+    expect(region.value.statusBarBrightness, Brightness.light);
+    await unmount(tester, c);
+  });
+
+  testWidgets('never double-pushes when the fire time passes while open',
+      (tester) async {
+    await insertDump('Standup', DateTime(2026, 9, 29, 9, 30));
+    final ProviderContainer c = await mount(tester);
+    expect(screen(), findsOneWidget);
+    // Left open past the NEXT morning's fire time: the boundary timer
+    // invalidates the briefing and a new, unviewed review day appears.
+    clockNow = DateTime(2026, 10, 1, 9);
+    c.invalidate(morningBriefingProvider);
+    await settle(tester);
+    expect(screen(), findsOneWidget, reason: 'one review route, not two');
+    await tester.tap(find.byKey(MorningReviewScreen.closeKey));
+    await settle(tester);
+    await settle(tester);
+    // The open screen recorded the new day when it rebuilt, so closing
+    // returns to Home rather than presenting again.
+    expect(store.morningReviewViewedDay, '2026-10-01');
+    expect(screen(), findsNothing);
+    await unmount(tester, c);
+  });
+
+  testWidgets('does not present over another screen; waits for Home',
+      (tester) async {
+    await tester.runAsync(() => store.setMorningReviewViewedDay('2026-09-30'));
+    final ProviderContainer c = await mount(tester);
+    expect(screen(), findsNothing);
+    // User navigates away from Home.
+    final NavigatorState nav = tester.state(find.byType(Navigator));
+    unawaited(
+      nav.push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => const Scaffold(body: Text('elsewhere')),
+        ),
+      ),
+    );
+    await settle(tester);
+    // A new review morning becomes due while elsewhere.
+    await tester.runAsync(() => store.setMorningReviewViewedDay(''));
+    c.invalidate(morningBriefingProvider);
+    await settle(tester);
+    expect(screen(), findsNothing, reason: 'never over a non-Home route');
+    expect(find.text('elsewhere'), findsOneWidget);
+    // Back on Home: now it presents.
+    nav.pop();
+    await settle(tester);
+    await settle(tester);
+    expect(screen(), findsOneWidget);
     await unmount(tester, c);
   });
 }

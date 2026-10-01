@@ -4,10 +4,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tangent/data/local_db.dart';
 import 'package:tangent/data/settings_store.dart';
+import 'package:tangent/screens/home/morning_review_screen.dart'
+    show morningBriefingProvider, morningReviewEnabledProvider;
 import 'package:tangent/screens/settings/reminders_section.dart';
 import 'package:tangent/screens/settings/settings_screen.dart'
     show settingsStoreProvider;
 import 'package:tangent/services/due_reminder_scheduler.dart';
+import 'package:tangent/services/morning_review.dart' show MorningBriefing;
 import 'package:tangent/services/morning_review_scheduler.dart';
 
 import '../support/fake_due_reminder_port.dart';
@@ -50,7 +53,8 @@ void main() {
           ),
         ],
         child: const MaterialApp(
-          home: Scaffold(body: SingleChildScrollView(child: RemindersSection())),
+          home:
+              Scaffold(body: SingleChildScrollView(child: RemindersSection())),
         ),
       );
 
@@ -252,6 +256,53 @@ void main() {
     expect(store.morningReviewEnabled, isFalse);
     expect(morningSwitch(tester).value, isFalse);
     expect(morningStatusText(tester), 'Off');
+  });
+
+  testWidgets(
+      'morning toggle drives the live enabled provider (sun icon / '
+      'auto-present) both ways', (tester) async {
+    final ProviderContainer c = ProviderContainer(
+      overrides: <Override>[
+        settingsStoreProvider.overrideWithValue(store),
+        remindersSupportedProvider.overrideWithValue(true),
+        dueReminderPortProvider.overrideWithValue(port),
+        dueReminderSchedulerProvider.overrideWith(
+          (ref) => DueReminderScheduler(
+            port: port,
+            loadTodos: () async => todos,
+            now: () => DateTime(2026, 9, 27, 6, 30),
+          ),
+        ),
+        morningReviewPortProvider.overrideWithValue(morningPort),
+        morningReviewSchedulerProvider.overrideWith(
+          (ref) => MorningReviewScheduler(
+            port: morningPort,
+            loadDumps: () async => <DumpRow>[],
+            now: () => DateTime(2026, 9, 27, 6, 30),
+          ),
+        ),
+        morningBriefingProvider
+            .overrideWith((ref) => Stream<MorningBriefing?>.value(null)),
+      ],
+    );
+    addTearDown(c.dispose);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: c,
+        child: const MaterialApp(
+          home:
+              Scaffold(body: SingleChildScrollView(child: RemindersSection())),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(c.read(morningReviewEnabledProvider), isFalse);
+    await tester.tap(morningSwitchFinder());
+    await tester.pumpAndSettle();
+    expect(c.read(morningReviewEnabledProvider), isTrue);
+    await tester.tap(morningSwitchFinder());
+    await tester.pumpAndSettle();
+    expect(c.read(morningReviewEnabledProvider), isFalse);
   });
 
   testWidgets('morning review denied: says so and offers system settings',
