@@ -41,12 +41,15 @@ import '../../services/ocr_settings_client.dart';
 import '../../services/recording_playback.dart';
 import '../../services/stamp_reconcile.dart';
 import '../../services/transcript_timings.dart';
+import '../../theme/tangent_tokens.dart';
 import '../../widgets/dump_picker_sheet.dart';
 import '../../widgets/ink_palette_popup.dart';
+import '../../widgets/instrument_scaffold.dart';
 import '../../widgets/notebook_dump_card.dart';
 import '../../widgets/notebook_image_block.dart';
 import '../../widgets/notebook_ink_canvas.dart';
 import '../../widgets/page_background_sheet.dart';
+import '../../widgets/top_nav_rail.dart';
 import '../dump/dump_detail_screen.dart';
 import '../dump/dumps_providers.dart';
 import '../home/home_providers.dart' show recordingPlaybackEngineFactoryProvider;
@@ -1637,7 +1640,12 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
         // with the failure snackbar explaining why.
         unawaited(_saveAndPop());
       },
-      child: Scaffold(
+      child: InstrumentScaffold(
+        // A pushed editor still belongs to Notebooks on the rail. The
+        // global create key is OFF here: the bottom-right corner is
+        // stylus space on a drawing surface.
+        root: TangentRoot.notebooks,
+        showCreateFab: false,
         appBar: AppBar(
           title: _loading || _notebook == null
               ? const Text('Notebook')
@@ -1713,7 +1721,10 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                   // triggerMode is longPress on touch), win the arena, and
                   // swallow the palette gesture — so the tooltip is manual
                   // here. Mouse hover is unaffected by triggerMode.
-                  Tooltip(
+                  _toolPill(
+                    tool: 'pen',
+                    active: _drawing && _tool == InkTool.pen,
+                    child: Tooltip(
                     message: _drawing ? 'Stop drawing' : 'Draw',
                     triggerMode: TooltipTriggerMode.manual,
                     child: GestureDetector(
@@ -1750,7 +1761,11 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                       ),
                     ),
                   ),
-                  Tooltip(
+                  ),
+                  _toolPill(
+                    tool: 'highlighter',
+                    active: _drawing && _tool == InkTool.highlighter,
+                    child: Tooltip(
                     message: 'Highlighter. Long-press for colours',
                     triggerMode: TooltipTriggerMode.manual,
                     child: GestureDetector(
@@ -1780,7 +1795,11 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                       ),
                     ),
                   ),
-                  IconButton(
+                  ),
+                  _toolPill(
+                    tool: 'eraser',
+                    active: _erasing,
+                    child: IconButton(
                     // An unlabelled mode is how you end up erasing when you
                     // meant to draw, so the active tool is always shown as
                     // selected.
@@ -1801,7 +1820,11 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                               if (_erasing) _lassoing = false;
                             }),
                   ),
-                  IconButton(
+                  ),
+                  _toolPill(
+                    tool: 'nib',
+                    active: _penStyle == PenStyle.fountain,
+                    child: IconButton(
                     key: const ValueKey('notebook-pen-style'),
                     // The nib: fountain tapers with pen pressure like
                     // Samsung Notes; ballpoint is the original uniform
@@ -1828,7 +1851,11 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                               _dirty = true;
                             }),
                   ),
-                  IconButton(
+                  ),
+                  _toolPill(
+                    tool: 'lasso',
+                    active: _lassoing,
+                    child: IconButton(
                     key: const ValueKey('notebook-lasso'),
                     // The smart lasso: circle ink to select it, drag the
                     // selection anywhere, delete it from this row.
@@ -1846,6 +1873,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                               if (_lassoing) _erasing = false;
                               if (!_lassoing) _lassoSelection = false;
                             }),
+                  ),
                   ),
                   if (_lassoing)
                     IconButton(
@@ -1914,7 +1942,12 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
             ),
           ),
         ),
-        bottomNavigationBar: _notebook == null
+        // The editor keeps its own inner Scaffold for the insert bar:
+        // Scaffold's bottomNavigationBar geometry (keyboard avoidance)
+        // is exactly what the bar always had, and the rail chrome above
+        // must not change it.
+        body: Scaffold(
+          bottomNavigationBar: _notebook == null
             ? null
             : BottomAppBar(
                 // One menu in the bottom-left holds every insert action, so
@@ -2037,7 +2070,30 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
             Expanded(child: _buildBody(rowsById)),
           ],
         ),
+        ),
       ),
+    );
+  }
+
+  /// Wraps a tool-strip MODE button in the rail's visual language: the
+  /// active tool sits on a quiet tinted pill, inactive tools sit on
+  /// nothing. Only the wrapper is decorated — the button's own `color`
+  /// (the picked ink colour on pen/highlighter) and `isSelected` are left
+  /// alone, because ink colour carries meaning here.
+  Widget _toolPill({
+    required String tool,
+    required bool active,
+    required Widget child,
+  }) {
+    return Container(
+      key: ValueKey<String>('tool-pill-$tool'),
+      decoration: active
+          ? BoxDecoration(
+              color: TopNavRail.activeTint,
+              borderRadius: BorderRadius.circular(TangentShapes.panelRadius),
+            )
+          : null,
+      child: child,
     );
   }
 

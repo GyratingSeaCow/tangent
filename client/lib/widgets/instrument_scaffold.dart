@@ -70,7 +70,14 @@ class InstrumentScaffold extends ConsumerWidget {
             MediaQuery.removePadding(
               context: context,
               removeTop: true,
-              child: appBar!,
+              // An app bar in a Column gets UNBOUNDED height, which blows up
+              // any bar whose `bottom:` uses flex (the notebook editor's
+              // tool strip has an Expanded width slider). Pin it to the
+              // height it already declares.
+              child: SizedBox(
+                height: appBar!.preferredSize.height,
+                child: appBar!,
+              ),
             ),
           Expanded(child: body),
         ],
