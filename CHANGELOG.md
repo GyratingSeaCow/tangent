@@ -5,6 +5,12 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.39.0 — 2026-10-01
+
+### Added
+- **Pin what matters — recordings, notebooks and To Dos.** Long-press any recording, notebook or To Do (or use its action sheet) and pin it: the item sorts to the top of its own category or folder group — no separate global section — wears a pin indicator on its row, and the pin syncs to every paired device. Drift v30. Spec `docs/design/2026-09-30-ask-my-notes.md` (queued item #1).
+- **Morning review — yesterday, waiting for you at breakfast.** Settings → Reminders gains a Morning review toggle (default off) with a time picker (default 8:00 AM). At the set time: a notification and a light-blue daybreak card at the top of Home listing yesterday's recordings and notes (one-line summaries, up to 5, then "and N more"). The card stays — across restarts — until viewed (tap an item, "and N more", or the check), then tucks away. Nothing captured yesterday means no notification and no card; toggle off means silence. Client-only, no schema change. Spec `docs/design/2026-09-30-ask-my-notes.md` (queued item #2).
+
 ## 1.38.0 — 2026-09-30
 
 ### Added

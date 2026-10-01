@@ -50,13 +50,25 @@ ADH2/
 
 ## Status
 
-Shipping — **v1.38.0** (see CHANGELOG.md). Client and server are both
-implemented and tested (2726
-Flutter tests, 718 server tests, 129 Kotlin tests). The client runs
+Shipping — **v1.39.0** (see CHANGELOG.md). Client and server are both
+implemented and tested (2783
+Flutter tests, 733 server tests, 129 Kotlin tests). The client runs
 natively on Linux AND Windows (tray icon, global record hotkey,
 close-to-tray, single instance, right-click = long-press; AppImage and
 Inno Setup installer under `packaging/`) — verified on CachyOS/KDE
 Plasma Wayland and Windows 11; see the README's Desktop sections.
+
+v1.39.0 **pinning + morning review** (ask-my-notes spec, queued items
+#1–2). Pinning: long-press or action-sheet Pin on recordings, notebooks
+and To Dos; a pinned row sorts to the top of its own category/folder
+group (no global pinned section), shows a pin indicator, and syncs to
+every paired device (client Drift v29→v30). Morning review: Settings →
+Reminders toggle (default OFF) + time picker (default 8:00 AM); at the
+set time a notification AND a light-blue "daybreak" card at the top of
+Home list yesterday's captures (recordings + notes, one-line summaries,
+max 5 + "and N more"). The card persists across restarts until viewed
+(tap an item, "and N more", or the check), then tucks away; viewed-day
+lives in SharedPreferences — client-only, no server change.
 
 v1.38.0 **auto-file** (ask-my-notes spec, queued item #3): after a
 transcript commits the server classifies the capture against live
