@@ -19,7 +19,8 @@ import 'package:tangent/services/ask_client.dart';
 import 'package:tangent/services/notebook_persistence.dart';
 import 'package:tangent/widgets/item_action_sheet.dart';
 
-import '../support/dump_selection_fixture.dart' show CountingDeletion, itemFor;
+import '../support/dump_selection_fixture.dart'
+    show CountingDeletion, itemFor, targetFor;
 
 /// Durable-publication fake: delegates to the real repository so content
 /// round-trips through the database, and records what was published.
@@ -309,8 +310,9 @@ void main() {
   });
 
   testWidgets(
-      'delete recording: server tombstone BEFORE LocalDeletionService; '
-      'stale chip degrades to a snackbar', (tester) async {
+      'delete recording: eligibility, then server tombstone, then '
+      'LocalDeletionService; stale chip degrades to a snackbar',
+      (tester) async {
     await insertDump('d-4', 'Engine noise');
     deletion.result = (
       replayed: false,
@@ -326,8 +328,11 @@ void main() {
       find.byKey(const ValueKey<String>('ask-source-delete-confirm')),
     );
     await pumpFrames(tester);
-    expect(log, <String>['server-delete:d-4:previews=0']);
+    // Previewed for the sheet AND re-checked by the provider, both BEFORE
+    // the server delete.
+    expect(log, <String>['server-delete:d-4:previews=2']);
     expect(deletion.previews, <Set<String>>[
+      <String>{'d-4'},
       <String>{'d-4'},
     ]);
     expect(deletion.deletes.single.targets.single.id, 'd-4');
@@ -385,8 +390,7 @@ void main() {
       (tester) async {
     await insertDump('d-404s', 'Synced one', syncedSeq: 41);
     await deleteVia404(tester, 'd-404s');
-    expect(log, <String>['server-delete:d-404s:previews=0']);
-    expect(deletion.previews, isEmpty);
+    expect(log, <String>['server-delete:d-404s:previews=2']);
     expect(deletion.deletes, isEmpty);
     expect(find.textContaining('Could not delete'), findsOneWidget);
     await unmount(tester);
@@ -402,8 +406,7 @@ void main() {
       syncAttempts: 1,
     );
     await deleteVia404(tester, 'd-404a');
-    expect(log, <String>['server-delete:d-404a:previews=0']);
-    expect(deletion.previews, isEmpty);
+    expect(log, <String>['server-delete:d-404a:previews=2']);
     expect(deletion.deletes, isEmpty);
     expect(find.textContaining('Could not delete'), findsOneWidget);
     await unmount(tester);
@@ -413,10 +416,83 @@ void main() {
       (tester) async {
     await insertDump('d-404l', 'Never uploaded', syncStatus: 'local_only');
     await deleteVia404(tester, 'd-404l');
-    expect(log, <String>['server-delete:d-404l:previews=0']);
+    expect(log, <String>['server-delete:d-404l:previews=2']);
     expect(deletion.deletes.single.targets.single.id, 'd-404l');
     expect(find.textContaining('Could not delete'), findsNothing);
     await unmount(tester);
+  });
+
+  testWidgets('pending capture with zero upload attempts + 404 proceeds',
+      (tester) async {
+    await insertDump('d-404p', 'Fresh capture', syncStatus: 'pending');
+    await deleteVia404(tester, 'd-404p');
+    expect(deletion.deletes.single.targets.single.id, 'd-404p');
+    expect(find.textContaining('Could not delete'), findsNothing);
+    await unmount(tester);
+  });
+
+  testWidgets('ineligible recording: Delete greyed with reason, no server call',
+      (tester) async {
+    await insertDump('d-busy', 'Transcribing');
+    deletion.previewTargets = <DeleteTarget>[
+      (
+        id: 'd-busy',
+        title: 'Transcribing',
+        eligibility: Eligibility.nonterminal,
+        retryTicketId: null,
+        binding: targetFor('d-busy').binding,
+      ),
+    ];
+    await mount(tester, <AskSource>[
+      const AskSource(entityType: 'dump', entityId: 'd-busy', snippet: 'b'),
+    ]);
+    await longPress(tester, chip(0, 'dump', 'd-busy'));
+    expect(find.text('Transcription in progress'), findsOneWidget);
+    await tester.tap(find.byKey(ItemActionSheet.keyFor(ItemAction.delete)));
+    await pumpFrames(tester);
+    expect(
+      find.byKey(const ValueKey<String>('ask-source-delete-confirm')),
+      findsNothing,
+    );
+    expect(log, isEmpty);
+    expect(deletion.deletes, isEmpty);
+    await unmount(tester);
+  });
+
+  testWidgets('provider refuses an ineligible row BEFORE any server delete',
+      (tester) async {
+    final List<String> serverCalls = <String>[];
+    deletion.previewTargets = <DeleteTarget>[
+      (
+        id: 'd-busy2',
+        title: 'Busy',
+        eligibility: Eligibility.busy,
+        retryTicketId: null,
+        binding: targetFor('d-busy2').binding,
+      ),
+    ];
+    final ProviderContainer c = ProviderContainer(
+      overrides: <Override>[
+        localDbProvider.overrideWithValue(db),
+        localDeletionServiceProvider.overrideWithValue(deletion),
+        askSourceServerDeleteProvider
+            .overrideWithValue((String id) async => serverCalls.add(id)),
+      ],
+    );
+    Object? caught;
+    await tester.runAsync(() async {
+      await insertDump('d-busy2', 'Busy');
+      try {
+        await c.read(askSourceDeleteDumpProvider)('d-busy2');
+      } catch (error) {
+        caught = error;
+      }
+    });
+    expect(caught, isA<StorageFault>());
+    expect(serverCalls, isEmpty);
+    expect(deletion.deletes, isEmpty);
+    c.dispose();
+    await tester.runAsync(db.close);
   });
 }
 

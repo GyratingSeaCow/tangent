@@ -3,9 +3,14 @@
 ///
 /// A citation row is not a list row, so long-press here opens the shared
 /// [ItemActionSheet] for the UNDERLYING entity rather than entering
-/// selection. Every action reuses the origin list's own write path, so a
-/// pin set here is the same flag the Recordings / Notebooks / To Do lists
-/// read, and a delete is the same tombstone-first deletion.
+/// selection. Move / Rename / Pin reuse the origin list's own write path,
+/// so a pin set here is the same flag the Recordings / Notebooks / To Do
+/// lists read.
+///
+/// Delete is NOT the Recordings-list delete: that one is device-only
+/// (LocalDeletionService). Here a recording is deleted from the server AND
+/// the device — local eligibility checked first, then the server tombstone,
+/// then local cleanup — because an Ask citation is a server-side reference.
 library;
 
 import 'dart:async';
@@ -29,6 +34,7 @@ import '../../services/notebook_persistence.dart'
 import '../../widgets/folder_picker.dart';
 import '../../widgets/item_action_sheet.dart';
 import '../home/home_screen.dart' show localDbProvider;
+import '../dump/dumps_list_screen.dart' show eligibilityReason;
 import '../server/server_connection_screen.dart'
     show transcriptionClientProvider;
 
@@ -100,14 +106,16 @@ final StreamProvider<Map<String, AskSourceEntity>> askSourceEntitiesProvider =
 
 /// True only for a recording that never even ATTEMPTED an upload: zero
 /// sync attempts, no confirmed sync sequence, not server-sourced, no server
-/// audio, and still local_only. An attempt whose reply was lost may have
-/// landed server-side, so any attempt fails closed.
+/// audio, and not synced/syncing. New captures sit in 'pending' with zero
+/// attempts and qualify; an attempt whose reply was lost may have landed
+/// server-side, so any attempt fails closed.
 bool askDumpNeverSynced(DumpRow row) =>
     row.syncAttempts == 0 &&
     row.syncedSeq == null &&
     row.remoteOnly != true &&
     row.audioOnServer != true &&
-    row.syncStatus == 'local_only';
+    row.syncStatus != 'synced' &&
+    row.syncStatus != 'syncing';
 
 /// Authoritative server delete (publishes the sync tombstone). A seam so
 /// tests can record ordering; production is [ServerDumpDeletion.deleteDump].
@@ -130,24 +138,44 @@ final Provider<Future<void> Function(String dumpId)>
     askSourceDeleteDumpProvider = Provider<Future<void> Function(String)>(
   (ref) => (String dumpId) async {
     final DumpRow? row = await ref.read(localDbProvider).getDumpRow(dumpId);
-    try {
-      await ref.read(askSourceServerDeleteProvider)(dumpId);
-    } on ApiException catch (error) {
-      // A 404 proves nothing on its own (already deleted, or an upload
-      // still in flight that lands after the local delete and resurrects
-      // on the next pull). Only a recording that never reached the server
-      // may proceed; anything that has synced fails closed.
-      if (error.statusCode != 404 || row == null || !askDumpNeverSynced(row)) {
-        rethrow;
-      }
-    }
     final LocalDeletionService deletion =
         ref.read(localDeletionServiceProvider);
+    // Eligibility FIRST. The server tombstone is irreversible and the next
+    // pull raw-deletes the local row (applyRemoteDumpDeletion), bypassing
+    // LocalDeletionService and orphaning audio — so a row the local service
+    // would refuse (mid-transcription, syncing, in use…) must never reach
+    // the server delete at all.
     final DeletionPreview preview =
         switch (await deletion.preview(<String>{dumpId})) {
       Ok<DeletionPreview>(:final value) => value,
       Fail<DeletionPreview>(:final problem) => throw StorageFault(problem),
     };
+    if (preview.targets.isEmpty) {
+      throw const StorageFault(
+        (code: ProblemCode.busy, message: 'Recording unavailable'),
+      );
+    }
+    for (final DeleteTarget target in preview.targets) {
+      if (target.eligibility != Eligibility.eligible) {
+        throw StorageFault(
+          (
+            code: ProblemCode.busy,
+            message: eligibilityReason(target.eligibility),
+          ),
+        );
+      }
+    }
+    try {
+      await ref.read(askSourceServerDeleteProvider)(dumpId);
+    } on ApiException catch (error) {
+      // A 404 proves nothing on its own (already deleted, or an upload
+      // still in flight that lands after the local delete and resurrects
+      // on the next pull). Only a recording that never attempted an upload
+      // may proceed; anything else fails closed.
+      if (error.statusCode != 404 || row == null || !askDumpNeverSynced(row)) {
+        rethrow;
+      }
+    }
     final BulkDeletionResult result = switch (await deletion.deleteConfirmed(
       (operationId: const Uuid().v4(), targets: preview.targets),
     )) {
@@ -210,6 +238,26 @@ Future<void> showAskSourceActions(
   // do not offer Delete: deleting a whole recording from its summary's
   // citation is too easy to misread as "delete the summary".
   final bool canDelete = source.entityType != 'summary';
+  // Recordings: ask the local deletion service up front so Delete is shown
+  // greyed with its reason (the Recordings-list pattern) instead of failing
+  // after confirmation. The provider re-checks before any server call.
+  String? deleteBlocked;
+  if (canDelete && kind == 'dump') {
+    final Outcome<DeletionPreview> preview = await ref
+        .read(localDeletionServiceProvider)
+        .preview(<String>{source.entityId});
+    deleteBlocked = switch (preview) {
+      Ok<DeletionPreview>(:final value) => value.targets.isEmpty
+          ? eligibilityReason(Eligibility.missing)
+          : value.targets
+              .map((DeleteTarget t) => t.eligibility)
+              .where((Eligibility e) => e != Eligibility.eligible)
+              .map(eligibilityReason)
+              .firstOrNull,
+      Fail<DeletionPreview>(:final problem) => problem.message,
+    };
+    if (!context.mounted) return;
+  }
   final ItemAction? action = await showItemActionSheet(
     context,
     title: title.trim().isEmpty ? '(untitled)' : title,
@@ -228,6 +276,9 @@ Future<void> showAskSourceActions(
     labelOverrides: kind == 'todo'
         ? const <ItemAction, String>{ItemAction.rename: 'Edit'}
         : const <ItemAction, String>{},
+    disabledActions: <ItemAction, String>{
+      if (deleteBlocked != null) ItemAction.delete: deleteBlocked,
+    },
   );
   if (action == null || !context.mounted) return;
 
