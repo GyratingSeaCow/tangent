@@ -52,6 +52,23 @@ class TangentColors {
 
   /// Handwriting on the notebook canvas. White, never [signal].
   static const Color ink = Color(0xFFEDF1F3);
+
+  /// Morning-review daybreak accents (Ask-arc queued item 2). Light blue
+  /// is the START-OF-DAY signal, chosen by Jeff and load-bearing like the
+  /// other colours here: it appears on exactly one surface — the morning
+  /// review card — so a light-blue panel always means "your yesterday".
+  /// The face is deliberately LIGHT on the blackout chassis (the one lit
+  /// card at dawn), so its text needs its own dark ink values.
+  static const Color daybreak = Color(0xFFBFE0FA);
+
+  /// Lit top edge of the daybreak panel (same bevel language as [edge]).
+  static const Color daybreakEdge = Color(0xFFE4F2FF);
+
+  /// Primary text on [daybreak].
+  static const Color daybreakInk = Color(0xFF12283A);
+
+  /// Secondary text and icons on [daybreak].
+  static const Color daybreakInkDim = Color(0xFF3D5A73);
 }
 
 /// Shape and elevation language.

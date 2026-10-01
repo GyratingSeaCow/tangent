@@ -20,17 +20,40 @@ import 'due_reminder_scheduler.dart';
 import 'notification_plugin_init.dart';
 
 class AndroidDueReminderPort implements DueReminderPort {
+  /// The configuration parameters (id, channel, task, payload) default to
+  /// the due reminder's own, so existing call sites are untouched; the
+  /// morning review builds a second instance over the same plugin with its
+  /// own ids (see `morning_review_scheduler.dart`) instead of duplicating
+  /// this plugin layer.
   AndroidDueReminderPort({
     FlutterLocalNotificationsPlugin? plugin,
     Workmanager? workmanager,
     void Function(NotificationResponse response)? onResponse,
+    int notificationId = kDueReminderNotificationId,
+    String channelId = kDueReminderChannelId,
+    String channelName = kDueReminderChannelName,
+    String channelDescription = 'A morning digest of to-dos due today.',
+    String taskName = kDueReminderTaskName,
+    String payload = kDueReminderPayload,
   })  : _plugin = plugin ?? FlutterLocalNotificationsPlugin(),
         _workmanager = workmanager ?? Workmanager(),
-        _onResponse = onResponse;
+        _onResponse = onResponse,
+        _notificationId = notificationId,
+        _channelId = channelId,
+        _channelName = channelName,
+        _channelDescription = channelDescription,
+        _taskName = taskName,
+        _payload = payload;
 
   final FlutterLocalNotificationsPlugin _plugin;
   final Workmanager _workmanager;
   final void Function(NotificationResponse response)? _onResponse;
+  final int _notificationId;
+  final String _channelId;
+  final String _channelName;
+  final String _channelDescription;
+  final String _taskName;
+  final String _payload;
 
   static const Color _accent = Color(0xFF9B2594);
   bool _tzReady = false;
@@ -95,9 +118,9 @@ class AndroidDueReminderPort implements DueReminderPort {
 
   NotificationDetails _details() => NotificationDetails(
         android: AndroidNotificationDetails(
-          kDueReminderChannelId,
-          kDueReminderChannelName,
-          channelDescription: 'A morning digest of to-dos due today.',
+          _channelId,
+          _channelName,
+          channelDescription: _channelDescription,
           icon: '@drawable/ic_notification',
           color: _accent,
           importance: Importance.defaultImportance,
@@ -114,10 +137,10 @@ class AndroidDueReminderPort implements DueReminderPort {
   }) async {
     try {
       await ensureReady();
-      await _plugin.cancel(kDueReminderNotificationId);
+      await _plugin.cancel(_notificationId);
       if (digest != null) {
         await _plugin.zonedSchedule(
-          kDueReminderNotificationId,
+          _notificationId,
           digest.title,
           digest.body,
           tz.TZDateTime.from(fireAt, tz.local),
@@ -127,14 +150,14 @@ class AndroidDueReminderPort implements DueReminderPort {
               : AndroidScheduleMode.inexactAllowWhileIdle,
           uiLocalNotificationDateInterpretation:
               UILocalNotificationDateInterpretation.absoluteTime,
-          payload: kDueReminderPayload,
+          payload: _payload,
         );
       }
       Duration delay = fireAt.difference(DateTime.now());
       if (delay.isNegative) delay = Duration.zero;
       await _workmanager.registerOneOffTask(
-        kDueReminderTaskName,
-        kDueReminderTaskName,
+        _taskName,
+        _taskName,
         initialDelay: delay,
         existingWorkPolicy: ExistingWorkPolicy.replace,
       );
@@ -148,11 +171,11 @@ class AndroidDueReminderPort implements DueReminderPort {
     try {
       await ensureReady();
       await _plugin.show(
-        kDueReminderNotificationId,
+        _notificationId,
         digest.title,
         digest.body,
         _details(),
-        payload: kDueReminderPayload,
+        payload: _payload,
       );
     } catch (error, stack) {
       _report('post', error, stack);
@@ -162,7 +185,7 @@ class AndroidDueReminderPort implements DueReminderPort {
   @override
   Future<void> withdraw() async {
     try {
-      await _plugin.cancel(kDueReminderNotificationId);
+      await _plugin.cancel(_notificationId);
     } catch (error, stack) {
       _report('withdraw', error, stack);
     }
@@ -171,8 +194,8 @@ class AndroidDueReminderPort implements DueReminderPort {
   @override
   Future<void> cancel() async {
     try {
-      await _plugin.cancel(kDueReminderNotificationId);
-      await _workmanager.cancelByUniqueName(kDueReminderTaskName);
+      await _plugin.cancel(_notificationId);
+      await _workmanager.cancelByUniqueName(_taskName);
     } catch (error, stack) {
       _report('cancel', error, stack);
     }

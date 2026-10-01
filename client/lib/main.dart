@@ -49,6 +49,8 @@ import 'services/desktop_due_reminder_port.dart';
 import 'services/due_digest.dart';
 import 'services/background_sync_scheduler.dart';
 import 'services/due_reminder_scheduler.dart';
+import 'services/morning_review.dart';
+import 'services/morning_review_scheduler.dart';
 import 'services/close_to_tray.dart';
 import 'services/record_hotkey.dart';
 import 'services/connectivity_service.dart';
@@ -86,6 +88,7 @@ Future<String> _backgroundDeviceLabel() async {
 void backgroundSyncDispatcher() {
   Workmanager().executeTask((String task, Map<String, dynamic>? input) async {
     if (task == kDueReminderTaskName) return _runDueReminderTask();
+    if (task == kMorningReviewTaskName) return _runMorningReviewTask();
     if (task != kDocumentSyncTaskName) return true;
     LocalDb? db;
     try {
@@ -151,6 +154,54 @@ Future<bool> _runDueReminderTask() async {
     await db?.close();
   }
 }
+
+/// The morning review at fire time (queued item 2), mirroring
+/// [_runDueReminderTask]: read yesterday's captures AS THEY ARE NOW, post
+/// the review (or withdraw the predicted one when yesterday captured
+/// nothing) and arm tomorrow. Background isolate, so it builds its own
+/// handles.
+Future<bool> _runMorningReviewTask() async {
+  LocalDb? db;
+  try {
+    WidgetsFlutterBinding.ensureInitialized();
+    final SettingsStore settings = await SettingsStore.load();
+    // Toggled off since the task was queued: do nothing and do not re-arm.
+    if (!settings.morningReviewEnabled) return true;
+    db = LocalDb();
+    final LocalDb handle = db;
+    final MorningReviewScheduler scheduler = MorningReviewScheduler(
+      port: _androidMorningReviewPort(),
+      loadDumps: () => handle.listDumps(limit: 500),
+      onPosted: settings.setLastMorningReviewShownDay,
+    );
+    await scheduler.runDailyTask(
+      minuteOfDay: settings.morningReviewMinuteOfDay,
+    );
+    return true;
+  } catch (_) {
+    // Never crash the isolate; a missed morning is recoverable, a task
+    // Android stops scheduling is not.
+    return false;
+  } finally {
+    await db?.close();
+  }
+}
+
+/// The Android reminder port configured for the morning review: same
+/// plugin layer, its own notification id, channel and background task so
+/// the two daily notices can never replace or cancel each other.
+AndroidDueReminderPort _androidMorningReviewPort({
+  void Function(NotificationResponse response)? onResponse,
+}) =>
+    AndroidDueReminderPort(
+      onResponse: onResponse,
+      notificationId: kMorningReviewNotificationId,
+      channelId: kMorningReviewChannelId,
+      channelName: kMorningReviewChannelName,
+      channelDescription: "Yesterday's captures, each morning.",
+      taskName: kMorningReviewTaskName,
+      payload: kMorningReviewPayload,
+    );
 
 /// Reminder tap → the To Do screen, on top of whatever is showing. The
 /// navigator may not exist yet on a cold start; wait a frame and retry.
@@ -275,6 +326,8 @@ Future<void> main(List<String> args) async {
   // the app once and never returns still gets background syncs.
   AndroidDueReminderPort? androidReminderPort;
   DesktopDueReminderPort? desktopReminderPort;
+  AndroidDueReminderPort? androidMorningPort;
+  DesktopDueReminderPort? desktopMorningPort;
   if (Platform.isAndroid) {
     final Workmanager workmanager = Workmanager();
     await workmanager.initialize(backgroundSyncDispatcher);
@@ -288,6 +341,10 @@ Future<void> main(List<String> args) async {
     } catch (e) {
       debugPrint('tangent.reminders unavailable: $e');
     }
+    // The morning review shares the initialised plugin (the guard keeps
+    // the tap router above the one that sticks) but posts under its own
+    // id, channel and task.
+    androidMorningPort = _androidMorningReviewPort();
   } else if (Platform.isLinux || Platform.isWindows) {
     // Desktop reminder (spec 2026-09-27 Half A): in-process timer + system
     // notification; a click raises the window and opens To Do, like the
@@ -309,8 +366,22 @@ Future<void> main(List<String> args) async {
         _openTodoScreen();
       },
     );
+    // The morning review rides its own notifier instance so closing one
+    // notice never closes the other; a click just raises the window —
+    // Home IS the review.
+    desktopMorningPort = DesktopDueReminderPort(
+      notifier: LocalNotifierDesktopNotifier(appName: 'Tangent'),
+      loadDigest: () async {
+        final MorningReview? review =
+            buildMorningReview(await db.listDumps(limit: 500), DateTime.now());
+        return review == null ? null : morningReviewNotification(review);
+      },
+      onPosted: settings.setLastMorningReviewShownDay,
+      onClick: () => unawaited(raiseAppWindow()),
+    );
   }
   final DueReminderPort? reminderPort = androidReminderPort ?? desktopReminderPort;
+  final DueReminderPort? morningPort = androidMorningPort ?? desktopMorningPort;
   // Completion notices on desktop (spec 2026-09-28 N5): the same
   // local_notifier backend as the reminder; a click raises the window and
   // opens the recording.
@@ -372,6 +443,8 @@ Future<void> main(List<String> args) async {
         settingsStoreProvider.overrideWithValue(settings),
         if (reminderPort != null)
           dueReminderPortProvider.overrideWithValue(reminderPort),
+        if (morningPort != null)
+          morningReviewPortProvider.overrideWithValue(morningPort),
         if (desktopCompletionPort != null)
           completionNotificationPortProvider
               .overrideWithValue(desktopCompletionPort),
@@ -407,6 +480,46 @@ Future<void> main(List<String> args) async {
         }
       }());
     }
+  }
+  if (desktopMorningPort != null && settings.morningReviewEnabled) {
+    // Same K1 shape as the due reminder: show the missed review once on
+    // the first launch after the chosen time, then arm the normal timer.
+    final DesktopDueReminderPort port = desktopMorningPort;
+    final MorningReviewScheduler scheduler = MorningReviewScheduler(
+      port: port,
+      loadDumps: () => db.listDumps(limit: 500),
+    );
+    unawaited(() async {
+      try {
+        await runDesktopMorningReviewCatchUp(
+          settings: settings,
+          port: port,
+          loadDumps: () => db.listDumps(limit: 500),
+          now: DateTime.now(),
+        );
+        await scheduler.scheduleNext(
+          minuteOfDay: settings.morningReviewMinuteOfDay,
+        );
+      } catch (e) {
+        debugPrint('tangent.morning-review: desktop start failed: $e');
+      }
+    }());
+  }
+  if (androidMorningPort != null && settings.morningReviewEnabled) {
+    // Re-arm on every launch, like the due reminder: a reboot, a cleared
+    // task or a time-zone change never leaves the review silently dead.
+    final MorningReviewScheduler scheduler = MorningReviewScheduler(
+      port: androidMorningPort,
+      loadDumps: () => db.listDumps(limit: 500),
+    );
+    unawaited(
+      scheduler
+          .scheduleNext(minuteOfDay: settings.morningReviewMinuteOfDay)
+          .catchError((Object e) {
+        debugPrint('tangent.morning-review: reschedule failed: $e');
+        return DateTime.now();
+      }),
+    );
   }
   if (androidReminderPort != null) {
     final AndroidDueReminderPort port = androidReminderPort;

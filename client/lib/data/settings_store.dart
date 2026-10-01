@@ -44,6 +44,10 @@ class SettingsStore {
   static const _completionNotificationsKey = 'completion_notifications';
   static const _reminderMinuteOfDayKey = 'reminder_minute_of_day';
   static const _lastReminderShownDayKey = 'last_reminder_shown_day';
+  static const _morningReviewEnabledKey = 'morning_review_enabled';
+  static const _morningReviewMinuteOfDayKey = 'morning_review_minute_of_day';
+  static const _lastMorningReviewShownDayKey = 'last_morning_review_shown_day';
+  static const _morningReviewViewedDayKey = 'morning_review_viewed_day';
 
   final SharedPreferences? _preferences;
 
@@ -153,6 +157,31 @@ class SettingsStore {
   /// the missed digest once per day and never twice for the same day.
   String lastReminderShownDay;
 
+  /// Morning review (Ask-arc queued item 2): a notification plus a
+  /// light-blue Home card with yesterday's captures. OFF by default for
+  /// the same reason as [remindersEnabled] — it asks for the notification
+  /// permission, so it only ever turns on by hand.
+  bool morningReviewEnabled;
+
+  /// Local time of the morning review as minutes after midnight; default
+  /// 08:00 (spec: "at a set time (default 8:00)"). Clamped like
+  /// [reminderMinuteOfDay].
+  int morningReviewMinuteOfDay;
+
+  /// `YYYY-MM-DD` of the last day a morning-review NOTIFICATION was
+  /// actually posted; '' when never. Same K1 role as
+  /// [lastReminderShownDay]: the desktop catch-up shows a missed review
+  /// once per day and never twice for the same day.
+  String lastMorningReviewShownDay;
+
+  /// `YYYY-MM-DD` of the review day the user last VIEWED the Home card
+  /// for; '' when never. The card stays — across launches — until its
+  /// review day is recorded here, then tucks away (spec: "stays until
+  /// viewed"). LOCAL-ONLY, in preferences on purpose: viewing is
+  /// per-device presentation state, not data, so it takes no schema
+  /// change and never syncs.
+  String morningReviewViewedDay;
+
   /// "Notify when transcription and notes finish" (spec 2026-09-28 N6).
   /// ON by default: the notices need no extra permission beyond the one
   /// the progress notice already asks for, and their absence was the
@@ -180,6 +209,10 @@ class SettingsStore {
     this.remindersEnabled = false,
     this.reminderMinuteOfDay = 420,
     this.lastReminderShownDay = '',
+    this.morningReviewEnabled = false,
+    this.morningReviewMinuteOfDay = 480,
+    this.lastMorningReviewShownDay = '',
+    this.morningReviewViewedDay = '',
     this.completionNotificationsEnabled = true,
     SharedPreferences? preferences,
   }) : _preferences = preferences;
@@ -223,6 +256,16 @@ class SettingsStore {
       ),
       lastReminderShownDay:
           preferences.getString(_lastReminderShownDayKey) ?? '',
+      morningReviewEnabled:
+          preferences.getBool(_morningReviewEnabledKey) ?? false,
+      morningReviewMinuteOfDay: clampMinuteOfDay(
+        preferences.getInt(_morningReviewMinuteOfDayKey),
+        fallback: 480,
+      ),
+      lastMorningReviewShownDay:
+          preferences.getString(_lastMorningReviewShownDayKey) ?? '',
+      morningReviewViewedDay:
+          preferences.getString(_morningReviewViewedDayKey) ?? '',
       completionNotificationsEnabled:
           preferences.getBool(_completionNotificationsKey) ?? true,
     );
@@ -322,14 +365,36 @@ class SettingsStore {
     await _preferences?.setString(_lastReminderShownDayKey, isoDay);
   }
 
+  Future<void> setMorningReviewEnabled(bool value) async {
+    morningReviewEnabled = value;
+    await _preferences?.setBool(_morningReviewEnabledKey, value);
+  }
+
+  Future<void> setMorningReviewMinuteOfDay(int value) async {
+    final int clamped = clampMinuteOfDay(value, fallback: 480);
+    morningReviewMinuteOfDay = clamped;
+    await _preferences?.setInt(_morningReviewMinuteOfDayKey, clamped);
+  }
+
+  Future<void> setLastMorningReviewShownDay(String isoDay) async {
+    lastMorningReviewShownDay = isoDay;
+    await _preferences?.setString(_lastMorningReviewShownDayKey, isoDay);
+  }
+
+  Future<void> setMorningReviewViewedDay(String isoDay) async {
+    morningReviewViewedDay = isoDay;
+    await _preferences?.setString(_morningReviewViewedDayKey, isoDay);
+  }
+
   Future<void> setCompletionNotificationsEnabled(bool value) async {
     completionNotificationsEnabled = value;
     await _preferences?.setBool(_completionNotificationsKey, value);
   }
 
-  /// Minutes after midnight, kept inside one day; null → 07:00.
-  static int clampMinuteOfDay(int? value) {
-    if (value == null) return 420;
+  /// Minutes after midnight, kept inside one day; null → [fallback]
+  /// (07:00 for the due reminder, 08:00 for the morning review).
+  static int clampMinuteOfDay(int? value, {int fallback = 420}) {
+    if (value == null) return fallback;
     return value.clamp(0, 24 * 60 - 1);
   }
 

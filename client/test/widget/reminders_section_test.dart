@@ -8,17 +8,22 @@ import 'package:tangent/screens/settings/reminders_section.dart';
 import 'package:tangent/screens/settings/settings_screen.dart'
     show settingsStoreProvider;
 import 'package:tangent/services/due_reminder_scheduler.dart';
+import 'package:tangent/services/morning_review_scheduler.dart';
 
 import '../support/fake_due_reminder_port.dart';
 
-/// Spec 2026-09-27 Half B, N4: the Reminders section.
+/// Spec 2026-09-27 Half B, N4: the Reminders section. The morning review
+/// (Ask-arc queued item 2) lives under the same heading on its own
+/// scheduler and port; its tests sit alongside.
 void main() {
   late FakeDueReminderPort port;
+  late FakeDueReminderPort morningPort;
   late SettingsStore store;
   List<TodoRow> todos = <TodoRow>[];
 
   setUp(() {
     port = FakeDueReminderPort();
+    morningPort = FakeDueReminderPort();
     store = SettingsStore();
     todos = <TodoRow>[];
   });
@@ -32,6 +37,14 @@ void main() {
             (ref) => DueReminderScheduler(
               port: port,
               loadTodos: () async => todos,
+              now: () => DateTime(2026, 9, 27, 6, 30),
+            ),
+          ),
+          morningReviewPortProvider.overrideWithValue(morningPort),
+          morningReviewSchedulerProvider.overrideWith(
+            (ref) => MorningReviewScheduler(
+              port: morningPort,
+              loadDumps: () async => <DumpRow>[],
               now: () => DateTime(2026, 9, 27, 6, 30),
             ),
           ),
@@ -179,5 +192,101 @@ void main() {
     expect(port.scheduledAt.last, DateTime(2026, 9, 27, 8, 15));
     expect(timeRow(tester).subtitle, isA<Text>());
     expect(statusText(tester), contains('8:15 AM'));
+  });
+
+  // ---- Morning review (Ask-arc queued item 2) ---------------------------
+
+  Finder morningSwitchFinder() =>
+      find.byKey(RemindersSection.morningEnabledKey);
+  SwitchListTile morningSwitch(WidgetTester t) =>
+      t.widget<SwitchListTile>(morningSwitchFinder());
+  ListTile morningTimeRow(WidgetTester t) =>
+      t.widget<ListTile>(find.byKey(RemindersSection.morningTimeKey));
+  String morningStatusText(WidgetTester t) =>
+      t.widget<Text>(find.byKey(RemindersSection.morningStatusKey)).data!;
+
+  testWidgets('morning review: off by default at 8:00; row disabled',
+      (tester) async {
+    await tester.pumpWidget(host());
+    await tester.pump();
+    expect(morningSwitch(tester).value, isFalse);
+    expect(morningTimeRow(tester).enabled, isFalse);
+    expect(morningTimeRow(tester).onTap, isNull);
+    expect(morningStatusText(tester), 'Off');
+    // The default time is the spec's 8:00, shown even while off.
+    expect(find.text('8:00 AM'), findsOneWidget);
+    expect(morningPort.scheduledAt, isEmpty);
+    expect(morningPort.permissionRequests, 0);
+  });
+
+  testWidgets(
+      'enabling the morning review asks permission, schedules 08:00, '
+      'persists — and never touches the due reminder', (tester) async {
+    await tester.pumpWidget(host());
+    await tester.pump();
+    await tester.tap(morningSwitchFinder());
+    await tester.pumpAndSettle();
+    expect(morningPort.permissionRequests, 1);
+    expect(morningPort.scheduledAt, <DateTime>[DateTime(2026, 9, 27, 8)]);
+    expect(store.morningReviewEnabled, isTrue);
+    expect(morningSwitch(tester).value, isTrue);
+    expect(morningTimeRow(tester).enabled, isTrue);
+    expect(morningStatusText(tester), startsWith('Next: '));
+    expect(morningStatusText(tester), contains('8:00 AM'));
+    // Its own alarm, not the due reminder's.
+    expect(port.permissionRequests, 0);
+    expect(port.scheduledAt, isEmpty);
+    expect(store.remindersEnabled, isFalse);
+  });
+
+  testWidgets('disabling the morning review cancels and persists off',
+      (tester) async {
+    store = SettingsStore(morningReviewEnabled: true);
+    await tester.pumpWidget(host());
+    await tester.pumpAndSettle();
+    // Already on from a previous session: re-armed on show.
+    expect(morningPort.scheduledAt, hasLength(1));
+    await tester.tap(morningSwitchFinder());
+    await tester.pumpAndSettle();
+    expect(morningPort.cancels, 1);
+    expect(store.morningReviewEnabled, isFalse);
+    expect(morningSwitch(tester).value, isFalse);
+    expect(morningStatusText(tester), 'Off');
+  });
+
+  testWidgets('morning review denied: says so and offers system settings',
+      (tester) async {
+    morningPort.grant = false;
+    await tester.pumpWidget(host());
+    await tester.pump();
+    await tester.tap(morningSwitchFinder());
+    await tester.pumpAndSettle();
+    expect(morningPort.permissionRequests, 1);
+    expect(morningPort.scheduledAt, isEmpty);
+    expect(
+      morningStatusText(tester),
+      'Notifications blocked — open system settings',
+    );
+  });
+
+  testWidgets('morning time picker changes the minute and re-schedules',
+      (tester) async {
+    store = SettingsStore(morningReviewEnabled: true);
+    await tester.pumpWidget(host());
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(RemindersSection.morningTimeKey));
+    await tester.pumpAndSettle();
+    // Switch the dialog to keyboard entry and type 9:30.
+    await tester.tap(find.byIcon(Icons.keyboard_outlined));
+    await tester.pumpAndSettle();
+    final Finder fields = find.byType(TextField);
+    await tester.enterText(fields.at(0), '9');
+    await tester.enterText(fields.at(1), '30');
+    await tester.tap(find.text('OK'));
+    await tester.pumpAndSettle();
+    expect(store.morningReviewMinuteOfDay, 9 * 60 + 30);
+    expect(morningPort.scheduledAt.last, DateTime(2026, 9, 27, 9, 30));
+    expect(morningTimeRow(tester).subtitle, isA<Text>());
+    expect(morningStatusText(tester), contains('9:30 AM'));
   });
 }

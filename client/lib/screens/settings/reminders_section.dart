@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../services/due_reminder_scheduler.dart';
+import '../../services/morning_review_scheduler.dart';
+import '../home/morning_review_card.dart' show morningReviewProvider;
 import 'completion_notifications_section.dart';
 import 'settings_screen.dart';
 
@@ -21,6 +23,9 @@ class RemindersSection extends ConsumerStatefulWidget {
   static const Key timeKey = Key('reminders-time');
   static const Key statusKey = Key('reminders-status');
   static const Key openSettingsKey = Key('reminders-open-settings');
+  static const Key morningEnabledKey = Key('morning-review-enabled');
+  static const Key morningTimeKey = Key('morning-review-time');
+  static const Key morningStatusKey = Key('morning-review-status');
 
   @override
   ConsumerState<RemindersSection> createState() => _RemindersSectionState();
@@ -34,12 +39,28 @@ class _RemindersSectionState extends ConsumerState<RemindersSection> {
   DateTime? _nextFire;
   bool _busy = false;
 
+  // The morning review (queued item 2) mirrors the due reminder's state
+  // machine exactly — same permission dance, same status line — but on its
+  // own scheduler, alarm and time.
+  late bool _morningEnabled =
+      ref.read(settingsStoreProvider).morningReviewEnabled;
+  late int _morningMinuteOfDay =
+      ref.read(settingsStoreProvider).morningReviewMinuteOfDay;
+  bool _morningDenied = false;
+  DateTime? _morningNextFire;
+  bool _morningBusy = false;
+
   @override
   void initState() {
     super.initState();
-    if (_enabled && ref.read(remindersSupportedProvider)) {
-      // Already on from a previous session: show the real next time.
-      WidgetsBinding.instance.addPostFrameCallback((_) => _rearm());
+    if (ref.read(remindersSupportedProvider)) {
+      // Already on from a previous session: show the real next times.
+      if (_enabled) {
+        WidgetsBinding.instance.addPostFrameCallback((_) => _rearm());
+      }
+      if (_morningEnabled) {
+        WidgetsBinding.instance.addPostFrameCallback((_) => _rearmMorning());
+      }
     }
   }
 
@@ -102,10 +123,92 @@ class _RemindersSectionState extends ConsumerState<RemindersSection> {
     if (_enabled && !_denied) await _rearm();
   }
 
+  Future<void> _rearmMorning() async {
+    final MorningReviewScheduler scheduler =
+        ref.read(morningReviewSchedulerProvider);
+    final DateTime next =
+        await scheduler.scheduleNext(minuteOfDay: _morningMinuteOfDay);
+    if (!mounted) return;
+    setState(() => _morningNextFire = next);
+  }
+
+  Future<void> _toggleMorning(bool on) async {
+    if (_morningBusy) return;
+    setState(() => _morningBusy = true);
+    final MorningReviewScheduler scheduler =
+        ref.read(morningReviewSchedulerProvider);
+    try {
+      if (on) {
+        final bool granted = await scheduler.requestPermission();
+        if (!mounted) return;
+        setState(() {
+          _morningEnabled = true;
+          _morningDenied = !granted;
+        });
+        await ref.read(settingsStoreProvider).setMorningReviewEnabled(true);
+        if (granted) await _rearmMorning();
+      } else {
+        await scheduler.cancel();
+        await ref.read(settingsStoreProvider).setMorningReviewEnabled(false);
+        if (!mounted) return;
+        setState(() {
+          _morningEnabled = false;
+          _morningDenied = false;
+          _morningNextFire = null;
+        });
+      }
+      // The Home card gates on the same switch; recompute it now rather
+      // than on the next database event.
+      ref.invalidate(morningReviewProvider);
+    } finally {
+      if (mounted) setState(() => _morningBusy = false);
+    }
+  }
+
+  Future<void> _pickMorningTime() async {
+    final TimeOfDay? picked = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay(
+        hour: _morningMinuteOfDay ~/ 60,
+        minute: _morningMinuteOfDay % 60,
+      ),
+      helpText: 'Morning review time',
+    );
+    if (picked == null || !mounted) return;
+    final int minute = picked.hour * 60 + picked.minute;
+    setState(() => _morningMinuteOfDay = minute);
+    await ref.read(settingsStoreProvider).setMorningReviewMinuteOfDay(minute);
+    ref.invalidate(morningReviewProvider);
+    if (_morningEnabled && !_morningDenied) await _rearmMorning();
+  }
+
   String _timeLabel(BuildContext context) => MaterialLocalizations.of(context)
       .formatTimeOfDay(
         TimeOfDay(hour: _minuteOfDay ~/ 60, minute: _minuteOfDay % 60),
       );
+
+  String _morningTimeLabel(BuildContext context) =>
+      MaterialLocalizations.of(context).formatTimeOfDay(
+        TimeOfDay(
+          hour: _morningMinuteOfDay ~/ 60,
+          minute: _morningMinuteOfDay % 60,
+        ),
+      );
+
+  String _morningStatus(BuildContext context) {
+    if (!_morningEnabled) return 'Off';
+    if (_morningDenied) {
+      return 'Notifications blocked — open system settings';
+    }
+    final DateTime? next = _morningNextFire;
+    if (next == null) return 'Next: scheduling…';
+    final DateTime now = DateTime.now();
+    final bool today = next.year == now.year &&
+        next.month == now.month &&
+        next.day == now.day;
+    return 'Next: ${today ? 'today' : 'tomorrow'} '
+        '${_morningTimeLabel(context)}';
+  }
 
   String _status(BuildContext context) {
     if (!_enabled) return 'Off';
@@ -179,6 +282,50 @@ class _RemindersSectionState extends ConsumerState<RemindersSection> {
                 key: RemindersSection.openSettingsKey,
                 onPressed: () =>
                     ref.read(dueReminderSchedulerProvider).openSystemSettings(),
+                child: const Text('Open system settings'),
+              ),
+            ),
+          ),
+        // Queued item 2: the morning review lives under the same heading —
+        // it is the other thing that happens at a chosen time each morning.
+        SwitchListTile(
+          key: RemindersSection.morningEnabledKey,
+          title: const Text('Morning review'),
+          subtitle: const Text(
+            "A notification and a card on Home with yesterday's captures.",
+          ),
+          value: _morningEnabled,
+          onChanged: _morningBusy ? null : _toggleMorning,
+        ),
+        ListTile(
+          key: RemindersSection.morningTimeKey,
+          enabled: _morningEnabled,
+          title: const Text('Review time'),
+          subtitle: Text(_morningTimeLabel(context)),
+          trailing: const Icon(Icons.schedule),
+          onTap: _morningEnabled ? _pickMorningTime : null,
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+          child: Text(
+            _morningStatus(context),
+            key: RemindersSection.morningStatusKey,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: _morningDenied ? theme.colorScheme.error : null,
+            ),
+          ),
+        ),
+        if (_morningEnabled &&
+            _morningDenied &&
+            ref.read(morningReviewSchedulerProvider).canOpenSystemSettings)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: OutlinedButton(
+                onPressed: () => ref
+                    .read(morningReviewSchedulerProvider)
+                    .openSystemSettings(),
                 child: const Text('Open system settings'),
               ),
             ),

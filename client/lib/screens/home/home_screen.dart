@@ -25,6 +25,7 @@ import '../recording/recording_waveform.dart';
 import '../settings/settings_screen.dart';
 import '../../theme/tangent_tokens.dart';
 import 'home_providers.dart';
+import 'morning_review_card.dart';
 import 'record_button_palette.dart';
 import 'speaker_backfill_banner.dart';
 
@@ -346,6 +347,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
+            // Queued item 2: the light-blue morning review, first thing on
+            // the screen the way it is first thing in the day. Renders
+            // nothing at all outside its window (see MorningReviewCard).
+            const MorningReviewCard(),
             const SpeakerBackfillBanner(),
             if (!isNoteMode)
               Text(
