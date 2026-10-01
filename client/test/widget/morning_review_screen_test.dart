@@ -89,7 +89,10 @@ void main() {
 
   /// Home stand-in: the real app bar pair (sun LEFT of settings) and the
   /// invisible auto-presenter, without Home's unrelated provider graph.
-  Future<ProviderContainer> mount(WidgetTester tester) async {
+  Future<ProviderContainer> mount(
+    WidgetTester tester, {
+    int presenters = 1,
+  }) async {
     final ProviderContainer container = ProviderContainer(
       overrides: <Override>[
         localDbProvider.overrideWithValue(db),
@@ -116,8 +119,12 @@ void main() {
                 ),
               ],
             ),
-            body: const Column(
-              children: <Widget>[MorningReviewAutoPresenter(), Text('home')],
+            body: Column(
+              children: <Widget>[
+                for (int i = 0; i < presenters; i++)
+                  const MorningReviewAutoPresenter(),
+                const Text('home'),
+              ],
             ),
           ),
         ),
@@ -360,6 +367,23 @@ void main() {
     await settle(tester);
     await settle(tester);
     expect(screen(), findsOneWidget);
+    await unmount(tester, c);
+  });
+
+  testWidgets(
+      'two presents scheduled in one frame open ONE review '
+      '(post-frame isCurrent re-check)', (tester) async {
+    // Two presenters both see an unviewed morning in the same build and
+    // each schedules a post-frame present — the same shape as any rebuild
+    // landing before the first push. The first push covers Home
+    // synchronously, so the second callback must find Home not current.
+    final ProviderContainer c = await mount(tester, presenters: 2);
+    expect(screen(), findsOneWidget);
+    final NavigatorState nav = tester.state(find.byType(Navigator));
+    nav.pop();
+    await settle(tester);
+    expect(screen(), findsNothing, reason: 'no second review underneath');
+    expect(find.text('home'), findsOneWidget);
     await unmount(tester, c);
   });
 }

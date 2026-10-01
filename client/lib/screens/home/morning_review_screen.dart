@@ -196,8 +196,6 @@ class _MorningReviewAutoPresenterState
     extends ConsumerState<MorningReviewAutoPresenter> {
   Timer? _boundary;
   bool? _armedFor;
-  String? _presentedDay;
-  bool _presenting = false;
 
   @override
   void dispose() {
@@ -229,10 +227,12 @@ class _MorningReviewAutoPresenterState
     );
   }
 
+  /// No presenter-side latches: the guards are [homeOnTop] here, the
+  /// post-frame `isCurrent` re-check (a second callback scheduled in the
+  /// same frame finds Home already covered, because push installs the
+  /// route synchronously), and the viewed day the open screen records.
   void _maybePresent(MorningBriefing? briefing, {required bool homeOnTop}) {
-    if (briefing == null || _presenting || !homeOnTop) return;
-    final String day = isoDate(briefing.reviewDay);
-    if (_presentedDay == day) return;
+    if (briefing == null || !homeOnTop) return;
     if (!morningReviewShouldAutoPresent(
       enabled: ref.read(morningReviewEnabledProvider),
       viewedDay: ref.read(settingsStoreProvider).morningReviewViewedDay,
@@ -240,17 +240,11 @@ class _MorningReviewAutoPresenterState
     )) {
       return;
     }
-    _presentedDay = day;
-    _presenting = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      // Re-check after the frame: a route may have been pushed meanwhile.
-      if (!mounted || ModalRoute.of(context)?.isCurrent == false) {
-        _presentedDay = null;
-        _presenting = false;
-        return;
-      }
-      await openMorningReview(context);
-      _presenting = false;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      // Re-check after the frame: a route (or this review) may have been
+      // pushed meanwhile.
+      if (!mounted || ModalRoute.of(context)?.isCurrent == false) return;
+      openMorningReview(context);
     });
   }
 
