@@ -8,8 +8,57 @@
 import 'package:flutter/material.dart';
 
 import '../data/local_db.dart';
+import '../theme/tangent_tokens.dart';
 
 enum _FolderAction { rename, delete }
+
+/// Instrument Console v2 inset card for list section headers (folder
+/// groups, the To Do Done section).
+///
+/// Decoration ONLY — the [child] keeps its own gesture wiring (tap
+/// collapses, long-press opens the folder menu), so the gesture contract
+/// survives any restyle. Lives next to the folder-header actions because
+/// every list that shows these headers already imports this file.
+class SectionHeaderCard extends StatelessWidget {
+  const SectionHeaderCard({super.key, required this.child});
+
+  final Widget child;
+
+  /// Horizontal inset from the screen edge.
+  static const double inset = 10;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(
+        horizontal: inset,
+        vertical: TangentSpacing.xs,
+      ),
+      child: Material(
+        color: TangentColors.panel,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(TangentShapes.panelRadius),
+          side: const BorderSide(
+            color: TangentColors.edge,
+            width: TangentShapes.edgeWidth,
+          ),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: child,
+      ),
+    );
+  }
+}
+
+/// The bottom inset every scrolling list reserves so the floating create
+/// key and the system bar never cover the last row.
+///
+/// Uses viewPadding, NOT padding: the keyboard zeroes `padding.bottom`,
+/// which would collapse the reservation the moment a text field focuses
+/// (a real prior bug on the dump detail screen).
+EdgeInsets listBottomInset(BuildContext context) => EdgeInsets.only(
+      bottom: 90 + MediaQuery.viewPaddingOf(context).bottom,
+    );
 
 /// Long-press menu for a folder header: rename or delete the folder itself.
 ///

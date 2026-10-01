@@ -70,7 +70,10 @@ class InstrumentScaffold extends ConsumerWidget {
             MediaQuery.removePadding(
               context: context,
               removeTop: true,
-              child: appBar!,
+              child: SizedBox(
+                height: appBar!.preferredSize.height,
+                child: appBar!,
+              ),
             ),
           Expanded(child: body),
         ],
