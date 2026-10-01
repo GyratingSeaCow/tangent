@@ -1,12 +1,18 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Summary-template preset and prompt-contract tests."""
 
+import pytest
+
 from app.summary_templates import (
     CUSTOM_CONTRACT_SUFFIX,
     MEETING_PROMPT,
+    MORNING_BRIEF_TEMPLATE_ID,
+    PER_DUMP_TEMPLATES,
     TEMPLATE_DEFINITIONS,
+    TEMPLATE_IDS,
     assemble_prompt,
     default_template_id,
+    morning_brief_prompt,
 )
 
 # Drift guard: this is the v1.12.0 SYSTEM_PROMPT copied verbatim. Comparing the
@@ -67,7 +73,32 @@ def test_template_ids_and_display_names_are_stable_and_ordered():
         ("lecture", "Lecture"),
         ("actions_only", "Actions only"),
         ("custom", "Custom"),
+        ("morning_brief", "Morning brief"),
     ]
+    # The per-dump set (client picker, assemble_prompt) is unchanged.
+    assert [item.id for item in PER_DUMP_TEMPLATES] == [
+        "meeting",
+        "brain_dump",
+        "lecture",
+        "actions_only",
+        "custom",
+    ]
+
+
+def test_morning_brief_is_not_a_per_dump_template():
+    assert MORNING_BRIEF_TEMPLATE_ID not in TEMPLATE_IDS
+    with pytest.raises(ValueError, match="Unknown summary template"):
+        assemble_prompt(MORNING_BRIEF_TEMPLATE_ID)
+
+
+def test_morning_brief_prompt_shape_and_single_worked_example():
+    prompt = morning_brief_prompt()
+    assert prompt.count("Example:") == 1
+    assert prompt.count("Output:") == 1
+    assert "**Highlights**" in prompt
+    assert "Never invent" in prompt
+    for heading in ("## Captured yesterday", "## Due today", "## Pinned"):
+        assert heading in prompt
 
 
 def test_meeting_preset_exactly_equals_the_former_system_prompt():
