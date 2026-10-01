@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // Instrument Console v2 on the Ask screen:
-//  * the rail rides above the screen's own app bar with Ask lit and inert;
+//  * the rail rides beneath the screen's own app bar with Ask lit and inert;
 //  * NO create FAB — the compose row (question field, mic, send) owns the
 //    bottom of the screen, and a FAB over the send button would be a
 //    mis-tap trap;
@@ -51,7 +51,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 1));
   }
 
-  testWidgets('the rail rides above the Ask app bar, lit and inert',
+  testWidgets('the rail rides beneath the Ask app bar, lit and inert',
       (tester) async {
     await mountAsk(tester);
 
@@ -63,8 +63,9 @@ void main() {
       reason: 'the active destination is lit, not a navigation target',
     );
     expect(
-      tester.getBottomLeft(find.byType(TopNavRail)).dy,
-      lessThanOrEqualTo(tester.getTopLeft(find.text('Ask')).dy),
+      // Mockup order: app bar first, rail beneath it.
+      tester.getTopLeft(find.byType(TopNavRail)).dy,
+      greaterThanOrEqualTo(tester.getBottomLeft(find.text('Ask')).dy),
     );
     expect(tester.takeException(), isNull);
 

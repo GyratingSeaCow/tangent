@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // Instrument Console v2 on the To Do screen:
-//  * the rail rides above the screen's own app bar with To Do lit and inert;
+//  * the rail rides beneath the screen's own app bar with To Do lit and inert;
 //  * the global create key appears (the screen never had a local FAB);
 //  * section headers — folders AND Done — render as inset cards without
 //    losing the header gestures (tap collapses, long-press is the folder
@@ -74,7 +74,7 @@ void main() {
   }
 
   testWidgets(
-      'the rail rides above the To Do app bar, lit and inert, with the '
+      'the rail rides beneath the To Do app bar, lit and inert, with the '
       'global create key', (tester) async {
     await mount(tester);
 
@@ -86,8 +86,9 @@ void main() {
       reason: 'the active destination is lit, not a navigation target',
     );
     expect(
-      tester.getBottomLeft(find.byType(TopNavRail)).dy,
-      lessThanOrEqualTo(tester.getTopLeft(find.text('To Do')).dy),
+      // Mockup order: app bar first, rail beneath it.
+      tester.getTopLeft(find.byType(TopNavRail)).dy,
+      greaterThanOrEqualTo(tester.getBottomLeft(find.text('To Do')).dy),
     );
     expect(find.byKey(InstrumentScaffold.createFabKey), findsOneWidget);
     // The quick-add stays pinned at top, under the app bar.

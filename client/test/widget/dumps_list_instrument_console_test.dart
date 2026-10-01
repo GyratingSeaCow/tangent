@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // Instrument Console v2 on the Recordings list:
-//  * the top rail rides above the screen's own app bar with Recordings lit
+//  * the top rail rides beneath the screen's own app bar with Recordings lit
 //    and inert — a pushed screen keeps its root highlighted;
 //  * the screen keeps its OWN create FAB: the pop-with-[DumpsCreateAction]
 //    contract (home consumes the result) cannot travel through the global
@@ -29,7 +29,7 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   testWidgets(
-      'the rail rides above the Recordings app bar, lit and inert, and the '
+      'the rail rides beneath the Recordings app bar, lit and inert, and the '
       'screen keeps its own Add FAB', (tester) async {
     await mountSelection(tester, CountingDeletion());
 
@@ -42,8 +42,9 @@ void main() {
     );
     // The rail sits ABOVE the screen app bar.
     expect(
-      tester.getBottomLeft(find.byType(TopNavRail)).dy,
-      lessThanOrEqualTo(tester.getTopLeft(find.text('Recordings')).dy),
+      // Mockup order: app bar first, rail beneath it.
+      tester.getTopLeft(find.byType(TopNavRail)).dy,
+      greaterThanOrEqualTo(tester.getBottomLeft(find.text('Recordings')).dy),
     );
     // Exactly one FAB — the screen's own Add key, not the global create key.
     final Finder fabFinder = find.byType(FloatingActionButton);

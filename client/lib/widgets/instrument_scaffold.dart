@@ -65,9 +65,28 @@ class InstrumentScaffold extends ConsumerWidget {
     return Scaffold(
       body: Column(
         children: [
+          // Mockup order: status bar, app bar, THEN the rail. The app bar
+          // owns the top inset.
+          if (appBar != null)
+            SafeArea(
+              bottom: false,
+              // An app bar in a Column gets UNBOUNDED height, which blows up
+              // any bar whose `bottom:` uses flex (the notebook editor's
+              // tool strip has an Expanded width slider). Pin it to the
+              // height it already declares.
+              child: MediaQuery.removePadding(
+                context: context,
+                removeTop: true,
+                child: SizedBox(
+                  height: appBar!.preferredSize.height,
+                  child: appBar!,
+                ),
+              ),
+            ),
           Container(
             color: TangentColors.sunken,
             child: SafeArea(
+              top: appBar == null,
               bottom: false,
               child: TopNavRail(
                 active: root,
@@ -75,19 +94,6 @@ class InstrumentScaffold extends ConsumerWidget {
               ),
             ),
           ),
-          if (appBar != null)
-            MediaQuery.removePadding(
-              context: context,
-              removeTop: true,
-              // An app bar in a Column gets UNBOUNDED height, which blows up
-              // any bar whose `bottom:` uses flex (the notebook editor's
-              // tool strip has an Expanded width slider). Pin it to the
-              // height it already declares.
-              child: SizedBox(
-                height: appBar!.preferredSize.height,
-                child: appBar!,
-              ),
-            ),
           Expanded(
             child: maxContentWidth == null
                 ? body

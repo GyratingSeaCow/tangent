@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // Instrument Console v2 on the Notebooks list:
-//  * the rail rides above the screen's own app bar with Notebooks lit and
+//  * the rail rides beneath the screen's own app bar with Notebooks lit and
 //    inert; the app bar keeps its search / sync / view-toggle actions;
 //  * the local New-notebook FAB is replaced by the GLOBAL create key — the
 //    create sheet's Notebook entry performs the identical create-and-open;
@@ -67,7 +67,7 @@ void main() {
   }
 
   testWidgets(
-      'the rail rides above the Notebooks app bar and the global create key '
+      'the rail rides beneath the Notebooks app bar and the global create key '
       'replaces the local FAB', (tester) async {
     await mountList(tester);
 
@@ -79,8 +79,9 @@ void main() {
       reason: 'the active destination is lit, not a navigation target',
     );
     expect(
-      tester.getBottomLeft(find.byType(TopNavRail)).dy,
-      lessThanOrEqualTo(tester.getTopLeft(find.text('Notebooks')).dy),
+      // Mockup order: app bar first, rail beneath it.
+      tester.getTopLeft(find.byType(TopNavRail)).dy,
+      greaterThanOrEqualTo(tester.getBottomLeft(find.text('Notebooks')).dy),
     );
     // The GLOBAL create key, and only it.
     expect(find.byKey(InstrumentScaffold.createFabKey), findsOneWidget);
