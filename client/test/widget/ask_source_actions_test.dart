@@ -113,8 +113,12 @@ void main() {
           notebookPersistenceProvider.overrideWithValue(persistence),
           localDeletionServiceProvider.overrideWithValue(deletion),
           askSourceServerDeleteProvider.overrideWithValue((String id) async {
-            // Records how many local previews ran BEFORE the server delete: 0.
-            log.add('server-delete:$id:previews=${deletion.previews.length}');
+            // Records the previews run before it and whether the deletion
+            // lease was held at the time.
+            log.add(
+              'server-delete:$id:previews=${deletion.previews.length}'
+              ':leased=${deletion.inLease}',
+            );
             if (serverStatus != null) {
               throw ApiException(
                 statusCode: serverStatus!,
@@ -330,7 +334,7 @@ void main() {
     await pumpFrames(tester);
     // Previewed for the sheet AND re-checked by the provider, both BEFORE
     // the server delete.
-    expect(log, <String>['server-delete:d-4:previews=2']);
+    expect(log, <String>['server-delete:d-4:previews=2:leased=true']);
     expect(deletion.previews, <Set<String>>[
       <String>{'d-4'},
       <String>{'d-4'},
@@ -390,8 +394,8 @@ void main() {
       (tester) async {
     await insertDump('d-404s', 'Synced one', syncedSeq: 41);
     await deleteVia404(tester, 'd-404s');
-    expect(log, <String>['server-delete:d-404s:previews=2']);
-    expect(deletion.deletes, isEmpty);
+    expect(log, <String>['server-delete:d-404s:previews=2:leased=true']);
+    expect(deletion.deleted, isEmpty);
     expect(find.textContaining('Could not delete'), findsOneWidget);
     await unmount(tester);
   });
@@ -406,8 +410,8 @@ void main() {
       syncAttempts: 1,
     );
     await deleteVia404(tester, 'd-404a');
-    expect(log, <String>['server-delete:d-404a:previews=2']);
-    expect(deletion.deletes, isEmpty);
+    expect(log, <String>['server-delete:d-404a:previews=2:leased=true']);
+    expect(deletion.deleted, isEmpty);
     expect(find.textContaining('Could not delete'), findsOneWidget);
     await unmount(tester);
   });
@@ -416,7 +420,7 @@ void main() {
       (tester) async {
     await insertDump('d-404l', 'Never uploaded', syncStatus: 'local_only');
     await deleteVia404(tester, 'd-404l');
-    expect(log, <String>['server-delete:d-404l:previews=2']);
+    expect(log, <String>['server-delete:d-404l:previews=2:leased=true']);
     expect(deletion.deletes.single.targets.single.id, 'd-404l');
     expect(find.textContaining('Could not delete'), findsNothing);
     await unmount(tester);
@@ -491,6 +495,68 @@ void main() {
     expect(caught, isA<StorageFault>());
     expect(serverCalls, isEmpty);
     expect(deletion.deletes, isEmpty);
+    c.dispose();
+    await tester.runAsync(db.close);
+  });
+
+  testWidgets(
+      'TOCTOU: eligible at preview, busy by the time of the lease → '
+      'no server delete, nothing deleted', (tester) async {
+    final List<String> serverCalls = <String>[];
+    // Preview says eligible; the recording becomes busy before deletion
+    // can take its lease (e.g. sync or playback started in between).
+    deletion.leaseBusy.add('d-race');
+    final ProviderContainer c = ProviderContainer(
+      overrides: <Override>[
+        localDbProvider.overrideWithValue(db),
+        localDeletionServiceProvider.overrideWithValue(deletion),
+        askSourceServerDeleteProvider
+            .overrideWithValue((String id) async => serverCalls.add(id)),
+      ],
+    );
+    Object? caught;
+    await tester.runAsync(() async {
+      await insertDump('d-race', 'Raced');
+      try {
+        await c.read(askSourceDeleteDumpProvider)('d-race');
+      } catch (error) {
+        caught = error;
+      }
+    });
+    expect(caught, isA<StorageFault>());
+    expect(serverCalls, isEmpty, reason: 'no tombstone without the lease');
+    expect(deletion.deleted, isEmpty);
+    c.dispose();
+    await tester.runAsync(db.close);
+  });
+
+  testWidgets('server failure inside the lease surfaces the server error',
+      (tester) async {
+    final ProviderContainer c = ProviderContainer(
+      overrides: <Override>[
+        localDbProvider.overrideWithValue(db),
+        localDeletionServiceProvider.overrideWithValue(deletion),
+        askSourceServerDeleteProvider.overrideWithValue(
+          (String id) async => throw const ApiException(
+            statusCode: 500,
+            code: 'server_error',
+            message: 'boom',
+          ),
+        ),
+      ],
+    );
+    Object? caught;
+    await tester.runAsync(() async {
+      await insertDump('d-500', 'Server fails');
+      try {
+        await c.read(askSourceDeleteDumpProvider)('d-500');
+      } catch (error) {
+        caught = error;
+      }
+    });
+    expect(caught, isA<ApiException>());
+    expect((caught! as ApiException).statusCode, 500);
+    expect(deletion.deleted, isEmpty);
     c.dispose();
     await tester.runAsync(db.close);
   });

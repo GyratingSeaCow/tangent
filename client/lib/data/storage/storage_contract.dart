@@ -570,9 +570,17 @@ abstract interface class RecordingCoordinator {
 
 abstract interface class LocalDeletionService {
   Future<Outcome<DeletionPreview>> preview(Set<String> selectedIds);
+
+  /// [whileLeased], when given, runs once per target AFTER that target's
+  /// exclusive deletion lease is acquired and BEFORE any ticket or I/O — so
+  /// an irreversible external step (the server tombstone) happens only for
+  /// a recording nothing else can start using until local cleanup ends. A
+  /// throw skips that target untouched (no ticket, no I/O); a target that
+  /// never gets the lease never runs it.
   Future<Outcome<BulkDeletionResult>> deleteConfirmed(
-    ConfirmedDeletion request,
-  );
+    ConfirmedDeletion request, {
+    Future<void> Function(String dumpId)? whileLeased,
+  });
   Future<Outcome<BulkDeletionResult>> retryConfirmed(
     ConfirmedDeletionRetry request,
   );

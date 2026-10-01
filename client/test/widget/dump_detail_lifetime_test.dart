@@ -95,9 +95,10 @@ final class ObservedDeletionService extends DefaultLocalDeletionService {
   ObservedDeletionService({required super.db, required super.backend, required super.mutations});
   final deletes = <ConfirmedDeletion>[], retries = <ConfirmedDeletionRetry>[];
   @override
-  Future<Outcome<BulkDeletionResult>> deleteConfirmed(ConfirmedDeletion request) {
+  Future<Outcome<BulkDeletionResult>> deleteConfirmed(ConfirmedDeletion request,
+      {Future<void> Function(String dumpId)? whileLeased,}) {
     deletes.add(request);
-    return super.deleteConfirmed(request);
+    return super.deleteConfirmed(request, whileLeased: whileLeased);
   }
   @override
   Future<Outcome<BulkDeletionResult>> retryConfirmed(ConfirmedDeletionRetry request) {
