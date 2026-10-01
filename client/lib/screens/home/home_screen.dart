@@ -25,7 +25,7 @@ import '../recording/recording_waveform.dart';
 import '../settings/settings_screen.dart';
 import '../../theme/tangent_tokens.dart';
 import 'home_providers.dart';
-import 'morning_review_card.dart';
+import 'morning_review_screen.dart';
 import 'record_button_palette.dart';
 import 'speaker_backfill_banner.dart';
 
@@ -332,6 +332,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               MaterialPageRoute<void>(builder: (_) => const AskScreen()),
             ),
           ),
+          // Morning review sun: immediately left of Settings, present only
+          // while the setting is on.
+          const MorningReviewSunButton(),
           IconButton(
             icon: const Icon(Icons.settings),
             tooltip: 'Settings',
@@ -347,10 +350,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            // Queued item 2: the light-blue morning review, first thing on
-            // the screen the way it is first thing in the day. Renders
-            // nothing at all outside its window (see MorningReviewCard).
-            const MorningReviewCard(),
+            // v1.40: renders nothing itself; presents the full-screen
+            // morning review over Home on the first open of each morning.
+            const MorningReviewAutoPresenter(),
             const SpeakerBackfillBanner(),
             if (!isNoteMode)
               Text(

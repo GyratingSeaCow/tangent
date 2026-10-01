@@ -44,7 +44,12 @@ String isoDate(DateTime day) {
 /// Only LIVE rows count: done (`doneAt` set) and soft-deleted (`deletedAt`
 /// set) items are excluded, as are undated ones. Overdue means
 /// `due_date < today`. Names are sorted by text, case-insensitively.
-DueDigest? buildDueDigest(List<TodoRow> todos, DateTime today) {
+/// Live, dated to-dos split into due-[today] and overdue, in input order.
+/// The one place that decides what "due" means, shared by the digest
+/// notification and the morning review screen.
+typedef DueBuckets = ({List<TodoRow> dueToday, List<TodoRow> overdue});
+
+DueBuckets dueBuckets(List<TodoRow> todos, DateTime today) {
   final String todayIso = isoDate(today);
   final List<TodoRow> dueToday = <TodoRow>[];
   final List<TodoRow> overdue = <TodoRow>[];
@@ -59,6 +64,13 @@ DueDigest? buildDueDigest(List<TodoRow> todos, DateTime today) {
       overdue.add(t);
     }
   }
+  return (dueToday: dueToday, overdue: overdue);
+}
+
+DueDigest? buildDueDigest(List<TodoRow> todos, DateTime today) {
+  final DueBuckets buckets = dueBuckets(todos, today);
+  final List<TodoRow> dueToday = buckets.dueToday;
+  final List<TodoRow> overdue = buckets.overdue;
   if (dueToday.isEmpty && overdue.isEmpty) return null;
 
   if (dueToday.isEmpty) {

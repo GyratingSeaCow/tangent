@@ -4,7 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../services/due_reminder_scheduler.dart';
 import '../../services/morning_review_scheduler.dart';
-import '../home/morning_review_card.dart' show morningReviewProvider;
+import '../home/morning_review_screen.dart'
+    show morningBriefingProvider, morningReviewEnabledProvider;
 import 'completion_notifications_section.dart';
 import 'settings_screen.dart';
 
@@ -146,10 +147,12 @@ class _RemindersSectionState extends ConsumerState<RemindersSection> {
           _morningDenied = !granted;
         });
         await ref.read(settingsStoreProvider).setMorningReviewEnabled(true);
+        ref.read(morningReviewEnabledProvider.notifier).state = true;
         if (granted) await _rearmMorning();
       } else {
         await scheduler.cancel();
         await ref.read(settingsStoreProvider).setMorningReviewEnabled(false);
+        ref.read(morningReviewEnabledProvider.notifier).state = false;
         if (!mounted) return;
         setState(() {
           _morningEnabled = false;
@@ -157,9 +160,9 @@ class _RemindersSectionState extends ConsumerState<RemindersSection> {
           _morningNextFire = null;
         });
       }
-      // The Home card gates on the same switch; recompute it now rather
-      // than on the next database event.
-      ref.invalidate(morningReviewProvider);
+      // The sun icon and auto-present watch morningReviewEnabledProvider;
+      // recompute the briefing now rather than on the next database event.
+      ref.invalidate(morningBriefingProvider);
     } finally {
       if (mounted) setState(() => _morningBusy = false);
     }
@@ -178,12 +181,12 @@ class _RemindersSectionState extends ConsumerState<RemindersSection> {
     final int minute = picked.hour * 60 + picked.minute;
     setState(() => _morningMinuteOfDay = minute);
     await ref.read(settingsStoreProvider).setMorningReviewMinuteOfDay(minute);
-    ref.invalidate(morningReviewProvider);
+    ref.invalidate(morningBriefingProvider);
     if (_morningEnabled && !_morningDenied) await _rearmMorning();
   }
 
-  String _timeLabel(BuildContext context) => MaterialLocalizations.of(context)
-      .formatTimeOfDay(
+  String _timeLabel(BuildContext context) =>
+      MaterialLocalizations.of(context).formatTimeOfDay(
         TimeOfDay(hour: _minuteOfDay ~/ 60, minute: _minuteOfDay % 60),
       );
 
@@ -203,9 +206,8 @@ class _RemindersSectionState extends ConsumerState<RemindersSection> {
     final DateTime? next = _morningNextFire;
     if (next == null) return 'Next: scheduling…';
     final DateTime now = DateTime.now();
-    final bool today = next.year == now.year &&
-        next.month == now.month &&
-        next.day == now.day;
+    final bool today =
+        next.year == now.year && next.month == now.month && next.day == now.day;
     return 'Next: ${today ? 'today' : 'tomorrow'} '
         '${_morningTimeLabel(context)}';
   }

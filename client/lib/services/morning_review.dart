@@ -87,6 +87,111 @@ bool morningReviewCardVisible({
   return viewedDay != isoDate(review.reviewDay);
 }
 
+/// What a pinned row is, so the briefing can pick its icon and route.
+enum MorningPinKind { recording, note, notebook, todo }
+
+/// One pinned item on the briefing, already reduced to what renders.
+class MorningPin {
+  const MorningPin({
+    required this.kind,
+    required this.id,
+    required this.title,
+  });
+
+  final MorningPinKind kind;
+  final String id;
+  final String title;
+}
+
+/// Everything the full-screen morning review shows, decided here so the
+/// screen only renders. Sections are independent: any may be empty, and
+/// the screen hides an empty one rather than drawing a hollow heading.
+class MorningBriefing {
+  const MorningBriefing({
+    required this.reviewDay,
+    required this.review,
+    required this.dueToday,
+    required this.overdue,
+    required this.pinned,
+  });
+
+  /// The morning this briefing belongs to (date-only); the viewed-day key.
+  final DateTime reviewDay;
+
+  /// Yesterday's captures, or null when yesterday captured nothing.
+  final MorningReview? review;
+
+  /// Live to-dos due on the actual current day, then overdue ones.
+  final List<TodoRow> dueToday;
+  final List<TodoRow> overdue;
+
+  /// Pinned recordings/notes, notebooks and to-dos, in that order.
+  final List<MorningPin> pinned;
+
+  List<DumpRow> get captures => review?.items ?? const <DumpRow>[];
+
+  bool get isEmpty =>
+      captures.isEmpty && dueToday.isEmpty && overdue.isEmpty && pinned.isEmpty;
+}
+
+/// Builds the briefing at [now]. [notebooks] are list headers (id, title,
+/// pinned); a full document is never needed to render one line.
+MorningBriefing buildMorningBriefing({
+  required DateTime now,
+  required int minuteOfDay,
+  required List<DumpRow> dumps,
+  required List<TodoRow> todos,
+  required List<({String id, String title, bool pinned})> notebooks,
+}) {
+  final DateTime reviewDay = morningReviewDayFor(now, minuteOfDay);
+  final DueBuckets due = dueBuckets(todos, now);
+  int byTitle(MorningPin a, MorningPin b) =>
+      a.title.toLowerCase().compareTo(b.title.toLowerCase());
+  final List<MorningPin> pinnedDumps = <MorningPin>[
+    for (final DumpRow d in dumps)
+      if (d.pinned == true)
+        MorningPin(
+          kind: d.mode == 'text_note'
+              ? MorningPinKind.note
+              : MorningPinKind.recording,
+          id: d.id,
+          title: morningReviewLine(d),
+        ),
+  ]..sort(byTitle);
+  final List<MorningPin> pinnedNotebooks = <MorningPin>[
+    for (final n in notebooks)
+      if (n.pinned)
+        MorningPin(kind: MorningPinKind.notebook, id: n.id, title: n.title),
+  ]..sort(byTitle);
+  final List<MorningPin> pinnedTodos = <MorningPin>[
+    for (final TodoRow t in todos)
+      if (t.pinned == true && t.doneAt == null && t.deletedAt == null)
+        MorningPin(kind: MorningPinKind.todo, id: t.id, title: t.body.trim()),
+  ]..sort(byTitle);
+  return MorningBriefing(
+    reviewDay: reviewDay,
+    review: buildMorningReview(dumps, reviewDay),
+    dueToday: due.dueToday,
+    overdue: due.overdue,
+    pinned: <MorningPin>[...pinnedDumps, ...pinnedNotebooks, ...pinnedTodos],
+  );
+}
+
+/// Whether the full screen presents itself over Home right now: only with
+/// the feature on, once per review morning, and never for an empty
+/// briefing (no noise on a quiet day; the sun icon still opens it).
+bool morningReviewShouldAutoPresent({
+  required bool enabled,
+  required String viewedDay,
+  required MorningBriefing briefing,
+}) {
+  if (!enabled || briefing.isEmpty) return false;
+  return viewedDay != isoDate(briefing.reviewDay);
+}
+
+/// Sun icon in the Home app bar: present all day exactly while enabled.
+bool morningReviewSunVisible({required bool enabled}) => enabled;
+
 /// The one-line summary of a capture: its existing title, which every dump
 /// carries (v1 deliberately adds no new summarisation).
 String morningReviewLine(DumpRow dump) => dump.title.trim();
@@ -100,12 +205,27 @@ String morningReviewDayLabel(MorningReview review, DateTime today) {
     return 'Yesterday';
   }
   const List<String> weekdays = <String>[
-    'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday',
+    'Monday',
+    'Tuesday',
+    'Wednesday',
+    'Thursday',
+    'Friday',
+    'Saturday',
     'Sunday',
   ];
   const List<String> months = <String>[
-    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
   ];
   final DateTime d = review.capturesDay;
   return '${weekdays[d.weekday - 1]}, ${months[d.month - 1]} ${d.day}';
@@ -128,8 +248,7 @@ String morningReviewCountLine(MorningReview review) {
 /// counts ride along for tests; nothing overdue exists here, so
 /// `overdueCount` is always zero.
 DueDigest morningReviewNotification(MorningReview review) {
-  final List<String> names =
-      review.items.map(morningReviewLine).toList();
+  final List<String> names = review.items.map(morningReviewLine).toList();
   final String listed = names.length <= kMorningReviewNamedItems
       ? names.join(', ')
       : '${names.take(kMorningReviewNamedItems).join(', ')} '

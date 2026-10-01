@@ -26,6 +26,7 @@ import '../notebook/notebook_editor_screen.dart';
 import '../server/server_connection_screen.dart'
     show secureStoreProvider, transcriptionClientProvider;
 import '../todo/todo_list_screen.dart';
+import 'ask_source_actions.dart';
 import '../recording/recording_controller.dart';
 
 final askHistoryRepositoryProvider = Provider<AskHistoryRepository>(
@@ -274,7 +275,11 @@ class _AskScreenState extends ConsumerState<AskScreen> {
     }
   }
 
-  Future<void> _openSource(AskSource source, String messageId, int index) async {
+  Future<void> _openSource(
+    AskSource source,
+    String messageId,
+    int index,
+  ) async {
     await ref.read(localDbProvider).markAskSourceVisited(
           messageId: messageId,
           sourceIndex: index,
@@ -323,6 +328,11 @@ class _AskScreenState extends ConsumerState<AskScreen> {
     final history = ref.watch(askHistoryProvider);
     final Set<String> visited =
         ref.watch(askSourceVisitsProvider).valueOrNull ?? const <String>{};
+    // Live entity state: one rename/pin/delete reflects on EVERY chip that
+    // cites the entity. Null while loading/unavailable: chips then render
+    // exactly as before rather than flashing "missing".
+    final Map<String, AskSourceEntity>? entities =
+        ref.watch(askSourceEntitiesProvider).valueOrNull;
     final RecordingState recordingState = widget.voiceQuestion == null
         ? ref.watch(askVoiceRecorderProvider).state
         : RecordingState.idle;
@@ -365,6 +375,19 @@ class _AskScreenState extends ConsumerState<AskScreen> {
                                     ),
                                     icon: _sourceIcon(entry.$2.entityType),
                                     label: _sourceLabel(entry.$2),
+                                    detail: entities?[askSourceEntityKey(
+                                      entry.$2,
+                                    )]
+                                        ?.title,
+                                    pinned: entities?[askSourceEntityKey(
+                                          entry.$2,
+                                        )]
+                                            ?.pinned ??
+                                        false,
+                                    missing: entities != null &&
+                                        !entities.containsKey(
+                                          askSourceEntityKey(entry.$2),
+                                        ),
                                     visited: visited.contains(
                                       '${message.id}#${entry.$1}',
                                     ),
@@ -372,6 +395,11 @@ class _AskScreenState extends ConsumerState<AskScreen> {
                                       entry.$2,
                                       message.id,
                                       entry.$1,
+                                    ),
+                                    onLongPress: () => showAskSourceActions(
+                                      context,
+                                      ref,
+                                      entry.$2,
                                     ),
                                   ),
                                 ),
@@ -477,23 +505,41 @@ class _SourceRow extends StatelessWidget {
     required this.icon,
     required this.label,
     required this.onTap,
+    this.onLongPress,
+    this.detail,
+    this.pinned = false,
+    this.missing = false,
     this.visited = false,
   });
 
   final IconData icon;
   final String label;
   final VoidCallback onTap;
+
+  /// Long-press: the per-entity action sheet (chips keep their own gesture;
+  /// long-press-to-select is a list-row contract).
+  final VoidCallback? onLongPress;
+
+  /// The cited entity's CURRENT title, shown quietly after the label.
+  final String? detail;
+  final bool pinned;
+
+  /// The entity is gone locally: struck through, tap explains via snackbar.
+  final bool missing;
   final bool visited;
 
   @override
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
     final TextStyle? base = Theme.of(context).textTheme.bodyMedium;
+    final String? shownDetail =
+        detail == null || detail!.trim().isEmpty ? null : detail!.trim();
     return InkWell(
       onTap: onTap,
+      onLongPress: onLongPress,
       borderRadius: BorderRadius.circular(8),
       child: Opacity(
-        opacity: visited ? 0.55 : 1,
+        opacity: visited || missing ? 0.55 : 1,
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
           child: Row(
@@ -505,16 +551,42 @@ class _SourceRow extends StatelessWidget {
                 color: visited ? scheme.onSurfaceVariant : scheme.primary,
               ),
               const SizedBox(width: 12),
-              Expanded(
+              Flexible(
+                flex: 0,
                 child: Text(
                   label,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: visited
-                      ? base?.copyWith(color: scheme.onSurfaceVariant)
-                      : base,
+                  style: (visited
+                          ? base?.copyWith(color: scheme.onSurfaceVariant)
+                          : base)
+                      ?.copyWith(
+                    decoration: missing ? TextDecoration.lineThrough : null,
+                  ),
                 ),
               ),
+              Expanded(
+                child: shownDetail == null
+                    ? const SizedBox.shrink()
+                    : Text(
+                        '  ·  $shownDetail',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: base?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+              ),
+              if (pinned)
+                Padding(
+                  padding: const EdgeInsets.only(left: 6),
+                  child: Icon(
+                    Icons.push_pin,
+                    key: const ValueKey<String>('ask-source-pinned'),
+                    size: 14,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
               Icon(
                 Icons.chevron_right,
                 size: 18,
