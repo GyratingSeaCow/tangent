@@ -33,6 +33,8 @@ import '../settings/handwriting_search_section.dart'
     show handwritingSearchEnabledProvider;
 import '../../widgets/item_action_sheet.dart';
 import '../../widgets/folder_header_actions.dart';
+import '../../widgets/instrument_scaffold.dart';
+import '../../widgets/top_nav_rail.dart';
 import 'notebook_grouping.dart';
 import 'notebook_editor_screen.dart';
 
@@ -71,9 +73,6 @@ class NotebookListScreen extends ConsumerStatefulWidget {
 }
 
 class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
-  /// Guards the create button so a double tap cannot spawn two notebooks.
-  bool _creating = false;
-
   /// Cover grid instead of the named list, like Samsung Notes' book view.
   ///
   /// Defaults to the list so an existing user's screen is unchanged until they
@@ -281,26 +280,6 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
         ),
       ),
     );
-  }
-
-  /// Creates an empty notebook and drops the user straight into it, so the
-  /// `+` button is one tap from writing.
-  Future<void> _createNotebook() async {
-    if (_creating) return;
-    setState(() => _creating = true);
-    try {
-      final Notebook created =
-          await ref.read(notebookRepositoryProvider).createNotebook();
-      if (!mounted) return;
-      await _openNotebook(created.id);
-    } catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not create notebook: $error')),
-      );
-    } finally {
-      if (mounted) setState(() => _creating = false);
-    }
   }
 
   /// Long-press opens the shared menu instead of deleting outright.
@@ -560,7 +539,12 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
       onPopInvokedWithResult: (bool didPop, Object? _) {
         if (!didPop && _selecting) _cancelSelection();
       },
-      child: Scaffold(
+      // Instrument Console v2: the rail rides on top with Notebooks lit,
+      // and the GLOBAL create key replaces the local New-notebook FAB —
+      // the create sheet's Notebook entry performs the same
+      // create-and-open this screen's `+` always did.
+      child: InstrumentScaffold(
+        root: TangentRoot.notebooks,
         appBar: AppBar(
           title: const Text('Notebooks'),
           actions: <Widget>[
@@ -581,13 +565,6 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
               onPressed: _toggleView,
             ),
           ],
-        ),
-        floatingActionButton: FloatingActionButton(
-          tooltip: 'New notebook',
-          backgroundColor: colors.primary,
-          foregroundColor: colors.onPrimary,
-          onPressed: _creating ? null : _createNotebook,
-          child: const Icon(Icons.add),
         ),
         body: Column(
           children: <Widget>[
@@ -729,38 +706,40 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
                       db: ref.read(localDbProvider),
                     );
             children.add(
-              InkWell(
-                key: ValueKey<String>('notebook-section-$sectionKey'),
-                onTap: () => _toggleSection(sectionKey),
-                onLongPress: headerActions,
-                // Desktop: right-click is this app's long-press.
-                onSecondaryTap: secondaryTapFor(headerActions),
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                  child: Row(
-                    children: <Widget>[
-                      Expanded(
-                        child: Text(
-                          section.title!,
-                          style: Theme.of(context)
-                              .textTheme
-                              .labelLarge
-                              ?.copyWith(color: colors.primary),
+              SectionHeaderCard(
+                child: InkWell(
+                  key: ValueKey<String>('notebook-section-$sectionKey'),
+                  onTap: () => _toggleSection(sectionKey),
+                  onLongPress: headerActions,
+                  // Desktop: right-click is this app's long-press.
+                  onSecondaryTap: secondaryTapFor(headerActions),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                    child: Row(
+                      children: <Widget>[
+                        Expanded(
+                          child: Text(
+                            section.title!,
+                            style: Theme.of(context)
+                                .textTheme
+                                .labelLarge
+                                ?.copyWith(color: colors.primary),
+                          ),
                         ),
-                      ),
-                      // The affordance: a chevron that points down when
-                      // open and sideways when folded, so collapsibility
-                      // is discoverable without a tooltip.
-                      AnimatedRotation(
-                        turns: collapsed ? -0.25 : 0,
-                        duration: const Duration(milliseconds: 150),
-                        child: Icon(
-                          Icons.expand_more,
-                          size: 20,
-                          color: colors.primary,
+                        // The affordance: a chevron that points down when
+                        // open and sideways when folded, so collapsibility
+                        // is discoverable without a tooltip.
+                        AnimatedRotation(
+                          turns: collapsed ? -0.25 : 0,
+                          duration: const Duration(milliseconds: 150),
+                          child: Icon(
+                            Icons.expand_more,
+                            size: 20,
+                            color: colors.primary,
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -814,7 +793,12 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
         return Column(
           children: <Widget>[
             selectionBar,
-            Expanded(child: ListView(children: children)),
+            Expanded(
+              child: ListView(
+                padding: listBottomInset(context),
+                children: children,
+              ),
+            ),
           ],
         );
       },

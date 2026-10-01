@@ -29,6 +29,8 @@ import '../server/server_connection_screen.dart'
 import '../todo/todo_list_screen.dart';
 import 'ask_source_actions.dart';
 import '../recording/recording_controller.dart';
+import '../../widgets/instrument_scaffold.dart';
+import '../../widgets/top_nav_rail.dart';
 
 final askHistoryRepositoryProvider = Provider<AskHistoryRepository>(
   (ref) => AskHistoryRepository(ref.watch(localDbProvider)),
@@ -337,7 +339,10 @@ class _AskScreenState extends ConsumerState<AskScreen> {
     final RecordingState recordingState = widget.voiceQuestion == null
         ? ref.watch(askVoiceRecorderProvider).state
         : RecordingState.idle;
-    return Scaffold(
+    return InstrumentScaffold(
+      root: TangentRoot.ask,
+      // The ask box owns the bottom edge: a create key would cover Send.
+      showCreateFab: false,
       appBar: AppBar(title: const Text('Ask')),
       body: Column(
         children: <Widget>[

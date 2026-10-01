@@ -38,7 +38,9 @@ import '../../widgets/item_action_sheet.dart';
 import '../../widgets/language_tag.dart';
 import '../../widgets/folder_header_actions.dart';
 import '../../widgets/folder_picker.dart';
+import '../../widgets/instrument_scaffold.dart';
 import '../../widgets/press_actions.dart';
+import '../../widgets/top_nav_rail.dart';
 import '../notebook/notebook_grouping.dart' show FolderSummary;
 import '../notebook/send_to_notebook.dart';
 import '../../data/notebook_repository.dart' show foldersProvider;
@@ -301,7 +303,13 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
           _change(_selection.cancel);
         }
       },
-      child: Scaffold(
+      // Instrument Console v2: the rail rides on top with Recordings lit.
+      // The screen KEEPS its own FAB — its pop-with-[DumpsCreateAction]
+      // contract (home consumes the result) cannot travel through the
+      // global create sheet, so the local key stays in the override slot.
+      child: InstrumentScaffold(
+        root: TangentRoot.recordings,
+        showCreateFab: false,
         floatingActionButton: FloatingActionButton(
           tooltip: 'Add',
           backgroundColor: Theme.of(context).colorScheme.primary,
@@ -1202,6 +1210,7 @@ class _DumpListState extends State<_DumpList> {
     // never opted into folders has always had.
     if (sections.length == 1 && sections.first.title == null) {
       return ListView.separated(
+        padding: listBottomInset(context),
         itemCount: widget.dumps.length,
         separatorBuilder: (_, __) => const Divider(height: 1),
         itemBuilder: (context, index) => _rowTile(widget.dumps[index]),
@@ -1221,34 +1230,36 @@ class _DumpListState extends State<_DumpList> {
                     section.title!,
                   );
       children.add(
-        InkWell(
-          key: ValueKey<String>('dump-section-$sectionKey'),
-          onTap: () => setState(() {
-            if (!_collapsed.remove(sectionKey)) _collapsed.add(sectionKey);
-          }),
-          onLongPress: headerActions,
-          // Desktop: right-click is this app's long-press.
-          onSecondaryTap: secondaryTapFor(headerActions),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-            child: Row(
-              children: <Widget>[
-                Icon(
-                  collapsed ? Icons.chevron_right : Icons.expand_more,
-                  size: 20,
-                ),
-                const SizedBox(width: 4),
-                Expanded(
-                  child: Text(
-                    section.title!,
-                    style: Theme.of(context).textTheme.titleSmall,
+        SectionHeaderCard(
+          child: InkWell(
+            key: ValueKey<String>('dump-section-$sectionKey'),
+            onTap: () => setState(() {
+              if (!_collapsed.remove(sectionKey)) _collapsed.add(sectionKey);
+            }),
+            onLongPress: headerActions,
+            // Desktop: right-click is this app's long-press.
+            onSecondaryTap: secondaryTapFor(headerActions),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+              child: Row(
+                children: <Widget>[
+                  Icon(
+                    collapsed ? Icons.chevron_right : Icons.expand_more,
+                    size: 20,
                   ),
-                ),
-                Text(
-                  '${section.dumps.length}',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-              ],
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(
+                      section.title!,
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+                  ),
+                  Text(
+                    '${section.dumps.length}',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -1268,7 +1279,7 @@ class _DumpListState extends State<_DumpList> {
         children.add(const Divider(height: 1));
       }
     }
-    return ListView(children: children);
+    return ListView(padding: listBottomInset(context), children: children);
   }
 
   /// The folder name the chip shows, or null when no live chip: no marker,
