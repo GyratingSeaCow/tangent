@@ -10,6 +10,7 @@ import 'package:tangent/data/notebook_repository.dart';
 import 'package:tangent/data/storage/storage_contract.dart';
 import 'package:tangent/data/storage/storage_providers.dart';
 import 'package:tangent/data/todo_repository.dart';
+import 'package:tangent/models/api_exception.dart';
 import 'package:tangent/models/notebook.dart';
 import 'package:tangent/screens/ask/ask_screen.dart';
 import 'package:tangent/screens/ask/ask_source_actions.dart';
@@ -51,6 +52,7 @@ void main() {
   late CountingDeletion deletion;
   late _Persistence persistence;
   late List<String> log;
+  int? serverStatus;
 
   setUp(() {
     db = LocalDb.forTesting(NativeDatabase.memory());
@@ -59,9 +61,16 @@ void main() {
     deletion = CountingDeletion();
     persistence = _Persistence(notebooks);
     log = <String>[];
+    serverStatus = null;
   });
 
-  Future<void> insertDump(String id, String title, {bool pinned = false}) =>
+  Future<void> insertDump(
+    String id,
+    String title, {
+    bool pinned = false,
+    String syncStatus = 'synced',
+    int? syncedSeq,
+  }) =>
       db.into(db.dumps).insert(
             DumpsCompanion.insert(
               id: id,
@@ -72,7 +81,8 @@ void main() {
               title: title,
               audioPath: 'content://media/external/audio/$id',
               audioSizeBytes: 2048,
-              syncStatus: 'synced',
+              syncStatus: syncStatus,
+              syncedSeq: Value(syncedSeq),
               pinned: Value(pinned),
             ),
           );
@@ -102,6 +112,13 @@ void main() {
           askSourceServerDeleteProvider.overrideWithValue((String id) async {
             // Records how many local previews ran BEFORE the server delete: 0.
             log.add('server-delete:$id:previews=${deletion.previews.length}');
+            if (serverStatus != null) {
+              throw ApiException(
+                statusCode: serverStatus!,
+                code: 'not_found',
+                message: 'Dump not found',
+              );
+            }
           }),
         ],
         child: MaterialApp(
@@ -212,7 +229,9 @@ void main() {
     );
     await choose(tester, ItemAction.unpin);
     expect(
-        (await tester.runAsync(() => db.getDumpRow('d-2')))!.pinned, isFalse,);
+      (await tester.runAsync(() => db.getDumpRow('d-2')))!.pinned,
+      isFalse,
+    );
 
     await longPress(tester, chip(2, 'todo', todo.id));
     await choose(tester, ItemAction.pin);
@@ -272,14 +291,18 @@ void main() {
     await tester.tapAt(const Offset(10, 10));
     await pumpFrames(tester);
     expect(
-        (await tester.runAsync(() => db.getDumpRow('d-3')))!.folderId, isNull,);
+      (await tester.runAsync(() => db.getDumpRow('d-3')))!.folderId,
+      isNull,
+    );
 
     await longPress(tester, chip(0, 'dump', 'd-3'));
     await choose(tester, ItemAction.move);
     await tester.tap(find.text('Sailing'));
     await pumpFrames(tester);
     expect(
-        (await tester.runAsync(() => db.getDumpRow('d-3')))!.folderId, folder,);
+      (await tester.runAsync(() => db.getDumpRow('d-3')))!.folderId,
+      folder,
+    );
     await unmount(tester);
   });
 
@@ -336,6 +359,44 @@ void main() {
     );
     await pumpFrames(tester);
     expect(find.textContaining('Could not delete'), findsOneWidget);
+    await unmount(tester);
+  });
+
+  Future<void> deleteVia404(WidgetTester tester, String id) async {
+    serverStatus = 404;
+    deletion.result = (
+      replayed: false,
+      items: <DeletionItemResult>[itemFor(id, DeleteState.deleted)],
+    );
+    await mount(tester, <AskSource>[
+      AskSource(entityType: 'dump', entityId: id, snippet: 'z'),
+    ]);
+    await longPress(tester, chip(0, 'dump', id));
+    await choose(tester, ItemAction.delete);
+    await tester.tap(
+      find.byKey(const ValueKey<String>('ask-source-delete-confirm')),
+    );
+    await pumpFrames(tester);
+  }
+
+  testWidgets('synced recording + server 404: nothing deleted locally, error',
+      (tester) async {
+    await insertDump('d-404s', 'Synced one', syncedSeq: 41);
+    await deleteVia404(tester, 'd-404s');
+    expect(log, <String>['server-delete:d-404s:previews=0']);
+    expect(deletion.previews, isEmpty);
+    expect(deletion.deletes, isEmpty);
+    expect(find.textContaining('Could not delete'), findsOneWidget);
+    await unmount(tester);
+  });
+
+  testWidgets('local-only recording + server 404: local delete proceeds',
+      (tester) async {
+    await insertDump('d-404l', 'Never uploaded', syncStatus: 'local_only');
+    await deleteVia404(tester, 'd-404l');
+    expect(log, <String>['server-delete:d-404l:previews=0']);
+    expect(deletion.deletes.single.targets.single.id, 'd-404l');
+    expect(find.textContaining('Could not delete'), findsNothing);
     await unmount(tester);
   });
 }

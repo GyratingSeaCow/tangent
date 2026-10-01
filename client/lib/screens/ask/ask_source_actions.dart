@@ -98,6 +98,16 @@ final StreamProvider<Map<String, AskSourceEntity>> askSourceEntitiesProvider =
   return out.stream;
 });
 
+/// True only for a recording the server has never held: no confirmed sync
+/// sequence, not server-sourced, no server audio, and neither synced nor
+/// mid-upload. Any doubt counts as "has synced".
+bool askDumpNeverSynced(DumpRow row) =>
+    row.syncedSeq == null &&
+    row.remoteOnly != true &&
+    row.audioOnServer != true &&
+    row.syncStatus != 'synced' &&
+    row.syncStatus != 'syncing';
+
 /// Authoritative server delete (publishes the sync tombstone). A seam so
 /// tests can record ordering; production is [ServerDumpDeletion.deleteDump].
 final Provider<Future<void> Function(String dumpId)>
@@ -112,15 +122,23 @@ final Provider<Future<void> Function(String dumpId)>
 /// Android audio lives behind SAF content:// URIs. Every item in the Ok
 /// envelope must report [DeleteState.deleted]; skipped/failed throws.
 ///
-/// A 404 from the server means it never had the recording (local-only
-/// capture): there is nothing to tombstone, so local cleanup proceeds.
+/// A 404 lets local cleanup proceed ONLY for a never-synced recording
+/// ([askDumpNeverSynced]); for a synced one it is a failure and nothing
+/// local is touched.
 final Provider<Future<void> Function(String dumpId)>
     askSourceDeleteDumpProvider = Provider<Future<void> Function(String)>(
   (ref) => (String dumpId) async {
+    final DumpRow? row = await ref.read(localDbProvider).getDumpRow(dumpId);
     try {
       await ref.read(askSourceServerDeleteProvider)(dumpId);
     } on ApiException catch (error) {
-      if (error.statusCode != 404) rethrow;
+      // A 404 proves nothing on its own (already deleted, or an upload
+      // still in flight that lands after the local delete and resurrects
+      // on the next pull). Only a recording that never reached the server
+      // may proceed; anything that has synced fails closed.
+      if (error.statusCode != 404 || row == null || !askDumpNeverSynced(row)) {
+        rethrow;
+      }
     }
     final LocalDeletionService deletion =
         ref.read(localDeletionServiceProvider);
