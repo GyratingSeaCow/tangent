@@ -382,7 +382,7 @@ void main() {
       );
     });
 
-    test('auto-present: on, unviewed, non-empty only', () {
+    test('auto-present: on and unviewed, even when empty', () {
       final MorningBriefing full = brief(
         dumps: <DumpRow>[dump('x', createdAt: DateTime(2026, 9, 29, 9))],
       );
@@ -416,7 +416,7 @@ void main() {
           viewedDay: '',
           briefing: brief(),
         ),
-        isFalse,
+        isTrue,
       );
       expect(morningReviewSunVisible(enabled: true), isTrue);
       expect(morningReviewSunVisible(enabled: false), isFalse);

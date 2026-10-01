@@ -177,15 +177,15 @@ MorningBriefing buildMorningBriefing({
   );
 }
 
-/// Whether the full screen presents itself over Home right now: only with
-/// the feature on, once per review morning, and never for an empty
-/// briefing (no noise on a quiet day; the sun icon still opens it).
+/// Whether the full screen presents itself over Home right now: with the
+/// feature on, once per review morning. An empty briefing still presents
+/// (its calm empty state) — the contract is "first open of the day".
 bool morningReviewShouldAutoPresent({
   required bool enabled,
   required String viewedDay,
   required MorningBriefing briefing,
 }) {
-  if (!enabled || briefing.isEmpty) return false;
+  if (!enabled) return false;
   return viewedDay != isoDate(briefing.reviewDay);
 }
 

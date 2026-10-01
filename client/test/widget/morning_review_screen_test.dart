@@ -194,6 +194,15 @@ void main() {
     await unmount(tester, c);
   });
 
+  testWidgets('empty morning still auto-presents the calm empty state',
+      (tester) async {
+    final ProviderContainer c = await mount(tester);
+    expect(screen(), findsOneWidget);
+    expect(find.byKey(MorningReviewScreen.emptyKey), findsOneWidget);
+    expect(store.morningReviewViewedDay, '2026-09-30');
+    await unmount(tester, c);
+  });
+
   testWidgets('setting OFF: no sun and no auto-present', (tester) async {
     store = SettingsStore(morningReviewEnabled: false);
     await insertDump('Standup', DateTime(2026, 9, 29, 9, 30));
