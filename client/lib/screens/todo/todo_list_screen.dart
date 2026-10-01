@@ -14,6 +14,8 @@ import '../../widgets/sync_button.dart';
 import '../home/home_providers.dart' show documentSyncEngineProvider;
 import '../home/home_screen.dart' show localDbProvider;
 import '../settings/ai_summaries_section.dart' show summariesClientProvider;
+import '../../widgets/instrument_scaffold.dart';
+import '../../widgets/top_nav_rail.dart';
 import 'todo_grouping.dart';
 
 /// The To Do screen (v1.24.0, folders): quick-add pinned at top, then one
@@ -26,7 +28,11 @@ import 'todo_grouping.dart';
 /// long-press a folder header = rename/delete the folder, never selection;
 /// long-press the date chip = clear the due date (it is a chip, not the row).
 class TodoListScreen extends ConsumerStatefulWidget {
-  const TodoListScreen({super.key});
+  const TodoListScreen({super.key, this.autofocusQuickAdd = false});
+
+  /// When true the quick-add field takes focus on mount — the global
+  /// create sheet's "To-do" entry lands ready to type.
+  final bool autofocusQuickAdd;
 
   static const Key quickAddFieldKey = Key('todo-quick-add-field');
   static const Key quickAddDateChipKey = Key('todo-quick-add-date-chip');
@@ -91,6 +97,17 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
   /// row that vanished under a sync can never be acted on.
   bool _selecting = false;
   final Set<String> _selected = <String>{};
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.autofocusQuickAdd) {
+      // Post-frame: the field must be mounted before it can take focus.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _quickAddFocus.requestFocus();
+      });
+    }
+  }
 
   @override
   void dispose() {
@@ -396,7 +413,8 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
       onPopInvokedWithResult: (bool didPop, _) {
         if (!didPop && _selecting) _cancelSelection();
       },
-      child: Scaffold(
+      child: InstrumentScaffold(
+        root: TangentRoot.todo,
         appBar: _selecting
             ? _buildSelectionBar(context, rows)
             : AppBar(
@@ -534,7 +552,8 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
       final String key = _sectionKeyOf(section);
       final bool collapsed = _collapsed.contains(key);
       children.add(
-        ListTile(
+        SectionHeaderCard(
+          child: ListTile(
           key: section.isDone
               ? TodoListScreen.doneHeaderKey
               : section.folderId == null
@@ -561,12 +580,13 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
               ? null
               : () => _folderHeaderActions(section),
         ),
+        ),
       );
       if (!collapsed) {
         children.addAll(section.todos.map((t) => _buildRow(context, t, now)));
       }
     }
-    return ListView(children: children);
+    return ListView(padding: listBottomInset(context), children: children);
   }
 
   /// The time chip's label and tint: Overdue (red) / Today / the date.

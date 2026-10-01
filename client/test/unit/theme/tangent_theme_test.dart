@@ -143,8 +143,12 @@ void main() {
           );
         });
 
-        test('the FAB is the record key: hot, rounded, never a pill', () {
-          expect(theme.floatingActionButtonTheme.backgroundColor, p.hot);
+        test('the FAB is the CREATE key: lime select, dark content, rounded',
+            () {
+          // Instrument Console v2: red is reserved for recording and
+          // destruction; the Capture screen's record key is bespoke.
+          expect(theme.floatingActionButtonTheme.backgroundColor, p.select);
+          expect(theme.floatingActionButtonTheme.foregroundColor, p.onSelect);
           final shape =
               theme.floatingActionButtonTheme.shape as RoundedRectangleBorder;
           expect(

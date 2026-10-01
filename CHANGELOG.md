@@ -5,6 +5,30 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.42.0 — 2026-10-01
+
+### Changed
+- **Instrument Console look.** A UI-only restyle: every button, action, menu
+  entry, setting and flow from 1.40.0 behaves exactly as before.
+  - A six-key navigation rail (Capture, Recordings, Notebooks, To Do, Ask,
+    Settings) sits under the app bar on every top-level screen. It is a jump
+    bar, not a tab stack: Android back still walks out through Capture.
+  - One lime **create** key on Notebooks and To Do opens a sheet that routes
+    to the same create flows as before. Recordings keeps its own Add key.
+    Red stays reserved for recording and destruction.
+  - Capture shows a state eyebrow (READY TO RECORD / RECORDING / TEXT NOTE),
+    a large tabular timer and a lime live waveform; import audio moved into
+    the app bar.
+  - Settings is organised into nine categories (Storage, Import & export,
+    Recording input, Server & devices, Transcription, Intelligence,
+    Integrations, Reminders, Maintenance & about). Every control is where it
+    was, one tap deeper; SAVE still saves everything.
+  - Corners are 6px panels / 8px sheet tops; folder heads are inset cards;
+    sheets carry a drag handle; the editor's mode tools light up in pills.
+  - Wide screens (Fold open, tablets): reading surfaces (Capture, Ask,
+    Settings, recording detail) are centred at a 700dp measure; list roots
+    use the full width. The rail compresses instead of overflowing at 280dp
+    split-screen widths.
 ## 1.41.0 — 2026-10-01
 
 ### Changed

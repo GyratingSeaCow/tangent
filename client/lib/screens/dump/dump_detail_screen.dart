@@ -32,6 +32,9 @@ import '../../widgets/language_tag.dart';
 import '../../widgets/listen_transcript_view.dart';
 import '../../widgets/waveform_scrubber.dart';
 import '../../widgets/summary_failed_row.dart';
+import '../../widgets/instrument_scaffold.dart';
+import '../../widgets/top_nav_rail.dart';
+import '../../theme/tangent_tokens.dart';
 import 'dumps_providers.dart';
 import 'name_speakers_sheet.dart';
 import 'summarize_flow.dart';
@@ -1173,7 +1176,11 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
     final bool exportable = currentRow != null && canExportMarkdown(currentRow);
     final bool sendable = currentRow != null && canSendToNotebook(currentRow);
 
-    return Scaffold(
+    return InstrumentScaffold(
+      // A pushed detail screen still belongs to Recordings: the rail shows
+      // where you are, not how you got here.
+      root: TangentRoot.recordings,
+      maxContentWidth: InstrumentScaffold.readingWidth,
       appBar: AppBar(
         title: Text(_modeTitle(currentRow)),
         actions: [
@@ -1598,14 +1605,28 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
             ),
             const SizedBox(height: 8),
           ],
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: MarkdownBody(
-                key: ValueKey('ai-summary-body-${widget.dumpId}'),
-                data: row.summary!,
-                selectable: true,
-                styleSheet: _summaryStyleSheet(Theme.of(context)),
+          // Instrument Console v2: the AI-written block carries a 3px
+          // signal bezel on its LEFT edge — the one lit accent that marks
+          // machine-generated text apart from the user's own transcript.
+          Container(
+            key: ValueKey('ai-summary-accent-${widget.dumpId}'),
+            decoration: const BoxDecoration(
+              border: Border(
+                left: BorderSide(
+                  color: TangentColors.signal,
+                  width: TangentShapes.bezelWidth,
+                ),
+              ),
+            ),
+            child: Card(
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: MarkdownBody(
+                  key: ValueKey('ai-summary-body-${widget.dumpId}'),
+                  data: row.summary!,
+                  selectable: true,
+                  styleSheet: _summaryStyleSheet(Theme.of(context)),
+                ),
               ),
             ),
           ),
@@ -1854,9 +1875,29 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
     return SegmentedButton<bool>(
       key: ValueKey('listen-toggle-${widget.dumpId}'),
       showSelectedIcon: false,
-      style: const ButtonStyle(
+      style: ButtonStyle(
         visualDensity: VisualDensity.compact,
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        // Instrument Console v2: the active segment takes the same quiet
+        // tinted pill as the rail's lit destination, with the signal
+        // foreground; inactive segments stay dim. Selection reads by
+        // LIGHT, not by fill.
+        backgroundColor: WidgetStateProperty.resolveWith(
+          (states) => states.contains(WidgetState.selected)
+              ? TopNavRail.activeTint
+              : Colors.transparent,
+        ),
+        foregroundColor: WidgetStateProperty.resolveWith(
+          (states) => states.contains(WidgetState.selected)
+              ? TangentColors.signal
+              : TangentColors.textDim,
+        ),
+        side: const WidgetStatePropertyAll(
+          BorderSide(
+            color: TangentColors.edge,
+            width: TangentShapes.edgeWidth,
+          ),
+        ),
       ),
       segments: const [
         ButtonSegment(
@@ -1959,7 +2000,18 @@ class _RecordingPlaybackPanel extends StatelessWidget {
             .toDouble() /
         1000;
 
-    return Card(
+    // Instrument Console v2: the transport is a machined, bordered panel —
+    // hairline edge, restrained radius — not a floating Card.
+    return Container(
+      key: const ValueKey<String>('transport-panel'),
+      decoration: BoxDecoration(
+        color: TangentColors.panel,
+        border: Border.all(
+          color: TangentColors.edge,
+          width: TangentShapes.edgeWidth,
+        ),
+        borderRadius: BorderRadius.circular(TangentShapes.panelRadius),
+      ),
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: Column(

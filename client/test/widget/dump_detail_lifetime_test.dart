@@ -223,6 +223,10 @@ void main() {
       expect((await f.db.getDump(a.key.dumpId))!.toJson(),originalRow);
       expect(await tester.runAsync(()=>f.audio('A',a.key.dumpId).readAsBytes()),[1,2,3]);
       expect(await tester.runAsync(()=>f.metadata('A',a.key.dumpId).readAsString()),originalMeta);
+      // The rail chrome above the detail body pushed this row past the lazy
+      // ListView's cache extent in the 800x600 test window: scroll it in
+      // before asserting, exactly as a user would.
+      await tester.scrollUntilVisible(find.byKey(const ValueKey('retry-playback')),200,scrollable:find.byType(Scrollable).first);await tester.pump();
       expect(find.text('Retry playback'),findsOneWidget);
       await other!.close();other=null;
       final retry=tester.widget<TextButton>(find.byKey(const ValueKey('retry-playback'))).onPressed!;

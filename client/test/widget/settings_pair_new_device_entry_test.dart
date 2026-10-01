@@ -49,7 +49,7 @@ void main() {
           secureStoreProvider.overrideWithValue(_FakeSecureStore()),
           transcriptionClientProvider.overrideWith((ref) => _FakeClient()),
         ],
-        child: const MaterialApp(home: SettingsScreen()),
+        child: const MaterialApp(home: SettingsScreen(category: SettingsCategory.server)),
       ),
     );
     await tester.pumpAndSettle();

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../models/dump.dart';
 import '../models/dump_mode.dart';
 import 'notebook_dump_card.dart' show dumpModeIcon, formatDumpDuration;
+import 'sheet_drag_handle.dart';
 
 /// Modal bottom-sheet body for multi-selecting dumps to embed in a notebook.
 ///
@@ -95,8 +96,9 @@ class _DumpPickerSheetState extends State<DumpPickerSheet> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              const SheetDragHandle(),
               Padding(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
                 child: Text(
                   'Add ${widget.noun}',
                   style: theme.textTheme.titleMedium,
@@ -128,28 +130,32 @@ class _DumpPickerSheetState extends State<DumpPickerSheet> {
                         itemCount: visible.length,
                         itemBuilder: (context, index) {
                           final dump = visible[index];
-                          return CheckboxListTile(
-                            key: ValueKey('dump-pick-${dump.id}'),
-                            value: _selected.contains(dump.id),
-                            controlAffinity: ListTileControlAffinity.leading,
-                            secondary: Icon(dumpModeIcon(dump.mode)),
-                            title: Text(
-                              dump.title.isEmpty ? '(untitled)' : dump.title,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
+                          // IC v2 row language: at least 52px of finger.
+                          return ConstrainedBox(
+                            constraints: const BoxConstraints(minHeight: 52),
+                            child: CheckboxListTile(
+                              key: ValueKey('dump-pick-${dump.id}'),
+                              value: _selected.contains(dump.id),
+                              controlAffinity: ListTileControlAffinity.leading,
+                              secondary: Icon(dumpModeIcon(dump.mode)),
+                              title: Text(
+                                dump.title.isEmpty ? '(untitled)' : dump.title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              subtitle: Text(
+                                _subtitle(dump),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              onChanged: (checked) => setState(() {
+                                if (checked ?? false) {
+                                  _selected.add(dump.id);
+                                } else {
+                                  _selected.remove(dump.id);
+                                }
+                              }),
                             ),
-                            subtitle: Text(
-                              _subtitle(dump),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            onChanged: (checked) => setState(() {
-                              if (checked ?? false) {
-                                _selected.add(dump.id);
-                              } else {
-                                _selected.remove(dump.id);
-                              }
-                            }),
                           );
                         },
                       ),

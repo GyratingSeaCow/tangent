@@ -15,15 +15,13 @@ import '../../services/widget_launch.dart';
 import '../../widgets/sync_button.dart' show syncMessageFor;
 
 import '../dump/dump_detail_screen.dart';
-import '../dump/dumps_list_screen.dart';
 import '../note/note_compose_screen.dart';
-import '../notebook/notebook_list_screen.dart';
-import '../todo/todo_list_screen.dart';
-import '../ask/ask_screen.dart';
 import '../recording/recording_controller.dart';
 import '../recording/recording_waveform.dart';
-import '../settings/settings_screen.dart';
+import '../../services/create_requests.dart';
 import '../../theme/tangent_tokens.dart';
+import '../../widgets/instrument_scaffold.dart';
+import '../../widgets/top_nav_rail.dart';
 import 'home_providers.dart';
 import 'morning_review_screen.dart';
 import 'record_button_palette.dart';
@@ -59,6 +57,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   DumpMode _mode = DumpMode.brainDump;
   StreamSubscription<String>? _instanceCommands;
   StreamSubscription<String>? _launchCommands;
+  StreamSubscription<CreateRequest>? _createRequests;
 
   /// Resolves once the recording controller can actually start: DB init,
   /// storage bootstrap, fence restore — the same future the controller
@@ -86,12 +85,44 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         if (command != null && mounted) _onLaunchCommand(command);
       }),
     );
+    // Global create funnel (Instrument Console v2): the lime FAB's sheet and
+    // the Recordings-list create flow both deliver here, so every creation
+    // path runs through the SAME mode switch and toggle the button uses.
+    _createRequests =
+        ref.read(createRequestsProvider).stream.listen(_onCreateRequest);
+  }
+
+  /// A create request switches the mode selector and fires the matching
+  /// entry point — exactly what [_openDumpsList]'s pop-result handling has
+  /// always done, generalized to any trigger.
+  void _onCreateRequest(CreateRequest request) {
+    if (!mounted) return;
+    setState(() {
+      _mode = switch (request) {
+        CreateRequest.textNote => DumpMode.textNote,
+        CreateRequest.meeting => DumpMode.meeting,
+        CreateRequest.recording => DumpMode.brainDump,
+        // Notebook/to-do creation never reaches Capture; routed elsewhere.
+        CreateRequest.notebook || CreateRequest.todo => _mode,
+      };
+    });
+    switch (request) {
+      case CreateRequest.textNote:
+        unawaited(_openNoteCompose());
+      case CreateRequest.recording:
+      case CreateRequest.meeting:
+        unawaited(_toggleRecording());
+      case CreateRequest.notebook:
+      case CreateRequest.todo:
+        break;
+    }
   }
 
   @override
   void dispose() {
     unawaited(_instanceCommands?.cancel());
     unawaited(_launchCommands?.cancel());
+    unawaited(_createRequests?.cancel());
     super.dispose();
   }
 
@@ -181,30 +212,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     );
   }
 
-  /// Pushes the dumps list and honors the [DumpsCreateAction] it pops with
-  /// (its `+` FAB): switch [_mode] to match, then reuse the existing entry
-  /// points — compose for text notes, `_toggleRecording` for voice modes.
-  Future<void> _openDumpsList() async {
-    final action = await Navigator.of(context).push<DumpsCreateAction?>(
-      MaterialPageRoute<DumpsCreateAction?>(
-        builder: (_) => const DumpsListScreen(),
-      ),
-    );
-    if (action == null || !mounted) return;
-    setState(() {
-      _mode = switch (action) {
-        DumpsCreateAction.textNote => DumpMode.textNote,
-        DumpsCreateAction.brainDump => DumpMode.brainDump,
-        DumpsCreateAction.meeting => DumpMode.meeting,
-      };
-    });
-    if (action == DumpsCreateAction.textNote) {
-      await _openNoteCompose();
-    } else {
-      await _toggleRecording();
-    }
-  }
-
   Future<void> _syncNow() async {
     setState(() => _syncing = true);
     try {
@@ -284,10 +291,27 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       return '$m:$s';
     })();
 
-    return Scaffold(
+    return InstrumentScaffold(
+      root: TangentRoot.capture,
+      maxContentWidth: InstrumentScaffold.readingWidth,
       appBar: AppBar(
         title: const Text('Tangent'),
         actions: [
+          // Mockup: import lives in the app bar, not the capture column.
+          IconButton(
+            key: const ValueKey('home-import-audio'),
+            icon: _importing
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.library_music),
+            tooltip: 'Import audio',
+            // Importing reserves a capture, so it must not run while one
+            // is already active.
+            onPressed: isRecording || _importing ? null : _importAudio,
+          ),
           IconButton(
             icon: _syncing
                 ? const SizedBox(
@@ -299,78 +323,62 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             tooltip: 'Sync now',
             onPressed: _syncing ? null : _syncNow,
           ),
-          IconButton(
-            icon: const Icon(Icons.list),
-            tooltip: 'Recordings',
-            onPressed: _openDumpsList,
-          ),
-          IconButton(
-            icon: const Icon(Icons.menu_book),
-            tooltip: 'Notebooks',
-            onPressed: () => Navigator.of(context).push<void>(
-              MaterialPageRoute<void>(
-                builder: (_) => const NotebookListScreen(),
-              ),
-            ),
-          ),
-          IconButton(
-            key: const Key('home-todo-button'),
-            // Phase 2 (I1): a CHECKED checkbox, not a checklist glyph.
-            icon: const Icon(Icons.check_box),
-            tooltip: 'To Do',
-            onPressed: () => Navigator.of(context).push<void>(
-              MaterialPageRoute<void>(
-                builder: (_) => const TodoListScreen(),
-              ),
-            ),
-          ),
-          IconButton(
-            key: const Key('home-ask-button'),
-            icon: const Icon(Icons.question_answer),
-            tooltip: 'Ask',
-            onPressed: () => Navigator.of(context).push<void>(
-              MaterialPageRoute<void>(builder: (_) => const AskScreen()),
-            ),
-          ),
-          // Morning review sun: immediately left of Settings, present only
-          // while the setting is on.
+          // Morning review sun: rightmost action, present only while the
+          // setting is on.
           const MorningReviewSunButton(),
-          IconButton(
-            icon: const Icon(Icons.settings),
-            tooltip: 'Settings',
-            onPressed: () => Navigator.of(context).push<void>(
-              MaterialPageRoute<void>(
-                builder: (_) => const SettingsScreen(),
-              ),
-            ),
-          ),
         ],
       ),
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
+      // Scrollable-center: the column centres when it fits and scrolls when
+      // it does not (short screens, large text). A plain Center+Column
+      // overflowed by the rail's height the day the rail landed.
+      body: LayoutBuilder(
+        builder: (context, constraints) => SingleChildScrollView(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: constraints.maxHeight),
+            child: Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                mainAxisSize: MainAxisSize.min,
+                children: [
             // v1.40: renders nothing itself; presents the full-screen
             // morning review over Home on the first open of each morning.
             const MorningReviewAutoPresenter(),
             const SpeakerBackfillBanner(),
-            if (!isNoteMode)
+            // Eyebrow status line (mockup): quiet uppercase mono over the
+            // timer, naming the capture state.
+            Text(
+              isNoteMode
+                  ? 'TEXT NOTE'
+                  : isRecording
+                      ? 'RECORDING'
+                      : 'READY TO RECORD',
+              style: Theme.of(context).textTheme.labelSmall,
+            ),
+            if (!isNoteMode) ...[
+              const SizedBox(height: 8),
               Text(
                 timeLabel,
                 style: TextStyle(
                   fontSize: 72,
                   fontWeight: FontWeight.w200,
+                  // Tabular figures: the timer must not wobble as digits
+                  // change.
+                  fontFeatures: const [FontFeature.tabularFigures()],
                   color: isRecording
                       ? Theme.of(context).colorScheme.error
                       : Theme.of(context).colorScheme.onSurface,
                 ),
               ),
+            ],
             if (isRecording) ...[
               const SizedBox(height: 12),
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 24),
                 child: RecordingWaveformConsumer(
-                  color: Theme.of(context).colorScheme.error,
+                  // Signal, not red: the token contract says lime marks the
+                  // LIVE thing, and the active waveform is the live thing.
+                  // The red key + red timer already say "capturing".
+                  color: TangentColors.signal,
                 ),
               ),
               const SizedBox(height: 12),
@@ -429,24 +437,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               style: Theme.of(context).textTheme.titleMedium,
             ),
             const SizedBox(height: 12),
-            // Jeff: "There also needs to be an Import Audio button which will
-            // allow you to import audio into the tangent folder by copying it
-            // to the tangent folder and then processing it."
-            TextButton.icon(
-              key: const ValueKey('home-import-audio'),
-              // Importing reserves a capture, so it must not run while one is
-              // already active.
-              onPressed: isRecording || _importing ? null : _importAudio,
-              icon: _importing
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.library_music),
-              label: Text(_importing ? 'Importing…' : 'Import audio'),
-            ),
-            const SizedBox(height: 12),
             _ModeSelector(
               current: _mode,
               onChanged: isRecording ? null : (m) => setState(() => _mode = m),
@@ -460,7 +450,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 style: Theme.of(context).textTheme.bodySmall,
               ),
             ),
-          ],
+                ],
+              ),
+            ),
+          ),
         ),
       ),
     );

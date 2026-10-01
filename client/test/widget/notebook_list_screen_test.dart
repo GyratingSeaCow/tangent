@@ -247,11 +247,17 @@ void main() {
     await unmount(tester);
   });
 
-  testWidgets('the FAB creates a notebook and opens its editor',
+  testWidgets('the create key creates a notebook and opens its editor',
       (tester) async {
     await mountList(tester);
 
+    // Instrument Console v2: the global create key opens the create sheet;
+    // its Notebook entry performs the exact create-and-open the local FAB
+    // used to.
     await tester.tap(find.byType(FloatingActionButton));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.tap(find.byKey(const Key('create-sheet-notebook')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     await tester.pump(const Duration(milliseconds: 100));

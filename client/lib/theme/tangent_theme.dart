@@ -75,9 +75,12 @@ ThemeData tangentTheme([TangentVariant variant = TangentVariant.anodized]) {
       ),
     ),
     // The record key. Hot, and the only FAB in the app. Rounded, not a pill.
+    // The FAB is the CREATE key (Instrument Console v2): lime select, never
+    // hot — red stays reserved for recording and destruction. The Capture
+    // screen's round red record key is bespoke, not this theme.
     floatingActionButtonTheme: FloatingActionButtonThemeData(
-      backgroundColor: p.hot,
-      foregroundColor: const Color(0xFFFFFFFF),
+      backgroundColor: p.select,
+      foregroundColor: p.onSelect,
       elevation: 0,
       focusElevation: 0,
       hoverElevation: 0,

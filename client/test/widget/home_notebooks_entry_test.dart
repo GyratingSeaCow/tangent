@@ -19,6 +19,7 @@ import 'package:tangent/screens/settings/settings_screen.dart'
 import 'package:tangent/services/recording_service.dart';
 import 'package:tangent/services/screen_awake.dart';
 import 'package:tangent/services/transcription_client.dart';
+import 'package:tangent/widgets/top_nav_rail.dart';
 
 import '../support/fake_notebook_repository.dart';
 import '../support/widget_recording_coordinator.dart';
@@ -86,11 +87,12 @@ void main() {
   }
 
   testWidgets(
-      'app bar exposes a Notebooks action between dumps and settings',
+      'chrome splits: sync stays in the app bar, destinations sit on the rail',
       (tester) async {
     final LocalDb db = await mountHome(tester);
 
     expect(find.byIcon(Icons.menu_book), findsOneWidget);
+    // Instrument Console v2: the app bar keeps the non-destination actions…
     expect(
       tester
           .widgetList<IconButton>(
@@ -101,8 +103,27 @@ void main() {
           )
           .map((IconButton button) => button.tooltip)
           .toList(),
-      // v1.37.0: Ask joined as the fourth content destination after To Do.
-      <String>['Sync now', 'Recordings', 'Notebooks', 'To Do', 'Ask', 'Settings'],
+      <String>['Import audio', 'Sync now'],
+    );
+    // …and every destination moved to the rail, in fixed order.
+    expect(
+      tester
+          .widgetList<IconButton>(
+            find.descendant(
+              of: find.byType(TopNavRail),
+              matching: find.byType(IconButton),
+            ),
+          )
+          .map((IconButton button) => button.tooltip)
+          .toList(),
+      <String>[
+        'Capture',
+        'Recordings',
+        'Notebooks',
+        'To Do',
+        'Ask',
+        'Settings',
+      ],
     );
     expect(tester.takeException(), isNull);
 

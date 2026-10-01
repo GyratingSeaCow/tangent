@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 
 import '../models/notebook_ruling.dart';
 import 'notebook_ink_canvas.dart';
+import 'sheet_drag_handle.dart';
 
 /// Opens the picker. Resolves to the picked ruling, or null when the sheet
 /// is dismissed. Dismissal must change NOTHING — the same rule as the ink
@@ -35,6 +36,7 @@ class PageBackgroundSheet extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
+          const SheetDragHandle(),
           for (final NotebookRuling ruling in NotebookRuling.values)
             ListTile(
               key: ValueKey<String>(

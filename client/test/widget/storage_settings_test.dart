@@ -7,6 +7,7 @@ import 'package:tangent/data/storage/storage_contract.dart';
 import 'package:tangent/data/storage/storage_providers.dart';
 import 'package:tangent/screens/settings/storage_settings_section.dart';
 import 'package:tangent/screens/settings/settings_screen.dart';
+import '../support/settings_categories.dart';
 import 'package:tangent/screens/server/server_connection_screen.dart';
 import 'package:tangent/data/settings_store.dart';
 import 'package:tangent/data/secure_storage.dart';
@@ -214,7 +215,7 @@ Future<void> mountHost(WidgetTester t, TestCatalog catalog, HeldClient client,
     settingsStoreProvider.overrideWithValue(settings),
     secureStoreProvider.overrideWithValue(secure),
     transcriptionClientProvider.overrideWith((_) => client),
-  ], child: const MaterialApp(home: SettingsScreen()),),);
+  ], child: const MaterialApp(home: SettingsScreen(category: SettingsCategory.storage)),),);
   await pumpStorage(t);
 }
 
@@ -282,7 +283,7 @@ void main() {
     await pumpStorage(t);
     expect(find.text('Storage unavailable. Try reopening Settings.'),
         findsOneWidget,);
-    expect(find.text('Settings'), findsOneWidget);
+    expect(find.text('Storage'), findsNWidgets(2)); // drill title + section heading
     oldCallback();
     await pumpStorage(t);
     expect(catalog.picks, 0);
@@ -434,6 +435,17 @@ void main() {
     // scrollUntilVisible stops as soon as the widget EXISTS, which (since the
     // custom-vocabulary section, 2026-09-26) can leave it a few px past the
     // viewport edge — so ensureVisible before tapping.
+    // Instrument Console v2: the Wi-Fi switch lives in Storage (where this
+    // host mounted); trigger + screen-awake live in Recording input. The
+    // drills switch IN PLACE, so edits in one must survive visiting the
+    // other — that is the contract this test now also proves.
+    await t.ensureVisible(find.text('Upload recordings only on Wi-Fi'));
+    await t.pump();
+    await t.tap(find.text('Upload recordings only on Wi-Fi'));
+    await pumpStorage(t);
+    await closeSettingsCategory(t);
+    await openSettingsCategory(t, SettingsCategory.recording);
+    await pumpStorage(t);
     await t.scrollUntilVisible(
       find.text('Tap to toggle'),
       80,
@@ -442,15 +454,6 @@ void main() {
     await t.ensureVisible(find.text('Tap to toggle'));
     await t.pump();
     await t.tap(find.text('Tap to toggle'));
-    await pumpStorage(t);
-    await t.scrollUntilVisible(
-      find.text('Upload recordings only on Wi-Fi'),
-      80,
-      scrollable: find.byType(Scrollable).first,
-    );
-    await t.ensureVisible(find.text('Upload recordings only on Wi-Fi'));
-    await t.pump();
-    await t.tap(find.text('Upload recordings only on Wi-Fi'));
     await pumpStorage(t);
     await t.scrollUntilVisible(
       find.text('Keep screen awake while recording'),
@@ -489,12 +492,19 @@ void main() {
     final settings = ObservedSettings();
     final secure = SyntheticSecureStore();
     await mountHost(t, catalog, client, settings, secure);
-    expect(find.text('Settings'), findsOneWidget);
+    expect(find.text('Storage'), findsNWidgets(2)); // drill title + section heading
     expect(find.text('No default folder'), findsOneWidget);
     expect(find.textContaining('Default folder unavailable'), findsOneWidget);
     client.info.completeError(StateError('Synthetic offline'));
     await pumpStorage(t);
+    // Server status moved to the Transcription drill (IC v2).
+    await closeSettingsCategory(t);
+    await openSettingsCategory(t, SettingsCategory.transcription);
+    await pumpStorage(t);
     expect(find.textContaining('Server unreachable:'), findsOneWidget);
+    await closeSettingsCategory(t);
+    await openSettingsCategory(t, SettingsCategory.storage);
+    await pumpStorage(t);
     await t.tap(find.byKey(const ValueKey('change-default-folder')));
     await pumpStorage(t);
     expect(catalog.picks, 1);
@@ -620,10 +630,21 @@ void main() {
       expect(secure.writes, 0);
       client.info.complete(syntheticInfo);
       await pumpStorage(t);
+      // The Server tile moved to the Server & devices drill (IC v2).
+      await closeSettingsCategory(t);
+      await openSettingsCategory(t, SettingsCategory.server);
+      await pumpStorage(t);
       expect(find.text(SyntheticSecureStore.url), findsOneWidget);
+      await closeSettingsCategory(t);
+      await openSettingsCategory(t, SettingsCategory.storage);
+      await pumpStorage(t);
       // Requirement 8: the status line is a STATUS line — the model list
       // moved into WhisperModelSection's radios, so 'default model:' and the
       // 'available:' pseudo-menu are gone from here.
+      // Server status moved to the Transcription drill (IC v2).
+      await closeSettingsCategory(t);
+      await openSettingsCategory(t, SettingsCategory.transcription);
+      await pumpStorage(t);
       expect(find.textContaining('Connected · 2 recordings'), findsOneWidget);
       expect(find.textContaining('default model:'), findsNothing);
       expect(find.textContaining('available:'), findsNothing);
@@ -639,6 +660,9 @@ void main() {
             .groupValue,
         'large-v3',
       );
+      await closeSettingsCategory(t);
+      await openSettingsCategory(t, SettingsCategory.storage);
+      await pumpStorage(t);
       expect(t.takeException(), isNull);
     });
   }

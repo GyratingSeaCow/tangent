@@ -5,6 +5,7 @@ import 'package:tangent/models/dump.dart';
 import 'package:tangent/models/dump_mode.dart';
 import 'package:tangent/models/sync_status.dart';
 import 'package:tangent/widgets/dump_picker_sheet.dart';
+import 'package:tangent/widgets/sheet_drag_handle.dart';
 
 Dump _dump(String id, String title, DumpMode mode, int seconds) {
   final at = DateTime(2026, 9, 17, 10, 30);
@@ -189,5 +190,22 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('dump-picker-add')));
     await tester.pumpAndSettle();
     expect(harness.result, isEmpty);
+  });
+
+  testWidgets('wears the house drag handle over 52px-minimum rows',
+      (tester) async {
+    await _openSheet(tester);
+
+    expect(find.byKey(SheetDragHandle.handleKey), findsOneWidget);
+    final barSize = tester.getSize(find.byKey(SheetDragHandle.barKey));
+    expect(barSize.width, 40);
+    expect(barSize.height, 3);
+
+    for (final id in <String>['d1', 'd2', 'd3']) {
+      expect(
+        tester.getSize(find.byKey(ValueKey('dump-pick-$id'))).height,
+        greaterThanOrEqualTo(52),
+      );
+    }
   });
 }

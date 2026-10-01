@@ -362,6 +362,25 @@ void main() {
     expect(screen(), findsOneWidget);
     await unmount(tester, c);
   });
+
+  testWidgets('source lines are rounded bordered cards', (tester) async {
+    await insertDump('Standup', DateTime(2026, 9, 29, 9, 30));
+    final ProviderContainer c = await mount(tester);
+    expect(screen(), findsOneWidget);
+
+    final Finder line = find.byKey(MorningReviewScreen.captureKey('Standup'));
+    expect(tester.getSize(line).height, greaterThanOrEqualTo(58));
+    final Container card = tester.widget<Container>(
+      find.descendant(of: line, matching: find.byType(Container)).first,
+    );
+    final BoxDecoration deco = card.decoration! as BoxDecoration;
+    expect(
+      deco.borderRadius,
+      BorderRadius.circular(TangentShapes.panelRadius),
+    );
+    expect(deco.border, isNotNull, reason: 'source cards carry an edge');
+    await unmount(tester, c);
+  });
 }
 
 /// Fixed pumps: the route transition is 420 ms and the screen streams; a

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tangent/theme/tangent_tokens.dart';
 import 'package:tangent/widgets/item_action_sheet.dart';
+import 'package:tangent/widgets/sheet_drag_handle.dart';
 
 // One long-press menu for every list in the app.
 //
@@ -178,6 +179,38 @@ void main() {
           find.text(ItemActionSheet.labelFor(action)),
           findsOneWidget,
           reason: '$action needs a human label',
+        );
+      }
+
+      await tester.tapAt(const Offset(200, 20));
+      await tester.pumpAndSettle();
+      expect(resolved, isTrue);
+      expect(chosen, isNull);
+    });
+
+    testWidgets('wears the house drag handle over 52px-minimum rows',
+        (tester) async {
+      await open(
+        tester,
+        title: 'A notebook',
+        actions: const <ItemAction>[ItemAction.rename, ItemAction.delete],
+      );
+      await tester.pumpAndSettle();
+
+      // One handle — the house 40x3 bar, not Material's stock one.
+      expect(find.byKey(SheetDragHandle.handleKey), findsOneWidget);
+      final Size bar = tester.getSize(find.byKey(SheetDragHandle.barKey));
+      expect(bar.width, 40);
+      expect(bar.height, 3);
+
+      for (final ItemAction action in <ItemAction>[
+        ItemAction.rename,
+        ItemAction.delete,
+      ]) {
+        expect(
+          tester.getSize(find.byKey(ItemActionSheet.keyFor(action))).height,
+          greaterThanOrEqualTo(52),
+          reason: '$action row must give a finger at least 52px',
         );
       }
 

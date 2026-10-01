@@ -25,6 +25,14 @@ Future<InkColor?> showInkPalette({
       screen.height - globalPosition.dy,
     ),
     color: TangentColors.panel,
+    // IC v2: popups share the one restrained panel radius.
+    shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(TangentShapes.panelRadius),
+      side: const BorderSide(
+        color: TangentColors.edge,
+        width: TangentShapes.edgeWidth,
+      ),
+    ),
     items: <PopupMenuEntry<InkColor>>[
       PopupMenuItem<InkColor>(
         enabled: false,

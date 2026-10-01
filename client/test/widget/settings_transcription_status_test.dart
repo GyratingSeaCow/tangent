@@ -92,7 +92,7 @@ Future<void> _mount(
           ),
         ),
       ],
-      child: const MaterialApp(home: SettingsScreen()),
+      child: const MaterialApp(home: SettingsScreen(category: SettingsCategory.transcription)),
     ),
   );
   await tester.pump();

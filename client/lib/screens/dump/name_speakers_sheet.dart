@@ -12,6 +12,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/local_db.dart';
 import '../../models/speaker_names.dart';
 import '../../services/speaker_naming.dart';
+import '../../widgets/sheet_drag_handle.dart';
 import '../home/home_screen.dart' show localDbProvider;
 
 /// Success snackbar text (spec §3).
@@ -207,8 +208,9 @@ class _NameSpeakersSheetState extends State<NameSpeakersSheet> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
+          const SheetDragHandle(),
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
             child: Text('Name speakers', style: theme.textTheme.titleMedium),
           ),
           Padding(

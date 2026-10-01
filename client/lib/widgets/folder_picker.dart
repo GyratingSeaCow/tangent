@@ -10,6 +10,8 @@
 // whenever someone changed their mind.
 import 'package:flutter/material.dart';
 
+import 'sheet_drag_handle.dart';
+
 /// A folder the user can file something into.
 @immutable
 class FolderOption {
@@ -97,8 +99,9 @@ class _FolderPickerState extends State<FolderPicker> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
+          const SheetDragHandle(),
           Padding(
-            padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
             child: Text('Move to', style: theme.textTheme.titleMedium),
           ),
           const Divider(height: 1),
@@ -109,6 +112,7 @@ class _FolderPickerState extends State<FolderPicker> {
               children: <Widget>[
                 ListTile(
                   key: FolderPicker.noFolderKey,
+                  minTileHeight: 52,
                   leading: const Icon(Icons.inbox_outlined),
                   title: const Text('No folder'),
                   selected: widget.currentFolderId == null,
@@ -118,6 +122,7 @@ class _FolderPickerState extends State<FolderPicker> {
                 for (final FolderOption folder in widget.folders)
                   ListTile(
                     key: FolderPicker.folderKey(folder.id),
+                    minTileHeight: 52,
                     leading: const Icon(Icons.folder_outlined),
                     title: Text(folder.name),
                     selected: folder.id == widget.currentFolderId,
@@ -133,6 +138,7 @@ class _FolderPickerState extends State<FolderPicker> {
                 if (!_creating)
                   ListTile(
                     key: FolderPicker.newFolderKey,
+                    minTileHeight: 52,
                     leading: const Icon(Icons.create_new_folder_outlined),
                     title: const Text('New folder'),
                     onTap: () => setState(() => _creating = true),
@@ -183,7 +189,8 @@ Future<FolderChoice?> showFolderPicker(
 }) {
   return showModalBottomSheet<FolderChoice>(
     context: context,
-    showDragHandle: true,
+    // The house SheetDragHandle is part of the sheet body; Material's stock
+    // handle would double it.
     isScrollControlled: true,
     builder: (BuildContext sheetContext) => Padding(
       // Keep the name field above the keyboard when creating a folder.

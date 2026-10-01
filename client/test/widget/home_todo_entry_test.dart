@@ -19,6 +19,7 @@ import 'package:tangent/screens/todo/todo_list_screen.dart';
 import 'package:tangent/services/recording_service.dart';
 import 'package:tangent/services/screen_awake.dart';
 import 'package:tangent/services/transcription_client.dart';
+import 'package:tangent/widgets/top_nav_rail.dart';
 
 import '../support/fake_notebook_repository.dart';
 import '../support/widget_recording_coordinator.dart';
@@ -85,32 +86,29 @@ void main() {
     await db.close();
   }
 
-  testWidgets('the app bar exposes the To Do checkbox action', (tester) async {
+  testWidgets('the nav rail exposes the To Do checkbox action',
+      (tester) async {
     final LocalDb db = await mountHome(tester);
 
-    expect(find.byKey(const Key('home-todo-button')), findsOneWidget);
+    final Finder todoButton = find.byKey(railKey(TangentRoot.todo));
+    expect(todoButton, findsOneWidget);
     // Phase 2 (I1): the ICON is the assertion, not just the key — the key
     // passed happily with phase 1's wrong `Icons.checklist`. Read it off the
     // keyed button so an unrelated check_box elsewhere cannot satisfy this.
     expect(
-      (tester
-              .widget<IconButton>(find.byKey(const Key('home-todo-button')))
-              .icon as Icon)
-          .icon,
+      (tester.widget<IconButton>(todoButton).icon as Icon).icon,
       Icons.check_box,
     );
     expect(
       find.descendant(
-        of: find.byKey(const Key('home-todo-button')),
+        of: todoButton,
         matching: find.byIcon(Icons.check_box),
       ),
       findsOneWidget,
     );
     expect(find.byIcon(Icons.checklist), findsNothing);
     expect(
-      tester
-          .widget<IconButton>(find.byKey(const Key('home-todo-button')))
-          .tooltip,
+      tester.widget<IconButton>(todoButton).tooltip,
       'To Do',
     );
     expect(tester.takeException(), isNull);
@@ -121,7 +119,7 @@ void main() {
   testWidgets('tapping the checkbox opens the To Do screen', (tester) async {
     final LocalDb db = await mountHome(tester);
 
-    await tester.tap(find.byKey(const Key('home-todo-button')));
+    await tester.tap(find.byKey(railKey(TangentRoot.todo)));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     await tester.pump(const Duration(milliseconds: 100));
@@ -137,7 +135,7 @@ void main() {
       (tester) async {
     final LocalDb db = await mountHome(tester);
 
-    await tester.tap(find.byKey(const Key('home-todo-button')));
+    await tester.tap(find.byKey(railKey(TangentRoot.todo)));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     Navigator.of(tester.element(find.byType(TodoListScreen))).pop();

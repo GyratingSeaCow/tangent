@@ -13,6 +13,7 @@
 import 'package:flutter/material.dart';
 
 import '../theme/tangent_tokens.dart';
+import 'sheet_drag_handle.dart';
 
 /// An action a list item can offer on long-press.
 ///
@@ -195,8 +196,9 @@ class ItemActionSheet extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
+          const SheetDragHandle(),
           Padding(
-            padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
@@ -238,6 +240,10 @@ class ItemActionSheet extends StatelessWidget {
                       return ListTile(
                         key: keyFor(action),
                         enabled: !isDisabled,
+                        // Explicit floor: desktop visual density would
+                        // otherwise compress a one-line tile below the
+                        // 52px finger target (IC v2 row language).
+                        minTileHeight: 52,
                         leading: Icon(iconFor(action), color: tint),
                         title: Text(
                           labelOverrides[action] ?? labelFor(action),
@@ -272,7 +278,8 @@ Future<ItemAction?> showItemActionSheet(
 }) {
   return showModalBottomSheet<ItemAction>(
     context: context,
-    showDragHandle: true,
+    // The house SheetDragHandle is part of the sheet body; Material's stock
+    // handle would double it.
     builder: (BuildContext sheetContext) => ItemActionSheet(
       title: title,
       subtitle: subtitle,
