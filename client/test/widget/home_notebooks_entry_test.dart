@@ -103,7 +103,7 @@ void main() {
           )
           .map((IconButton button) => button.tooltip)
           .toList(),
-      <String>['Sync now'],
+      <String>['Import audio', 'Sync now'],
     );
     // …and every destination moved to the rail, in fixed order.
     expect(

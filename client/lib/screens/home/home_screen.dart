@@ -296,6 +296,21 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       appBar: AppBar(
         title: const Text('Tangent'),
         actions: [
+          // Mockup: import lives in the app bar, not the capture column.
+          IconButton(
+            key: const ValueKey('home-import-audio'),
+            icon: _importing
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.library_music),
+            tooltip: 'Import audio',
+            // Importing reserves a capture, so it must not run while one
+            // is already active.
+            onPressed: isRecording || _importing ? null : _importAudio,
+          ),
           IconButton(
             icon: _syncing
                 ? const SizedBox(
@@ -328,23 +343,41 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             // morning review over Home on the first open of each morning.
             const MorningReviewAutoPresenter(),
             const SpeakerBackfillBanner(),
-            if (!isNoteMode)
+            // Eyebrow status line (mockup): quiet uppercase mono over the
+            // timer, naming the capture state.
+            Text(
+              isNoteMode
+                  ? 'TEXT NOTE'
+                  : isRecording
+                      ? 'RECORDING'
+                      : 'READY TO RECORD',
+              style: Theme.of(context).textTheme.labelSmall,
+            ),
+            if (!isNoteMode) ...[
+              const SizedBox(height: 8),
               Text(
                 timeLabel,
                 style: TextStyle(
                   fontSize: 72,
                   fontWeight: FontWeight.w200,
+                  // Tabular figures: the timer must not wobble as digits
+                  // change.
+                  fontFeatures: const [FontFeature.tabularFigures()],
                   color: isRecording
                       ? Theme.of(context).colorScheme.error
                       : Theme.of(context).colorScheme.onSurface,
                 ),
               ),
+            ],
             if (isRecording) ...[
               const SizedBox(height: 12),
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 24),
                 child: RecordingWaveformConsumer(
-                  color: Theme.of(context).colorScheme.error,
+                  // Signal, not red: the token contract says lime marks the
+                  // LIVE thing, and the active waveform is the live thing.
+                  // The red key + red timer already say "capturing".
+                  color: TangentColors.signal,
                 ),
               ),
               const SizedBox(height: 12),
@@ -401,24 +434,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       ? 'Tap to stop'
                       : 'Tap to record',
               style: Theme.of(context).textTheme.titleMedium,
-            ),
-            const SizedBox(height: 12),
-            // Jeff: "There also needs to be an Import Audio button which will
-            // allow you to import audio into the tangent folder by copying it
-            // to the tangent folder and then processing it."
-            TextButton.icon(
-              key: const ValueKey('home-import-audio'),
-              // Importing reserves a capture, so it must not run while one is
-              // already active.
-              onPressed: isRecording || _importing ? null : _importAudio,
-              icon: _importing
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.library_music),
-              label: Text(_importing ? 'Importing…' : 'Import audio'),
             ),
             const SizedBox(height: 12),
             _ModeSelector(
