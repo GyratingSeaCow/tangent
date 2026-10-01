@@ -136,7 +136,7 @@ ThemeData tangentTheme() {
       backgroundColor: TangentColors.panel,
       surfaceTintColor: Colors.transparent,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(TangentShapes.sheetRadius),
+        borderRadius: BorderRadius.circular(TangentShapes.panelRadius),
       ),
     ),
     snackBarTheme: SnackBarThemeData(

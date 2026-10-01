@@ -46,8 +46,9 @@ void main() {
     });
 
     test('hardware shapes: panels are squared, pills are round', () {
-      expect(TangentShapes.panelRadius, 7.0);
-      expect(TangentShapes.sheetRadius, 14.0);
+      // Instrument Console v2: 6px corner everywhere, 8px sheet top.
+      expect(TangentShapes.panelRadius, 6.0);
+      expect(TangentShapes.sheetRadius, 8.0);
       expect(TangentShapes.pillRadius, greaterThanOrEqualTo(999.0));
     });
 

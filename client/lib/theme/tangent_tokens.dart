@@ -79,8 +79,10 @@ class TangentColors {
 class TangentShapes {
   const TangentShapes._();
 
-  static const double panelRadius = 7;
-  static const double sheetRadius = 14;
+  /// Instrument Console v2: one restrained corner radius across the app,
+  /// with a slightly larger top radius on bottom sheets.
+  static const double panelRadius = 6;
+  static const double sheetRadius = 8;
   static const double pillRadius = 999;
 
   static const double edgeWidth = 1;
