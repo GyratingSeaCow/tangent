@@ -44,7 +44,7 @@ Future<void> _mount(WidgetTester tester) async {
         settingsStoreProvider.overrideWithValue(SettingsStore()),
         secureStoreProvider.overrideWithValue(_FakeSecureStore()),
       ],
-      child: const MaterialApp(home: SettingsScreen()),
+      child: const MaterialApp(home: SettingsScreen(category: SettingsCategory.maintenance)),
     ),
   );
   await tester.pumpAndSettle();

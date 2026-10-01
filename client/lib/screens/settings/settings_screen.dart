@@ -21,17 +21,59 @@ import 'input_device_section.dart';
 import 'mic_gain_section.dart';
 import 'storage_settings_section.dart';
 import 'trash_screen.dart';
+import '../../widgets/instrument_scaffold.dart';
+import '../../widgets/top_nav_rail.dart';
 import 'custom_vocabulary_section.dart';
 import 'whisper_model_section.dart';
 
+/// Instrument Console v2: the nine Settings categories, in overview order.
+/// Every v1.40.0 control lives in exactly one of these; none was dropped.
+enum SettingsCategory {
+  storage('Storage', 'Default folder, local storage and Wi-Fi upload',
+      Icons.folder_outlined,),
+  transfer('Import & export', 'Bulk audio and Obsidian Markdown',
+      Icons.import_export,),
+  recording('Recording input', 'Microphone, Bluetooth, gain and trigger',
+      Icons.mic_none,),
+  server('Server & devices', 'Connection, pairing and trash',
+      Icons.cloud_sync_outlined,),
+  transcription('Transcription', 'Whisper model and custom vocabulary',
+      Icons.subtitles_outlined,),
+  intelligence('Intelligence', 'Handwriting, summaries and auto-file',
+      Icons.auto_awesome_outlined,),
+  integrations('Integrations', 'Google Tasks and remembered voices',
+      Icons.hub_outlined,),
+  reminders('Reminders', 'Due dates, morning review and completion notices',
+      Icons.schedule,),
+  maintenance('Maintenance & about', 'Diagnostics, licenses and version',
+      Icons.build_outlined,);
+
+  const SettingsCategory(this.title, this.subtitle, this.icon);
+
+  final String title;
+  final String subtitle;
+  final IconData icon;
+}
+
 class SettingsScreen extends ConsumerStatefulWidget {
-  const SettingsScreen({super.key});
+  /// [category] = the drill to open on first build; null = the overview.
+  /// The screen moves between overview and drills IN PLACE (one State, one
+  /// load, one SAVE) so an edit in Storage survives a visit to Recording
+  /// input exactly as it did on the flat list.
+  const SettingsScreen({super.key, this.category});
+
+  final SettingsCategory? category;
+
+  static Key categoryKey(SettingsCategory c) =>
+      ValueKey<String>('settings-category-${c.name}');
 
   @override
   ConsumerState<SettingsScreen> createState() => _SettingsScreenState();
 }
 
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
+  /// Which drill is open; null = the overview. In-place, see [SettingsScreen].
+  SettingsCategory? _category;
   TriggerMode _triggerMode = TriggerMode.tap;
   bool _wifiOnly = false;
   // Defaults to true: recordings stay on the device unless the user opts in.
@@ -46,6 +88,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   @override
   void initState() {
     super.initState();
+    _category = widget.category;
     _load();
     // The footer version comes from the build, never a literal: the old
     // hard-coded 'v1.0.0' footer sat stale for seven releases.
@@ -131,29 +174,144 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Settings'),
-        actions: [
-          TextButton(
-            onPressed: _loaded ? _save : null,
-            child: const Text('SAVE'),
-          ),
-        ],
+    final SettingsCategory? category = _category;
+    return PopScope(
+      // System back from a drill returns to the overview, not out of
+      // Settings — the same step the app bar's back arrow takes.
+      canPop: category == null,
+      onPopInvokedWithResult: (bool didPop, Object? _) {
+        if (!didPop && _category != null) setState(() => _category = null);
+      },
+      child: InstrumentScaffold(
+        root: TangentRoot.settings,
+        // Settings is a form, not a place you create things from.
+        showCreateFab: false,
+        appBar: AppBar(
+          leading: category == null
+              ? null
+              : IconButton(
+                  key: const ValueKey<String>('settings-category-back'),
+                  icon: const Icon(Icons.arrow_back),
+                  tooltip: 'Settings',
+                  onPressed: () => setState(() => _category = null),
+                ),
+          title: Text(category?.title ?? 'Settings'),
+          actions: [
+            TextButton(
+              onPressed: _loaded ? _save : null,
+              child: const Text('SAVE'),
+            ),
+          ],
+        ),
+        body: category == null
+            ? _overview(context)
+            : ListView(
+                padding: const EdgeInsets.only(bottom: 90),
+                children: _categoryChildren(context, category),
+              ),
       ),
-      body: ListView(
-        children: [
+    );
+  }
+
+  Widget _overview(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.only(bottom: 90),
+      children: [
+        for (final SettingsCategory c in SettingsCategory.values)
+          ListTile(
+            key: SettingsScreen.categoryKey(c),
+            leading: Icon(c.icon),
+            title: Text(c.title),
+            subtitle: Text(c.subtitle),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => setState(() => _category = c),
+          ),
+      ],
+    );
+  }
+
+  /// The v1.40.0 flat list, partitioned. Each widget appears in exactly one
+  /// category; the order inside a category is the order it had before.
+  ///
+  /// The load gate is also the old one: the independent sections (storage,
+  /// import/export, input device, mic gain) render immediately, everything
+  /// fed by this screen's own state waits behind 'Loading settings…'.
+  List<Widget> _categoryChildren(BuildContext context, SettingsCategory c) {
+    final Widget loading = const ListTile(title: Text('Loading settings…'));
+    switch (c) {
+      case SettingsCategory.storage:
+        return [
           const StorageSettingsSection(),
           const Divider(),
-          const BulkImportSection(),
-          const ObsidianExportSection(),
-          const Divider(),
+          if (!_loaded) loading else ...[
+          SwitchListTile(
+            title: const Text('Keep recordings on this device'),
+            subtitle: const Text(
+              'Recordings are never uploaded to the server for storage. '
+              'Transcription still works over Wi-Fi or mobile data.',
+            ),
+            value: _keepOnDeviceOnly,
+            onChanged: (v) => setState(() => _keepOnDeviceOnly = v),
+          ),
+          SwitchListTile(
+            title: const Text('Upload recordings only on Wi-Fi'),
+            subtitle: Text(
+              _keepOnDeviceOnly
+                  ? 'No effect while recordings are kept on this device. '
+                      'Transcription is never limited to Wi-Fi.'
+                  : 'Wait for Wi-Fi before uploading recordings for storage. '
+                      'Transcription is exempt and still runs on mobile data.',
+            ),
+            value: _wifiOnly,
+            onChanged: (v) => setState(() => _wifiOnly = v),
+          ),
+          ],
+        ];
+      case SettingsCategory.transfer:
+        return const [
+          BulkImportSection(),
+          ObsidianExportSection(),
+        ];
+      case SettingsCategory.recording:
+        return [
           const InputDeviceSection(),
           const MicGainSection(),
           const Divider(),
-          if (!_loaded)
-            const ListTile(title: Text('Loading settings…'))
-          else ...[
+          if (!_loaded) loading else ...[
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
+            child: Text(
+              'Recording trigger',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+          ),
+          RadioListTile<TriggerMode>(
+            title: const Text('Tap to toggle'),
+            subtitle: const Text('Tap once to start, tap again to stop'),
+            value: TriggerMode.tap,
+            groupValue: _triggerMode,
+            onChanged: (v) => setState(() => _triggerMode = v!),
+          ),
+          RadioListTile<TriggerMode>(
+            title: const Text('Hold to record'),
+            subtitle: const Text('Press and hold the record button'),
+            value: TriggerMode.hold,
+            groupValue: _triggerMode,
+            onChanged: (v) => setState(() => _triggerMode = v!),
+          ),
+          SwitchListTile(
+            title: const Text('Keep screen awake while recording'),
+            subtitle: const Text(
+              'Prevents screen sleep only while an active recording is running',
+            ),
+            value: _keepScreenAwake,
+            onChanged: (value) => setState(() => _keepScreenAwake = value),
+          ),
+          ],
+        ];
+      case SettingsCategory.server:
+        if (!_loaded) return [loading];
+        return [
           ListTile(
             title: const Text('Server'),
             subtitle: Text(_serverUrl.isEmpty ? '(not set)' : _serverUrl),
@@ -185,14 +343,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               ),
             ),
           ),
-          const Divider(),
-          const Padding(
-            padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
-            child: Text(
-              'Transcription',
-              style: TextStyle(fontWeight: FontWeight.bold),
-            ),
-          ),
+        ];
+      case SettingsCategory.transcription:
+        if (!_loaded) return [loading];
+        return [
           ListTile(
             title: Text(_serverInfo?.title ?? 'Server transcription'),
             subtitle: Text(_serverInfoText()),
@@ -220,70 +374,29 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
           const WhisperModelSection(),
           const CustomVocabularySection(),
-          const Divider(),
-          const HandwritingSearchSection(),
-          const Divider(),
-          const AiSummariesSection(),
-          const Divider(),
-          const AutoFileSection(),
-          const Divider(),
+        ];
+      case SettingsCategory.intelligence:
+        if (!_loaded) return [loading];
+        return const [
+          HandwritingSearchSection(),
+          Divider(),
+          AiSummariesSection(),
+          Divider(),
+          AutoFileSection(),
+        ];
+      case SettingsCategory.integrations:
+        if (!_loaded) return [loading];
+        return [
           const GoogleTasksSection(),
           // v1.36.0: reuses the info fetched above — no second round trip.
           VoicesSection(available: _serverInfo?.diarization ?? false),
-          const Divider(),
-          const RemindersSection(),
-          const Padding(
-            padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
-            child: Text(
-              'Recording trigger',
-              style: TextStyle(fontWeight: FontWeight.bold),
-            ),
-          ),
-          RadioListTile<TriggerMode>(
-            title: const Text('Tap to toggle'),
-            subtitle: const Text('Tap once to start, tap again to stop'),
-            value: TriggerMode.tap,
-            groupValue: _triggerMode,
-            onChanged: (v) => setState(() => _triggerMode = v!),
-          ),
-          RadioListTile<TriggerMode>(
-            title: const Text('Hold to record'),
-            subtitle: const Text('Press and hold the record button'),
-            value: TriggerMode.hold,
-            groupValue: _triggerMode,
-            onChanged: (v) => setState(() => _triggerMode = v!),
-          ),
-          const Divider(),
-          SwitchListTile(
-            title: const Text('Keep recordings on this device'),
-            subtitle: const Text(
-              'Recordings are never uploaded to the server for storage. '
-              'Transcription still works over Wi-Fi or mobile data.',
-            ),
-            value: _keepOnDeviceOnly,
-            onChanged: (v) => setState(() => _keepOnDeviceOnly = v),
-          ),
-          SwitchListTile(
-            title: const Text('Upload recordings only on Wi-Fi'),
-            subtitle: Text(
-              _keepOnDeviceOnly
-                  ? 'No effect while recordings are kept on this device. '
-                      'Transcription is never limited to Wi-Fi.'
-                  : 'Wait for Wi-Fi before uploading recordings for storage. '
-                      'Transcription is exempt and still runs on mobile data.',
-            ),
-            value: _wifiOnly,
-            onChanged: (v) => setState(() => _wifiOnly = v),
-          ),
-          SwitchListTile(
-            title: const Text('Keep screen awake while recording'),
-            subtitle: const Text(
-              'Prevents screen sleep only while an active recording is running',
-            ),
-            value: _keepScreenAwake,
-            onChanged: (value) => setState(() => _keepScreenAwake = value),
-          ),
-          const Divider(),
+        ];
+      case SettingsCategory.reminders:
+        if (!_loaded) return [loading];
+        return const [RemindersSection()];
+      case SettingsCategory.maintenance:
+        if (!_loaded) return [loading];
+        return [
           const DiagnosticsSection(),
           const Divider(),
           ListTile(
@@ -315,10 +428,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               style: const TextStyle(color: TangentColors.textDim),
             ),
           ),
-          ],
-        ],
-      ),
-    );
+        ];
+    }
   }
 
   String _serverInfoText() {
