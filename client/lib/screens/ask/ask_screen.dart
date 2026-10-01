@@ -345,11 +345,18 @@ class _AskScreenState extends ConsumerState<AskScreen> {
               loading: () => const Center(child: CircularProgressIndicator()),
               error: (_, __) =>
                   const Center(child: Text('Could not load Ask history.')),
+              // Chat order: reversed so the view STARTS at the newest message
+              // (offset 0 = bottom) and stays there as answers arrive —
+              // independent of when the history stream first emits, unlike
+              // a post-frame jumpTo. History stays oldest-first; only the
+              // index maps from the end.
               data: (messages) => ListView.builder(
+                key: const ValueKey<String>('ask-history'),
+                reverse: true,
                 padding: const EdgeInsets.all(12),
                 itemCount: messages.length,
                 itemBuilder: (context, index) {
-                  final message = messages[index];
+                  final message = messages[messages.length - 1 - index];
                   final bool user = message.role == 'user';
                   return Align(
                     alignment:
