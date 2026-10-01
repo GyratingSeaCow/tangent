@@ -36,7 +36,8 @@ class SheetDragHandle extends StatelessWidget {
             height: 3,
             decoration: BoxDecoration(
               color: TangentColors.textDim.withValues(alpha: 0.6),
-              borderRadius: BorderRadius.circular(TangentShapes.pillRadius),
+              // A 3dp grab bar: the tag radius already rounds it fully.
+              borderRadius: BorderRadius.circular(TangentShapes.radiusTag),
             ),
           ),
         ),

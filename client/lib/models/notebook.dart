@@ -667,7 +667,7 @@ enum InkTool {
 /// it reads as a mark, not a selection.
 enum InkColor {
   // Pen inks.
-  white('white', 0xFFEDF1F3),
+  white('white', 0xFFF2EFE6),
   blue('blue', 0xFF5AB4FF),
   red('red', 0xFFFF6B6B),
   amber('amber', 0xFFFFB347),
