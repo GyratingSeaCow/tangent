@@ -15,15 +15,13 @@ import '../../services/widget_launch.dart';
 import '../../widgets/sync_button.dart' show syncMessageFor;
 
 import '../dump/dump_detail_screen.dart';
-import '../dump/dumps_list_screen.dart';
 import '../note/note_compose_screen.dart';
-import '../notebook/notebook_list_screen.dart';
-import '../todo/todo_list_screen.dart';
-import '../ask/ask_screen.dart';
 import '../recording/recording_controller.dart';
 import '../recording/recording_waveform.dart';
-import '../settings/settings_screen.dart';
+import '../../services/create_requests.dart';
 import '../../theme/tangent_tokens.dart';
+import '../../widgets/instrument_scaffold.dart';
+import '../../widgets/top_nav_rail.dart';
 import 'home_providers.dart';
 import 'morning_review_screen.dart';
 import 'record_button_palette.dart';
@@ -59,6 +57,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   DumpMode _mode = DumpMode.brainDump;
   StreamSubscription<String>? _instanceCommands;
   StreamSubscription<String>? _launchCommands;
+  StreamSubscription<CreateRequest>? _createRequests;
 
   /// Resolves once the recording controller can actually start: DB init,
   /// storage bootstrap, fence restore — the same future the controller
@@ -86,12 +85,44 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         if (command != null && mounted) _onLaunchCommand(command);
       }),
     );
+    // Global create funnel (Instrument Console v2): the lime FAB's sheet and
+    // the Recordings-list create flow both deliver here, so every creation
+    // path runs through the SAME mode switch and toggle the button uses.
+    _createRequests =
+        ref.read(createRequestsProvider).stream.listen(_onCreateRequest);
+  }
+
+  /// A create request switches the mode selector and fires the matching
+  /// entry point — exactly what [_openDumpsList]'s pop-result handling has
+  /// always done, generalized to any trigger.
+  void _onCreateRequest(CreateRequest request) {
+    if (!mounted) return;
+    setState(() {
+      _mode = switch (request) {
+        CreateRequest.textNote => DumpMode.textNote,
+        CreateRequest.meeting => DumpMode.meeting,
+        CreateRequest.recording => DumpMode.brainDump,
+        // Notebook/to-do creation never reaches Capture; routed elsewhere.
+        CreateRequest.notebook || CreateRequest.todo => _mode,
+      };
+    });
+    switch (request) {
+      case CreateRequest.textNote:
+        unawaited(_openNoteCompose());
+      case CreateRequest.recording:
+      case CreateRequest.meeting:
+        unawaited(_toggleRecording());
+      case CreateRequest.notebook:
+      case CreateRequest.todo:
+        break;
+    }
   }
 
   @override
   void dispose() {
     unawaited(_instanceCommands?.cancel());
     unawaited(_launchCommands?.cancel());
+    unawaited(_createRequests?.cancel());
     super.dispose();
   }
 
@@ -181,30 +212,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     );
   }
 
-  /// Pushes the dumps list and honors the [DumpsCreateAction] it pops with
-  /// (its `+` FAB): switch [_mode] to match, then reuse the existing entry
-  /// points — compose for text notes, `_toggleRecording` for voice modes.
-  Future<void> _openDumpsList() async {
-    final action = await Navigator.of(context).push<DumpsCreateAction?>(
-      MaterialPageRoute<DumpsCreateAction?>(
-        builder: (_) => const DumpsListScreen(),
-      ),
-    );
-    if (action == null || !mounted) return;
-    setState(() {
-      _mode = switch (action) {
-        DumpsCreateAction.textNote => DumpMode.textNote,
-        DumpsCreateAction.brainDump => DumpMode.brainDump,
-        DumpsCreateAction.meeting => DumpMode.meeting,
-      };
-    });
-    if (action == DumpsCreateAction.textNote) {
-      await _openNoteCompose();
-    } else {
-      await _toggleRecording();
-    }
-  }
-
   Future<void> _syncNow() async {
     setState(() => _syncing = true);
     try {
@@ -284,7 +291,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       return '$m:$s';
     })();
 
-    return Scaffold(
+    return InstrumentScaffold(
+      root: TangentRoot.capture,
       appBar: AppBar(
         title: const Text('Tangent'),
         actions: [
@@ -299,57 +307,23 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             tooltip: 'Sync now',
             onPressed: _syncing ? null : _syncNow,
           ),
-          IconButton(
-            icon: const Icon(Icons.list),
-            tooltip: 'Recordings',
-            onPressed: _openDumpsList,
-          ),
-          IconButton(
-            icon: const Icon(Icons.menu_book),
-            tooltip: 'Notebooks',
-            onPressed: () => Navigator.of(context).push<void>(
-              MaterialPageRoute<void>(
-                builder: (_) => const NotebookListScreen(),
-              ),
-            ),
-          ),
-          IconButton(
-            key: const Key('home-todo-button'),
-            // Phase 2 (I1): a CHECKED checkbox, not a checklist glyph.
-            icon: const Icon(Icons.check_box),
-            tooltip: 'To Do',
-            onPressed: () => Navigator.of(context).push<void>(
-              MaterialPageRoute<void>(
-                builder: (_) => const TodoListScreen(),
-              ),
-            ),
-          ),
-          IconButton(
-            key: const Key('home-ask-button'),
-            icon: const Icon(Icons.question_answer),
-            tooltip: 'Ask',
-            onPressed: () => Navigator.of(context).push<void>(
-              MaterialPageRoute<void>(builder: (_) => const AskScreen()),
-            ),
-          ),
-          // Morning review sun: immediately left of Settings, present only
-          // while the setting is on.
+          // Morning review sun: rightmost action, present only while the
+          // setting is on.
           const MorningReviewSunButton(),
-          IconButton(
-            icon: const Icon(Icons.settings),
-            tooltip: 'Settings',
-            onPressed: () => Navigator.of(context).push<void>(
-              MaterialPageRoute<void>(
-                builder: (_) => const SettingsScreen(),
-              ),
-            ),
-          ),
         ],
       ),
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
+      // Scrollable-center: the column centres when it fits and scrolls when
+      // it does not (short screens, large text). A plain Center+Column
+      // overflowed by the rail's height the day the rail landed.
+      body: LayoutBuilder(
+        builder: (context, constraints) => SingleChildScrollView(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: constraints.maxHeight),
+            child: Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                mainAxisSize: MainAxisSize.min,
+                children: [
             // v1.40: renders nothing itself; presents the full-screen
             // morning review over Home on the first open of each morning.
             const MorningReviewAutoPresenter(),
@@ -460,7 +434,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 style: Theme.of(context).textTheme.bodySmall,
               ),
             ),
-          ],
+                ],
+              ),
+            ),
+          ),
         ),
       ),
     );

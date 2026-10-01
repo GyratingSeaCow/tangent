@@ -26,7 +26,11 @@ import 'todo_grouping.dart';
 /// long-press a folder header = rename/delete the folder, never selection;
 /// long-press the date chip = clear the due date (it is a chip, not the row).
 class TodoListScreen extends ConsumerStatefulWidget {
-  const TodoListScreen({super.key});
+  const TodoListScreen({super.key, this.autofocusQuickAdd = false});
+
+  /// When true the quick-add field takes focus on mount — the global
+  /// create sheet's "To-do" entry lands ready to type.
+  final bool autofocusQuickAdd;
 
   static const Key quickAddFieldKey = Key('todo-quick-add-field');
   static const Key quickAddDateChipKey = Key('todo-quick-add-date-chip');
@@ -91,6 +95,17 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
   /// row that vanished under a sync can never be acted on.
   bool _selecting = false;
   final Set<String> _selected = <String>{};
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.autofocusQuickAdd) {
+      // Post-frame: the field must be mounted before it can take focus.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _quickAddFocus.requestFocus();
+      });
+    }
+  }
 
   @override
   void dispose() {

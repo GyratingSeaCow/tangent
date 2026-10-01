@@ -62,19 +62,21 @@ ThemeData tangentTheme() {
         ),
       ),
     ),
-    // The record key. Red, fully round, and the only FAB in the app.
+    // The global create key (Instrument Console v2). Signal lime: creating
+    // is not capturing, so the FAB must NOT take the record red — the round
+    // red record key on Capture is a bespoke widget, not a FAB.
     floatingActionButtonTheme: FloatingActionButtonThemeData(
-      backgroundColor: TangentColors.record,
+      backgroundColor: TangentColors.signal,
       foregroundColor: TangentColors.sunken,
       elevation: 0,
       focusElevation: 0,
       hoverElevation: 0,
       highlightElevation: 0,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(TangentShapes.pillRadius),
+        borderRadius: BorderRadius.circular(TangentShapes.panelRadius),
         side: const BorderSide(
-          color: TangentColors.edge,
-          width: TangentShapes.bezelWidth,
+          color: TangentColors.signal,
+          width: TangentShapes.edgeWidth,
         ),
       ),
     ),

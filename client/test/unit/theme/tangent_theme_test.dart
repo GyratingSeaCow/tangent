@@ -85,17 +85,24 @@ void main() {
       );
     });
 
-    test('the FAB is the record key: record red, fully round', () {
+    test('the FAB is the create key: signal lime, console corners', () {
+      // Instrument Console v2: the global FAB creates, it does not record,
+      // so it takes the signal colour — red stays reserved for capture and
+      // destruction (the record key itself is not a FAB).
       final theme = tangentTheme();
       expect(
         theme.floatingActionButtonTheme.backgroundColor,
-        TangentColors.record,
+        TangentColors.signal,
+      );
+      expect(
+        theme.floatingActionButtonTheme.foregroundColor,
+        TangentColors.sunken,
       );
       final shape =
           theme.floatingActionButtonTheme.shape as RoundedRectangleBorder;
       expect(
         shape.borderRadius,
-        BorderRadius.circular(TangentShapes.pillRadius),
+        BorderRadius.circular(TangentShapes.panelRadius),
       );
     });
 
