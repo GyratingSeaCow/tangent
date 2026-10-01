@@ -57,13 +57,19 @@ class TopNavRail extends StatelessWidget {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.end,
         children: [
+          // Six 48dp keys are 288dp: wider than a 280dp window (split
+          // screen, large text on small phones). Each key is Flexible so
+          // the row compresses instead of overflowing; at normal widths
+          // every key still gets its full 48dp.
           for (final (root, icon, label) in destinations)
-            _RailButton(
-              root: root,
-              icon: icon,
-              label: label,
-              isActive: root == active,
-              onSelect: onSelect,
+            Flexible(
+              child: _RailButton(
+                root: root,
+                icon: icon,
+                label: label,
+                isActive: root == active,
+                onSelect: onSelect,
+              ),
             ),
         ],
       ),
