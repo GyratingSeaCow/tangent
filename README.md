@@ -15,6 +15,9 @@ Tangent server. Tangent does not send recordings to a third-party service.
 
 ## App layout
 
+Screen-by-screen screenshots with per-button documentation:
+[docs/user-guide](./docs/user-guide/README.md).
+
 The Instrument interface has Anodized (dark) and Aluminium (light) themes. Lime
 marks selection and primary create actions; red is reserved for recording and
 destructive actions.
