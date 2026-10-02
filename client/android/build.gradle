@@ -13,6 +13,23 @@ subprojects {
     project.evaluationDependsOn(":app")
 }
 
+// Flutter 3.47 / AGP 9: third-party plugins (e.g. flutter_timezone) still pin
+// Kotlin jvmTarget 1.8 while AGP 9 defaults their Java target to 11 — Gradle
+// hard-fails on the mismatch. Java compatibility is FINALIZED by the time any
+// root-script hook can touch an evaluated subproject (evaluationDependsOn
+// above), so don't force Java; instead align each plugin's Kotlin jvmTarget to
+// that plugin's own finalized Java target at task-configuration time (lazy
+// configureEach, read-only on the android extension). :app manages itself.
+subprojects { sub ->
+    if (sub.name != "app") {
+        sub.tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach { task ->
+            if (sub.hasProperty("android")) {
+                task.kotlinOptions.jvmTarget = sub.android.compileOptions.targetCompatibility.toString()
+            }
+        }
+    }
+}
+
 tasks.register("clean", Delete) {
     delete rootProject.buildDir
 }
