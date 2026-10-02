@@ -7,7 +7,7 @@
 #                               runtime wheels (~9 GB extra). Default is the
 #                               CPU-only build — GPU hosts build with
 #                               docker-compose.gpu.yml, which sets this arg.
-FROM python:3.11-slim-bookworm AS base
+FROM python:3.11-slim-trixie AS base
 
 # System deps for faster-whisper (ffmpeg) + audio handling. Also pull in the
 # distro security fixes that lag behind the slim base image. curl is NOT
@@ -58,10 +58,12 @@ RUN --mount=from=ghcr.io/astral-sh/uv:0.9,source=/uv,target=/usr/local/bin/uv \
 ENV LD_LIBRARY_PATH=/usr/local/lib/python3.11/site-packages/nvidia/cublas/lib:/usr/local/lib/python3.11/site-packages/nvidia/cudnn/lib
 
 # Trivy flags the base image's bundled wheel/jaraco.context (CVE-2026-24049,
-# CVE-2026-23949). Separate cheap layer so CVE bumps don't re-run the big
-# dependency install above.
+# CVE-2026-23949) — both as top-level dists AND as setuptools' _vendor
+# copies, so setuptools must ride along (>=84 vendors the fixed versions).
+# Separate cheap layer so CVE bumps don't re-run the big install above.
 RUN --mount=from=ghcr.io/astral-sh/uv:0.9,source=/uv,target=/usr/local/bin/uv \
-    uv pip install --system --no-cache --upgrade "wheel>=0.46.2" "jaraco.context>=6.1"
+    uv pip install --system --no-cache --upgrade \
+        "wheel>=0.46.2" "jaraco.context>=6.1" "setuptools>=84"
 
 # Copy app code
 COPY app ./app
