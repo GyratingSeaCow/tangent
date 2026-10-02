@@ -119,7 +119,11 @@ void main() {
           recordingServiceProvider.overrideWithValue(StubRecordingService()),
           recordingCoordinatorProvider.overrideWith((ref) =>
               WidgetRecordingCoordinator(ref.watch(recordingServiceProvider)),),
-          settingsStoreProvider.overrideWithValue(SettingsStore()),
+          // Welcome dialog (spec 2026-10-02) is launch-global; keep it out
+          // of tests that are not about it.
+          settingsStoreProvider.overrideWithValue(
+            SettingsStore(showWelcomeMessage: false),
+          ),
           screenAwakeProvider.overrideWithValue(_NoopScreenAwake()),
           captureReadyProvider.overrideWith((ref) async {}),
           catalogSyncProvider.overrideWith((ref) async {}),
@@ -190,7 +194,11 @@ void main() {
           recordingServiceProvider.overrideWithValue(StubRecordingService()),
           recordingCoordinatorProvider.overrideWith((ref) =>
               WidgetRecordingCoordinator(ref.watch(recordingServiceProvider)),),
-          settingsStoreProvider.overrideWithValue(SettingsStore()),
+          // Welcome dialog (spec 2026-10-02) is launch-global; keep it out
+          // of tests that are not about it.
+          settingsStoreProvider.overrideWithValue(
+            SettingsStore(showWelcomeMessage: false),
+          ),
           screenAwakeProvider.overrideWithValue(_NoopScreenAwake()),
           captureReadyProvider.overrideWith((ref) async {}),
           catalogSyncProvider.overrideWith((ref) async {}),
@@ -275,7 +283,11 @@ void main() {
           recordingImporterProvider.overrideWithValue(importer),
           localDeletionServiceProvider.overrideWithValue(deletion),
           transcriptionClientProvider.overrideWith((ref) => client),
-          settingsStoreProvider.overrideWithValue(SettingsStore()),
+          // Welcome dialog (spec 2026-10-02) is launch-global; keep it out
+          // of tests that are not about it.
+          settingsStoreProvider.overrideWithValue(
+            SettingsStore(showWelcomeMessage: false),
+          ),
           recordingServiceProvider.overrideWithValue(StubRecordingService()),
           recordingCoordinatorProvider.overrideWith(
             (ref) =>
@@ -325,7 +337,11 @@ void main() {
           ),
           captureReadyProvider.overrideWith((ref) async {}),
           catalogSyncProvider.overrideWith((ref) async {}),
-          settingsStoreProvider.overrideWithValue(SettingsStore()),
+          // Welcome dialog (spec 2026-10-02) is launch-global; keep it out
+          // of tests that are not about it.
+          settingsStoreProvider.overrideWithValue(
+            SettingsStore(showWelcomeMessage: false),
+          ),
           screenAwakeProvider.overrideWithValue(_NoopScreenAwake()),
         ],
         child: const MaterialApp(home: HomeScreen()),
@@ -355,7 +371,11 @@ void main() {
           ),
           captureReadyProvider.overrideWith((ref) async {}),
           catalogSyncProvider.overrideWith((ref) async {}),
-          settingsStoreProvider.overrideWithValue(SettingsStore()),
+          // Welcome dialog (spec 2026-10-02) is launch-global; keep it out
+          // of tests that are not about it.
+          settingsStoreProvider.overrideWithValue(
+            SettingsStore(showWelcomeMessage: false),
+          ),
           screenAwakeProvider.overrideWithValue(_NoopScreenAwake()),
         ],
         child: const MaterialApp(home: HomeScreen()),
@@ -390,7 +410,11 @@ void main() {
           ),
           captureReadyProvider.overrideWith((ref) async {}),
           catalogSyncProvider.overrideWith((ref) async {}),
-          settingsStoreProvider.overrideWithValue(SettingsStore()),
+          // Welcome dialog (spec 2026-10-02) is launch-global; keep it out
+          // of tests that are not about it.
+          settingsStoreProvider.overrideWithValue(
+            SettingsStore(showWelcomeMessage: false),
+          ),
           screenAwakeProvider.overrideWithValue(_NoopScreenAwake()),
         ],
         child: const MaterialApp(home: HomeScreen()),
@@ -436,7 +460,11 @@ void main() {
           ),
           captureReadyProvider.overrideWith((ref) async {}),
           catalogSyncProvider.overrideWith((ref) async {}),
-          settingsStoreProvider.overrideWithValue(SettingsStore()),
+          // Welcome dialog (spec 2026-10-02) is launch-global; keep it out
+          // of tests that are not about it.
+          settingsStoreProvider.overrideWithValue(
+            SettingsStore(showWelcomeMessage: false),
+          ),
           screenAwakeProvider.overrideWithValue(_NoopScreenAwake()),
         ],
         child: const MaterialApp(home: HomeScreen()),
@@ -611,7 +639,11 @@ void main() {
           ),
           captureReadyProvider.overrideWith((ref) => ready ?? Future.value()),
           catalogSyncProvider.overrideWith((ref) async {}),
-          settingsStoreProvider.overrideWithValue(SettingsStore()),
+          // Welcome dialog (spec 2026-10-02) is launch-global; keep it out
+          // of tests that are not about it.
+          settingsStoreProvider.overrideWithValue(
+            SettingsStore(showWelcomeMessage: false),
+          ),
           screenAwakeProvider.overrideWithValue(_NoopScreenAwake()),
           widgetLaunchProvider.overrideWith((ref) {
             final WidgetLaunch launch = WidgetLaunch(channel: launchChannel);

@@ -71,7 +71,11 @@ void main() {
           recordingCoordinatorProvider.overrideWith((ref) => coordinator),
           captureReadyProvider.overrideWith((ref) async {}),
           catalogSyncProvider.overrideWith((ref) async {}),
-          settingsStoreProvider.overrideWithValue(SettingsStore()),
+          // Welcome dialog (spec 2026-10-02) is launch-global; keep it out
+          // of tests that are not about it.
+          settingsStoreProvider.overrideWithValue(
+            SettingsStore(showWelcomeMessage: false),
+          ),
           screenAwakeProvider.overrideWithValue(_NoopScreenAwake()),
           // Keep the pushed dumps list off the real DB watch/fake clock.
           deletionEligibilityProvider.overrideWith(

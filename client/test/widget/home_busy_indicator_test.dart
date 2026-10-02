@@ -13,8 +13,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:tangent/data/settings_store.dart';
 import 'package:tangent/screens/home/home_screen.dart';
 import 'package:tangent/screens/recording/recording_controller.dart';
+import 'package:tangent/screens/settings/settings_screen.dart'
+    show settingsStoreProvider;
 import 'package:tangent/theme/tangent_tokens.dart';
 
 /// Drives the home screen with one pinned RecordingState.
@@ -43,6 +46,11 @@ Future<void> pumpHomeIn(WidgetTester tester, RecordingState state) async {
       overrides: <Override>[
         recordingControllerProvider.overrideWith(
           (ref) => _FixedRecordingController(state),
+        ),
+        // Welcome dialog (spec 2026-10-02) is launch-global; keep it out
+        // of tests that are not about it.
+        settingsStoreProvider.overrideWithValue(
+          SettingsStore(showWelcomeMessage: false),
         ),
       ],
       child: const MaterialApp(home: HomeScreen()),

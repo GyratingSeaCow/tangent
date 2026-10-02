@@ -4,14 +4,17 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../settings/settings_screen.dart' show settingsStoreProvider;
 
-/// First-run welcome: the pairing walkthrough shown over Capture on every
-/// launch until this device is paired with a server (spec 2026-10-01).
+/// First-run welcome: the pairing walkthrough shown over Capture on EVERY
+/// launch — paired or not — until the user opts out (spec 2026-10-02).
 ///
 /// Dismissal contract:
 /// - Close: the reminder returns on the next launch (it is a REMINDER).
-/// - The bottom-centre "DO NOT REMIND ME AGAIN" checkbox: persists
-///   `showWelcomeMessage = false` and closes — gone forever unless the
-///   Settings → Server & devices → "Show welcome message" toggle re-arms it.
+/// - The ONLY permanent removal: check the bottom-centre "DO NOT REMIND ME
+///   AGAIN" checkbox AND press Confirm. That persists
+///   `showWelcomeMessage = false` and closes. The checkbox alone does
+///   nothing permanent; Confirm is disabled until it is checked.
+/// - Settings → Server & devices → "Show welcome message" can re-arm the
+///   message (one-way — see [WelcomeMessageSection]).
 ///
 /// The steps mirror server/README.md (Quick start + Pairing devices); if the
 /// pairing flow changes there, change it here too.
@@ -21,6 +24,7 @@ class WelcomePairingDialog extends ConsumerStatefulWidget {
   static const Key dialogKey = Key('welcome-pairing-dialog');
   static const Key dismissForeverKey = Key('welcome-dismiss-forever');
   static const Key closeKey = Key('welcome-close');
+  static const Key confirmKey = Key('welcome-confirm');
 
   @override
   ConsumerState<WelcomePairingDialog> createState() =>
@@ -30,10 +34,14 @@ class WelcomePairingDialog extends ConsumerStatefulWidget {
 class _WelcomePairingDialogState extends ConsumerState<WelcomePairingDialog> {
   bool _dismissForever = false;
 
-  Future<void> _onDismissForeverChanged(bool? checked) async {
-    final bool value = checked ?? false;
-    setState(() => _dismissForever = value);
-    if (!value) return;
+  /// The checkbox only arms Confirm — it persists nothing and never closes
+  /// the dialog on its own (spec 2026-10-02).
+  void _onDismissForeverChanged(bool? checked) {
+    setState(() => _dismissForever = checked ?? false);
+  }
+
+  /// The ONLY permanent removal path: checkbox checked + Confirm pressed.
+  Future<void> _confirmDismissForever() async {
     await ref.read(settingsStoreProvider).setShowWelcomeMessage(false);
     if (!mounted) return;
     Navigator.of(context).pop();
@@ -130,7 +138,8 @@ class _WelcomePairingDialogState extends ConsumerState<WelcomePairingDialog> {
               ),
               const Divider(height: 16),
               // Spec: checkbox at the bottom CENTRE of the dialog. Checking
-              // it persists the opt-out and closes immediately.
+              // it only enables Confirm; Confirm is what persists the
+              // opt-out and closes. Close is this-launch-only.
               Center(
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
@@ -145,10 +154,22 @@ class _WelcomePairingDialogState extends ConsumerState<WelcomePairingDialog> {
                 ),
               ),
               Center(
-                child: TextButton(
-                  key: WelcomePairingDialog.closeKey,
-                  onPressed: () => Navigator.of(context).pop(),
-                  child: const Text('Close'),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    TextButton(
+                      key: WelcomePairingDialog.closeKey,
+                      onPressed: () => Navigator.of(context).pop(),
+                      child: const Text('Close'),
+                    ),
+                    const SizedBox(width: 12),
+                    FilledButton(
+                      key: WelcomePairingDialog.confirmKey,
+                      onPressed:
+                          _dismissForever ? _confirmDismissForever : null,
+                      child: const Text('Confirm'),
+                    ),
+                  ],
                 ),
               ),
             ],

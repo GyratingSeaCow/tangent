@@ -62,7 +62,11 @@ void main() {
           ),
           captureReadyProvider.overrideWith((ref) async {}),
           catalogSyncProvider.overrideWith((ref) async {}),
-          settingsStoreProvider.overrideWithValue(SettingsStore()),
+          // Welcome dialog (spec 2026-10-02) is launch-global; keep it out
+          // of tests that are not about it.
+          settingsStoreProvider.overrideWithValue(
+            SettingsStore(showWelcomeMessage: false),
+          ),
           screenAwakeProvider.overrideWithValue(_NoopScreenAwake()),
           deletionEligibilityProvider.overrideWith(
             (_) => Stream<Map<String, Eligibility>>.value(

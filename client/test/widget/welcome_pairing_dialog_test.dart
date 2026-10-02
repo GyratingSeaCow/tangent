@@ -23,10 +23,12 @@ import 'package:tangent/services/transcription_client.dart';
 
 import '../support/widget_recording_coordinator.dart';
 
-/// First-run welcome dialog (spec 2026-10-01): repeats the pairing
-/// walkthrough at launch while NO server is paired, silenced forever by its
-/// bottom-centre DO NOT REMIND ME AGAIN checkbox, re-armed by the Settings →
-/// Server & devices "Show welcome message" toggle.
+/// First-run welcome dialog (spec 2026-10-02): repeats the pairing
+/// walkthrough on EVERY launch — paired or not — until the user checks
+/// DO NOT REMIND ME AGAIN and hits Confirm. That is the ONLY way to remove
+/// it: the checkbox alone does nothing permanent, Close is this-launch-only,
+/// and the Settings → Server & devices "Show welcome message" toggle is
+/// one-way — it can re-arm the message but flipping it off does not stick.
 
 class _StubClient extends TranscriptionClient {
   _StubClient() : super(baseUrl: 'http://test');
@@ -100,7 +102,7 @@ void main() {
     await db.close();
   }
 
-  testWidgets('unpaired launch with the pref on shows the welcome dialog',
+  testWidgets('unpaired launch with no opt-out shows the welcome dialog',
       (tester) async {
     final LocalDb db = await mountHome(tester, settings: SettingsStore());
 
@@ -115,20 +117,22 @@ void main() {
     await unmountHome(tester, db);
   });
 
-  testWidgets('a paired device never sees the welcome dialog', (tester) async {
+  testWidgets('a PAIRED device still sees the welcome dialog at launch',
+      (tester) async {
     final LocalDb db = await mountHome(
       tester,
       settings: SettingsStore(),
       pairedUrl: 'http://192.168.1.100:8765',
     );
 
-    expect(find.byKey(WelcomePairingDialog.dialogKey), findsNothing);
+    // Spec 2026-10-02: pairing does NOT silence the reminder. Only the
+    // checkbox + Confirm does.
+    expect(find.byKey(WelcomePairingDialog.dialogKey), findsOneWidget);
 
     await unmountHome(tester, db);
   });
 
-  testWidgets('the pref off keeps the dialog away even when unpaired',
-      (tester) async {
+  testWidgets('the persisted opt-out keeps the dialog away', (tester) async {
     final LocalDb db = await mountHome(
       tester,
       settings: SettingsStore(showWelcomeMessage: false),
@@ -155,12 +159,46 @@ void main() {
   });
 
   testWidgets(
-      'checking DO NOT REMIND ME AGAIN persists the opt-out and closes',
+      'checking the box alone neither closes the dialog nor persists anything',
       (tester) async {
     final SettingsStore settings = SettingsStore();
     final LocalDb db = await mountHome(tester, settings: settings);
 
     await tester.tap(find.byKey(WelcomePairingDialog.dismissForeverKey));
+    await tester.pumpAndSettle();
+
+    // The checkbox is only half of the contract — the dialog stays up and
+    // the pref is untouched until Confirm is pressed.
+    expect(find.byKey(WelcomePairingDialog.dialogKey), findsOneWidget);
+    expect(settings.showWelcomeMessage, isTrue);
+
+    await unmountHome(tester, db);
+  });
+
+  testWidgets('Confirm is disabled until the box is checked', (tester) async {
+    final LocalDb db = await mountHome(tester, settings: SettingsStore());
+
+    final Finder confirm = find.byKey(WelcomePairingDialog.confirmKey);
+    expect(confirm, findsOneWidget);
+    expect(tester.widget<FilledButton>(confirm).onPressed, isNull);
+
+    await tester.tap(find.byKey(WelcomePairingDialog.dismissForeverKey));
+    await tester.pumpAndSettle();
+
+    expect(tester.widget<FilledButton>(confirm).onPressed, isNotNull);
+
+    await unmountHome(tester, db);
+  });
+
+  testWidgets(
+      'checkbox + Confirm — the ONLY removal path — persists the opt-out '
+      'and closes', (tester) async {
+    final SettingsStore settings = SettingsStore();
+    final LocalDb db = await mountHome(tester, settings: settings);
+
+    await tester.tap(find.byKey(WelcomePairingDialog.dismissForeverKey));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(WelcomePairingDialog.confirmKey));
     await tester.pumpAndSettle();
 
     expect(find.byKey(WelcomePairingDialog.dialogKey), findsNothing);
@@ -192,6 +230,33 @@ void main() {
     await tester.tap(toggle);
     await tester.pumpAndSettle();
 
+    expect(settings.showWelcomeMessage, isTrue);
+    expect(tester.widget<SwitchListTile>(toggle).value, isTrue);
+  });
+
+  testWidgets(
+      'the settings toggle is one-way: flipping it OFF does not stick',
+      (tester) async {
+    final SettingsStore settings = SettingsStore();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: <Override>[
+          settingsStoreProvider.overrideWithValue(settings),
+        ],
+        child: const MaterialApp(
+          home: Scaffold(body: WelcomeMessageSection()),
+        ),
+      ),
+    );
+
+    final Finder toggle = find.byKey(WelcomeMessageSection.enabledKey);
+    expect(tester.widget<SwitchListTile>(toggle).value, isTrue);
+
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+
+    // Spec 2026-10-02: the ONLY way to remove the welcome message is the
+    // dialog's checkbox + Confirm. The switch snaps back on.
     expect(settings.showWelcomeMessage, isTrue);
     expect(tester.widget<SwitchListTile>(toggle).value, isTrue);
   });
