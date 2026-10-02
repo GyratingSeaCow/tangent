@@ -2,7 +2,9 @@
 <!-- Widget background: Tangent's dark surface, launcher-corner rounding. -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="rectangle">
-  <solid android:color="#1D1B20" />
-  <corners android:radius="24dp" />
-  <stroke android:width="1dp" android:color="#49454F" />
+  <solid android:color="@color/widget_notebook_surface" />
+  <corners android:radius="@dimen/widget_notebook_corner_radius" />
+  <stroke
+      android:width="@dimen/widget_notebook_outline_width"
+      android:color="@color/widget_notebook_outline" />
 </shape>

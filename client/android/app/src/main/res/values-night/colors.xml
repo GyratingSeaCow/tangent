@@ -9,4 +9,7 @@
     <!-- Same value as values/: the notebook tile does not restyle itself
          with the system theme either. -->
     <color name="widget_notebook_title">#E6E1E5</color>
+    <color name="widget_notebook_surface">#1D1B20</color>
+    <color name="widget_notebook_outline">#49454F</color>
+    <color name="widget_notebook_icon">#E8DEF8</color>
 </resources>
