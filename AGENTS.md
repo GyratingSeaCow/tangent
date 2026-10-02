@@ -50,13 +50,19 @@ ADH2/
 
 ## Status
 
-Shipping — **v1.43.0** (see CHANGELOG.md). Client and server are both
-implemented and tested (2871
+Shipping — **v1.44.0** (see CHANGELOG.md). Client and server are both
+implemented and tested (2877
 Flutter tests, 760 server tests, 129 Kotlin tests). The client runs
 natively on Linux AND Windows (tray icon, global record hotkey,
 close-to-tray, single instance, right-click = long-press; AppImage and
 Inno Setup installer under `packaging/`) — verified on CachyOS/KDE
 Plasma Wayland and Windows 11; see the README's Desktop sections.
+
+v1.44.0 **First-run welcome dialog**: a pairing walkthrough repeats at
+launch until the device is paired; its bottom-centre DO NOT REMIND ME AGAIN
+checkbox persists the opt-out, and Settings > Server & devices > "Show
+welcome message" re-arms it. Client-only (the server bump is version
+metadata).
 
 v1.43.0 **Morning Brief** (spec docs/design/2026-10-01-morning-brief.md).
 Server pre-generates a daily brief (narrative paragraph + bullet
