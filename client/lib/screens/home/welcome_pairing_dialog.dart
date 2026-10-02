@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../settings/settings_screen.dart' show settingsStoreProvider;
@@ -17,7 +20,10 @@ import '../settings/settings_screen.dart' show settingsStoreProvider;
 ///   message (one-way — see [WelcomeMessageSection]).
 ///
 /// The steps mirror server/README.md (Quick start + Pairing devices); if the
-/// pairing flow changes there, change it here too.
+/// pairing flow changes there, change it here too. One deliberate
+/// simplification: where the README shows separate PowerShell/bash grep
+/// variants for re-reading the pairing code, this dialog shows the single
+/// shell-neutral `--since 2m` form — the same command works in both shells.
 class WelcomePairingDialog extends ConsumerStatefulWidget {
   const WelcomePairingDialog({super.key});
 
@@ -25,6 +31,17 @@ class WelcomePairingDialog extends ConsumerStatefulWidget {
   static const Key dismissForeverKey = Key('welcome-dismiss-forever');
   static const Key closeKey = Key('welcome-close');
   static const Key confirmKey = Key('welcome-confirm');
+  static const Key copyStartServerKey = Key('welcome-copy-start-server');
+  static const Key copyServerLogKey = Key('welcome-copy-server-log');
+  static const Key copyPairingLogKey = Key('welcome-copy-pairing-log');
+
+  /// Exact texts placed on the clipboard — pinned by the widget tests so the
+  /// walkthrough never drifts from the real commands.
+  static const String startServerCommand = 'cd server\ndocker compose up -d';
+  static const String serverLogCommand =
+      'docker compose logs -f tangent-server';
+  static const String pairingLogCommand =
+      'docker compose logs tangent-server --since 2m';
 
   @override
   ConsumerState<WelcomePairingDialog> createState() =>
@@ -47,33 +64,68 @@ class _WelcomePairingDialogState extends ConsumerState<WelcomePairingDialog> {
     Navigator.of(context).pop();
   }
 
-  Widget _step(String number, String text) => Padding(
-        padding: const EdgeInsets.only(bottom: 8),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            Text(
-              '$number.  ',
-              style: const TextStyle(fontWeight: FontWeight.bold),
-            ),
-            Expanded(child: Text(text)),
-          ],
-        ),
-      );
+  /// Phase label ("On your PC", "On this device") with a leading icon.
+  Widget _sectionHeader(BuildContext context, IconData icon, String label) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(top: 4, bottom: 10),
+      child: Row(
+        children: <Widget>[
+          Icon(icon, size: 18, color: scheme.primary),
+          const SizedBox(width: 8),
+          Text(
+            label,
+            style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                  color: scheme.primary,
+                  fontWeight: FontWeight.w600,
+                ),
+          ),
+        ],
+      ),
+    );
+  }
 
-  Widget _code(BuildContext context, String text) => Container(
-        width: double.infinity,
-        margin: const EdgeInsets.only(bottom: 8),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-        decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.surfaceContainerHighest,
-          borderRadius: BorderRadius.circular(6),
-        ),
-        child: Text(
-          text,
-          style: const TextStyle(fontFamily: 'monospace', fontSize: 12.5),
-        ),
-      );
+  /// Numbered step: a small circled badge followed by one short sentence.
+  Widget _step(BuildContext context, String number, String text) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Container(
+            width: 22,
+            height: 22,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: scheme.primaryContainer,
+              shape: BoxShape.circle,
+            ),
+            child: Text(
+              number,
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: scheme.onPrimaryContainer,
+                    fontWeight: FontWeight.bold,
+                  ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text(
+                text,
+                style: Theme.of(context)
+                    .textTheme
+                    .bodyMedium
+                    ?.copyWith(height: 1.35),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -93,8 +145,8 @@ class _WelcomePairingDialogState extends ConsumerState<WelcomePairingDialog> {
               ),
               const SizedBox(height: 4),
               Text(
-                'Recording works right now. To transcribe and sync, pair this '
-                'device with your own Tangent server:',
+                'Recording works right now — nothing to set up. Pairing '
+                'with your own Tangent server adds transcription and sync.',
                 style: Theme.of(context).textTheme.bodyMedium,
               ),
               const SizedBox(height: 12),
@@ -103,34 +155,52 @@ class _WelcomePairingDialogState extends ConsumerState<WelcomePairingDialog> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: <Widget>[
-                      _step('1', 'On your PC, start the server:'),
-                      _code(context, 'cd server\ndocker compose up -d'),
+                      _sectionHeader(
+                        context,
+                        Icons.desktop_windows_outlined,
+                        'On your PC — one-time',
+                      ),
                       _step(
+                        context,
+                        '1',
+                        'Start the server from the repo folder:',
+                      ),
+                      const _CodeCard(
+                        command: WelcomePairingDialog.startServerCommand,
+                        copyKey: WelcomePairingDialog.copyStartServerKey,
+                      ),
+                      _step(
+                        context,
                         '2',
-                        'First run only: the log prints a setup command. '
-                        'Run the printed curl POST once and save the token:',
+                        'Follow the log. On the first run it prints a '
+                            'one-time setup command — run that once and save '
+                            'the token it returns:',
                       ),
-                      _code(
+                      const _CodeCard(
+                        command: WelcomePairingDialog.serverLogCommand,
+                        copyKey: WelcomePairingDialog.copyServerLogKey,
+                      ),
+                      _sectionHeader(
                         context,
-                        'docker compose logs -f tangent-server',
+                        Icons.smartphone_outlined,
+                        'On this device',
                       ),
                       _step(
+                        context,
                         '3',
-                        'On this device: Settings → Server & devices → '
-                        'Server → Find my server, then tap Pair next to '
-                        'your server.',
+                        'Open Settings → Server & devices → Find my '
+                            'server, then tap Pair next to your server.',
                       ),
                       _step(
-                        '4',
-                        'The server logs a 6-digit code (expires in 120 '
-                        'seconds). Read it on the PC and type it here:',
-                      ),
-                      _code(
                         context,
-                        '# PowerShell\ndocker compose logs tangent-server --since 2m |\n'
-                        '  Select-String code_issued\n'
-                        '# bash\ndocker compose logs tangent-server --since 2m |\n'
-                        '  grep code_issued',
+                        '4',
+                        'Type the 6-digit code from the PC log here. It '
+                            'expires in 120 seconds — if you missed it, '
+                            're-read the log:',
+                      ),
+                      const _CodeCard(
+                        command: WelcomePairingDialog.pairingLogCommand,
+                        copyKey: WelcomePairingDialog.copyPairingLogKey,
                       ),
                     ],
                   ),
@@ -175,6 +245,83 @@ class _WelcomePairingDialogState extends ConsumerState<WelcomePairingDialog> {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// A command the user can copy with one tap: monospace text in a rounded
+/// card with a trailing copy button that flips to a check for two seconds
+/// as the "copied" acknowledgement.
+class _CodeCard extends StatefulWidget {
+  const _CodeCard({required this.command, required this.copyKey});
+
+  final String command;
+  final Key copyKey;
+
+  @override
+  State<_CodeCard> createState() => _CodeCardState();
+}
+
+class _CodeCardState extends State<_CodeCard> {
+  bool _copied = false;
+  Timer? _resetTimer;
+
+  @override
+  void dispose() {
+    _resetTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _copy() async {
+    await Clipboard.setData(ClipboardData(text: widget.command));
+    if (!mounted) return;
+    setState(() => _copied = true);
+    _resetTimer?.cancel();
+    _resetTimer = Timer(const Duration(seconds: 2), () {
+      if (mounted) setState(() => _copied = false);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    return Container(
+      width: double.infinity,
+      // Left margin aligns the card under the step text, past the badge.
+      margin: const EdgeInsets.only(left: 30, bottom: 10),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: scheme.outlineVariant),
+      ),
+      child: Row(
+        children: <Widget>[
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 4, 10),
+              child: Text(
+                widget.command,
+                style: const TextStyle(
+                  fontFamily: 'monospace',
+                  fontSize: 12.5,
+                  height: 1.4,
+                ),
+              ),
+            ),
+          ),
+          IconButton(
+            key: widget.copyKey,
+            onPressed: _copy,
+            tooltip: _copied ? 'Copied' : 'Copy',
+            visualDensity: VisualDensity.compact,
+            icon: Icon(
+              _copied ? Icons.check : Icons.copy_rounded,
+              size: 18,
+              color: _copied ? scheme.primary : scheme.onSurfaceVariant,
+            ),
+          ),
+        ],
       ),
     );
   }

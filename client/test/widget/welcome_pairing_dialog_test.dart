@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tangent/data/local_db.dart';
@@ -109,10 +110,78 @@ void main() {
     expect(find.byKey(WelcomePairingDialog.dialogKey), findsOneWidget);
     expect(find.text('Welcome to Tangent'), findsOneWidget);
     expect(find.text('DO NOT REMIND ME AGAIN'), findsOneWidget);
-    // The walkthrough names the real steps, not a paraphrase.
-    expect(find.textContaining('docker compose up -d'), findsOneWidget);
-    expect(find.textContaining('code_issued'), findsOneWidget);
+    // The walkthrough names the real steps, not a paraphrase — each command
+    // is rendered verbatim with its own tap-to-copy button.
+    expect(
+      find.textContaining('docker compose up -d'),
+      findsOneWidget,
+    );
+    expect(
+      find.text(WelcomePairingDialog.serverLogCommand),
+      findsOneWidget,
+    );
+    expect(
+      find.text(WelcomePairingDialog.pairingLogCommand),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(WelcomePairingDialog.copyStartServerKey),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(WelcomePairingDialog.copyServerLogKey),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(WelcomePairingDialog.copyPairingLogKey),
+      findsOneWidget,
+    );
     expect(tester.takeException(), isNull);
+
+    await unmountHome(tester, db);
+  });
+
+  testWidgets(
+      'the copy button puts the exact command on the clipboard and '
+      'acknowledges with a transient check icon', (tester) async {
+    final List<MethodCall> platformCalls = <MethodCall>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (MethodCall call) async {
+        platformCalls.add(call);
+        return null;
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, null),
+    );
+    final LocalDb db = await mountHome(tester, settings: SettingsStore());
+
+    await tester.tap(find.byKey(WelcomePairingDialog.copyStartServerKey));
+    await tester.pump();
+
+    final MethodCall setData = platformCalls
+        .singleWhere((MethodCall c) => c.method == 'Clipboard.setData');
+    expect(
+      (setData.arguments as Map<Object?, Object?>)['text'],
+      WelcomePairingDialog.startServerCommand,
+    );
+    // Both lines of the multi-line command travel in one copy.
+    expect(
+      WelcomePairingDialog.startServerCommand,
+      contains('docker compose up -d'),
+    );
+
+    // Acknowledgement: the icon flips to a check, then reverts. Scoped to
+    // the dialog — HomeScreen renders its own check icons elsewhere.
+    final Finder checkInDialog = find.descendant(
+      of: find.byKey(WelcomePairingDialog.dialogKey),
+      matching: find.byIcon(Icons.check),
+    );
+    expect(checkInDialog, findsOneWidget);
+    await tester.pump(const Duration(seconds: 3));
+    expect(checkInDialog, findsNothing);
 
     await unmountHome(tester, db);
   });
@@ -210,8 +279,7 @@ void main() {
   testWidgets(
       'the settings toggle re-arms the welcome message after the opt-out',
       (tester) async {
-    final SettingsStore settings =
-        SettingsStore(showWelcomeMessage: false);
+    final SettingsStore settings = SettingsStore(showWelcomeMessage: false);
     await tester.pumpWidget(
       ProviderScope(
         overrides: <Override>[
@@ -234,8 +302,7 @@ void main() {
     expect(tester.widget<SwitchListTile>(toggle).value, isTrue);
   });
 
-  testWidgets(
-      'the settings toggle is one-way: flipping it OFF does not stick',
+  testWidgets('the settings toggle is one-way: flipping it OFF does not stick',
       (tester) async {
     final SettingsStore settings = SettingsStore();
     await tester.pumpWidget(
