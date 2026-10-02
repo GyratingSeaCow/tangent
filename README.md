@@ -15,8 +15,23 @@ Tangent server. Tangent does not send recordings to a third-party service.
 
 ## App layout
 
-Screen-by-screen screenshots with per-button documentation:
-[docs/user-guide](./docs/user-guide/README.md).
+<table>
+  <tr>
+    <td align="center"><a href="./docs/user-guide/README.md#capture"><img src="./docs/user-guide/capture.png" width="230" alt="Capture screen"></a><br><b>Capture</b></td>
+    <td align="center"><a href="./docs/user-guide/README.md#recordings"><img src="./docs/user-guide/recordings.png" width="230" alt="Recordings screen"></a><br><b>Recordings</b></td>
+    <td align="center"><a href="./docs/user-guide/README.md#notebooks"><img src="./docs/user-guide/notebooks.png" width="230" alt="Notebooks screen"></a><br><b>Notebooks</b></td>
+    <td align="center"><a href="./docs/user-guide/README.md#to-do"><img src="./docs/user-guide/todo.png" width="230" alt="To Do screen"></a><br><b>To Do</b></td>
+  </tr>
+  <tr>
+    <td align="center"><a href="./docs/user-guide/README.md#ask"><img src="./docs/user-guide/ask.png" width="230" alt="Ask screen"></a><br><b>Ask</b></td>
+    <td align="center"><a href="./docs/user-guide/README.md#settings"><img src="./docs/user-guide/settings.png" width="230" alt="Settings screen"></a><br><b>Settings</b></td>
+    <td align="center"><a href="./docs/user-guide/README.md#morning-review"><img src="./docs/user-guide/morning-review.png" width="230" alt="Morning review"></a><br><b>Morning review</b></td>
+    <td></td>
+  </tr>
+</table>
+
+Every screenshot links to the [user guide](./docs/user-guide/README.md), which
+documents each screen button by button.
 
 The Instrument interface has Anodized (dark) and Aluminium (light) themes. Lime
 marks selection and primary create actions; red is reserved for recording and
