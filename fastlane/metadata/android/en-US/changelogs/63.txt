@@ -1,0 +1,2 @@
+ADDED:
+- F-Droid packaging metadata: app description, icon, screenshots and per-release changelogs, plus a release gate that requires a changelog for every versionCode. First release prepared for F-Droid inclusion. No app code changes; no server update required.

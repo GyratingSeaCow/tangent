@@ -50,13 +50,21 @@ ADH2/
 
 ## Status
 
-Shipping — **v1.47.0** (see CHANGELOG.md). Client and server are both
+Shipping — **v1.48.0** (see CHANGELOG.md). Client and server are both
 implemented and tested (2883
 Flutter tests, 777 server tests, 129 Kotlin tests). The client runs
 natively on Linux AND Windows (tray icon, global record hotkey,
 close-to-tray, single instance, right-click = long-press; AppImage and
 Inno Setup installer under `packaging/`) — verified on CachyOS/KDE
 Plasma Wayland and Windows 11; see the README's Desktop sections.
+
+v1.48.0 **F-Droid packaging** (metadata-only, no app or server code):
+fastlane/metadata/android/en-US/ at the repo root (description, 512x512
+icon, the 8 user-guide screenshots, changelogs/<versionCode>.txt for
+codes 49-62), and release.yml gains an `fdroid-changelog` job the APK
+job needs — a tag whose versionCode lacks a fastlane changelog fails
+before any asset builds. First tag eligible for the fdroiddata
+submission.
 
 v1.47.0 **Support the Dev** (client-only): tenth and last Settings
 category — a verbatim thank-you note with a PayPal donation button that
