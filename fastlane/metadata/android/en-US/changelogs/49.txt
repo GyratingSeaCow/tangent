@@ -1,0 +1,3 @@
+ADDED:
+- Voice matching — Tangent learns who's speaking. (community request #4) Rename *Speaker 1* to a person once and the server remembers their voice; the next recording they're in comes back already named. One voice book on the server (works from every device), silent auto-naming only when you haven't named anyone on that recording yourself, and a per-person Forget in Settings → Voices — no wipe-all. Spec docs/design/2026-09-29-voice-matching.md.
+- Brain Dumps over 30 seconds now get…

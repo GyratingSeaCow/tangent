@@ -1,0 +1,2 @@
+FIXED:
+- No more Capture flash when jumping between screens. Tapping a rail key from a list screen used to pop to Capture first and then push the new screen, so Capture showed for the length of the transition. The jump is now one navigator transaction: the screen you were on stays beneath the transition until the new one has landed. Back still walks out through Capture.

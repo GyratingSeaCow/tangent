@@ -1,0 +1,4 @@
+CHANGED:
+- Instrument Console look. A UI-only restyle: every button, action, menu entry, setting and flow from 1.40.0 behaves exactly as before.
+  - A six-key navigation rail (Capture, Recordings, Notebooks, To Do, Ask, Settings) sits under the app bar on every top-level screen. It is a jump bar, not a tab stack: Android back still walks out through Capture.
+  - One lime create key on Notebooks and To Do opens a sheet that routes to the same create flows as before. Recordings keeps its own…

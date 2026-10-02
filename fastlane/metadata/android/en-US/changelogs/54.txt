@@ -1,0 +1,3 @@
+ADDED:
+- Act on Ask sources directly. Long-press any source chip under an Ask answer — recording, notebook or To Do — to move, rename, delete, or pin/unpin the underlying item. Pins made from Ask show up everywhere the item lives (Recordings, Notebooks, To Dos). Deleting is fail-safe: a recording that has ever attempted an upload is never removed locally on a server miss, and items busy transcribing refuse deletion cleanly.
+- Morning review is now a full screen. The daybreak-blue review takes…

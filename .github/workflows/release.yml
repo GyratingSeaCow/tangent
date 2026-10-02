@@ -39,9 +39,40 @@ permissions:
   contents: read
 
 jobs:
+  # F-Droid metadata gate: every release versionCode must ship a fastlane
+  # changelog (fastlane/metadata/android/en-US/changelogs/<code>.txt, max
+  # 500 chars) — F-Droid renders it as the per-version "what's new" text.
+  # Branch-artifact runs (manual dispatch with no tag) skip the check.
+  fdroid-changelog:
+    name: F-Droid changelog present
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.BUILD_REF }}
+      - name: Require fastlane changelog for this versionCode
+        run: |
+          if [ "$IS_RELEASE" != "true" ]; then
+            echo "Not a release ref — skipping changelog gate."
+            exit 0
+          fi
+          code=$(grep -E '^version:' client/pubspec.yaml | sed -E 's/.*\+([0-9]+).*/\1/')
+          f="fastlane/metadata/android/en-US/changelogs/${code}.txt"
+          if [ ! -f "$f" ]; then
+            echo "::error::Missing $f — add the F-Droid changelog for versionCode ${code} before tagging."
+            exit 1
+          fi
+          chars=$(wc -m < "$f")
+          if [ "$chars" -gt 500 ]; then
+            echo "::error::$f is ${chars} chars (max 500)."
+            exit 1
+          fi
+          echo "OK: $f (${chars} chars)"
+
   apk:
     name: Build + attach release APK
     runs-on: ubuntu-latest
+    needs: fdroid-changelog
     permissions:
       contents: write # attach the APK to the GitHub Release
     steps:

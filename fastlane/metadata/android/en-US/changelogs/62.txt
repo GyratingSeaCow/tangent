@@ -1,0 +1,2 @@
+ADDED:
+- Settings → Support the Dev (the last row of the settings menu): a thank-you note from the dev with a PayPal donation link below it. The donate button opens PayPal's hosted-button payment page externally — the app embeds no payment code and no WebView.

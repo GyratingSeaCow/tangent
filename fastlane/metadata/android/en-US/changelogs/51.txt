@@ -1,0 +1,3 @@
+ADDED:
+- Ask My Notes. A new Ask destination: ask a question in text or by voice and get an answer grounded in your own recordings, summaries, notebooks, and to-dos. Answers cite their sources as tappable chips — a cited recording opens seeked to the exact moment that backs the answer; honest misses say so instead of guessing. Question/answer history syncs read-only to every paired device (Drift v27, pull-only). Spec docs/design/2026-09-30-ask-my-notes.md.
+- Voice questions under 25 seconds…

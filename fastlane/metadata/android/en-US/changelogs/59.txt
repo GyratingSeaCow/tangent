@@ -1,0 +1,2 @@
+ADDED:
+- First-run welcome dialog: pairing walkthrough (server start, setup token, Find my server, 6-digit code) repeats at every launch until this device is paired. The bottom-centre "DO NOT REMIND ME AGAIN" checkbox dismisses it forever; Settings → Server & devices → "Show welcome message" turns it back on. Closing without checking reminds again next launch.

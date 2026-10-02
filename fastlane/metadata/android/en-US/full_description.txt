@@ -1,0 +1,17 @@
+Tangent records Brain Dumps and Meetings, stores them locally, and transcribes them on a self-hosted server. It also provides typed notes, handwriting notebooks, to-dos, full-text search, multi-device sync and "Ask My Notes" — questions answered from your own recordings, summaries, notebooks and to-dos.
+
+Recording, playback, notebooks, to-dos and local search work entirely offline, without a server. Transcription, AI summaries, handwriting search and multi-device sync require the free, open-source Tangent server (same repository), which you run yourself with Docker. Tangent never sends your recordings or notes to a third-party service.
+
+Features:
+
+* <b>Brain Dump</b> — voice memo with a verbatim transcript
+* <b>Meeting</b> — speaker-aware transcript and meeting notes
+* <b>Text Note</b> — typed note without audio
+* <b>Notebooks</b> — handwriting, typed blocks and embedded recordings with pen styles, palm rejection, lasso selection, undo/redo and PDF export
+* <b>Handwriting search</b> — find handwritten notes by what you wrote; recognition runs on your server
+* <b>To Do</b> — tasks, due dates, folders, reminders and optional Google Tasks sync
+* <b>Ask</b> — questions grounded in your own captures, answered by a local model on your server
+* <b>Morning review</b> — yesterday's captures, due to-dos and pinned items in one screen
+* Multi-device sync through your own server; audio stays on the device that recorded it unless you download it
+
+Pair the app with your server by local-network discovery and a 6-digit code, or enter the URL and token manually (Tailscale/VPN friendly).

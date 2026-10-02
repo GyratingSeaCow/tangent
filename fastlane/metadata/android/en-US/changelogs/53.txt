@@ -1,0 +1,3 @@
+ADDED:
+- Pin what matters — recordings, notebooks and To Dos. Long-press any recording, notebook or To Do (or use its action sheet) and pin it: the item sorts to the top of its own category or folder group — no separate global section — wears a pin indicator on its row, and the pin syncs to every paired device. Drift v30. Spec docs/design/2026-09-30-ask-my-notes.md (queued item #1).
+- Morning review — yesterday, waiting for you at breakfast. Settings → Reminders gains a Morning review toggle…
