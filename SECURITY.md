@@ -10,9 +10,8 @@ Instead, use GitHub's private reporting:
 **https://github.com/GyratingSeaCow/tangent/security/advisories/new**
 
 Include what you found, how to reproduce it, and which version (app
-`Settings → About`, server `GET /v1/server/info/public`). You will get an
-acknowledgement within a few days and a fix or a reasoned response before
-anything is disclosed publicly.
+`Settings → Maintenance & about`, server `GET /v1/server/info/public`). Do not
+publish details before the report has been investigated.
 
 ## Scope
 
@@ -20,7 +19,7 @@ anything is disclosed publicly.
 - The FastAPI server and its Docker image under `server/`
 - The release pipeline under `.github/workflows/`
 
-## What is already in place
+## Existing controls
 
 - Every device holds its own bearer token, minted only by reading a 6-digit
   code off the server's own output (`docs/design/server-discovery-and-pairing.md`).

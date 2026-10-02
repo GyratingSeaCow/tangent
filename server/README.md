@@ -1,6 +1,6 @@
 # Tangent Server
 
-FastAPI server for the Tangent voice brain-dump app. Self-hosted, single-user, AGPL-3.0.
+FastAPI, SQLite and faster-whisper backend for Tangent.
 
 ## Quick start (Docker)
 
@@ -15,21 +15,21 @@ your API token, then pair your devices with the app's **Find my server**
 button (see [Pairing devices](#pairing-devices)) — the endpoint is POST-only,
 so opening it in a browser returns `405 Method Not Allowed`.
 
-**Ports:** the container always listens on `8000` internally, and
+**Ports:** the container listens on `8000` internally, and
 `docker-compose.yml` publishes it on host port **8765**. So from your own
 machine use `http://localhost:8765`, and from the phone
-`http://<your-lan-ip>:8765` (for example `http://192.168.1.42:8765`). Change the
+`http://192.168.1.100:8765` (using the server's actual LAN address). Change the
 left-hand number in the compose `ports:` entry if 8765 is taken.
 
 ### Where your data lives
 
 `./data` on the host is bind-mounted to `/data` in the container. The container writes:
 
-- `./data/tangent.db` — the server's database (dumps, jobs, auth token)
-- `./data/audio/<dump-id>.opus` — uploaded audio files
-- `./data/models/` — faster-whisper model cache (`download_root`, under the data dir)
+- `./data/tangent.db` — application data, sync state and hashed credentials
+- `./data/audio/` — uploaded audio (`.opus`, `.wav`, `.mp3` or `.m4a`)
+- `./data/models/` — model cache
 
-These survive container restarts and image rebuilds. If you ever want to wipe everything, stop the container and `rm -rf ./data`.
+These survive container restarts and image rebuilds. Back up this directory.
 
 ### First-run setup
 
@@ -56,6 +56,16 @@ Save the returned token; it will not be shown again.
 The URL it prints is the *container's* view (port 8000). From outside, use the
 published host port **8765**:
 
+PowerShell:
+
+```powershell
+$body = @{ display_name = "Tangent Server" } | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri http://localhost:8765/v1/setup `
+  -ContentType "application/json" -Body $body
+```
+
+bash:
+
 ```bash
 curl -X POST http://localhost:8765/v1/setup \
   -H "Content-Type: application/json" \
@@ -66,31 +76,31 @@ curl -X POST http://localhost:8765/v1/setup \
    primary credential; keep it safe.
 2. Connect your devices by **pairing** (next section) — you normally never
    type this token into a device.
-3. If you do connect manually (VPN/Tailscale), use `http://<lan-ip>:8765`
-   from the phone (not `localhost`).
+3. If discovery cannot reach the server, pair with its explicit URL (for
+   example `http://192.168.1.100:8765`). Manual URL + primary token is the
+   fallback for scripted or headless clients.
 
 ## Pairing devices
 
 Each device earns its **own** revocable token by proving it can read the
 server's output — no token copying:
 
-1. In the app: **Settings → Server → Find my server** → tap **Pair** next to
+1. In the app: **Settings → Server & devices → Find my server** → tap **Pair** next to
    this server. (The app discovers it via the unauthenticated
    `GET /v1/server/info/public` beacon, which exposes only name, version and
    an auth flag.)
 2. The server logs a 6-digit code the moment the device asks. Read it:
 
-   ```bash
-   # Linux/macOS:
-   docker compose logs tangent-server --since 2m | grep code_issued
-
-   # Windows PowerShell:
+   ```powershell
    docker compose logs tangent-server --since 2m | Select-String code_issued
    ```
 
+   ```bash
+   docker compose logs tangent-server --since 2m | grep code_issued
+   ```
+
    (Run from `server/`, or add `-f path\to\server\docker-compose.yml`.)
-3. Type the code into the device. It receives a token bound to its device id
-   and is fully connected.
+3. Type the code into the device. It receives a token bound to its device id.
 
 Security properties:
 
