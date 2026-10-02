@@ -12,6 +12,7 @@ import 'bulk_import_section.dart';
 import 'diagnostics_section.dart';
 import 'obsidian_export_section.dart';
 import 'reminders_section.dart';
+import 'welcome_message_section.dart';
 import 'handwriting_search_section.dart';
 import 'ai_summaries_section.dart';
 import 'auto_file_section.dart';
@@ -344,6 +345,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               ),
             ),
           ),
+          const WelcomeMessageSection(),
         ];
       case SettingsCategory.transcription:
         if (!_loaded) return [loading];

@@ -22,8 +22,11 @@ import '../../services/create_requests.dart';
 import '../../theme/tangent_tokens.dart';
 import '../../widgets/instrument_scaffold.dart';
 import '../../widgets/top_nav_rail.dart';
+import '../server/server_connection_screen.dart' show secureStoreProvider;
+import '../settings/settings_screen.dart' show settingsStoreProvider;
 import 'home_providers.dart';
 import 'morning_review_screen.dart';
+import 'welcome_pairing_dialog.dart';
 import 'record_button_palette.dart';
 import 'speaker_backfill_banner.dart';
 
@@ -90,6 +93,32 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     // path runs through the SAME mode switch and toggle the button uses.
     _createRequests =
         ref.read(createRequestsProvider).stream.listen(_onCreateRequest);
+    // First-run welcome (spec 2026-10-01): repeat the pairing walkthrough at
+    // every launch until the device is paired, the user checks DO NOT REMIND
+    // ME AGAIN, or the Settings toggle is off.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_maybeShowWelcome());
+    });
+  }
+
+  /// Shows [WelcomePairingDialog] when the welcome pref is on AND no server
+  /// is configured. A secure-storage read failure means pairing state is
+  /// UNKNOWN — never nag blind, so it skips (this also keeps the dialog out
+  /// of hosts without the keystore plugin, including widget tests).
+  Future<void> _maybeShowWelcome() async {
+    if (!ref.read(settingsStoreProvider).showWelcomeMessage) return;
+    final String? serverUrl;
+    try {
+      serverUrl = await ref.read(secureStoreProvider).getServerUrl();
+    } catch (_) {
+      return;
+    }
+    if (serverUrl != null && serverUrl.isNotEmpty) return;
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (BuildContext context) => const WelcomePairingDialog(),
+    );
   }
 
   /// A create request switches the mode selector and fires the matching

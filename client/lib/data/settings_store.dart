@@ -41,6 +41,7 @@ class SettingsStore {
   static const _obsidianWordTimestampsKey = 'obsidian_export_word_timestamps';
   static const _notebookImportAudioCardKey = 'notebook-import-audio-card';
   static const _remindersEnabledKey = 'reminders_enabled';
+  static const _showWelcomeMessageKey = 'show_welcome_message';
   static const _completionNotificationsKey = 'completion_notifications';
   static const _reminderMinuteOfDayKey = 'reminder_minute_of_day';
   static const _lastReminderShownDayKey = 'last_reminder_shown_day';
@@ -143,6 +144,12 @@ class SettingsStore {
   /// can seek it in place. ON by default (spec §C); remembered per device.
   bool notebookImportAudioCard;
 
+  /// First-run welcome: pairing steps shown at launch until this device is
+  /// paired, dismissed forever by its own checkbox, re-armed by the
+  /// Settings → Server & devices toggle. ON by default — a fresh install
+  /// is exactly who needs it.
+  bool showWelcomeMessage;
+
   /// Daily due-date reminder (Android). OFF by default (spec N4): it asks
   /// for the notification permission, so it only ever turns on by hand.
   bool remindersEnabled;
@@ -206,6 +213,7 @@ class SettingsStore {
     this.obsidianExportSummary = true,
     this.obsidianExportWordTimestamps = false,
     this.notebookImportAudioCard = true,
+    this.showWelcomeMessage = true,
     this.remindersEnabled = false,
     this.reminderMinuteOfDay = 420,
     this.lastReminderShownDay = '',
@@ -250,6 +258,8 @@ class SettingsStore {
           preferences.getBool(_obsidianWordTimestampsKey) ?? false,
       notebookImportAudioCard:
           preferences.getBool(_notebookImportAudioCardKey) ?? true,
+      showWelcomeMessage:
+          preferences.getBool(_showWelcomeMessageKey) ?? true,
       remindersEnabled: preferences.getBool(_remindersEnabledKey) ?? false,
       reminderMinuteOfDay: clampMinuteOfDay(
         preferences.getInt(_reminderMinuteOfDayKey),
@@ -389,6 +399,11 @@ class SettingsStore {
   Future<void> setCompletionNotificationsEnabled(bool value) async {
     completionNotificationsEnabled = value;
     await _preferences?.setBool(_completionNotificationsKey, value);
+  }
+
+  Future<void> setShowWelcomeMessage(bool value) async {
+    showWelcomeMessage = value;
+    await _preferences?.setBool(_showWelcomeMessageKey, value);
   }
 
   /// Minutes after midnight, kept inside one day; null → [fallback]

@@ -106,7 +106,7 @@ every changed setting across all categories at once.
 | **Storage** | Default recordings folder (SAF grant), local storage use, Wi-Fi-only upload. |
 | **Import & export** | Bulk audio import/export, Obsidian Markdown export. |
 | **Recording input** | Microphone selection, Bluetooth input, gain, record trigger. |
-| **Server & devices** | Server connection, device pairing, pairing-code display, trash. |
+| **Server & devices** | Server connection, device pairing, pairing-code display, trash, welcome-message toggle. |
 | **Transcription** | Whisper model selection, custom vocabulary. |
 | **Intelligence** | Handwriting search (OCR), AI summaries, auto-file. |
 | **Integrations** | Google Tasks sync, remembered voices (speaker naming). |
