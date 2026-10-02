@@ -40,6 +40,17 @@ Future<GlobalKey<NavigatorState>> openRecording(
   return navigator;
 }
 
+Future<void> pressTooltip(WidgetTester tester, String tooltip) async {
+  final IconButton button = tester.widget<IconButton>(
+    find.ancestor(
+      of: find.byTooltip(tooltip),
+      matching: find.byType(IconButton),
+    ),
+  );
+  button.onPressed!();
+  await tester.pump();
+}
+
 void main() {
   testWidgets(
       'I1-I1 captured discovery recheck is inert during admission and after disposal',
@@ -68,7 +79,7 @@ void main() {
     h.deletion.beforePreview = (index) async {
       if (index == 2) await gate.future;
     };
-    await tester.tap(find.byTooltip('Retry deletion'));
+    await pressTooltip(tester, 'Retry deletion');
     await pumpBoundUntil(tester, () => h.deletion.previews.length >= 3);
     check();
     check();
@@ -104,7 +115,7 @@ void main() {
           ),)
         : actual;
     await openRecording(tester, h, a);
-    await tester.tap(find.byTooltip('Delete'));
+    await pressTooltip(tester, 'Delete');
     await pumpBoundUntil(
         tester,
         () => find
@@ -209,7 +220,7 @@ void main() {
               .isNotEmpty,);
       expect(find.byKey(const ValueKey('local-delete-retry')), findsNothing);
       expect(find.byKey(const ValueKey('local-delete-totals')), findsNothing);
-      await tester.tap(find.byTooltip('Delete'));
+      await pressTooltip(tester, 'Delete');
       await pumpBoundUntil(
           tester,
           () => find
@@ -251,7 +262,7 @@ void main() {
     };
     await openRecording(tester, h, a);
     await pumpBoundUntil(tester, () => h.players.single.loaded);
-    await tester.tap(find.byTooltip('Delete'));
+    await pressTooltip(tester, 'Delete');
     await pumpBoundUntil(
         tester, () => find.byType(AlertDialog).evaluate().isNotEmpty,);
     expect(find.text('Delete 1 local recordings?'), findsOneWidget);
@@ -271,7 +282,7 @@ void main() {
             .single
             .operationId,
         'fixture-other-owner',);
-    await tester.tap(find.byTooltip('Retry deletion'));
+    await pressTooltip(tester, 'Retry deletion');
     await pumpBoundUntil(
         tester, () => find.byType(AlertDialog).evaluate().isNotEmpty,);
     expect(find.text('Retry deletion of 1 local recordings?'), findsOneWidget);
@@ -307,7 +318,7 @@ void main() {
             h.players.isNotEmpty &&
             h.players.last.loaded &&
             h.deletion.returnedPreviews == 1,);
-    await tester.tap(find.byTooltip('Delete'));
+    await pressTooltip(tester, 'Delete');
     await pumpBoundUntil(tester,
         () => find.textContaining('Delete failed:').evaluate().isNotEmpty,);
     expect(find.byType(AlertDialog), findsNothing);
@@ -317,7 +328,7 @@ void main() {
     expect(h.players, hasLength(1));
     expect(h.players.single.closes, 0);
     expect(find.text('Retry playback'), findsNothing);
-    await tester.tap(find.byTooltip('Play recording'));
+    await pressTooltip(tester, 'Play recording');
     await tester.pump();
     expect(h.players.single.plays, 1);
     await disposeBoundWidget(tester, h.owners!);
