@@ -50,19 +50,27 @@ ADH2/
 
 ## Status
 
-Shipping — **v1.44.0** (see CHANGELOG.md). Client and server are both
-implemented and tested (2877
+Shipping — **v1.45.0** (see CHANGELOG.md). Client and server are both
+implemented and tested (2878
 Flutter tests, 760 server tests, 129 Kotlin tests). The client runs
 natively on Linux AND Windows (tray icon, global record hotkey,
 close-to-tray, single instance, right-click = long-press; AppImage and
 Inno Setup installer under `packaging/`) — verified on CachyOS/KDE
 Plasma Wayland and Windows 11; see the README's Desktop sections.
 
+v1.45.0 **Welcome dialog dismissal contract** (spec correction of
+v1.44.0): the walkthrough repeats at EVERY launch — paired or not. The
+ONLY removal is the DO NOT REMIND ME AGAIN checkbox + Confirm (Confirm
+disabled until checked; the checkbox alone persists nothing). Close is
+this-launch-only. The Settings toggle is one-way: ON re-arms, OFF is
+ignored (switch snaps back). Client-only (the server bump is version
+metadata; the container-audit image changes also ride this tag).
+
 v1.44.0 **First-run welcome dialog**: a pairing walkthrough repeats at
 launch until the device is paired; its bottom-centre DO NOT REMIND ME AGAIN
 checkbox persists the opt-out, and Settings > Server & devices > "Show
 welcome message" re-arms it. Client-only (the server bump is version
-metadata).
+metadata). Superseded by v1.45.0's dismissal contract.
 
 v1.43.0 **Morning Brief** (spec docs/design/2026-10-01-morning-brief.md).
 Server pre-generates a daily brief (narrative paragraph + bullet

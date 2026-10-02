@@ -5,10 +5,17 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## 1.45.0 — 2026-10-02
 
 ### Changed
 
+- Welcome dialog dismissal contract (spec correction): the pairing
+  walkthrough now repeats at EVERY launch — paired or not — and the ONLY
+  way to remove it is checking "DO NOT REMIND ME AGAIN" and pressing the
+  new Confirm button (disabled until the box is checked; the checkbox
+  alone persists nothing). Close remains this-launch-only. Settings →
+  Server & devices → "Show welcome message" is now one-way: it re-arms
+  the message, but flipping it off is ignored and the switch snaps back.
 - Container audit: image now builds CPU-only by default (14.3 GB → 2.9 GB;
   `docker-compose.gpu.yml` sets the new `TANGENT_GPU=1` build arg to restore
   the CUDA torch + cu12 runtime flavour), runs as non-root uid 1000 (Linux
