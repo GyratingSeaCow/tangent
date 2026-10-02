@@ -138,8 +138,7 @@ void main() {
     final LocalDb db = await mountHome(tester);
 
     await tester.tap(find.byIcon(Icons.menu_book));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
     await tester.pump(const Duration(milliseconds: 100));
 
     expect(find.byType(NotebookListScreen), findsOneWidget);
@@ -154,11 +153,9 @@ void main() {
     final LocalDb db = await mountHome(tester);
 
     await tester.tap(find.byIcon(Icons.menu_book));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
     Navigator.of(tester.element(find.byType(NotebookListScreen))).pop();
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
 
     expect(find.byIcon(Icons.list), findsOneWidget);
     expect(find.byIcon(Icons.cloud_sync), findsOneWidget);
