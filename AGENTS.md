@@ -50,13 +50,19 @@ ADH2/
 
 ## Status
 
-Shipping — **v1.46.0** (see CHANGELOG.md). Client and server are both
-implemented and tested (2879
+Shipping — **v1.47.0** (see CHANGELOG.md). Client and server are both
+implemented and tested (2883
 Flutter tests, 777 server tests, 129 Kotlin tests). The client runs
 natively on Linux AND Windows (tray icon, global record hotkey,
 close-to-tray, single instance, right-click = long-press; AppImage and
 Inno Setup installer under `packaging/`) — verified on CachyOS/KDE
 Plasma Wayland and Windows 11; see the README's Desktop sections.
+
+v1.47.0 **Support the Dev** (client-only): tenth and last Settings
+category — a verbatim thank-you note with a PayPal donation button that
+opens the hosted-button payment page (ncp/payment/3L6QWSULPF4WS)
+externally via url_launcher; no payment JS, no WebView. URL and message
+are pinned by widget tests.
 
 v1.46.0 also (spec docs/design/2026-10-02-mcp-server.md; client half:
 the welcome-dialog walkthrough redesign — phased "On your PC" / "On this
