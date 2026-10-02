@@ -65,9 +65,8 @@ void main() {
       (tester) async {
     await _mount(tester);
 
-    final List<String> titles = SettingsCategory.values
-        .map((SettingsCategory c) => c.title)
-        .toList();
+    final List<String> titles =
+        SettingsCategory.values.map((SettingsCategory c) => c.title).toList();
     expect(titles, <String>[
       'Storage',
       'Import & export',
@@ -112,7 +111,10 @@ void main() {
     // Back arrow returns to the overview IN PLACE: same State, so an edit
     // made in Storage would survive this trip.
     await closeSettingsCategory(tester);
-    expect(find.byKey(SettingsScreen.categoryKey(SettingsCategory.recording)), findsOneWidget);
+    expect(
+      find.byKey(SettingsScreen.categoryKey(SettingsCategory.recording)),
+      findsOneWidget,
+    );
 
     await openSettingsCategory(tester, SettingsCategory.recording);
     expect(find.text('Keep screen awake while recording'), findsOneWidget);
@@ -133,13 +135,13 @@ void main() {
     await closeSettingsCategory(tester);
     await openSettingsCategory(tester, SettingsCategory.recording);
 
-    final RadioListTile<TriggerMode> hold = tester.widget(
+    final RadioGroup<TriggerMode> triggerGroup = tester.widget(
       find.ancestor(
         of: find.text('Hold to record'),
-        matching: find.byType(RadioListTile<TriggerMode>),
+        matching: find.byType(RadioGroup<TriggerMode>),
       ),
     );
-    expect(hold.groupValue, TriggerMode.hold);
+    expect(triggerGroup.groupValue, TriggerMode.hold);
   });
 
   testWidgets('Maintenance & about keeps Licenses and the version line',

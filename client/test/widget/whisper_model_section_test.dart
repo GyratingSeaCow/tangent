@@ -260,18 +260,15 @@ Finder _row(String name) =>
     find.byKey(ValueKey<String>('whisper-model-row-$name'));
 
 String? _selected(WidgetTester tester) {
-  final Iterable<RadioListTile<String>> tiles =
-      tester.widgetList<RadioListTile<String>>(
-    find.byType(RadioListTile<String>),
-  );
-  for (final RadioListTile<String> tile in tiles) {
-    if (tile.value == tile.groupValue) return tile.value;
-  }
-  return null;
+  return tester
+      .widget<RadioGroup<String>>(
+        find.byType(RadioGroup<String>),
+      )
+      .groupValue;
 }
 
 bool _rowEnabled(WidgetTester tester, String name) =>
-    tester.widget<RadioListTile<String>>(_row(name)).onChanged != null;
+    tester.widget<RadioListTile<String>>(_row(name)).enabled ?? true;
 
 /// Tap a row and let the (possible) dialog animate in. Safe to settle: no
 /// poll timer exists until an install starts.
@@ -465,8 +462,7 @@ void main() {
     expect(find.textContaining('45%'), findsNothing);
   });
 
-  testWidgets(
-      'install progress renders inline and mirrors to the notification',
+  testWidgets('install progress renders inline and mirrors to the notification',
       (tester) async {
     final _Harness h = await _mount(tester);
     await tester.pumpAndSettle();
@@ -771,7 +767,8 @@ void main() {
     expect(_selected(tester), 'tiny');
   });
 
-  testWidgets('a model the client has no copy for still renders with the '
+  testWidgets(
+      'a model the client has no copy for still renders with the '
       'server\'s own size', (tester) async {
     // Forward compatibility: a newer server offering a name this build has
     // never heard of must appear, not vanish from the list.

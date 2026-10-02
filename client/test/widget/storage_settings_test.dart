@@ -25,12 +25,13 @@ const oldLocation = (
     documentId: ''
   )
 );
-DefaultFolderState folder(
-        {bool canChoose = true,
-        bool available = true,
-        StorageLocation? location = oldLocation,
-        int revision = 7,
-        StorageProblem? problem,}) =>
+DefaultFolderState folder({
+  bool canChoose = true,
+  bool available = true,
+  StorageLocation? location = oldLocation,
+  int revision = 7,
+  StorageProblem? problem,
+}) =>
     (
       location: location,
       revision: revision,
@@ -69,13 +70,18 @@ class TestCatalog extends Fake implements StorageCatalog {
   }
 
   @override
-  Future<Outcome<DefaultFolderState>> commitDefault(FolderCandidate candidate,
-      {required int expectedRevision,}) async {
+  Future<Outcome<DefaultFolderState>> commitDefault(
+    FolderCandidate candidate, {
+    required int expectedRevision,
+  }) async {
     commits.add((candidate: candidate, revision: expectedRevision));
     return await (commitGate?.future ??
         commitResult ??
-        Future.value(const Fail<DefaultFolderState>(
-            (code: ProblemCode.invalid, message: 'Unexpected commit'),),));
+        Future.value(
+          const Fail<DefaultFolderState>(
+            (code: ProblemCode.invalid, message: 'Unexpected commit'),
+          ),
+        ));
   }
 
   Future<void> close() async {
@@ -83,8 +89,11 @@ class TestCatalog extends Fake implements StorageCatalog {
       pickGate!.complete(const Ok(null));
     }
     if (commitGate != null && !commitGate!.isCompleted) {
-      commitGate!.complete(const Fail(
-          (code: ProblemCode.interrupted, message: 'Synthetic cleanup'),),);
+      commitGate!.complete(
+        const Fail(
+          (code: ProblemCode.interrupted, message: 'Synthetic cleanup'),
+        ),
+      );
     }
     await changes.close();
   }
@@ -101,20 +110,26 @@ Future<void> mountStorage(WidgetTester t, TestCatalog catalog) async {
     await t.pump();
     await catalog.close();
   });
-  await t.pumpWidget(ProviderScope(overrides: [
-    storageCatalogProvider.overrideWithValue(catalog),
-    defaultFolderProvider.overrideWith((_) => catalog.watchDefault()),
-  ], child: const MaterialApp(home: Scaffold(body: StorageSettingsSection())),),);
+  await t.pumpWidget(
+    ProviderScope(
+      overrides: [
+        storageCatalogProvider.overrideWithValue(catalog),
+        defaultFolderProvider.overrideWith((_) => catalog.watchDefault()),
+      ],
+      child: const MaterialApp(home: Scaffold(body: StorageSettingsSection())),
+    ),
+  );
   await pumpStorage(t);
 }
 
 const syntheticInfo = ServerInfo(
-    version: 'fixture',
-    setupComplete: true,
-    defaultModel: 'large-v3',
-    availableModels: ['large-v3'],
-    storageUsedBytes: 0,
-    dumpCount: 2,);
+  version: 'fixture',
+  setupComplete: true,
+  defaultModel: 'large-v3',
+  availableModels: ['large-v3'],
+  storageUsedBytes: 0,
+  dumpCount: 2,
+);
 
 class HeldClient extends Fake implements TranscriptionClient {
   final info = Completer<ServerInfo>();
@@ -153,10 +168,11 @@ class SyntheticSecureStore extends Fake implements SecureStore {
 class ObservedSettings extends SettingsStore {
   ObservedSettings()
       : super(
-            triggerMode: TriggerMode.hold,
-            wifiOnlySync: true,
-            autoSync: false,
-            keepScreenAwakeWhileRecording: false,);
+          triggerMode: TriggerMode.hold,
+          wifiOnlySync: true,
+          autoSync: false,
+          keepScreenAwakeWhileRecording: false,
+        );
   final saves = <String>[];
   @override
   Future<void> setTriggerMode(TriggerMode value) async {
@@ -183,8 +199,13 @@ class ObservedSettings extends SettingsStore {
   }
 }
 
-Future<void> mountHost(WidgetTester t, TestCatalog catalog, HeldClient client,
-    ObservedSettings settings, SyntheticSecureStore secure,) async {
+Future<void> mountHost(
+  WidgetTester t,
+  TestCatalog catalog,
+  HeldClient client,
+  ObservedSettings settings,
+  SyntheticSecureStore secure,
+) async {
   // The real Settings screen is ~1400 logical pixels of ListView content, far
   // taller than the 800x600 default test surface. That matters for assertions,
   // not just for looks: a SliverList reports children outside its *paint*
@@ -209,13 +230,20 @@ Future<void> mountHost(WidgetTester t, TestCatalog catalog, HeldClient client,
     await t.pump();
     await catalog.close();
   });
-  await t.pumpWidget(ProviderScope(overrides: [
-    storageCatalogProvider.overrideWithValue(catalog),
-    defaultFolderProvider.overrideWith((_) => catalog.watchDefault()),
-    settingsStoreProvider.overrideWithValue(settings),
-    secureStoreProvider.overrideWithValue(secure),
-    transcriptionClientProvider.overrideWith((_) => client),
-  ], child: const MaterialApp(home: SettingsScreen(category: SettingsCategory.storage)),),);
+  await t.pumpWidget(
+    ProviderScope(
+      overrides: [
+        storageCatalogProvider.overrideWithValue(catalog),
+        defaultFolderProvider.overrideWith((_) => catalog.watchDefault()),
+        settingsStoreProvider.overrideWithValue(settings),
+        secureStoreProvider.overrideWithValue(secure),
+        transcriptionClientProvider.overrideWith((_) => client),
+      ],
+      child: const MaterialApp(
+        home: SettingsScreen(category: SettingsCategory.storage),
+      ),
+    ),
+  );
   await pumpStorage(t);
 }
 
@@ -249,10 +277,11 @@ void main() {
       expect(settings.saves, isEmpty);
       if (stage == 'secure-url') {
         expect(
-            t
-                .widget<TextButton>(find.widgetWithText(TextButton, 'SAVE'))
-                .onPressed,
-            isNull,);
+          t
+              .widget<TextButton>(find.widgetWithText(TextButton, 'SAVE'))
+              .onPressed,
+          isNull,
+        );
       }
       await t.pumpWidget(const SizedBox.shrink());
       await t.pump();
@@ -281,9 +310,14 @@ void main() {
         .onPressed!;
     catalog.changes.addError(StateError('Synthetic storage observation error'));
     await pumpStorage(t);
-    expect(find.text('Storage unavailable. Try reopening Settings.'),
-        findsOneWidget,);
-    expect(find.text('Storage'), findsNWidgets(2)); // drill title + section heading
+    expect(
+      find.text('Storage unavailable. Try reopening Settings.'),
+      findsOneWidget,
+    );
+    expect(
+      find.text('Storage'),
+      findsNWidgets(2),
+    ); // drill title + section heading
     oldCallback();
     await pumpStorage(t);
     expect(catalog.picks, 0);
@@ -303,8 +337,10 @@ void main() {
     await pumpStorage(t);
     expect(find.byKey(const ValueKey('change-default-folder')), findsNothing);
     expect(find.text('Read-only on this platform.'), findsOneWidget);
-    expect(find.textContaining('Reconnect storage or restore access'),
-        findsOneWidget,);
+    expect(
+      find.textContaining('Reconnect storage or restore access'),
+      findsOneWidget,
+    );
     expect(catalog.picks, 0);
     expect(catalog.commits, isEmpty);
   });
@@ -315,21 +351,28 @@ void main() {
       await mountStorage(t, catalog);
       await t.tap(find.byKey(const ValueKey('change-default-folder')));
       await pumpStorage(t);
-      catalog.pickGate!.completeError(typed
-          ? const StorageFault(
-              (code: ProblemCode.denied, message: 'Synthetic denied'),)
-          : StateError('Synthetic failure'),);
+      catalog.pickGate!.completeError(
+        typed
+            ? const StorageFault(
+                (code: ProblemCode.denied, message: 'Synthetic denied'),
+              )
+            : StateError('Synthetic failure'),
+      );
       await pumpStorage(t);
       expect(
-          find.byKey(const ValueKey('storage-change-error')), findsOneWidget,);
+        find.byKey(const ValueKey('storage-change-error')),
+        findsOneWidget,
+      );
       expect(find.text('Original recordings'), findsOneWidget);
       expect(catalog.commits, isEmpty);
       expect(
-          t
-              .widget<TextButton>(
-                  find.byKey(const ValueKey('change-default-folder')),)
-              .onPressed,
-          isNotNull,);
+        t
+            .widget<TextButton>(
+              find.byKey(const ValueKey('change-default-folder')),
+            )
+            .onPressed,
+        isNotNull,
+      );
       expect(t.takeException(), isNull);
     });
   }
@@ -351,9 +394,11 @@ void main() {
           (t) async {
         final problem = (code: entry.key, message: 'Synthetic failure');
         final catalog = TestCatalog(folder())
-          ..pickResult = Future.value(stage == 'picker'
-              ? Fail<FolderCandidate?>(problem)
-              : const Ok<FolderCandidate?>(chosenCandidate),)
+          ..pickResult = Future.value(
+            stage == 'picker'
+                ? Fail<FolderCandidate?>(problem)
+                : const Ok<FolderCandidate?>(chosenCandidate),
+          )
           ..commitResult = Future.value(Fail<DefaultFolderState>(problem));
         await mountStorage(t, catalog);
         await t.tap(find.byKey(const ValueKey('change-default-folder')));
@@ -363,15 +408,19 @@ void main() {
         expect(find.text('Chosen recordings'), findsNothing);
         expect(catalog.commits, hasLength(stage == 'picker' ? 0 : 1));
         if (stage == 'commit') {
-          expect(catalog.commits.single,
-              (candidate: chosenCandidate, revision: 7),);
+          expect(
+            catalog.commits.single,
+            (candidate: chosenCandidate, revision: 7),
+          );
         }
         expect(
-            t
-                .widget<TextButton>(
-                    find.byKey(const ValueKey('change-default-folder')),)
-                .onPressed,
-            isNotNull,);
+          t
+              .widget<TextButton>(
+                find.byKey(const ValueKey('change-default-folder')),
+              )
+              .onPressed,
+          isNotNull,
+        );
         expect(t.takeException(), isNull);
       });
     }
@@ -384,7 +433,8 @@ void main() {
       await mountStorage(t, catalog);
       final callback = t
           .widget<TextButton>(
-              find.byKey(const ValueKey('change-default-folder')),)
+            find.byKey(const ValueKey('change-default-folder')),
+          )
           .onPressed!;
       callback();
       await pumpStorage(t);
@@ -398,10 +448,11 @@ void main() {
       if (stage == 'picker') {
         catalog.pickGate!.complete(const Ok(chosenCandidate));
       } else {
-        catalog.commitGate!.complete(const Fail((
-          code: ProblemCode.persistence,
-          message: 'Synthetic late failure'
-        ),),);
+        catalog.commitGate!.complete(
+          const Fail(
+            (code: ProblemCode.persistence, message: 'Synthetic late failure'),
+          ),
+        );
       }
       await pumpStorage(t);
       expect(catalog.picks, 1);
@@ -481,18 +532,21 @@ void main() {
   testWidgets(
       'missing default and server failure do not hide Settings or folder action',
       (t) async {
-    final catalog = TestCatalog(folder(
+    final catalog = TestCatalog(
+      folder(
         location: null,
         available: false,
-        problem: (
-          code: ProblemCode.denied,
-          message: 'Synthetic revoked grant'
-        ),),);
+        problem: (code: ProblemCode.denied, message: 'Synthetic revoked grant'),
+      ),
+    );
     final client = HeldClient();
     final settings = ObservedSettings();
     final secure = SyntheticSecureStore();
     await mountHost(t, catalog, client, settings, secure);
-    expect(find.text('Storage'), findsNWidgets(2)); // drill title + section heading
+    expect(
+      find.text('Storage'),
+      findsNWidgets(2),
+    ); // drill title + section heading
     expect(find.text('No default folder'), findsOneWidget);
     expect(find.textContaining('Default folder unavailable'), findsOneWidget);
     client.info.completeError(StateError('Synthetic offline'));
@@ -520,29 +574,39 @@ void main() {
     t.view.devicePixelRatio = 1;
     addTearDown(t.view.resetPhysicalSize);
     addTearDown(t.view.resetDevicePixelRatio);
-    final catalog = TestCatalog(folder(location: (
-      id: 'long',
-      directory: oldLocation.directory,
-      label: 'A long human-readable recordings folder name on removable storage'
-    ),),);
+    final catalog = TestCatalog(
+      folder(
+        location: (
+          id: 'long',
+          directory: oldLocation.directory,
+          label:
+              'A long human-readable recordings folder name on removable storage'
+        ),
+      ),
+    );
     addTearDown(() async {
       await t.pumpWidget(const SizedBox.shrink());
       await t.pump();
       await catalog.close();
     });
-    await t.pumpWidget(ProviderScope(
+    await t.pumpWidget(
+      ProviderScope(
         overrides: [
           storageCatalogProvider.overrideWithValue(catalog),
           defaultFolderProvider.overrideWith((_) => catalog.watchDefault()),
         ],
         child: MaterialApp(
           builder: (context, child) => MediaQuery(
-              data: MediaQuery.of(context)
-                  .copyWith(textScaler: TextScaler.linear(2)),
-              child: child!,),
+            data: MediaQuery.of(context)
+                .copyWith(textScaler: TextScaler.linear(2)),
+            child: child!,
+          ),
           home: const Scaffold(
-              body: SingleChildScrollView(child: StorageSettingsSection()),),
-        ),),);
+            body: SingleChildScrollView(child: StorageSettingsSection()),
+          ),
+        ),
+      ),
+    );
     await pumpStorage(t);
     expect(find.text(catalog.state.location!.label), findsOneWidget);
     expect(find.byType(TextField), findsNothing);
@@ -581,8 +645,11 @@ void main() {
     catalog.commitGate!
         .complete(Ok(folder(location: newLocation, revision: 9)));
     await pumpStorage(t);
-    expect(find.text('Original recordings'), findsOneWidget,
-        reason: 'commit return is not the committed provider emission',);
+    expect(
+      find.text('Original recordings'),
+      findsOneWidget,
+      reason: 'commit return is not the committed provider emission',
+    );
     expect(find.text('Chosen recordings'), findsNothing);
     catalog.emit(folder(location: newLocation, revision: 9));
     await pumpStorage(t);
@@ -603,12 +670,17 @@ void main() {
       await mountHost(t, catalog, client, settings, secure);
       expect(client.calls, 1);
       expect(client.info.isCompleted, isFalse);
-      expect(find.text('Original recordings'), findsOneWidget,
-          reason:
-              'local Storage must not wait behind the whole-screen server-info spinner',);
+      expect(
+        find.text('Original recordings'),
+        findsOneWidget,
+        reason:
+            'local Storage must not wait behind the whole-screen server-info spinner',
+      );
       if (!available) {
         expect(
-            find.textContaining('Default folder unavailable'), findsOneWidget,);
+          find.textContaining('Default folder unavailable'),
+          findsOneWidget,
+        );
       }
       await t.tap(find.byKey(const ValueKey('change-default-folder')));
       await pumpStorage(t);
@@ -654,8 +726,13 @@ void main() {
       // shows the last known model; it must still name one, selected.
       expect(
         t
-            .widget<RadioListTile<String>>(
-              find.byKey(const ValueKey('whisper-model-row-large-v3')),
+            .widget<RadioGroup<String>>(
+              find.ancestor(
+                of: find.byKey(
+                  const ValueKey('whisper-model-row-large-v3'),
+                ),
+                matching: find.byType(RadioGroup<String>),
+              ),
             )
             .groupValue,
         'large-v3',
@@ -680,7 +757,9 @@ void main() {
         expect(find.text('Original recordings'), findsOneWidget);
       } else {
         expect(
-            find.byKey(const ValueKey('change-default-folder')), findsNothing,);
+          find.byKey(const ValueKey('change-default-folder')),
+          findsNothing,
+        );
         expect(catalog.picks, 0);
       }
       await t.pumpWidget(const SizedBox.shrink());

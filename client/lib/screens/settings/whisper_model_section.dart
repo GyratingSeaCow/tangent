@@ -331,8 +331,9 @@ class _WhisperModelSectionState extends ConsumerState<WhisperModelSection> {
     WhisperModelClient client,
     String name,
   ) async {
-    final int bytes =
-        _catalog?.byName(name)?.approxDownloadBytes ?? _known(name)?.approxBytes ?? 0;
+    final int bytes = _catalog?.byName(name)?.approxDownloadBytes ??
+        _known(name)?.approxBytes ??
+        0;
     final bool confirmed = await showDialog<bool>(
           context: context,
           builder: (BuildContext context) =>
@@ -434,7 +435,9 @@ class _WhisperModelSectionState extends ConsumerState<WhisperModelSection> {
         });
         await _notify(
           'Model install failed',
-          progress.detail.isEmpty ? 'The server could not install it.' : progress.detail,
+          progress.detail.isEmpty
+              ? 'The server could not install it.'
+              : progress.detail,
         );
       default:
         setState(() => _progress = progress);
@@ -595,108 +598,114 @@ class _WhisperModelSectionState extends ConsumerState<WhisperModelSection> {
     final WhisperInstallProgress? progress = _progress;
     final bool locked = _offline || _busy || _installing;
 
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: <Widget>[
-        const Padding(
-          padding: EdgeInsets.fromLTRB(16, 8, 16, 0),
-          child: Text(
-            'Transcription model',
-            style: TextStyle(fontWeight: FontWeight.bold),
-          ),
-        ),
-        const Padding(
-          padding: EdgeInsets.fromLTRB(16, 4, 16, 4),
-          child: Text(
-            'Your server transcribes with the model selected here. Bigger '
-            'models are more accurate and take longer to download and run.',
-            style: TextStyle(fontSize: 12),
-          ),
-        ),
-        if (_offline)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+    return RadioGroup<String>(
+      groupValue: active,
+      onChanged: (String? value) {
+        if (!locked && value != null) _onSelect(value);
+      },
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 8, 16, 0),
             child: Text(
-              'Your server is unreachable, so this list cannot be changed '
-              'right now. Showing the model this device last saw it using.',
-              key: const ValueKey<String>('whisper-model-offline'),
-              style: TextStyle(
-                fontSize: 12,
-                color: Theme.of(context).colorScheme.error,
+              'Transcription model',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+          ),
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 4, 16, 4),
+            child: Text(
+              'Your server transcribes with the model selected here. Bigger '
+              'models are more accurate and take longer to download and run.',
+              style: TextStyle(fontSize: 12),
+            ),
+          ),
+          if (_offline)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: Text(
+                'Your server is unreachable, so this list cannot be changed '
+                'right now. Showing the model this device last saw it using.',
+                key: const ValueKey<String>('whisper-model-offline'),
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Theme.of(context).colorScheme.error,
+                ),
               ),
             ),
-          ),
-        for (final _Row row in rows)
-          RadioListTile<String>(
-            key: ValueKey<String>('whisper-model-row-${row.name}'),
-            value: row.name,
-            groupValue: active,
-            onChanged: locked ? null : _onSelect,
-            title: Row(
-              children: <Widget>[
-                Expanded(child: Text(row.name)),
-                if (row.installed != null)
-                  _InstalledBadge(installed: row.installed!),
-              ],
+          for (final _Row row in rows)
+            RadioListTile<String>(
+              key: ValueKey<String>('whisper-model-row-${row.name}'),
+              value: row.name,
+              enabled: !locked,
+              title: Row(
+                children: <Widget>[
+                  Expanded(child: Text(row.name)),
+                  if (row.installed != null)
+                    _InstalledBadge(installed: row.installed!),
+                ],
+              ),
+              subtitle: Text(row.subtitle),
+              secondary: row.installed == true && row.name != active
+                  ? IconButton(
+                      key: ValueKey<String>('whisper-model-delete-${row.name}'),
+                      tooltip: 'Delete ${row.name} from the server',
+                      icon: const Icon(Icons.delete_outline),
+                      onPressed: locked ? null : () => _onDelete(row.name),
+                    )
+                  : null,
             ),
-            subtitle: Text(row.subtitle),
-            secondary: row.installed == true && row.name != active
-                ? IconButton(
-                    key: ValueKey<String>('whisper-model-delete-${row.name}'),
-                    tooltip: 'Delete ${row.name} from the server',
-                    icon: const Icon(Icons.delete_outline),
-                    onPressed: locked ? null : () => _onDelete(row.name),
-                  )
-                : null,
-          ),
-        if (progress != null && !_installFailed)
-          ListTile(
-            key: const ValueKey<String>('whisper-model-install-progress'),
-            title: Text(
-              'Installing ${progress.model ?? _installTarget ?? ''} — '
-              '${progress.percent}%',
+          if (progress != null && !_installFailed)
+            ListTile(
+              key: const ValueKey<String>('whisper-model-install-progress'),
+              title: Text(
+                'Installing ${progress.model ?? _installTarget ?? ''} — '
+                '${progress.percent}%',
+              ),
+              subtitle: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  if (progress.detail.isNotEmpty) Text(progress.detail),
+                  const SizedBox(height: 8),
+                  LinearProgressIndicator(
+                    value: progress.percent.clamp(0, 100) / 100,
+                  ),
+                ],
+              ),
             ),
-            subtitle: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: <Widget>[
-                if (progress.detail.isNotEmpty) Text(progress.detail),
-                const SizedBox(height: 8),
-                LinearProgressIndicator(
-                  value: progress.percent.clamp(0, 100) / 100,
-                ),
-              ],
+          if (_installFailed && progress != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  Text(
+                    'Install failed: ${progress.detail}',
+                    style:
+                        TextStyle(color: Theme.of(context).colorScheme.error),
+                  ),
+                  const SizedBox(height: 8),
+                  FilledButton.tonal(
+                    key: const ValueKey<String>('whisper-model-install-retry'),
+                    onPressed: _retryInstall,
+                    child: const Text('Retry install'),
+                  ),
+                ],
+              ),
             ),
-          ),
-        if (_installFailed && progress != null)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: <Widget>[
-                Text(
-                  'Install failed: ${progress.detail}',
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
-                ),
-                const SizedBox(height: 8),
-                FilledButton.tonal(
-                  key: const ValueKey<String>('whisper-model-install-retry'),
-                  onPressed: _retryInstall,
-                  child: const Text('Retry install'),
-                ),
-              ],
+          if (_error != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: Text(
+                _error!,
+                key: const ValueKey<String>('whisper-model-error'),
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
             ),
-          ),
-        if (_error != null)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-            child: Text(
-              _error!,
-              key: const ValueKey<String>('whisper-model-error'),
-              style: TextStyle(color: Theme.of(context).colorScheme.error),
-            ),
-          ),
-      ],
+        ],
+      ),
     );
   }
 }
@@ -723,9 +732,8 @@ class _InstalledBadge extends StatelessWidget {
         installed ? 'Installed' : 'Not installed',
         style: TextStyle(
           fontSize: 11,
-          color: installed
-              ? scheme.onSecondaryContainer
-              : scheme.onSurfaceVariant,
+          color:
+              installed ? scheme.onSecondaryContainer : scheme.onSurfaceVariant,
         ),
       ),
     );

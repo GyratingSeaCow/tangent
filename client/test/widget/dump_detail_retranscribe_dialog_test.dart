@@ -186,9 +186,16 @@ void main() {
   Finder english(String id) =>
       find.byKey(ValueKey<String>('retranscribe-english-$id'));
 
-  testWidgets('Spanish row: both radios, original selected by default; '
-      'choosing English + Overwrite asks for translate: true',
-      (tester) async {
+  bool selected(WidgetTester tester, Finder tile) {
+    final RadioGroup<bool> group = tester.widget<RadioGroup<bool>>(
+      find.ancestor(of: tile, matching: find.byType(RadioGroup<bool>)),
+    );
+    return group.groupValue == tester.widget<RadioListTile<bool>>(tile).value;
+  }
+
+  testWidgets(
+      'Spanish row: both radios, original selected by default; '
+      'choosing English + Overwrite asks for translate: true', (tester) async {
     final service = await mountDetail(tester, 'rt-es', language: 'es');
     await openDialog(tester, 'rt-es');
 
@@ -197,19 +204,19 @@ void main() {
     expect(find.text('In Spanish (original)'), findsOneWidget);
     expect(find.text('In English (translate)'), findsOneWidget);
     expect(
-      tester.widget<RadioListTile<bool>>(original('rt-es')).checked,
+      selected(tester, original('rt-es')),
       isTrue,
       reason: 'the stored transcript is the original: that is the default',
     );
     expect(
-      tester.widget<RadioListTile<bool>>(english('rt-es')).checked,
+      selected(tester, english('rt-es')),
       isFalse,
     );
 
     await tester.tap(english('rt-es'));
     await tester.pumpAndSettle();
     expect(
-      tester.widget<RadioListTile<bool>>(english('rt-es')).checked,
+      selected(tester, english('rt-es')),
       isTrue,
     );
     expect(service.requested, isEmpty, reason: 'nothing until Overwrite');
@@ -222,7 +229,8 @@ void main() {
     await unmount(tester);
   });
 
-  testWidgets('Spanish row already translated: English is the default, and '
+  testWidgets(
+      'Spanish row already translated: English is the default, and '
       'switching back to the original asks for translate: false',
       (tester) async {
     final service = await mountDetail(
@@ -234,12 +242,12 @@ void main() {
     await openDialog(tester, 'rt-es-en');
 
     expect(
-      tester.widget<RadioListTile<bool>>(english('rt-es-en')).checked,
+      selected(tester, english('rt-es-en')),
       isTrue,
       reason: 'the stored transcript IS the translation',
     );
     expect(
-      tester.widget<RadioListTile<bool>>(original('rt-es-en')).checked,
+      selected(tester, original('rt-es-en')),
       isFalse,
     );
 
@@ -265,7 +273,8 @@ void main() {
     await unmount(tester);
   });
 
-  testWidgets('English row: the dialog is unchanged (no radios, same copy '
+  testWidgets(
+      'English row: the dialog is unchanged (no radios, same copy '
       'and buttons) and Overwrite asks for translate: false', (tester) async {
     final service = await mountDetail(tester, 'rt-en', language: 'en');
     await openDialog(tester, 'rt-en');
