@@ -25,9 +25,10 @@ import 'trash_screen.dart';
 import '../../widgets/instrument_scaffold.dart';
 import '../../widgets/top_nav_rail.dart';
 import 'custom_vocabulary_section.dart';
+import 'support_dev_section.dart';
 import 'whisper_model_section.dart';
 
-/// Instrument Console v2: the nine Settings categories, in overview order.
+/// Instrument Console v2: the ten Settings categories, in overview order.
 /// Every v1.40.0 control lives in exactly one of these; none was dropped.
 enum SettingsCategory {
   storage('Storage', 'Default folder, local storage and Wi-Fi upload',
@@ -47,7 +48,9 @@ enum SettingsCategory {
   reminders('Reminders', 'Due dates, morning review and completion notices',
       Icons.schedule,),
   maintenance('Maintenance & about', 'Diagnostics, licenses and version',
-      Icons.build_outlined,);
+      Icons.build_outlined,),
+  supportDev('Support the Dev', 'A thank-you note and donation link',
+      Icons.favorite_outline,);
 
   const SettingsCategory(this.title, this.subtitle, this.icon);
 
@@ -432,6 +435,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ),
           ),
         ];
+      case SettingsCategory.supportDev:
+        // Static thank-you + donation link: independent of screen state,
+        // so no load gate.
+        return const [SupportDevSection()];
     }
   }
 

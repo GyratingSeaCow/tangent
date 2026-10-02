@@ -61,7 +61,7 @@ Future<void> _mount(WidgetTester tester) async {
 }
 
 void main() {
-  testWidgets('the overview lists all nine categories in fixed order',
+  testWidgets('the overview lists all ten categories in fixed order',
       (tester) async {
     await _mount(tester);
 
@@ -78,6 +78,7 @@ void main() {
       'Integrations',
       'Reminders',
       'Maintenance & about',
+      'Support the Dev',
     ]);
     for (final SettingsCategory c in SettingsCategory.values) {
       expect(
