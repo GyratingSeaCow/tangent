@@ -17,7 +17,7 @@ flutter run                    # attached device or emulator
 flutter build apk --debug      # -> build/app/outputs/flutter-apk/app-debug.apk
 ```
 
-Requires Flutter ≥ 3.27 (Dart ≥ 3.6), JDK 17 and the Android SDK. Run
+Requires Flutter ≥ 3.47 (Dart ≥ 3.13), JDK 17 and the Android SDK. Run
 `flutter doctor` to find what is missing.
 
 The first Android build downloads Gradle, the Android Gradle Plugin and NDK.

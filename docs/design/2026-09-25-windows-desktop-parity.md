@@ -10,12 +10,10 @@ The first-ever `flutter build windows` and smoke launch produced these
 facts; every task below is grounded in them.
 
 1. **Build toolchain** — bench builds need three things:
-   - Flutter 3.27.1's `visual_studio.dart` doesn't know VS 2026 (major 18)
-     and falls back to a "Visual Studio 16 2019" generator. Bench-local
-     shim in `$LOCALAPPDATA/flutter/.../windows/visual_studio.dart`: major
-     18 → `Visual Studio 18 2026` (a real generator in VS 2026's CMake).
-     Re-apply after any `flutter upgrade`. CI's windows-latest runners
-     carry VS 2022 (major 17) and use the stock path.
+   - Flutter 3.47.6's `visual_studio.dart` knows VS 2026 (major 18), so the
+     former bench-local generator shim is no longer needed. The upgraded
+     tool resolves `Visual Studio 18 2026` directly; CI remains pinned to
+     windows-2022 until the newer runner is validated end-to-end.
    - `CL=/D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS` — the
      14.51 STL hard-errors on `<experimental/coroutine>` which
      `permission_handler_windows` still includes. To be moved into
