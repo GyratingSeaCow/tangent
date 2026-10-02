@@ -1,52 +1,49 @@
 # Tangent — Voice Brain Dump for ADHD
 
-> **Talk. We remember.**
-> Voice notes → searchable text → your second brain.
-> Built for ADHD minds. Self-hosted. Offline-first. No subscriptions.
-
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](./LICENSE)
 [![Version: 1.40.0](https://img.shields.io/badge/version-1.40.0-blue.svg)](./CHANGELOG.md)
 [![Client tests: 2798 passing](https://img.shields.io/badge/client_tests-2798%20passing-brightgreen.svg)]()
 [![Server tests: 733 passing](https://img.shields.io/badge/server_tests-733%20passing-brightgreen.svg)]()
 
----
+Tangent records Brain Dumps and Meetings, stores them locally, and transcribes
+them on a self-hosted server. It also provides typed notes, notebooks, to-dos,
+full-text search, multi-device sync and Ask My Notes.
 
-## What is this?
+Recording, playback, notebooks, to-dos and local search work without a server.
+Transcription, server-backed AI features and multi-device sync require the
+Tangent server. Tangent does not send recordings to a third-party service.
 
-**Tangent** is a voice-first brain dump app for people whose brains outpace their
-fingers. You tap a big red button, ramble for 30 seconds or 30 minutes, and the app:
+## App layout
 
-1. **Saves the recording locally** on your device — always, even offline
-2. **Lets you play and seek it** directly in the Dump detail
-3. **Transcribes it on your own server** with Whisper large-v3, when you point
-   the app at one (see [Server setup](#server-setup))
-4. **Indexes the text** for full-text search
-5. **Keeps everything on the device** until you choose to transcribe
+The Instrument interface has Anodized (dark) and Aluminium (light) themes. Lime
+marks selection and primary create actions; red is reserved for recording and
+destructive actions.
 
-> **Transcription requires a server you run.** There is no on-device
-> transcription and no third-party cloud: recording, playback, notebooks and
-> search all work fully offline, but turning speech into text means running the
-> bundled server yourself (Docker one-liner below) and pairing the app with it.
+A six-key rail appears on top-level screens:
 
-**Three capture modes:**
+- **Capture** — Brain Dump, Meeting and Text Note capture
+- **Recordings** — recordings, transcripts, summaries and folders
+- **Notebooks** — handwriting, typed blocks and embedded recordings
+- **To Do** — tasks, due dates, folders and Google Tasks sync
+- **Ask** — questions grounded in recordings, summaries, notebooks and to-dos
+- **Settings** — nine categories: Storage, Import & export, Recording input,
+  Server & devices, Transcription, Intelligence, Integrations, Reminders, and
+  Maintenance & about
 
-- **Brain Dump** — unstructured voice memo, transcribed verbatim
-- **Meeting** — secretary mode, post-processed into `# Meeting Summary / Action Items / Transcript`
-- **Text Note** — typed straight in, no recording
+Long-press recordings, notebooks and to-dos to move, rename, delete or pin them.
+Long-press an Ask source chip to act on its underlying item. When enabled, the
+full-screen morning review shows all of yesterday's captures, due and overdue
+to-dos, and pinned items.
 
-**Notebooks** give you an endless scrolling page where handwriting, typed
-blocks and your recordings live side by side — drag a recording onto the page,
-write around it, and tap it to play it back. Handwriting is pressure-aware
-with a **pen-style picker** (uniform, fountain, italic nib), palm rejection,
-a stroke eraser, **multi-step undo/redo**, and a **smart lasso** that
-circle-selects ink, text blocks and recording cards together so you can drag
-or delete them as one — all on **one unified toolbar** that never reshuffles.
-Backing out of any editor **saves automatically** — the back button never
-discards work. Any notebook can be **exported to PDF** (pen strokes render
-exactly as drawn) straight into the system share sheet. File notebooks —
-**and dumps** — into the same **folders**, collapse a folder by tapping its
-name, rename or delete it with a long-press, and switch between a named list
-and a cover-grid view.
+## Capture modes
+
+- **Brain Dump** — voice memo with a verbatim transcript
+- **Meeting** — speaker-aware transcript and meeting notes
+- **Text Note** — typed note without audio
+
+Notebooks combine handwriting, typed blocks and recording cards on a scrolling
+page. They support pen styles, palm rejection, erasing, lasso selection,
+undo/redo, shared folders and PDF export. Editors save on back.
 
 **Handwriting search** finds your handwritten notes by what you wrote. Type a
 word: the Notebooks list shows which notebooks match with a count and a
@@ -55,7 +52,7 @@ highlighted on your real ink — next/prev walks the matches, Ctrl+F style.
 Recognition runs **on the server**, so search works on every device that
 syncs, Linux desktop included (no on-device recognizer needed anywhere). The
 resulting index syncs back down, so **searching itself is local and offline**.
-It is **off by default**: turn it on in Settings → Handwriting search, which
+It is **off by default**: turn it on in Settings → Intelligence → Handwriting search, which
 installs the recognition model with progress notifications (a CPU and an RTX
 GPU flavour — the GPU one is the *same model running faster*, not more
 accurate). Turning it off removes the model and the index.
@@ -91,26 +88,10 @@ one. The recording shows an **Added to your calendar** card with a link to
 the Google event and an Undo. Say it in a Brain Dump with no date and the
 event goes on the recording's day, flagged *no date said — tap to fix*; in a
 Meeting a date-less phrase is ignored (people say it conversationally
-there). Needs the Google link from Settings → Google with the calendar
+there). Needs the Google link from Settings → Integrations → Google with the calendar
 permission — enable the **Google Calendar API** in the same Cloud project as
 Tasks, and tap **Reconnect** once after updating the server so the token
 carries `calendar.events.owned`.
-
-*Why no "Hey Google, start recording in Tangent"?* Assistant only fulfils
-an app's custom voice actions once it has indexed the app from the Play
-Store; on a sideloaded build it says "Starting recording in Tangent" and
-delivers nothing — a confirmation with no action, which is worse than no
-voice path. A literal *"Hey Tangent"* hotword would need an always-listening
-microphone service (persistent notification, battery, mic contention with
-Assistant); not shipped. Samsung side-key tip: Settings → Advanced features →
-Side key → Double press → Open app → Tangent opens the app in two presses,
-with the Record shortcut one long-press further.
-
-It's the voice-capture + searchable-archive piece that no current app gets right for ADHD
-users. The closest competitors (Otter, Plaud, Audionotes) all charge monthly fees,
-lock you to their cloud, and were never designed for how ADHD brains actually work.
-
----
 
 ## Quick start
 
@@ -122,12 +103,44 @@ lock you to their cloud, and were never designed for how ADHD brains actually wo
 | **Android app** | [Flutter ≥ 3.27](https://docs.flutter.dev/get-started/install) (Dart ≥ 3.6), JDK 17, Android SDK + `adb` — or just sideload the release APK |
 | **Linux desktop app** | Flutter ≥ 3.27 on a Linux host, plus `clang`, `cmake`, `ninja-build`, `libgtk-3-dev` |
 
-`flutter doctor` tells you what is still missing for the client build. Docker is
-by far the easiest way to run the server — it needs no Python setup at all.
+`flutter doctor` reports missing client build dependencies. Docker runs the
+server without a local Python environment.
+
+### Already have a server? Install the APK and pair
+
+1. Download the APK from [Releases](https://github.com/GyratingSeaCow/tangent/releases).
+2. Install it over the existing release build:
+
+   **PowerShell**
+
+   ```powershell
+   adb install -r .\tangent-vX.Y.Z.apk
+   ```
+
+   **bash**
+
+   ```bash
+   adb install -r ./tangent-vX.Y.Z.apk
+   ```
+
+3. Open Tangent and pair under **Settings → Server & devices**. Use the pairing
+   flow first; manual server URL + primary token is the fallback.
 
 ### Server setup
 
-**Prebuilt image from GHCR (easiest — no clone, no build):**
+**Prebuilt image from GHCR:**
+
+PowerShell:
+
+```powershell
+docker run -d --name tangent-server `
+  -p 8765:8000 `
+  -v tangent-data:/data `
+  --restart unless-stopped `
+  ghcr.io/gyratingseacow/tangent-server:latest
+```
+
+bash:
 
 ```bash
 docker run -d --name tangent-server \
@@ -137,7 +150,7 @@ docker run -d --name tangent-server \
   ghcr.io/gyratingseacow/tangent-server:latest
 ```
 
-**Docker Compose (builds locally, more knobs):**
+**Docker Compose (builds locally):**
 
 ```bash
 git clone https://github.com/GyratingSeaCow/tangent.git
@@ -158,20 +171,22 @@ pip install -e ".[dev]"
 python -m uvicorn app.main:create_app --factory --host 0.0.0.0 --port 8000
 ```
 
-Run first-run setup **once** to name the server and mint its primary token:
+Run first-run setup once to name the server and mint its primary token.
+
+PowerShell (Docker host port):
+
+```powershell
+$body = @{ display_name = "Tangent Server" } | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri http://localhost:8765/v1/setup `
+  -ContentType "application/json" -Body $body
+```
+
+bash:
 
 ```bash
-# Docker publishes the server on host port 8765:
 curl -X POST http://localhost:8765/v1/setup \
   -H "Content-Type: application/json" \
-  -d '{"display_name": "You"}'
-
-# Running from source with the command above, it is on 8000:
-curl -X POST http://localhost:8000/v1/setup \
-  -H "Content-Type: application/json" \
-  -d '{"display_name": "You"}'
-
-# → {"token": "abc...", "display_name": "You", ...}
+  -d '{"display_name": "Tangent Server"}'
 ```
 
 **Save the token somewhere safe** — it is only shown once, and it is the
@@ -233,8 +248,8 @@ pair with decides where the app works:
 
 | Pair with… | Works at home (same Wi-Fi) | Works away from home (cellular, other Wi-Fi) |
 |---|---|---|
-| the **LAN address** (`192.168.x.x`) — what **Find my server** returns | yes | **no** — the app spins forever, there is no error |
-| the **Tailscale address** (`100.x.x.x`) | yes | yes |
+| the **LAN address** (for example `192.168.1.100`) — what **Find my server** returns | yes | no |
+| the **Tailscale address** (for example `100.64.0.10`) | yes | yes |
 
 **If you ever want to use Tangent away from home, pair with the Tailscale
 address.** Nothing else changes — the same code, the same token — only the
@@ -245,19 +260,18 @@ console.
 > **Symptom to recognise:** a recording sits on "Uploading audio to your
 > server" indefinitely when you are away from home, but works the moment
 > you are back on home Wi-Fi. The app is paired to the LAN address. Fix:
-> **Settings → Server**, replace the address with
-> `http://<tailscale-ip>:8765`, Save. The stuck upload goes through within
-> 30 seconds. **Find my server cannot fix this** — on cellular it sweeps
-> the carrier's subnet (e.g. `33.x.x.x`), where there is nothing to find.
+> **Settings → Server & devices**, replace the address with
+> `http://100.64.0.10:8765` (using your server's actual Tailscale address),
+> then Save. **Find my server** only discovers servers on the current LAN.
 
 #### Option A — pair over Tailscale (works everywhere)
 
 1. Install [Tailscale](https://tailscale.com) on the server machine and on
    the device, sign both into the same tailnet, and confirm the device can
    see the server (tap the server in the Tailscale app → it shows online).
-2. On the device, open **Settings → Server**. Ignore **Find my server**.
-   In the **Server URL** field enter `http://<tailscale-ip>:8765` (the
-   server's `100.x.x.x` address), then tap **Pair**.
+2. On the device, open **Settings → Server & devices**. Ignore **Find my server**.
+   In the **Server URL** field enter `http://100.64.0.10:8765` (using the
+   server's actual Tailscale address), then tap **Pair**.
 3. The server prints a **6-digit code** to its log. Read it there:
 
    ```powershell
@@ -282,7 +296,7 @@ New-NetFirewallRule -DisplayName "Tangent server 8765" -Direction Inbound -Proto
 
 #### Option B — pair on the local network (home only)
 
-1. On the device, open **Settings → Server** and tap **Find my server**. The
+1. On the device, open **Settings → Server & devices** and tap **Find my server**. The
    app sweeps your local network and lists every Tangent server it finds
    (name, address, version) within a few seconds.
 2. Tap **Pair** next to your server.
@@ -291,7 +305,7 @@ New-NetFirewallRule -DisplayName "Tangent server 8765" -Direction Inbound -Proto
 
 Pairing this way stores the LAN address; the app will only reach the
 server while on the same network. Switch to the Tailscale address later
-under **Settings → Server** at any time — no re-pairing needed.
+under **Settings → Server & devices** at any time — no re-pairing needed.
 
 **Why a code?** It proves you control the server, not just its network. The
 code is never sent to the requesting device, expires in **120 seconds**, is
@@ -312,7 +326,7 @@ primary token from setup directly, for scripted or headless installs.
 
 ### Desktop (Linux)
 
-The easiest path is the **AppImage** from
+Download the **AppImage** from
 [Releases](https://github.com/GyratingSeaCow/tangent/releases): download
 `Tangent-x86_64.AppImage`, `chmod +x` it, and run. Requires `fuse2` on
 Arch-family distros; GTK3 is assumed present. libmpv and its codec stack
@@ -404,6 +418,17 @@ bash ../packaging/build-windows-installer.sh
 
 ### Server
 
+PowerShell (GHCR container):
+
+```powershell
+docker pull ghcr.io/gyratingseacow/tangent-server:latest
+docker stop tangent-server
+docker rm tangent-server
+# Re-run the docker run command from Server setup.
+```
+
+bash:
+
 ```bash
 # GHCR image:
 docker pull ghcr.io/gyratingseacow/tangent-server:latest
@@ -443,8 +468,16 @@ survives container rebuilds and does not need reinstalling after an update.
 
 Install the new APK over the old one — data is kept:
 
+PowerShell:
+
+```powershell
+adb install -r .\tangent-vX.Y.Z.apk
+```
+
+bash:
+
 ```bash
-adb install -r tangent-vX.Y.Z.apk     # or open the APK on the phone
+adb install -r ./tangent-vX.Y.Z.apk
 ```
 
 > **After every reinstall, Android revokes the storage folder grant.** The
@@ -500,11 +533,9 @@ requires a one-time uninstall, which deletes local data. Stick to one flavor.
 
 ## REST API
 
-Everything the app can do, you can script. The server publishes its full
-OpenAPI schema — open **`http://<your-server>:8765/docs`** in a browser for
-interactive documentation of every endpoint (24 routes: dumps, audio,
-transcription jobs, sync, OCR/handwriting search, pairing, models), or
-fetch **`/openapi.json`** to generate a client in your language of choice.
+The server publishes OpenAPI documentation. Open
+**`http://192.168.1.100:8765/docs`** (using the server's actual address) or
+fetch **`/openapi.json`**.
 
 All data routes require the bearer token you got at setup. A complete
 transcription round-trip from the shell:
@@ -545,55 +576,15 @@ test too — an undocumented route can't ship.
 ### Privacy & data ownership
 
 - **Audio never leaves your device unless you sync to a server you control.**
-- Server stores audio as plain `.opus` files under `<data_dir>/audio/{dump_id}.opus`.
-- Tokens in the client are stored in **Android Keystore** via `flutter_secure_storage`
-  (encrypted at rest with AES-GCM, key in hardware-backed keystore).
+- Server stores uploaded audio as ordinary files under `<data_dir>/audio/`,
+  preserving a supported extension such as `.opus`, `.wav`, `.mp3` or `.m4a`.
+- Tokens use the platform credential store through `flutter_secure_storage`.
 - Pairing codes are stored **hashed** on the server and never transmitted to
   the requesting device; each device holds its own revocable token.
 - The unauthenticated discovery endpoint reveals only the server's name,
   version and that auth is required — no data, counts, or configuration.
-- No analytics, no telemetry, no third-party calls. AGPL-3 means if anyone runs a public
-  fork of the server, they have to publish their changes.
-
----
-
-## v1 feature checklist
-
-| Feature | Status |
-|---|---|
-| Voice recording (opus, 16kHz mono) | ✅ Android, Linux, Windows |
-| Local-first storage (always saves first) | ✅ |
-| SQLite with FTS5 full-text search | ✅ |
-| Server upload (multipart, idempotent) | ✅ |
-| In-app recording playback + seek bar | ✅ |
-| Transcription via your own server (Whisper large-v3) | ✅ device-verified |
-| Persistent progress panel + active clip indicator | ✅ |
-| **Brain Dump mode** (verbatim transcript) | ✅ |
-| **Meeting mode** (action items + summary) | ✅ |
-| Real-time job updates (Server-Sent Events) | ✅ |
-| Sync engine with retry + failure tracking | ✅ |
-| Batched "Confirm to Transcribe All" notification | ✅ (the Sync button on home) |
-| Server-side audio download (single + bulk, playable) | ✅ device-verified |
-| Bulk transcribe from the selection toolbar | ✅ |
-| Token-based auth (hashed, single-user, per-device tokens) | ✅ |
-| Self-hosted Docker Compose | ✅ |
-| Notebooks (handwriting + typed blocks + embedded recordings) | ✅ |
-| Notebook folders with collapsible sections (list + cover views) | ✅ |
-| Dump folders (same folder system as notebooks; rename/delete) | ✅ |
-| Notebook export to PDF (share sheet) | ✅ |
-| Handwriting search (server-side OCR, offline search on every device) | ✅ device-verified |
-| Import dumps as audio bubble or transcript text, placed below existing content | ✅ |
-| Pen styles (uniform / fountain / italic nib), pressure-aware | ✅ device-verified |
-| Palm rejection + stroke eraser | ✅ device-verified |
-| Smart lasso (ink + blocks + recordings; drag, delete) | ✅ device-verified |
-| Multi-step undo/redo | ✅ device-verified |
-| Save-on-back everywhere (back never discards) | ✅ |
-| Import existing audio files | ✅ |
-| Text notes | ✅ |
-| Speaker diarization (server, pyannote) | ✅ optional, off by default |
-| **Multi-device sync** (notebooks, notes, recordings) | ✅ |
-| **Server discovery + pairing** (subnet sweep, 6-digit code) | ✅ device-verified |
-| Encryption at rest for audio | ❌ v2 |
+- No analytics or telemetry. Optional integrations contact their configured
+  providers (for example Google Tasks/Calendar and Hugging Face downloads).
 
 ---
 
@@ -639,39 +630,6 @@ tangent/
 └── CONTRIBUTING.md
 ```
 
-### Architecture decisions
-
-- **Why self-hosted?** Cloud-locked voice apps fail at the moment users need them most
-  (sub goes up, service shuts down, rate limit hit). Tangent is a single Docker container
-  on a Raspberry Pi if you want it to be.
-- **Why SQLite?** Single-user, single-binary deployment. No "did you forget to start
-  Postgres?" tax. WAL mode lets us have async reads + writes.
-- **Why faster-whisper?** CTranslate2 backend is 4× faster than OpenAI's reference
-  implementation. Runs large-v3 on a CPU at reasonable speed.
-- **Why Flutter?** Same UI codebase runs on Android + Linux + Windows. ADHD users live
-  on phones; the dev lives on Windows. Both deserve first-class support.
-- **Why client-side discovery?** The server usually runs in a bridged Docker
-  container whose mDNS announcements would carry an unreachable container IP.
-  The client sweeping its own /24 works identically for Docker, bare-metal
-  and Raspberry Pi deployments, and needs zero server-side network setup.
-- **Why pairing codes instead of QR/token copy?** Reading a code off the
-  server's own output proves administrative access to the machine — a guest
-  on your Wi-Fi can reach the port but can never see the code.
-
----
-
 ## License
 
-[AGPL-3.0](./LICENSE). Self-hosted = source-available. If you fork it and run a public
-service, you have to publish your changes. That's the whole point.
-
-## Acknowledgments
-
-- **r/ADHD** — for the years of "I just want an app that…" threads that made the gap obvious
-- **r/selfhosted** — for proving the offline-first community is real and growing
-- **whisper.cpp / faster-whisper** — for making local Whisper inference actually work
-- **Immich** — for showing the world what a self-hosted, community-loved app looks like
-
----
-
-*Built by one ADHD developer. v1 ships; v2 starts whenever.*
+[AGPL-3.0](./LICENSE).
