@@ -9,11 +9,21 @@ matching) has shipped — confirmed by grep against `client/lib` / `server/app`.
 
 | # | Item | Size | Blocker / owner |
 |---|------|------|-----------------|
-| 1 | **Morning Brief live-E2E** — v1.43.0 shipped with contract tests (fakes) only. Needed on the real container: Qwen3-4B output quality on a heavy day, the honest short line on an empty-capture day, and an adversarial no-invention probe on the brief prompt (per docs/design/2026-10-01-morning-brief.md §Verification). | S | Container must run 1.43.0 first; Jeff rebuilds (see #2) |
-| 2 | **Server container rebuild to 1.43.0** — running container advertises its build-time version until rebuilt; Morning Brief endpoints + 05:00 scheduler don't exist until then. | XS | Jeff's step (PS command; agent-run builds stall in CUDA wheel downloads) |
-| 3 | **v1.43.0 release asset check** — CI + Release workflows on the tag green, `gh release view v1.43.0` lists all three client assets (APK, Windows setup, AppImage) + GHCR image `1.43.0`. | XS | ~15 min after tag push |
-| 4 | **In-app screenshot user guide** — per-screen screenshots (Fold) with button-by-button function docs, committed to the repo; settings = one overview screenshot only. | M | In progress this run |
-| 5 | **Docs overhaul merge** — `feature/docs-overhaul` (stale-claim fixes + fluff removal) review + merge. | S | In progress this run (Ted drafting) |
+| 1 | **Morning Brief prompt polish (minor):** the brief phrased the recording *title* "Jeff Labeled" as a meeting attendee ("a meeting with Jeff Labeled"). All cited facts were grounded; this is title-vs-person disambiguation in the aggregate prompt, not invention. Optional tweak. | XS | None — Jeff's call whether it bothers him |
+
+## Done 2026-10-01 (v1.43.0 arc)
+
+- **Morning Brief live-E2E — PASSED** on the rebuilt 1.43.0 container
+  (`Qwen_Qwen3-4B-Instruct-2507-Q4_K_M`): heavy days 2026-10-01/02 produced
+  grounded narrative + highlights (every claim traced to stored dumps);
+  empty day 2026-08-15 returned the honest short line with `model: none`
+  (LLM never invoked). Auth gate verified (anon 401); regenerate path
+  202 + background thread confirmed.
+- Container rebuilt by Jeff; `/v1/server/info/public` reports 1.43.0.
+- Release assets verified: all three client assets on the v1.43.0 release,
+  GHCR `1.43.0` anonymously pullable (manifest 200).
+- Screenshot user guide shipped (`docs/user-guide/`, Jeff-approved set).
+- Docs overhaul merged (README set de-fluffed, claims grep-verified).
 
 ## Rulings
 
