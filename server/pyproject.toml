@@ -28,6 +28,8 @@ dependencies = [
     "google-auth>=2.35.0,<3",
     "google-auth-oauthlib>=1.2.1,<2",
     "requests>=2.32.0,<3",
+    # Remote MCP endpoint (/mcp, streamable HTTP): official MCP python SDK.
+    "mcp>=1.10.0,<2",
 ]
 
 [project.optional-dependencies]

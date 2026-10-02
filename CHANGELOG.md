@@ -5,6 +5,22 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+
+- **Remote MCP server** (server-only): the container now speaks the Model
+  Context Protocol at `/mcp` (streamable HTTP, stateless, JSON responses)
+  on the same port and bearer tokens as the REST API — no compose change.
+  Curated tools over the service layer (never a REST mirror):
+  `search_notes` (FTS5/BM25 + recency, the Ask retrieval), `list_recordings`,
+  `get_recording` (speaker names rendered), `list_notebooks`, `get_notebook`
+  (typed text + handwriting words), `list_todos`, `create_text_note` and
+  `create_todo` — both writes publish to the sync change feed (device id
+  `mcp`) so every paired device pulls them. Deleted entities are invisible;
+  Google bookkeeping and embeddings are never exposed.
+  Spec: `docs/design/2026-10-02-mcp-server.md`.
+
 ## 1.45.0 — 2026-10-02
 
 ### Changed

@@ -118,6 +118,32 @@ Security properties:
 
   The primary setup token is not revocable this way; it lives separately.
 
+## MCP endpoint (AI agents)
+
+The server speaks the [Model Context Protocol](https://modelcontextprotocol.io)
+at **`/mcp`** (streamable HTTP, stateless, JSON responses) on the same port as
+the REST API. Any MCP-capable agent (Hermes, Claude Code, Claude Desktop, …)
+can search and read your notes and add text notes / to-dos; writes land on the
+sync feed, so paired devices pull them like any other edit.
+
+Auth is the same bearer scheme as the REST API — the setup token or any live
+device token:
+
+```json
+{
+  "tangent": {
+    "type": "http",
+    "url": "http://<server>:8765/mcp",
+    "headers": { "Authorization": "Bearer <token>" }
+  }
+}
+```
+
+Tools: `search_notes`, `list_recordings`, `get_recording`, `list_notebooks`,
+`get_notebook`, `list_todos`, `create_text_note`, `create_todo`. Deleted items
+are invisible; server-only columns (Google ids, embeddings) are never exposed.
+Design: `docs/design/2026-10-02-mcp-server.md`.
+
 ## Configuration
 
 All config via environment variables (set in `docker-compose.yml` or override per-service):

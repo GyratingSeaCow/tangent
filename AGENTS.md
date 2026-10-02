@@ -58,6 +58,18 @@ close-to-tray, single instance, right-click = long-press; AppImage and
 Inno Setup installer under `packaging/`) — verified on CachyOS/KDE
 Plasma Wayland and Windows 11; see the README's Desktop sections.
 
+Unreleased (server-only, spec docs/design/2026-10-02-mcp-server.md):
+**Remote MCP server** at `/mcp` — streamable HTTP, stateless, JSON
+responses, same port + bearer tokens as the REST API (`BearerAuthASGI`
+runs require_auth's exact checks before the transport). Curated FastMCP
+tools over the service layer, never a REST mirror: search_notes (the Ask
+retrieval), list/get recordings (speaker names rendered) and notebooks
+(typed text + ink words), list_todos, create_text_note + create_todo
+(both publish to change_log as device `mcp`, so devices sync them).
+Fresh FastMCP per create_app() — a StreamableHTTPSessionManager only
+runs once; DNS-rebinding Host pinning is explicitly OFF (LAN server,
+bearer is the gate).
+
 v1.45.0 **Welcome dialog dismissal contract** (spec correction of
 v1.44.0): the walkthrough repeats at EVERY launch — paired or not. The
 ONLY removal is the DO NOT REMIND ME AGAIN checkbox + Confirm (Confirm

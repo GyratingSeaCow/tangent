@@ -9,6 +9,8 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from app.api.ask import router as ask_router
+from app.api.auto_file import router as auto_file_router
 from app.api.dumps import router as dumps_router
 from app.api.google_tasks import router as google_tasks_router
 from app.api.jobs import router as jobs_router
@@ -16,8 +18,6 @@ from app.api.models import router as models_router
 from app.api.morning_brief import router as morning_brief_router
 from app.api.ocr import router as ocr_router
 from app.api.pairing import router as pairing_router
-from app.api.ask import router as ask_router
-from app.api.auto_file import router as auto_file_router
 from app.api.server_info import router as info_router
 from app.api.setup import router as setup_router
 from app.api.summaries import router as summaries_router
@@ -112,7 +112,10 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         with contextlib.suppress(StopIteration):
             next(gen)
 
-    yield
+    # The MCP session manager owns the streamable-HTTP transport's task
+    # group; it must be running for every request the /mcp mount serves.
+    async with _app.state.mcp.session_manager.run():
+        yield
     from app.services import (
         google_tasks_worker,
         ocr_env,
@@ -159,6 +162,20 @@ def create_app() -> FastAPI:
     app.include_router(voices_router)  # /v1/voices
 
     register_exception_handlers(app)
+
+    # Remote MCP endpoint (design 2026-10-02): fresh server per app because
+    # a StreamableHTTPSessionManager only runs once; auth is the same bearer
+    # scheme as the REST API, enforced before the transport sees a request.
+    # Dispatched by middleware, not Mount — the bare /mcp path must answer
+    # without a 307 (several MCP clients won't re-POST across a redirect).
+    from app.mcp_server import BearerAuthASGI, MCPRouteMiddleware, build_mcp
+
+    app.state.mcp = build_mcp()
+    app.add_middleware(
+        MCPRouteMiddleware,
+        mcp_app=BearerAuthASGI(app.state.mcp.streamable_http_app()),
+    )
+
     return app
 
 
