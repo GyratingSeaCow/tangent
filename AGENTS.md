@@ -58,7 +58,10 @@ close-to-tray, single instance, right-click = long-press; AppImage and
 Inno Setup installer under `packaging/`) — verified on CachyOS/KDE
 Plasma Wayland and Windows 11; see the README's Desktop sections.
 
-Unreleased (server-only, spec docs/design/2026-10-02-mcp-server.md):
+v1.46.0 also (spec docs/design/2026-10-02-mcp-server.md; client half:
+the welcome-dialog walkthrough redesign — phased "On your PC" / "On this
+device" sections, numbered step badges, per-command tap-to-copy code
+cards, shell-neutral `--since 2m` log command):
 **Remote MCP server** at `/mcp` — streamable HTTP, stateless, JSON
 responses, same port + bearer tokens as the REST API (`BearerAuthASGI`
 runs require_auth's exact checks before the transport). Curated FastMCP
