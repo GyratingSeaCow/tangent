@@ -1,8 +1,7 @@
 # Contributing to Tangent
 
-Thanks for taking a look. Tangent is a working app, not a design doc — the
-client runs on Android and Linux, and the server is a self-hosted FastAPI +
-faster-whisper service.
+The client runs on Android, Linux and Windows. The server is FastAPI, SQLite
+and faster-whisper.
 
 ## Quick start
 
@@ -38,8 +37,7 @@ cd ../server && uv run pytest
 cd ../client/android && ./gradlew :app:testDebugUnitTest
 ```
 
-Tangent is built test-first. New behaviour needs a test that fails before your
-change and passes after it — a test that has never failed proves nothing.
+New behaviour needs a test that fails before the change and passes after it.
 
 Gesture and storage code in particular has a history of passing headless tests
 while breaking on a real phone, so anything touching those paths should be
@@ -49,7 +47,7 @@ verified on a device before it lands.
 
 | Area | Skills | Where |
 |---|---|---|
-| Flutter client (Android/Linux) | Dart, Flutter, mobile UX | `client/lib/` |
+| Flutter client (Android/Linux/Windows) | Dart, Flutter, mobile and desktop UX | `client/lib/` |
 | Python server (FastAPI + Whisper) | Python, async, audio | `server/app/` |
 | Android storage/SAF internals | Kotlin, Android framework | `client/android/` |
 | Server packaging | Docker, Compose | `server/Dockerfile` |
@@ -57,14 +55,12 @@ verified on a device before it lands.
 
 ## How to file an issue
 
-GitHub Issues is the right place for bugs and feature ideas. For a bug, include
-your device/OS, whether the server is involved, and what you expected instead.
+Use GitHub Issues for bugs and feature requests. Include the device/OS, whether
+the server is involved, reproduction steps, expected behavior and actual behavior.
 
 ## Code of conduct
 
-Be kind. Assume good faith. Many contributors will have ADHD themselves — they
-may have inconsistent commit schedules, miss meetings, or send rambling
-messages. That's fine. Treat them the way you'd want to be treated.
+Be respectful and assume good faith.
 
 ## License
 
