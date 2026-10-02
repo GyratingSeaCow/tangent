@@ -8,40 +8,55 @@ Future<bool> confirmLocalDeletion(BuildContext context, int count,
     {bool retry = false,}) async {
   var resolved = false;
   try {
-    return await showDialog<bool>(
-          context: context,
-          builder: (ctx) {
-            void resolve(bool yes) {
-              if (resolved ||
-                  !ctx.mounted ||
-                  ModalRoute.of(ctx)?.isCurrent != true) {
-                return;
-              }
-              resolved = true;
-              Navigator.of(ctx).pop(yes);
-            }
+    final NavigatorState navigator =
+        Navigator.of(context, rootNavigator: true);
+    final DialogRoute<bool> route = DialogRoute<bool>(
+      context: context,
+      themes: InheritedTheme.capture(
+        from: context,
+        to: navigator.context,
+      ),
+      barrierColor: DialogTheme.of(context).barrierColor ??
+          Theme.of(context).dialogTheme.barrierColor ??
+          Colors.black54,
+      traversalEdgeBehavior: TraversalEdgeBehavior.closedLoop,
+      builder: (ctx) {
+        void resolve(bool yes) {
+          if (resolved ||
+              !ctx.mounted ||
+              ModalRoute.of(ctx)?.isCurrent != true) {
+            return;
+          }
+          resolved = true;
+          Navigator.of(ctx).pop(yes);
+        }
 
-            return AlertDialog(
-              scrollable: true,
-              title: Text(retry
-                  ? 'Retry deletion of $count local recordings?'
-                  : 'Delete $count local recordings?',),
-              content: const Text(localDeletionWarning),
-              actions: [
-                TextButton(
-                    key: const ValueKey('local-delete-cancel'),
-                    autofocus: true,
-                    onPressed: () => resolve(false),
-                    child: const Text('Cancel'),),
-                FilledButton(
-                    key: const ValueKey('local-delete-confirm'),
-                    onPressed: () => resolve(true),
-                    child: Text(retry ? 'Retry' : 'Delete'),),
-              ],
-            );
-          },
-        ) ??
-        false;
+        return AlertDialog(
+          scrollable: true,
+          title: Text(retry
+              ? 'Retry deletion of $count local recordings?'
+              : 'Delete $count local recordings?',),
+          content: const Text(localDeletionWarning),
+          actions: [
+            TextButton(
+                key: const ValueKey('local-delete-cancel'),
+                autofocus: true,
+                onPressed: () => resolve(false),
+                child: const Text('Cancel'),),
+            FilledButton(
+                key: const ValueKey('local-delete-confirm'),
+                onPressed: () => resolve(true),
+                child: Text(retry ? 'Retry' : 'Delete'),),
+          ],
+        );
+      },
+    );
+    final bool result = await navigator.push<bool>(route) ?? false;
+    // Flutter 3.47.6 can retain stale semantics parents when the underlying
+    // route mutates while a dialog is still reversing (flutter/flutter#193706).
+    // Wait until the overlay is removed before callers update playback UI.
+    await route.completed;
+    return result;
   } finally {
     resolved = true;
   }
