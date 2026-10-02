@@ -49,6 +49,25 @@ Long-press is the universal "act on this item" gesture.
 | **Notebook rows** | Tap to open the notebook editor (handwriting with pen styles and palm rejection, typed blocks, embedded recording cards, lasso selection, multi-step undo/redo). The ⋮ menu holds per-notebook actions (rename, move, delete, pin). |
 | **Lime + key** | Create a new notebook. |
 
+## Notebook editor
+
+![Notebook editor](notebook-editor.png)
+
+Opens from any notebook row. The Back arrow **saves and exits** — there is no
+discard dialog; only a failed save keeps the screen open (with a snackbar
+saying why).
+
+| Control | Function |
+|---|---|
+| **Title field** (app bar) | Rename the notebook in place. |
+| **Find in notebook** (magnifier) | Search handwriting and typed blocks; next/previous walk the matches on your real ink. |
+| **Save notebook** (disk) | Save immediately (Back also saves). |
+| **Notebook menu** (⋮) | Page settings (background/ruling), export, and other notebook-level actions. |
+| **Toolbar row** | One permanent row: Draw toggle, highlighter, eraser, pen nib, lasso, Undo stroke, Redo, and the pen-size slider. Tapping any tool enters draw mode with that tool active. **Long-press the pen or highlighter to open its colour palette** — each tool remembers its colour and tints its icon to match. |
+| **Draw mode off** (default) | A finger drags/scrolls the page; only the stylus inks (palm rejection). Toggle Draw to ink with a finger. |
+| **Lasso** | Loop ink or blocks to select (a loop catching ~40% of an item grabs it), then drag to move or delete the selection. |
+| **Insert** (bottom bar) | Add content blocks: typed text, checkboxes, images, embedded recording cards. |
+
 ## To Do
 
 ![To Do screen](todo.png)
