@@ -195,4 +195,10 @@ Future<ProviderContainer> mountSelection(
 Future<void> pumpSelection(WidgetTester tester) async {
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 250));
+  // Flutter 3.47 overlay/SnackBar entrances span a second animation window;
+  // after one 250 ms pump they are still mid-transition (ensureVisible finds
+  // no element, result toasts are not yet laid out). Bounded extra pump, NOT
+  // pumpAndSettle: these suites hold Completer-gated in-flight states that
+  // pumpAndSettle would hang on.
+  await tester.pump(const Duration(milliseconds: 250));
 }
