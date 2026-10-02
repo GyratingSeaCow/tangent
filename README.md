@@ -1,4 +1,4 @@
-# Tangent — Voice Brain Dump for ADHD
+# Tangent — Voice/Text Brain Dumps
 
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](./LICENSE)
 [![Version: 1.44.0](https://img.shields.io/badge/version-1.44.0-blue.svg)](./CHANGELOG.md)
