@@ -1,7 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- Launcher/app label, referenced from AndroidManifest.xml. -->
+    <string name="app_name">Tangent</string>
+
     <string name="widget_notebook_description">Opens one notebook directly</string>
     <string name="widget_notebook_unset">Tap to set up</string>
+
+    <!-- Notebook-widget configuration dialogs. -->
+    <string name="widget_config_no_notebooks_title">No notebooks yet</string>
+    <string name="widget_config_no_notebooks_message">Create a notebook in Tangent first, then add the widget.</string>
+    <string name="widget_config_pick_title">Open which notebook?</string>
 
     <!-- 1x1 mic widget + "Record" launcher shortcut (spec 2026-09-28). -->
     <string name="widget_record_description">Start a brain dump</string>
