@@ -5,7 +5,7 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## 1.46.0 — 2026-10-02
 
 ### Added
 
@@ -20,6 +20,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `mcp`) so every paired device pulls them. Deleted entities are invisible;
   Google bookkeeping and embeddings are never exposed.
   Spec: `docs/design/2026-10-02-mcp-server.md`.
+
+### Changed
+
+- Welcome dialog redesign: the pairing walkthrough is split into labelled
+  "On your PC — one-time" and "On this device" phases with numbered step
+  badges, and every command sits in its own code card with a tap-to-copy
+  button (check-mark acknowledgement). Step 2's wording no longer promises
+  a curl command while showing the log command, and the dual
+  PowerShell/bash grep block is replaced by the shell-neutral
+  `docker compose logs tangent-server --since 2m`.
 
 ## 1.45.0 — 2026-10-02
 

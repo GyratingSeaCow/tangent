@@ -1,9 +1,9 @@
 # Tangent — Voice Brain Dump for ADHD
 
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](./LICENSE)
-[![Version: 1.45.0](https://img.shields.io/badge/version-1.45.0-blue.svg)](./CHANGELOG.md)
-[![Client tests: 2878 passing](https://img.shields.io/badge/client_tests-2878%20passing-brightgreen.svg)]()
-[![Server tests: 760 passing](https://img.shields.io/badge/server_tests-760%20passing-brightgreen.svg)]()
+[![Version: 1.46.0](https://img.shields.io/badge/version-1.46.0-blue.svg)](./CHANGELOG.md)
+[![Client tests: 2879 passing](https://img.shields.io/badge/client_tests-2879%20passing-brightgreen.svg)]()
+[![Server tests: 777 passing](https://img.shields.io/badge/server_tests-777%20passing-brightgreen.svg)]()
 
 Tangent records Brain Dumps and Meetings, stores them locally, and transcribes
 them on a self-hosted server. It also provides typed notes, notebooks, to-dos,
