@@ -50,13 +50,34 @@ ADH2/
 
 ## Status
 
-Shipping — **v1.40.0** (see CHANGELOG.md). Client and server are both
-implemented and tested (2798
-Flutter tests, 733 server tests, 129 Kotlin tests). The client runs
+Shipping — **v1.43.0** (see CHANGELOG.md). Client and server are both
+implemented and tested (2871
+Flutter tests, 760 server tests, 129 Kotlin tests). The client runs
 natively on Linux AND Windows (tray icon, global record hotkey,
 close-to-tray, single instance, right-click = long-press; AppImage and
 Inno Setup installer under `packaging/`) — verified on CachyOS/KDE
 Plasma Wayland and Windows 11; see the README's Desktop sections.
+
+v1.43.0 **Morning Brief** (spec docs/design/2026-10-01-morning-brief.md).
+Server pre-generates a daily brief (narrative paragraph + bullet
+highlights) ~05:00 server-local from yesterday's dumps, due To Dos and
+pinned items via the installed local summarizer; cached per day
+(`morning_briefs`), served at `GET /v1/morning-brief` (404 not
+generated / 409 not installed, detail strings load-bearing client-side).
+Client renders it read-only (flutter_markdown_plus, pinned ^1.0.3) at
+the top of the morning review; hidden on 404/409/empty/error, never a
+spinner. Also: Ask delete holds its deletion lease across the server
+DELETE. Live-E2E of real model output on the container is still open —
+see docs/next-iteration.md.
+
+v1.41.0–v1.42.1 **Instrument design language + console chrome**
+(UI-only restyle arc). Anodized (dark) / Aluminium (light) themes,
+lime select + hot-orange record colours via `TangentPalette`
+ThemeExtension; 4/8/12/18 radius scale; six-key navigation rail under
+the app bar on top-level screens (jump bar, back still exits through
+Capture); Capture state eyebrow + live waveform; Settings reorganised
+into nine in-place category drills; wide-screen 700dp reading measure;
+rail compresses at 280dp.
 
 v1.40.0 **Ask source actions + full-screen morning review** (ask-my-notes
 arc follow-up). Ask: long-press any source chip to move/rename/delete/
