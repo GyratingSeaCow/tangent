@@ -11,6 +11,7 @@ import 'package:tangent/data/local_db.dart';
 import 'package:tangent/data/settings_store.dart';
 import 'package:tangent/screens/home/home_screen.dart' show localDbProvider;
 import 'package:tangent/screens/home/morning_review_screen.dart';
+import 'package:tangent/services/summaries_client.dart';
 import 'package:tangent/screens/settings/settings_screen.dart'
     show settingsStoreProvider;
 import 'package:tangent/theme/tangent_theme.dart';
@@ -89,11 +90,18 @@ void main() {
 
   /// Home stand-in: the real app bar pair (sun LEFT of settings) and the
   /// invisible auto-presenter, without Home's unrelated provider graph.
-  Future<ProviderContainer> mount(WidgetTester tester) async {
+  Future<ProviderContainer> mount(
+    WidgetTester tester, {
+    int presenters = 1,
+    Future<MorningBriefResult> Function(String isoDay)? brief,
+  }) async {
     final ProviderContainer container = ProviderContainer(
       overrides: <Override>[
         localDbProvider.overrideWithValue(db),
         settingsStoreProvider.overrideWithValue(store),
+        morningBriefFetcherProvider.overrideWithValue(
+          brief ?? (_) async => const MorningBriefNotGenerated(),
+        ),
         morningReviewClockProvider.overrideWithValue(() => clockNow),
         morningReviewTimerFactoryProvider
             .overrideWithValue((_, __) => _NeverTimer()),
@@ -116,8 +124,12 @@ void main() {
                 ),
               ],
             ),
-            body: const Column(
-              children: <Widget>[MorningReviewAutoPresenter(), Text('home')],
+            body: Column(
+              children: <Widget>[
+                for (int i = 0; i < presenters; i++)
+                  const MorningReviewAutoPresenter(),
+                const Text('home'),
+              ],
             ),
           ),
         ),
@@ -380,6 +392,127 @@ void main() {
     );
     expect(deco.border, isNotNull, reason: 'source cards carry an edge');
     await unmount(tester, c);
+  });
+
+  testWidgets(
+      'two presents scheduled in one frame open ONE review '
+      '(post-frame isCurrent re-check)', (tester) async {
+    // Two presenters both see an unviewed morning in the same build and
+    // each schedules a post-frame present — the same shape as any rebuild
+    // landing before the first push. The first push covers Home
+    // synchronously, so the second callback must find Home not current.
+    final ProviderContainer c = await mount(tester, presenters: 2);
+    expect(screen(), findsOneWidget);
+    final NavigatorState nav = tester.state(find.byType(Navigator));
+    nav.pop();
+    await settle(tester);
+    expect(screen(), findsNothing, reason: 'no second review underneath');
+    expect(find.text('home'), findsOneWidget);
+    await unmount(tester, c);
+  });
+
+  group('Morning Brief (v1.41)', () {
+    final List<String> asked = <String>[];
+    setUp(asked.clear);
+
+    // Every brief test has one capture from yesterday, so "the rest of the
+    // review stands" is observable.
+    Future<ProviderContainer> mountWith(
+      WidgetTester tester,
+      Future<MorningBriefResult> Function(String) brief,
+    ) async {
+      await insertDump('Standup', DateTime(2026, 9, 29, 9, 30));
+      return mount(tester, brief: brief);
+    }
+
+    Future<MorningBriefResult> Function(String) answer(MorningBriefResult r) =>
+        (String day) async {
+          asked.add(day);
+          return r;
+        };
+
+    Finder briefCard() => find.byKey(MorningReviewScreen.briefKey);
+
+    testWidgets('renders the brief markdown at the TOP of the review',
+        (tester) async {
+      final ProviderContainer c = await mountWith(
+        tester,
+        answer(
+          MorningBriefReady(
+            date: '2026-09-30',
+            briefMd: 'A busy day.\n\n**Highlights**\n- Launch moved.',
+            generatedAt: DateTime(2026, 9, 30, 5),
+            model: 'qwen',
+          ),
+        ),
+      );
+      expect(screen(), findsOneWidget);
+      expect(asked, <String>['2026-09-30'], reason: 'one GET per open');
+      expect(briefCard(), findsOneWidget);
+      expect(find.text('YOUR BRIEF'), findsOneWidget);
+      expect(find.textContaining('A busy day.'), findsOneWidget);
+      expect(find.textContaining('Launch moved.'), findsOneWidget);
+      // Above every section (slivers aren't RenderBoxes: compare the
+      // brief's heading text with the first capture row).
+      final double briefY = tester.getTopLeft(find.text('YOUR BRIEF')).dy;
+      final double captureY = tester
+          .getTopLeft(find.byKey(MorningReviewScreen.captureKey('Standup')))
+          .dy;
+      expect(briefY, lessThan(captureY));
+      await unmount(tester, c);
+    });
+
+    for (final (String name, MorningBriefResult r)
+        in <(String, MorningBriefResult)>[
+      ('409 not installed', const MorningBriefUnavailable(disabled: false)),
+      ('409 disabled', const MorningBriefUnavailable(disabled: true)),
+      ('404 not generated', const MorningBriefNotGenerated()),
+      (
+        'empty',
+        MorningBriefReady(
+          date: '2026-09-30',
+          briefMd: '  \n',
+          generatedAt: DateTime(2026),
+          model: 'qwen',
+        ),
+      ),
+    ]) {
+      testWidgets('hidden on $name; the rest of the review stands',
+          (tester) async {
+        final ProviderContainer c = await mountWith(tester, answer(r));
+        expect(screen(), findsOneWidget);
+        expect(briefCard(), findsNothing);
+        expect(find.text('YOUR BRIEF'), findsNothing);
+        expect(find.byKey(MorningReviewScreen.capturesKey), findsOneWidget);
+        await unmount(tester, c);
+      });
+    }
+
+    testWidgets('a failed fetch hides the brief, no error surfaced',
+        (tester) async {
+      final ProviderContainer c = await mountWith(
+        tester,
+        (_) async => throw Exception('offline'),
+      );
+      expect(screen(), findsOneWidget);
+      expect(briefCard(), findsNothing);
+      expect(tester.takeException(), isNull);
+      await unmount(tester, c);
+    });
+
+    testWidgets('a slow fetch never blocks the review (no spinner)',
+        (tester) async {
+      final Completer<MorningBriefResult> pending =
+          Completer<MorningBriefResult>();
+      final ProviderContainer c =
+          await mountWith(tester, (_) => pending.future);
+      expect(screen(), findsOneWidget);
+      expect(find.byKey(MorningReviewScreen.capturesKey), findsOneWidget);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      pending.complete(const MorningBriefNotGenerated());
+      await settle(tester);
+      await unmount(tester, c);
+    });
   });
 }
 

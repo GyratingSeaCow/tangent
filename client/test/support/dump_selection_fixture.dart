@@ -72,17 +72,63 @@ class CountingDeletion implements LocalDeletionService {
     return Ok((targets: previewTargets ?? ids.map(targetFor).toList()));
   }
 
+  /// Ids whose (simulated) lease is unavailable: [whileLeased] never runs
+  /// for them and they come back skipped — the real service's busy path.
+  final Set<String> leaseBusy = <String>{};
+
+  /// Ids this fake actually reported deleted (not merely requested).
+  final List<String> deleted = <String>[];
+
+  /// True only while a [whileLeased] callback is running.
+  bool inLease = false;
+
   @override
   Future<Outcome<BulkDeletionResult>> deleteConfirmed(
-      ConfirmedDeletion r,) async {
+    ConfirmedDeletion r, {
+    Future<void> Function(String dumpId)? whileLeased,
+  }) async {
     deletes.add(r);
     if (deleteGate != null) return deleteGate!.future;
-    return Ok(result ??
-        (
-          items:
-              r.targets.map((t) => itemFor(t.id, DeleteState.deleted)).toList(),
-          replayed: false
-        ),);
+    final List<DeletionItemResult> items = <DeletionItemResult>[];
+    final Set<String> skipped = <String>{};
+    for (final t in r.targets) {
+      if (leaseBusy.contains(t.id)) {
+        skipped.add(t.id);
+        items.add(itemFor(t.id, DeleteState.skipped));
+        continue;
+      }
+      if (whileLeased != null) {
+        inLease = true;
+        try {
+          await whileLeased(t.id);
+        } catch (_) {
+          skipped.add(t.id);
+          items.add(itemFor(t.id, DeleteState.skipped));
+          continue;
+        } finally {
+          inLease = false;
+        }
+      }
+      items.add(itemFor(t.id, DeleteState.deleted));
+    }
+    // A scripted [result] is the envelope verbatim (it may describe items
+    // outside the request), except a target refused at the lease stays
+    // skipped — the real service never deletes one.
+    final BulkDeletionResult out = result == null
+        ? (items: items, replayed: false)
+        : (
+            items: <DeletionItemResult>[
+              for (final DeletionItemResult i in result!.items)
+                skipped.contains(i.id) ? itemFor(i.id, DeleteState.skipped) : i,
+            ],
+            replayed: result!.replayed,
+          );
+    deleted.addAll(
+      out.items
+          .where((DeletionItemResult i) => i.state == DeleteState.deleted)
+          .map((DeletionItemResult i) => i.id),
+    );
+    return Ok(out);
   }
 
   @override

@@ -129,13 +129,65 @@ Mandatory output contract:
 - If a requested section has no items, write exactly "None" under its heading.
 - Write the output in the same language as the transcript."""
 
+#: v1.41 Morning Brief. NOT a per-dump template: its input is the day's
+#: AGGREGATE (yesterday's captures, today's due to-dos, pinned items) built
+#: by ``app.services.morning_brief``. Exactly ONE worked example — the
+#: validated Qwen model follows a single concrete format far better than a
+#: rules list alone. "- None" placeholders are still stripped server-side.
+MORNING_BRIEF_PROMPT = """\
+You write a short, friendly morning brief for one person from their own notes.
+The input lists what they captured yesterday, the to-dos due today, and their
+pinned items. Write Markdown in EXACTLY this shape:
+
+<one short paragraph, 2-4 sentences, plain conversational prose>
+
+**Highlights**
+- <one bullet per notable item, at most 5>
+
+Rules:
+- Use ONLY facts present in the input. Never invent names, numbers, dates,
+  tasks, decisions, or outcomes, and never guess at what something means.
+- Refer to items by the titles and words the input uses.
+- Do not give advice, encouragement beyond one friendly clause, or opinions.
+- If there is nothing notable to highlight, omit the Highlights block.
+- Write in the same language as the input.
+
+Example:
+
+Input:
+## Captured yesterday
+- Vendor call (meeting): Agreed to move the launch to the 14th. Priya owns the
+  revised checklist.
+- Garden ideas (brain dump): Raised beds along the fence; ask about cedar.
+## Due today
+- Send revised checklist
+## Pinned
+- Q4 roadmap (notebook)
+
+Output:
+Yesterday you had the vendor call, where the launch moved to the 14th with
+Priya owning the revised checklist, and you jotted down some garden ideas.
+Today the revised checklist is due.
+
+**Highlights**
+- Launch moved to the 14th (vendor call).
+- Due today: send revised checklist.
+- Garden: raised beds along the fence; ask about cedar.
+"""
+
 
 @dataclass(frozen=True)
 class SummaryTemplate:
     id: str
     display_name: str
     prompt: str | None
+    #: False for server-internal templates (Morning Brief) that never apply
+    #: to one dump: kept out of the client picker, TEMPLATE_IDS, and so out
+    #: of assemble_prompt / POST /v1/dumps/{id}/summarize.
+    per_dump: bool = True
 
+
+MORNING_BRIEF_TEMPLATE_ID = "morning_brief"
 
 TEMPLATE_DEFINITIONS = (
     SummaryTemplate("meeting", "Meeting", MEETING_PROMPT),
@@ -143,8 +195,15 @@ TEMPLATE_DEFINITIONS = (
     SummaryTemplate("lecture", "Lecture", LECTURE_PROMPT),
     SummaryTemplate("actions_only", "Actions only", ACTIONS_ONLY_PROMPT),
     SummaryTemplate("custom", "Custom", None),
+    SummaryTemplate(
+        MORNING_BRIEF_TEMPLATE_ID,
+        "Morning brief",
+        MORNING_BRIEF_PROMPT,
+        per_dump=False,
+    ),
 )
-TEMPLATE_IDS = frozenset(item.id for item in TEMPLATE_DEFINITIONS)
+PER_DUMP_TEMPLATES = tuple(item for item in TEMPLATE_DEFINITIONS if item.per_dump)
+TEMPLATE_IDS = frozenset(item.id for item in PER_DUMP_TEMPLATES)
 _PROMPTS = {item.id: item.prompt for item in TEMPLATE_DEFINITIONS}
 
 
@@ -163,6 +222,13 @@ def assemble_prompt(template_id: str, *, custom_prompt: str | None = None) -> st
             raise ValueError("Custom summary template is not configured")
         return authored + CUSTOM_CONTRACT_SUFFIX
     prompt = _PROMPTS[template_id]
+    assert prompt is not None
+    return prompt
+
+
+def morning_brief_prompt() -> str:
+    """The Morning Brief system prompt (never a per-dump template)."""
+    prompt = _PROMPTS[MORNING_BRIEF_TEMPLATE_ID]
     assert prompt is not None
     return prompt
 

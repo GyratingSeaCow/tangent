@@ -151,8 +151,9 @@ class DefaultLocalDeletionService implements LocalDeletionService {
 
   @override
   Future<Outcome<BulkDeletionResult>> deleteConfirmed(
-    ConfirmedDeletion request,
-  ) =>
+    ConfirmedDeletion request, {
+    Future<void> Function(String dumpId)? whileLeased,
+  }) =>
       _boundary(() async {
         // Copy before first await. Titles are presentation only, never persisted.
         final byId = <String, DeleteTarget>{};
@@ -193,7 +194,8 @@ class DefaultLocalDeletionService implements LocalDeletionService {
               )
               .toList(),
           () async => [
-            for (final t in targets) await _delete(request.operationId, t),
+            for (final t in targets)
+              await _delete(request.operationId, t, whileLeased: whileLeased),
           ],
         );
       });
@@ -358,8 +360,14 @@ class DefaultLocalDeletionService implements LocalDeletionService {
     String operationId,
     DeleteTarget target, {
     bool retry = false,
+    Future<void> Function(String dumpId)? whileLeased,
   }) async {
-    final result = await _deleteOne(operationId, target, retry: retry);
+    final result = await _deleteOne(
+      operationId,
+      target,
+      retry: retry,
+      whileLeased: whileLeased,
+    );
     await _progress(operationId, result);
     return result;
   }
@@ -368,6 +376,7 @@ class DefaultLocalDeletionService implements LocalDeletionService {
     String operationId,
     DeleteTarget target, {
     bool retry = false,
+    Future<void> Function(String dumpId)? whileLeased,
   }) async {
     final binding = target.binding;
     if (binding == null ||
@@ -394,6 +403,20 @@ class DefaultLocalDeletionService implements LocalDeletionService {
       );
       if (lease.binding != binding) {
         _fault(ProblemCode.wrongIncarnation);
+      }
+      if (whileLeased != null) {
+        // The exclusive lease is held: no playback, sync, transcription or
+        // publication can begin on this recording until it closes. A failed
+        // external step skips the target with nothing claimed or touched.
+        try {
+          await whileLeased(target.id);
+        } catch (_) {
+          return _item(
+            target.id,
+            DeleteState.skipped,
+            problem: _problem(ProblemCode.unavailable),
+          );
+        }
       }
       ticket = _value<DeletionTicket>(
         await _db.claimLocalDeletion(operationId, target),

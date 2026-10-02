@@ -513,6 +513,72 @@ void main() {
       );
     });
 
+    group('getMorningBrief (v1.41)', () {
+      void answer(int status, Object? body) {
+        when(
+          () => dio.get<dynamic>(
+            '/v1/morning-brief',
+            queryParameters: <String, dynamic>{'date': '2026-10-02'},
+          ),
+        ).thenAnswer((_) async => respond('/v1/morning-brief', status, body));
+      }
+
+      test('200 parses the brief', () async {
+        answer(200, <String, dynamic>{
+          'date': '2026-10-02',
+          'brief_md': 'Hello.\n\n**Highlights**\n- A',
+          'generated_at': 1759381200,
+          'model': 'Qwen3',
+        });
+        final MorningBriefResult r = await client.getMorningBrief('2026-10-02');
+        expect(r, isA<MorningBriefReady>());
+        final MorningBriefReady ready = r as MorningBriefReady;
+        expect(ready.briefMd, 'Hello.\n\n**Highlights**\n- A');
+        expect(ready.model, 'Qwen3');
+        expect(ready.generatedAt.millisecondsSinceEpoch, 1759381200000);
+      });
+
+      test('404 is not-generated, not an error', () async {
+        answer(404, <String, dynamic>{'detail': 'Morning brief not generated'});
+        expect(
+          await client.getMorningBrief('2026-10-02'),
+          isA<MorningBriefNotGenerated>(),
+        );
+      });
+
+      // The two strings below are the server's DETAIL_NOT_INSTALLED /
+      // DETAIL_DISABLED (server/app/api/morning_brief.py) — coupled.
+      test('409 not-installed detail classifies as not installed', () async {
+        answer(409, <String, dynamic>{
+          'detail': 'Summarizer environment is not installed',
+        });
+        expect(
+          await client.getMorningBrief('2026-10-02'),
+          isA<MorningBriefUnavailable>()
+              .having((u) => u.disabled, 'disabled', false),
+        );
+      });
+
+      test('409 disabled detail classifies as disabled', () async {
+        answer(409, <String, dynamic>{'detail': 'AI summaries are disabled'});
+        expect(
+          await client.getMorningBrief('2026-10-02'),
+          isA<MorningBriefUnavailable>()
+              .having((u) => u.disabled, 'disabled', true),
+        );
+      });
+
+      test('401 still throws', () async {
+        answer(401, <String, dynamic>{
+          'error': <String, dynamic>{'code': 'unauthorized', 'message': 'x'},
+        });
+        await expectLater(
+          client.getMorningBrief('2026-10-02'),
+          throwsA(isA<ApiException>()),
+        );
+      });
+    });
+
     test('401 with the error envelope becomes a typed ApiException', () async {
       when(() => dio.get<dynamic>('/v1/summaries/settings')).thenAnswer(
         (_) async => respond('/v1/summaries/settings', 401, <String, dynamic>{

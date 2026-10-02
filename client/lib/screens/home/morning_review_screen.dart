@@ -17,6 +17,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show SystemUiOverlayStyle;
+import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/local_db.dart';
@@ -27,9 +28,12 @@ import '../../services/desktop_due_reminder_port.dart' show TimerFactory;
 import '../../services/due_digest.dart' show isoDate;
 import '../../services/due_reminder_scheduler.dart' show DueReminderScheduler;
 import '../../services/morning_review.dart';
+import '../../services/summaries_client.dart'
+    show MorningBriefResult, MorningBriefReady;
 import '../../theme/tangent_tokens.dart';
 import '../dump/dump_detail_screen.dart';
 import '../notebook/notebook_editor_screen.dart';
+import '../settings/ai_summaries_section.dart' show summariesClientProvider;
 import '../settings/settings_screen.dart' show settingsStoreProvider;
 import '../todo/todo_list_screen.dart';
 import 'home_screen.dart' show localDbProvider;
@@ -47,6 +51,34 @@ final Provider<TimerFactory> morningReviewTimerFactoryProvider =
     Provider<TimerFactory>(
   (ref) => (Duration delay, void Function() fire) => Timer(delay, fire),
 );
+
+/// Fetches the server's cached Morning Brief for an ISO day (v1.41). A
+/// seam so widget tests never reach secure storage or the network.
+final Provider<Future<MorningBriefResult> Function(String isoDay)>
+    morningBriefFetcherProvider =
+    Provider<Future<MorningBriefResult> Function(String isoDay)>(
+  (ref) => (String isoDay) async =>
+      (await ref.read(summariesClientProvider.future)).getMorningBrief(isoDay),
+);
+
+/// The brief markdown to render atop the review, or null to HIDE the
+/// section: not installed / disabled (409), not generated yet (404), empty,
+/// or any failure (offline, auth). Fetched once per screen open — no
+/// poller; autoDispose drops it when the review closes.
+final morningBriefProvider =
+    FutureProvider.autoDispose.family<String?, String>((ref, isoDay) async {
+  try {
+    final MorningBriefResult result =
+        await ref.watch(morningBriefFetcherProvider)(isoDay);
+    return switch (result) {
+      MorningBriefReady(:final String briefMd) when briefMd.trim().isNotEmpty =>
+        briefMd.trim(),
+      _ => null,
+    };
+  } catch (_) {
+    return null; // additive: a failure just hides the brief
+  }
+});
 
 /// The live on/off switch. [SettingsStore] is a plain object, so the
 /// Settings toggle writes the store AND this provider; everything that
@@ -196,8 +228,6 @@ class _MorningReviewAutoPresenterState
     extends ConsumerState<MorningReviewAutoPresenter> {
   Timer? _boundary;
   bool? _armedFor;
-  String? _presentedDay;
-  bool _presenting = false;
 
   @override
   void dispose() {
@@ -229,10 +259,12 @@ class _MorningReviewAutoPresenterState
     );
   }
 
+  /// No presenter-side latches: the guards are [homeOnTop] here, the
+  /// post-frame `isCurrent` re-check (a second callback scheduled in the
+  /// same frame finds Home already covered, because push installs the
+  /// route synchronously), and the viewed day the open screen records.
   void _maybePresent(MorningBriefing? briefing, {required bool homeOnTop}) {
-    if (briefing == null || _presenting || !homeOnTop) return;
-    final String day = isoDate(briefing.reviewDay);
-    if (_presentedDay == day) return;
+    if (briefing == null || !homeOnTop) return;
     if (!morningReviewShouldAutoPresent(
       enabled: ref.read(morningReviewEnabledProvider),
       viewedDay: ref.read(settingsStoreProvider).morningReviewViewedDay,
@@ -240,17 +272,11 @@ class _MorningReviewAutoPresenterState
     )) {
       return;
     }
-    _presentedDay = day;
-    _presenting = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      // Re-check after the frame: a route may have been pushed meanwhile.
-      if (!mounted || ModalRoute.of(context)?.isCurrent == false) {
-        _presentedDay = null;
-        _presenting = false;
-        return;
-      }
-      await openMorningReview(context);
-      _presenting = false;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      // Re-check after the frame: a route (or this review) may have been
+      // pushed meanwhile.
+      if (!mounted || ModalRoute.of(context)?.isCurrent == false) return;
+      openMorningReview(context);
     });
   }
 
@@ -278,6 +304,7 @@ class MorningReviewScreen extends ConsumerStatefulWidget {
   static const Key overdueKey = Key('morning-review-overdue');
   static const Key pinnedKey = Key('morning-review-pinned');
   static const Key emptyKey = Key('morning-review-empty');
+  static const Key briefKey = Key('morning-review-brief');
 
   static Key captureKey(String id) =>
       ValueKey<String>('morning-review-item-$id');
@@ -375,6 +402,8 @@ class _MorningReviewScreenState extends ConsumerState<MorningReviewScreen> {
                 child: CustomScrollView(
                   slivers: <Widget>[
                     SliverToBoxAdapter(child: _header(context, now, briefing)),
+                    if (briefing != null)
+                      _brief(context, isoDate(briefing.reviewDay)),
                     if (briefing == null)
                       const SliverFillRemaining(
                         hasScrollBody: false,
@@ -520,6 +549,69 @@ class _MorningReviewScreenState extends ConsumerState<MorningReviewScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// The AI brief (v1.41): read-only markdown in the same frosted card as
+  /// the sections. Collapses to nothing while loading or when hidden — it
+  /// is additive, so it never blocks or spins over the review.
+  Widget _brief(BuildContext context, String isoDay) {
+    final String? md = ref.watch(morningBriefProvider(isoDay)).valueOrNull;
+    if (md == null) return const SliverToBoxAdapter(child: SizedBox.shrink());
+    final ThemeData theme = Theme.of(context);
+    final TextStyle? body = theme.textTheme.bodyLarge?.copyWith(
+      color: TangentColors.daybreakInk,
+      height: 1.45,
+    );
+    return SliverPadding(
+      key: MorningReviewScreen.briefKey,
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 18),
+      sliver: SliverToBoxAdapter(
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.6),
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: Colors.white.withValues(alpha: 0.9)),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(18, 14, 18, 16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
+                Row(
+                  children: <Widget>[
+                    const Icon(
+                      Icons.auto_awesome_rounded,
+                      size: 18,
+                      color: TangentColors.daybreakInkDim,
+                    ),
+                    const SizedBox(width: 10),
+                    Text(
+                      'YOUR BRIEF',
+                      style: theme.textTheme.labelMedium?.copyWith(
+                        color: TangentColors.daybreakInk,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 1.2,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                MarkdownBody(
+                  data: md,
+                  selectable: true,
+                  styleSheet: MarkdownStyleSheet(
+                    p: body,
+                    strong: body?.copyWith(fontWeight: FontWeight.w700),
+                    listBullet: body,
+                    blockSpacing: 10,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }

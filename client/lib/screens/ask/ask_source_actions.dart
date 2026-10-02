@@ -34,7 +34,7 @@ import '../../services/notebook_persistence.dart'
 import '../../widgets/folder_picker.dart';
 import '../../widgets/item_action_sheet.dart';
 import '../home/home_screen.dart' show localDbProvider;
-import '../dump/dumps_list_screen.dart' show eligibilityReason;
+import '../../services/deletion_eligibility_text.dart';
 import '../server/server_connection_screen.dart'
     show transcriptionClientProvider;
 
@@ -125,11 +125,14 @@ final Provider<Future<void> Function(String dumpId)>
       ref.read(transcriptionClientProvider).deleteDump(dumpId),
 );
 
-/// Deletes a recording the only safe way: authoritative server DELETE
-/// (publishes the tombstone, so the next pull cannot resurrect it) BEFORE
-/// local cleanup through [LocalDeletionService] — never dart:io, because
-/// Android audio lives behind SAF content:// URIs. Every item in the Ok
-/// envelope must report [DeleteState.deleted]; skipped/failed throws.
+/// Deletes a recording the only safe way: local eligibility, then the
+/// exclusive deletion lease, then the authoritative server DELETE
+/// (publishes the tombstone, so the next pull cannot resurrect it) while
+/// that lease is held, then local cleanup through [LocalDeletionService] —
+/// never dart:io, because Android audio lives behind SAF content:// URIs.
+/// Every item in the Ok envelope must report [DeleteState.deleted];
+/// skipped/failed throws. A recording that cannot get the lease never
+/// reaches the server.
 ///
 /// A 404 lets local cleanup proceed ONLY for a never-synced recording
 /// ([askDumpNeverSynced]); for a synced one it is a failure and nothing
@@ -165,23 +168,46 @@ final Provider<Future<void> Function(String dumpId)>
         );
       }
     }
-    try {
-      await ref.read(askSourceServerDeleteProvider)(dumpId);
-    } on ApiException catch (error) {
-      // A 404 proves nothing on its own (already deleted, or an upload
-      // still in flight that lands after the local delete and resurrects
-      // on the next pull). Only a recording that never attempted an upload
-      // may proceed; anything else fails closed.
-      if (error.statusCode != 404 || row == null || !askDumpNeverSynced(row)) {
+    // The server tombstone runs INSIDE the local deletion lease
+    // (whileLeased): the eligibility checked above cannot change while the
+    // call is in flight, because nothing else can acquire the recording
+    // until local cleanup finishes. Without the lease, a recording that
+    // became busy mid-call got a server tombstone that local cleanup then
+    // refused, and the next pull raw-deleted the row, orphaning its audio.
+    Object? serverError;
+    StackTrace? serverTrace;
+    Future<void> serverDelete(String id) async {
+      try {
+        await ref.read(askSourceServerDeleteProvider)(id);
+      } on ApiException catch (error, trace) {
+        // A 404 proves nothing on its own (already deleted, or an upload
+        // still in flight that lands after the local delete and resurrects
+        // on the next pull). Only a recording that never attempted an
+        // upload may proceed; anything else fails closed.
+        if (error.statusCode == 404 && row != null && askDumpNeverSynced(row)) {
+          return;
+        }
+        serverError = error;
+        serverTrace = trace;
+        rethrow;
+      } catch (error, trace) {
+        serverError = error;
+        serverTrace = trace;
         rethrow;
       }
     }
+
     final BulkDeletionResult result = switch (await deletion.deleteConfirmed(
       (operationId: const Uuid().v4(), targets: preview.targets),
+      whileLeased: serverDelete,
     )) {
       Ok<BulkDeletionResult>(:final value) => value,
       Fail<BulkDeletionResult>(:final problem) => throw StorageFault(problem),
     };
+    if (serverError != null) {
+      // Surface the server's own failure, not the generic skipped item.
+      Error.throwWithStackTrace(serverError!, serverTrace!);
+    }
     for (final DeletionItemResult item in result.items) {
       if (item.state != DeleteState.deleted) {
         throw StorageFault(

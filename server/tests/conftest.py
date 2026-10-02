@@ -43,6 +43,20 @@ def _reset_sse_app_status():
     AppStatus.should_exit_event = None
 
 
+@pytest.fixture(autouse=True)
+def _no_morning_brief_scheduler(monkeypatch: pytest.MonkeyPatch):
+    """Every TestClient runs the app lifespan, which starts the Morning
+    Brief scheduler thread. Left live it could share the summarizer child
+    with tests that fake an install. Off by default; the scheduler's own
+    tests call ``tick`` directly, and one test pins the lifespan wiring."""
+    from app.services import morning_brief
+
+    monkeypatch.setattr(morning_brief, "start_scheduler", lambda: None)
+    morning_brief._attempts.clear()
+    yield
+    morning_brief._attempts.clear()
+
+
 @pytest.fixture
 def temp_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Generator[Path, None, None]:
     """Provide a temporary data dir, set as TANGENT_DATA_DIR."""

@@ -298,6 +298,80 @@ void main() {
     expect(item.problem!.code, ProblemCode.wrongIncarnation);
     expect(h.backend.componentCalls, 0);
   });
+  test('whileLeased runs under the exclusive lease, never without it',
+      () async {
+    final h = CatalogHarness();
+    addTearDown(h.close);
+    final b = await h.f.seed('fixture-while-leased');
+    await h.bootstrap();
+    final calls = <String>[];
+    final request = await confirmation(h, b.key.dumpId);
+    // Busy at delete time (eligible at preview): the hook must not run.
+    final playback = requireOk(
+      await h.mutations.acquire(
+        b.key.dumpId,
+        UseKind.playback,
+        expectedIncarnation: b.key.incarnation,
+      ),
+    );
+    try {
+      final item = requireOk(
+        await service(h).deleteConfirmed(
+          request,
+          whileLeased: (id) async => calls.add(id),
+        ),
+      ).items.single;
+      expect(item.state, DeleteState.skipped);
+      expect(calls, isEmpty);
+    } finally {
+      await playback.close();
+    }
+    // Lease available: the hook runs while it is held — a competing
+    // acquire fails busy — and BEFORE any component I/O.
+    Outcome<UseLease>? competing;
+    final item = requireOk(
+      await service(h).deleteConfirmed(
+        await confirmation(h, b.key.dumpId, operation: 'fixture-leased-2'),
+        whileLeased: (id) async {
+          calls.add(id);
+          expect(h.backend.componentCalls, 0);
+          competing = await h.mutations.acquire(
+            id,
+            UseKind.playback,
+            expectedIncarnation: b.key.incarnation,
+          );
+        },
+      ),
+    ).items.single;
+    expect(calls, [b.key.dumpId]);
+    expect(competing, isA<Fail<UseLease>>());
+    expect(item.state, DeleteState.deleted);
+  });
+  test('whileLeased throwing skips the target untouched', () async {
+    final h = CatalogHarness();
+    addTearDown(h.close);
+    final b = await h.f.seed('fixture-hook-throws');
+    await h.bootstrap();
+    final item = requireOk(
+      await service(h).deleteConfirmed(
+        await confirmation(h, b.key.dumpId),
+        whileLeased: (_) async => throw StateError('server refused'),
+      ),
+    ).items.single;
+    expect(item.state, DeleteState.skipped);
+    expect(item.ticketId, isNull);
+    expect(h.backend.componentCalls, 0);
+    expect(await h.f.db.getDump(b.key.dumpId), isNotNull);
+    // The lease was released: a fresh delete still succeeds.
+    expect(
+      requireOk(
+        await service(h).deleteConfirmed(
+          await confirmation(h, b.key.dumpId, operation: 'fixture-after-hook'),
+        ),
+      ).items.single.state,
+      DeleteState.deleted,
+    );
+  });
   test('playback acquired after confirmation blocks deletion until closed',
       () async {
     final h = CatalogHarness();

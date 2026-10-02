@@ -172,6 +172,41 @@ final class SummarizeConflictException extends ApiException {
   final SummarizeConflictReason reason;
 }
 
+/// GET /v1/morning-brief outcome (v1.41). Every non-[MorningBriefReady]
+/// case HIDES the brief section; the rest of the morning review stands.
+sealed class MorningBriefResult {
+  const MorningBriefResult();
+}
+
+/// 200: the cached brief for the requested date.
+final class MorningBriefReady extends MorningBriefResult {
+  const MorningBriefReady({
+    required this.date,
+    required this.briefMd,
+    required this.generatedAt,
+    required this.model,
+  });
+
+  final String date;
+  final String briefMd;
+  final DateTime generatedAt;
+  final String model;
+}
+
+/// 404: not generated for that date yet (pre-05:00, or generation failed).
+final class MorningBriefNotGenerated extends MorningBriefResult {
+  const MorningBriefNotGenerated();
+}
+
+/// 409: summarizer not installed, or AI summaries switched off.
+final class MorningBriefUnavailable extends MorningBriefResult {
+  const MorningBriefUnavailable({required this.disabled});
+
+  /// True for the server's "AI summaries are disabled" 409; false for not
+  /// installed (and for any unrecognized 409 detail).
+  final bool disabled;
+}
+
 /// A typed 422 from [SummariesClient.summarizeDump]: the template id was
 /// unknown, or 'custom' was requested while the custom slot is empty. The
 /// server's detail is the user-facing wording (it names which case).
@@ -625,6 +660,42 @@ class SummariesClient {
       );
     }
     _checkStatus(resp);
+  }
+
+  /// GET /v1/morning-brief?date=YYYY-MM-DD — the server's cached daily
+  /// brief. Cheap (served from the per-day cache); never generates.
+  ///
+  /// The 409 classifier is coupled to the server's detail strings in
+  /// server/app/api/morning_brief.py (DETAIL_DISABLED / DETAIL_NOT_INSTALLED):
+  /// "AI summaries are disabled" → disabled; anything else → not
+  /// installed. Both outcomes hide the section, so a drifted string can
+  /// only mislabel the reason, never show a brief that should be hidden.
+  Future<MorningBriefResult> getMorningBrief(String isoDay) async {
+    final resp = await _dio.get<dynamic>(
+      '/v1/morning-brief',
+      queryParameters: <String, dynamic>{'date': isoDay},
+    );
+    if (resp.statusCode == 404) return const MorningBriefNotGenerated();
+    if (resp.statusCode == 409) {
+      final String detail = switch (resp.data) {
+        {'detail': final String d} => d,
+        _ => '',
+      };
+      return MorningBriefUnavailable(
+        disabled: detail.toLowerCase().contains('disabled'),
+      );
+    }
+    _checkStatus(resp);
+    final Map<String, dynamic> body =
+        (resp.data as Map<String, dynamic>?) ?? const <String, dynamic>{};
+    return MorningBriefReady(
+      date: body['date'] as String? ?? isoDay,
+      briefMd: body['brief_md'] as String? ?? '',
+      generatedAt: DateTime.fromMillisecondsSinceEpoch(
+        ((body['generated_at'] as num?) ?? 0).toInt() * 1000,
+      ),
+      model: body['model'] as String? ?? '',
+    );
   }
 
   void _checkStatus(Response<dynamic> resp) {

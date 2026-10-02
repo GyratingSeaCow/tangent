@@ -16,7 +16,7 @@ from app.db import get_db
 from app.logging_config import get_logger
 from app.services import summarizer_env, summarizer_worker
 from app.summary_templates import (
-    TEMPLATE_DEFINITIONS,
+    PER_DUMP_TEMPLATES,
     assemble_prompt,
     get_custom_prompt,
     set_custom_prompt,
@@ -138,7 +138,7 @@ def get_summary_templates(
     return SummaryTemplatesResponse(
         templates=[
             SummaryTemplateEntry(id=item.id, display_name=item.display_name)
-            for item in TEMPLATE_DEFINITIONS
+            for item in PER_DUMP_TEMPLATES
         ],
         custom_configured=get_custom_prompt(db) is not None,
     )

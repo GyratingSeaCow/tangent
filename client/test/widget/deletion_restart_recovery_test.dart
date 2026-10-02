@@ -62,9 +62,12 @@ class RecoveryDeletion extends DefaultLocalDeletionService {
 
   @override
   Future<Outcome<BulkDeletionResult>> deleteConfirmed(
-      ConfirmedDeletion request,) async {
+    ConfirmedDeletion request, {
+    Future<void> Function(String dumpId)? whileLeased,
+  }) async {
     deletes.add(request);
-    final result = await super.deleteConfirmed(request);
+    final result =
+        await super.deleteConfirmed(request, whileLeased: whileLeased);
     originalComputed = true;
     await originalResultGate?.future;
     originalReturned = true;
