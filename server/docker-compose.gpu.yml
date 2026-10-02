@@ -9,6 +9,12 @@
 # container; /v1/ocr/capability reports gpu_visible accordingly.
 services:
   tangent-server:
+    build:
+      args:
+        # CUDA torch + the cu12 runtime wheels only make sense where a GPU
+        # is actually passed through, so the GPU override also switches the
+        # image build to the CUDA flavour (~9 GB larger than the CPU build).
+        TANGENT_GPU: "1"
     deploy:
       resources:
         reservations:

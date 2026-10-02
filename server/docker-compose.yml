@@ -19,6 +19,13 @@ services:
     image: tangent-server:1.44.0
     container_name: tangent-server
     restart: unless-stopped
+    # Zombie reaping + hardening: no privilege escalation, and every Linux
+    # capability dropped — uvicorn on an unprivileged port needs none.
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     ports:
       # Bind the API to all interfaces so the phone can reach it over LAN.
       # The first number is the HOST port — change it if 8000 is already
@@ -55,7 +62,8 @@ services:
     healthcheck:
       # Use FastAPI's public schema as a process-readiness probe. The server-info
       # endpoint requires bearer auth after setup and would always return 401.
-      test: ["CMD", "curl", "-f", "http://localhost:8000/openapi.json"]
+      # Python stdlib probe — the image no longer ships curl.
+      test: ["CMD", "python", "-c", "import urllib.request,sys;sys.exit(0 if urllib.request.urlopen('http://localhost:8000/openapi.json', timeout=4).status==200 else 1)"]
       interval: 30s
       timeout: 5s
       start_period: 10s

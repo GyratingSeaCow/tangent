@@ -28,3 +28,12 @@ models/
 README.md
 .dockerignore
 docker-compose.yml
+docker-compose.gpu.yml
+
+# Not part of the image (only pyproject.toml + app/ are copied).
+tests/
+scripts/
+tools/
+uv.lock
+pytest.ini
+setup-flutter.ps1

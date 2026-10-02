@@ -5,6 +5,19 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Changed
+
+- Container audit: image now builds CPU-only by default (14.3 GB → 2.9 GB;
+  `docker-compose.gpu.yml` sets the new `TANGENT_GPU=1` build arg to restore
+  the CUDA torch + cu12 runtime flavour), runs as non-root uid 1000 (Linux
+  hosts upgrading: `sudo chown -R 1000:1000 ./data` once), drops curl for a
+  Python-stdlib healthcheck, pins the base image and uv, applies Debian
+  security updates at build, upgrades CVE-flagged wheel/jaraco.context, and
+  persists the HF/pyannote model cache under `/data`. Compose adds
+  `no-new-privileges`, `cap_drop: ALL`, and `init: true`.
+
 ## 1.44.0 — 2026-10-01
 
 ### Added
