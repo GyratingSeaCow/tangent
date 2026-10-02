@@ -1932,8 +1932,7 @@ void main() {
     await tester.pump();
 
     await tester.pageBack();
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
 
     // No dialog, no data loss: the notebook persists and the screen closes.
     expect(find.text('Discard changes?'), findsNothing);
@@ -1955,8 +1954,7 @@ void main() {
     await mountEditor(tester, notebook: seeded());
 
     await tester.pageBack();
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
 
     expect(find.text('Discard changes?'), findsNothing);
     expect(find.byType(NotebookEditorScreen), findsNothing);
