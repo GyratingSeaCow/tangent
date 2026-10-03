@@ -1783,8 +1783,7 @@ class _DumpDetailScreenState extends ConsumerState<DumpDetailScreen> {
                     peaks: timings.peaks,
                     position: _playhead,
                     duration: _playbackController != null &&
-                            _playbackController!.state.duration >
-                                Duration.zero
+                            _playbackController!.state.duration > Duration.zero
                         ? _playbackController!.state.duration
                         : Duration(seconds: row.durationSeconds),
                     onSeek: (t) => unawaited(_seekAndPlay(t)),
@@ -2218,7 +2217,9 @@ class _SummaryPendingCardState extends State<_SummaryPendingCard> {
                 Expanded(
                   child: Text(
                     headline,
-                    key: ValueKey('ai-summary-pending-headline-${widget.row.id}'),
+                    key: ValueKey(
+                      'ai-summary-pending-headline-${widget.row.id}',
+                    ),
                     style: theme.textTheme.bodyMedium,
                   ),
                 ),
@@ -2285,23 +2286,31 @@ class _RetranscribeDialogState extends State<_RetranscribeDialog> {
           ),
           if (language != null) ...[
             const SizedBox(height: 12),
-            RadioListTile<bool>(
-              key: ValueKey('retranscribe-original-${widget.dumpId}'),
-              contentPadding: EdgeInsets.zero,
-              dense: true,
-              value: false,
+            RadioGroup<bool>(
               groupValue: _translate,
-              onChanged: (bool? v) => setState(() => _translate = v ?? false),
-              title: Text('In ${languageDisplayName(language)} (original)'),
-            ),
-            RadioListTile<bool>(
-              key: ValueKey('retranscribe-english-${widget.dumpId}'),
-              contentPadding: EdgeInsets.zero,
-              dense: true,
-              value: true,
-              groupValue: _translate,
-              onChanged: (bool? v) => setState(() => _translate = v ?? true),
-              title: const Text('In English (translate)'),
+              onChanged: (bool? value) {
+                if (value != null) setState(() => _translate = value);
+              },
+              child: Column(
+                children: <Widget>[
+                  RadioListTile<bool>(
+                    key: ValueKey('retranscribe-original-${widget.dumpId}'),
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    value: false,
+                    title: Text(
+                      'In ${languageDisplayName(language)} (original)',
+                    ),
+                  ),
+                  RadioListTile<bool>(
+                    key: ValueKey('retranscribe-english-${widget.dumpId}'),
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    value: true,
+                    title: const Text('In English (translate)'),
+                  ),
+                ],
+              ),
             ),
           ],
         ],

@@ -10,7 +10,7 @@ matching) has shipped — confirmed by grep against `client/lib` / `server/app`.
 | # | Item | Size | Blocker / owner |
 |---|------|------|-----------------|
 | 1 | **Morning Brief prompt polish (minor):** the brief phrased the recording *title* "Jeff Labeled" as a meeting attendee ("a meeting with Jeff Labeled"). All cited facts were grounded; this is title-vs-person disambiguation in the aggregate prompt, not invention. Optional tweak. | XS | None — Jeff's call whether it bothers him |
-| 2 | **Flutter SDK upgrade arc** — the repo pins Flutter 3.27.1 / Dart 3.6 (Dec 2024). 130 package updates are now held back by that floor, incl. Dependabot PRs #6 (flutter_lints 6, needs Dart ≥3.8) and #7 (riverpod 3, real migration). One arc: bump Flutter stable → re-pin CI + bench + Docker builder → let Dependabot re-group → take riverpod 3 as its own follow-up. Until then #6/#7 **cannot merge** (SDK floor), and PR #5 was superseded by a lockfile commit (its 25 "minor" bumps were mostly Dart-3.9+ or breaking majors; only flutter_secure_storage 9.6.2 was actually in-constraint). | L | None — schedule when Jeff wants an infra arc |
+| 2 | **Flutter SDK upgrade arc** — upgraded the repo pin to Flutter 3.47.6 / Dart 3.13 (Sep 2026) and refreshed the lockfile without taking Dependabot PRs #6 (flutter_lints 6) or #7 (riverpod 3, real migration). Those majors remain separate follow-ups. | L | Implementation complete; verification pending |
 
 ## Done 2026-10-01 (v1.43.0 arc)
 

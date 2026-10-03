@@ -118,8 +118,8 @@ carries `calendar.events.owned`.
 | To run | You need |
 |---|---|
 | **Server** (needed only for transcription + sync) | Docker, **or** Python ≥ 3.11 |
-| **Android app** | [Flutter ≥ 3.27](https://docs.flutter.dev/get-started/install) (Dart ≥ 3.6), JDK 17, Android SDK + `adb` — or just sideload the release APK |
-| **Linux desktop app** | Flutter ≥ 3.27 on a Linux host, plus `clang`, `cmake`, `ninja-build`, `libgtk-3-dev` |
+| **Android app** | [Flutter ≥ 3.47](https://docs.flutter.dev/get-started/install) (Dart ≥ 3.13), JDK 17, Android SDK + `adb` — or just sideload the release APK |
+| **Linux desktop app** | Flutter ≥ 3.47 on a Linux host, plus `clang`, `cmake`, `ninja-build`, `libgtk-3-dev` |
 
 `flutter doctor` reports missing client build dependencies. Docker runs the
 server without a local Python environment.

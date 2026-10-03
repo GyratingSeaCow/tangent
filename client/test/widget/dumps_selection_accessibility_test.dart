@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import 'dart:ui' show SemanticsFlag;
+import 'dart:ui' show CheckedState;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -29,35 +29,51 @@ void main() {
           expect(t.getSize(bubble).width, greaterThanOrEqualTo(48));
           expect(t.getSize(bubble).height, greaterThanOrEqualTo(48));
           expect(
-              t.getSemantics(bubble).hasFlag(SemanticsFlag.isChecked), isTrue,);
+            t.getSemantics(bubble).flagsCollection.isChecked,
+            CheckedState.isTrue,
+          );
           final all = find.byKey(const ValueKey('selection-all'));
-          expect(t.getSemantics(all).hasFlag(SemanticsFlag.isCheckStateMixed),
-              isTrue,);
-          await t.tap(all);
-          await pumpSelection(t);
-          expect(t.getSemantics(all).hasFlag(SemanticsFlag.isChecked), isTrue);
-          await t.tap(all);
-          await pumpSelection(t);
-          expect(t.getSemantics(all).hasFlag(SemanticsFlag.isChecked), isFalse);
           expect(
-              t
-                  .widget<IconButton>(
-                      find.byKey(const ValueKey('selection-delete')),)
-                  .onPressed,
-              isNull,);
+            t.getSemantics(all).flagsCollection.isChecked,
+            CheckedState.mixed,
+          );
+          await t.tap(all);
+          await pumpSelection(t);
+          expect(
+            t.getSemantics(all).flagsCollection.isChecked,
+            CheckedState.isTrue,
+          );
+          await t.tap(all);
+          await pumpSelection(t);
+          expect(
+            t.getSemantics(all).flagsCollection.isChecked,
+            CheckedState.isFalse,
+          );
+          expect(
+            t
+                .widget<IconButton>(
+                  find.byKey(const ValueKey('selection-delete')),
+                )
+                .onPressed,
+            isNull,
+          );
           await t.tap(bubble);
           await pumpSelection(t);
           await t.tap(find.byKey(const ValueKey('selection-delete')));
           await pumpSelection(t);
           expect(t.takeException(), isNull);
-          expect(find.textContaining('Server copies are not deleted'),
-              findsOneWidget,);
           expect(
-              t
-                  .widget<TextButton>(
-                      find.byKey(const ValueKey('local-delete-cancel')),)
-                  .autofocus,
-              isTrue,);
+            find.textContaining('Server copies are not deleted'),
+            findsOneWidget,
+          );
+          expect(
+            t
+                .widget<TextButton>(
+                  find.byKey(const ValueKey('local-delete-cancel')),
+                )
+                .autofocus,
+            isTrue,
+          );
           await t.tap(find.byKey(const ValueKey('local-delete-cancel')));
           await pumpSelection(t);
           expect(t.takeException(), isNull);
@@ -78,13 +94,15 @@ void main() {
       'fixture-1': Eligibility.nonterminal,
       'hidden': Eligibility.eligible,
     };
-    c.read(presentedFixture.notifier).state = AsyncData((
-      scopeKey: 'search',
-      generation: 2,
-      settled: true,
-      rows: rows,
-      limit: 100
-    ),);
+    c.read(presentedFixture.notifier).state = AsyncData(
+      (
+        scopeKey: 'search',
+        generation: 2,
+        settled: true,
+        rows: rows,
+        limit: 100
+      ),
+    );
     await pumpSelection(t);
     await t.longPress(find.byKey(const ValueKey('dump-row-fixture-0')));
     await pumpSelection(t);
@@ -94,8 +112,10 @@ void main() {
     // will later skip.
     final inProgress = find.byKey(const ValueKey('dump-select-fixture-1'));
     expect(t.widget<Checkbox>(inProgress).onChanged, isNotNull);
-    expect(t.widget<Checkbox>(inProgress).semanticLabel,
-        contains('Transcription in progress'),);
+    expect(
+      t.widget<Checkbox>(inProgress).semanticLabel,
+      contains('Transcription in progress'),
+    );
     await t.tap(find.byKey(const ValueKey('selection-all')));
     await pumpSelection(t);
     expect(find.text('100 selected'), findsOneWidget);
@@ -105,13 +125,15 @@ void main() {
       'arrival': Eligibility.eligible,
       'fixture-2': Eligibility.syncing,
     };
-    c.read(presentedFixture.notifier).state = AsyncData((
-      scopeKey: 'search',
-      generation: 2,
-      settled: true,
-      rows: [viewRow('arrival'), ...rows.skip(1).toList().reversed],
-      limit: 100
-    ),);
+    c.read(presentedFixture.notifier).state = AsyncData(
+      (
+        scopeKey: 'search',
+        generation: 2,
+        settled: true,
+        rows: [viewRow('arrival'), ...rows.skip(1).toList().reversed],
+        limit: 100
+      ),
+    );
     await pumpSelection(t);
     // Only disappearance prunes (fixture-0 left the results); a changed
     // eligibility (fixture-2 now syncing) does not silently deselect.

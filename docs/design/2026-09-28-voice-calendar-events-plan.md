@@ -6,7 +6,7 @@
 
 **Architecture:** Mirror the To Do spine. Client parses the transcript → `calendar_events` row → device sync → server `_apply_calendar_event` → `google_calendar_worker` pushes/pulls on the existing 5-min Google tick with the existing OAuth link → Google ids/links flow back through `change_log`. Spec: `docs/design/2026-09-28-voice-calendar-events.md` — read it first; every rule below cites its section.
 
-**Tech Stack:** Flutter 3.27.1 / drift (client DB v25 → v26), FastAPI + sqlite3 + `requests` (server), Google Calendar API v3.
+**Tech Stack:** Flutter 3.47.6 / drift (client DB v25 → v26), FastAPI + sqlite3 + `requests` (server), Google Calendar API v3.
 
 ## Global Constraints
 

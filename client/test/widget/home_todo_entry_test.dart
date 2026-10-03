@@ -124,8 +124,7 @@ void main() {
     final LocalDb db = await mountHome(tester);
 
     await tester.tap(find.byKey(railKey(TangentRoot.todo)));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
     await tester.pump(const Duration(milliseconds: 100));
 
     expect(find.byType(TodoListScreen), findsOneWidget);
@@ -140,11 +139,9 @@ void main() {
     final LocalDb db = await mountHome(tester);
 
     await tester.tap(find.byKey(railKey(TangentRoot.todo)));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
     Navigator.of(tester.element(find.byType(TodoListScreen))).pop();
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
 
     expect(find.byIcon(Icons.list), findsOneWidget);
     expect(find.byIcon(Icons.cloud_sync), findsOneWidget);

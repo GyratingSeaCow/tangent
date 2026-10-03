@@ -31,26 +31,56 @@ import 'whisper_model_section.dart';
 /// Instrument Console v2: the ten Settings categories, in overview order.
 /// Every v1.40.0 control lives in exactly one of these; none was dropped.
 enum SettingsCategory {
-  storage('Storage', 'Default folder, local storage and Wi-Fi upload',
-      Icons.folder_outlined,),
-  transfer('Import & export', 'Bulk audio and Obsidian Markdown',
-      Icons.import_export,),
-  recording('Recording input', 'Microphone, Bluetooth, gain and trigger',
-      Icons.mic_none,),
-  server('Server & devices', 'Connection, pairing and trash',
-      Icons.cloud_sync_outlined,),
-  transcription('Transcription', 'Whisper model and custom vocabulary',
-      Icons.subtitles_outlined,),
-  intelligence('Intelligence', 'Handwriting, summaries and auto-file',
-      Icons.auto_awesome_outlined,),
-  integrations('Integrations', 'Google Tasks and remembered voices',
-      Icons.hub_outlined,),
-  reminders('Reminders', 'Due dates, morning review and completion notices',
-      Icons.schedule,),
-  maintenance('Maintenance & about', 'Diagnostics, licenses and version',
-      Icons.build_outlined,),
-  supportDev('Support the Dev', 'A thank-you note and donation link',
-      Icons.favorite_outline,);
+  storage(
+    'Storage',
+    'Default folder, local storage and Wi-Fi upload',
+    Icons.folder_outlined,
+  ),
+  transfer(
+    'Import & export',
+    'Bulk audio and Obsidian Markdown',
+    Icons.import_export,
+  ),
+  recording(
+    'Recording input',
+    'Microphone, Bluetooth, gain and trigger',
+    Icons.mic_none,
+  ),
+  server(
+    'Server & devices',
+    'Connection, pairing and trash',
+    Icons.cloud_sync_outlined,
+  ),
+  transcription(
+    'Transcription',
+    'Whisper model and custom vocabulary',
+    Icons.subtitles_outlined,
+  ),
+  intelligence(
+    'Intelligence',
+    'Handwriting, summaries and auto-file',
+    Icons.auto_awesome_outlined,
+  ),
+  integrations(
+    'Integrations',
+    'Google Tasks and remembered voices',
+    Icons.hub_outlined,
+  ),
+  reminders(
+    'Reminders',
+    'Due dates, morning review and completion notices',
+    Icons.schedule,
+  ),
+  maintenance(
+    'Maintenance & about',
+    'Diagnostics, licenses and version',
+    Icons.build_outlined,
+  ),
+  supportDev(
+    'Support the Dev',
+    'A thank-you note and donation link',
+    Icons.favorite_outline,
+  );
 
   const SettingsCategory(this.title, this.subtitle, this.icon);
 
@@ -152,9 +182,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 
   Future<void> _changeServer() async {
-    await Navigator.of(context).push<void>(MaterialPageRoute<void>(
-      builder: (_) => const ServerConnectionScreen(),
-    ),);
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => const ServerConnectionScreen(),
+      ),
+    );
     await _load();
   }
 
@@ -248,28 +280,30 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         return [
           const StorageSettingsSection(),
           const Divider(),
-          if (!_loaded) loading else ...[
-          SwitchListTile(
-            title: const Text('Keep recordings on this device'),
-            subtitle: const Text(
-              'Recordings are never uploaded to the server for storage. '
-              'Transcription still works over Wi-Fi or mobile data.',
+          if (!_loaded)
+            loading
+          else ...[
+            SwitchListTile(
+              title: const Text('Keep recordings on this device'),
+              subtitle: const Text(
+                'Recordings are never uploaded to the server for storage. '
+                'Transcription still works over Wi-Fi or mobile data.',
+              ),
+              value: _keepOnDeviceOnly,
+              onChanged: (v) => setState(() => _keepOnDeviceOnly = v),
             ),
-            value: _keepOnDeviceOnly,
-            onChanged: (v) => setState(() => _keepOnDeviceOnly = v),
-          ),
-          SwitchListTile(
-            title: const Text('Upload recordings only on Wi-Fi'),
-            subtitle: Text(
-              _keepOnDeviceOnly
-                  ? 'No effect while recordings are kept on this device. '
-                      'Transcription is never limited to Wi-Fi.'
-                  : 'Wait for Wi-Fi before uploading recordings for storage. '
-                      'Transcription is exempt and still runs on mobile data.',
+            SwitchListTile(
+              title: const Text('Upload recordings only on Wi-Fi'),
+              subtitle: Text(
+                _keepOnDeviceOnly
+                    ? 'No effect while recordings are kept on this device. '
+                        'Transcription is never limited to Wi-Fi.'
+                    : 'Wait for Wi-Fi before uploading recordings for storage. '
+                        'Transcription is exempt and still runs on mobile data.',
+              ),
+              value: _wifiOnly,
+              onChanged: (v) => setState(() => _wifiOnly = v),
             ),
-            value: _wifiOnly,
-            onChanged: (v) => setState(() => _wifiOnly = v),
-          ),
           ],
         ];
       case SettingsCategory.transfer:
@@ -282,36 +316,44 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           const InputDeviceSection(),
           const MicGainSection(),
           const Divider(),
-          if (!_loaded) loading else ...[
-          const Padding(
-            padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
-            child: Text(
-              'Recording trigger',
-              style: TextStyle(fontWeight: FontWeight.bold),
+          if (!_loaded)
+            loading
+          else ...[
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
+              child: Text(
+                'Recording trigger',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
             ),
-          ),
-          RadioListTile<TriggerMode>(
-            title: const Text('Tap to toggle'),
-            subtitle: const Text('Tap once to start, tap again to stop'),
-            value: TriggerMode.tap,
-            groupValue: _triggerMode,
-            onChanged: (v) => setState(() => _triggerMode = v!),
-          ),
-          RadioListTile<TriggerMode>(
-            title: const Text('Hold to record'),
-            subtitle: const Text('Press and hold the record button'),
-            value: TriggerMode.hold,
-            groupValue: _triggerMode,
-            onChanged: (v) => setState(() => _triggerMode = v!),
-          ),
-          SwitchListTile(
-            title: const Text('Keep screen awake while recording'),
-            subtitle: const Text(
-              'Prevents screen sleep only while an active recording is running',
+            RadioGroup<TriggerMode>(
+              groupValue: _triggerMode,
+              onChanged: (TriggerMode? value) {
+                if (value != null) setState(() => _triggerMode = value);
+              },
+              child: const Column(
+                children: <Widget>[
+                  RadioListTile<TriggerMode>(
+                    title: Text('Tap to toggle'),
+                    subtitle: Text('Tap once to start, tap again to stop'),
+                    value: TriggerMode.tap,
+                  ),
+                  RadioListTile<TriggerMode>(
+                    title: Text('Hold to record'),
+                    subtitle: Text('Press and hold the record button'),
+                    value: TriggerMode.hold,
+                  ),
+                ],
+              ),
             ),
-            value: _keepScreenAwake,
-            onChanged: (value) => setState(() => _keepScreenAwake = value),
-          ),
+            SwitchListTile(
+              title: const Text('Keep screen awake while recording'),
+              subtitle: const Text(
+                'Prevents screen sleep only while an active recording is running',
+              ),
+              value: _keepScreenAwake,
+              onChanged: (value) => setState(() => _keepScreenAwake = value),
+            ),
           ],
         ];
       case SettingsCategory.server:
@@ -415,10 +457,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             onTap: () => showLicensePage(
               context: context,
               applicationName: 'Tangent',
-              applicationVersion:
-                  _appVersion.isEmpty ? null : 'v$_appVersion',
-              applicationLegalese:
-                  'Copyright © 2026 Tangent contributors.\n'
+              applicationVersion: _appVersion.isEmpty ? null : 'v$_appVersion',
+              applicationLegalese: 'Copyright © 2026 Tangent contributors.\n'
                   'Licensed under the GNU AGPL-3.0-or-later: you have the '
                   'right to receive the source code of this app and of the '
                   'server it talks to.',
@@ -453,7 +493,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     // no 'default model:' note and no 'available:' pseudo-menu that
     // selected nothing.
     if (info.dumpCount != null) parts.add('${info.dumpCount} recordings');
-    if (info.setupComplete == false) parts.add('SETUP INCOMPLETE — open the server URL in a browser');
+    if (info.setupComplete == false) {
+      parts.add('SETUP INCOMPLETE — open the server URL in a browser');
+    }
     return parts.join(' · ');
   }
 }
@@ -471,7 +513,8 @@ class ServerInfoSnapshot {
     return ServerInfoSnapshot(
       setupComplete: info.setupComplete as bool,
       model: info.defaultModel as String?,
-      models: (info.availableModels as List?)?.map((e) => e.toString()).toList(),
+      models:
+          (info.availableModels as List?)?.map((e) => e.toString()).toList(),
       dumpCount: info.dumpCount as int?,
       diarization: (info.diarization as bool?) ?? false,
     );

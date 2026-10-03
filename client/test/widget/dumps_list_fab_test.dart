@@ -82,8 +82,7 @@ Future<_PopProbe> _pushList(WidgetTester tester) async {
   );
   _registerUnmount(tester);
   await tester.tap(find.byKey(const ValueKey('open-dumps')));
-  await tester.pump();
-  await tester.pump(const Duration(milliseconds: 400));
+  await tester.pumpAndSettle();
   await _pumpData(tester);
   return probe;
 }
@@ -138,8 +137,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('mode-filter-textNote')));
     await _pumpData(tester);
     await tester.tap(find.byType(FloatingActionButton));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
 
     expect(probe.completed, isTrue);
     expect(probe.result, DumpsCreateAction.textNote);
@@ -159,8 +157,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('mode-filter-brainDump')));
     await _pumpData(tester);
     await tester.tap(find.byType(FloatingActionButton));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
 
     expect(probe.completed, isTrue);
     expect(probe.result, DumpsCreateAction.brainDump);
@@ -174,8 +171,7 @@ void main() {
     final probe = await _pushList(tester);
 
     await tester.tap(find.byType(FloatingActionButton));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
 
     expect(probe.completed, isFalse,
         reason: 'under the All filter the FAB asks before popping',);
@@ -200,8 +196,7 @@ void main() {
     );
 
     await tester.tap(meetingOption);
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
 
     expect(probe.completed, isTrue);
     expect(probe.result, DumpsCreateAction.meeting);

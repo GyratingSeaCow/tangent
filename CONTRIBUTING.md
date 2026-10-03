@@ -16,7 +16,7 @@ docker compose up -d          # published on host port 8765
 uv sync --all-extras
 uv run pytest                 # 162 passed, 3 skipped
 
-# Client (needs Flutter >= 3.27, JDK 17, Android SDK)
+# Client (needs Flutter >= 3.47, JDK 17, Android SDK)
 cd ../client
 flutter pub get
 flutter test                  # 1320 tests
