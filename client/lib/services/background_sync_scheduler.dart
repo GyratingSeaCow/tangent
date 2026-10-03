@@ -30,7 +30,7 @@ Future<void> registerPeriodicDocumentSync(Workmanager workmanager) async {
     kDocumentSyncTaskName,
     kDocumentSyncTaskName,
     frequency: kDocumentSyncInterval,
-    existingWorkPolicy: ExistingWorkPolicy.keep,
+    existingWorkPolicy: ExistingPeriodicWorkPolicy.keep,
     constraints: Constraints(
       // Without a network the task wakes, fails, and burns battery for
       // nothing. Deliberately `connected` rather than `unmetered`: document
