@@ -58,7 +58,8 @@ class UncertainDb extends LocalDb {
     await super.freezeLegacyAnchor(anchorJson);
     if (freezeAckLost) {
       freezeAckLost = false;
-      throw SqliteException(10, 'synthetic lost acknowledgement');
+      throw SqliteException(
+          extendedResultCode: 10, message: 'synthetic lost acknowledgement');
     }
   }
 
@@ -67,7 +68,8 @@ class UncertainDb extends LocalDb {
     final result = await super.commitStorageCatalog(action);
     if (defaultAckLost) {
       defaultAckLost = false;
-      throw SqliteException(10, 'synthetic lost acknowledgement');
+      throw SqliteException(
+          extendedResultCode: 10, message: 'synthetic lost acknowledgement');
     }
     return result;
   }
