@@ -39,7 +39,7 @@ class DefaultRecordingMutationCoordinator
           (_) {
             lease.release();
           },
-          onError: (Object _, StackTrace __) {
+          onError: (Object _, StackTrace _) {
             // A broken adapter did not prove termination. Keep its pin fail-closed.
           },
         ),
@@ -224,7 +224,7 @@ class DefaultRecordingMutationCoordinator
         (_) {
           lease.release();
         },
-        onError: (Object _, StackTrace __) {
+        onError: (Object _, StackTrace _) {
           // Rejection is not proof that underlying work stopped. Retain the pin.
         },
       ),

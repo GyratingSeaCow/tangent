@@ -224,7 +224,7 @@ void main() {
     await h.bootstrap();
     final c = capture(h, recorder);
     final r = requireOk(await c.start(mode: 'meeting'));
-    h.backend.publication = (_, __) => ImmediateIo(
+    h.backend.publication = (_, _) => ImmediateIo(
           'fixture-initial-failure',
           const Fail((code: ProblemCode.denied, message: 'fixture denied')),
         );
@@ -233,7 +233,7 @@ void main() {
     expect(before.state, 'failed');
     expect(jsonDecode(before.publicationJson!)['published'], isNull);
     final bytes = await File(r.stagingPath).readAsBytes();
-    h.backend.publication = (_, __) {
+    h.backend.publication = (_, _) {
       entered.complete();
       return GatedIo('fixture-recovery', result.future, finished.future);
     };
@@ -316,7 +316,7 @@ void main() {
     await h.bootstrap();
     final c = capture(h, recorder);
     final r = requireOk(await c.start(mode: 'meeting'));
-    h.backend.publication = (_, __) => ImmediateIo(
+    h.backend.publication = (_, _) => ImmediateIo(
           'fixture-initial-failure',
           const Fail((code: ProblemCode.io, message: 'fixture unavailable')),
         );
@@ -426,12 +426,12 @@ void main() {
       await h.bootstrap();
       final c = capture(h, recorder);
       final r = requireOk(await c.start(mode: 'meeting'));
-      h.backend.publication = (_, __) => ImmediateIo(
+      h.backend.publication = (_, _) => ImmediateIo(
             'fixture-first-failure',
             const Fail((code: ProblemCode.io, message: 'fixture')),
           );
       expect(await c.stopAndPersist(), isA<Fail<DumpRow?>>());
-      h.backend.publication = (_, __) {
+      h.backend.publication = (_, _) {
         entered.complete();
         return GatedIo(
           'fixture-recovery-owner',
@@ -516,7 +516,7 @@ void main() {
     await h.bootstrap();
     final c = capture(h, recorder);
     requireOk(await c.start(mode: 'meeting'));
-    h.backend.publication = (_, __) => ImmediateIo(
+    h.backend.publication = (_, _) => ImmediateIo(
           'fixture-first-failure',
           const Fail((code: ProblemCode.io, message: 'synthetic')),
         );
@@ -772,7 +772,7 @@ void main() {
     await h.bootstrap();
     final c = capture(h, recorder);
     final r = requireOk(await c.start(mode: 'meeting'));
-    h.backend.publication = (_, __) {
+    h.backend.publication = (_, _) {
       entered.complete();
       return GatedIo(
         'fixture-live-publication',
@@ -814,7 +814,7 @@ void main() {
       final c = capture(h, recorder);
       final r = requireOk(await c.start(mode: 'brain_dump'));
       await h.f.audio('B', r.key.dumpId).writeAsBytes([9, 8, 7]);
-      h.backend.publication = (_, __) => ImmediateIo(
+      h.backend.publication = (_, _) => ImmediateIo(
             'fixture-forged-receipt',
             Ok(
               (

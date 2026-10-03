@@ -79,7 +79,7 @@ class WaveformScrubberState extends State<WaveformScrubber> {
             width: double.infinity,
             child: ValueListenableBuilder<Duration>(
               valueListenable: widget.position,
-              builder: (context, _, __) => CustomPaint(
+              builder: (context, _, _) => CustomPaint(
                 painter: _WaveformPainter(
                   peaks: widget.peaks,
                   playhead: playheadFraction,

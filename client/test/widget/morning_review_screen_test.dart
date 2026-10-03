@@ -104,7 +104,7 @@ void main() {
         ),
         morningReviewClockProvider.overrideWithValue(() => clockNow),
         morningReviewTimerFactoryProvider
-            .overrideWithValue((_, __) => _NeverTimer()),
+            .overrideWithValue((_, _) => _NeverTimer()),
       ],
     );
     await tester.pumpWidget(

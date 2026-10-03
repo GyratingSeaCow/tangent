@@ -21,7 +21,7 @@ void main() {
   testWidgets('right-click selects, exactly like long-press', (tester) async {
     var opens = 0;
     final service = CountingDeletion();
-    await mountSelection(tester, service, onOpen: (_, __) => opens++);
+    await mountSelection(tester, service, onOpen: (_, _) => opens++);
 
     await rightClick(tester, find.byKey(const ValueKey('dump-row-fixture-a')));
 

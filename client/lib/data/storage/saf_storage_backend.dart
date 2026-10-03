@@ -476,7 +476,7 @@ class SafStorageBackend implements StorageBackend {
         );
       }
       return await _start<LegacyStorage?>('inspectLegacyStorage', {
-        if (frozenAnchorJson != null) 'frozenAnchorJson': frozenAnchorJson,
+        'frozenAnchorJson': ?frozenAnchorJson,
       }, (value) {
         Never invalid() => throw const StorageFault(
               (

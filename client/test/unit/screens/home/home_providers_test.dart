@@ -111,7 +111,7 @@ void main() {
     );
     final subscription = container.listen(
       serverTranscriptionServiceProvider,
-      (_, __) {},
+      (_, _) {},
       fireImmediately: true,
     );
     addTearDown(() async {

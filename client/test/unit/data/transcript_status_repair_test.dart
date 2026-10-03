@@ -346,7 +346,7 @@ void main() {
       status: 'not_transcribed',
       transcript: 'server text',
     );
-    staged.dispose();
+    staged.close();
 
     final LocalDb first = LocalDb.forTesting(NativeDatabase(file));
     await first.listDumps();

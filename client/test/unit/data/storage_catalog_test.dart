@@ -209,7 +209,7 @@ void main() {
     await h.bootstrap();
     final original = await h.catalog.watchDefault().first;
     h.backend.choice = Ok(fileLocation('B', h.f.directory('B')));
-    h.backend.probe = (_, __) {
+    h.backend.probe = (_, _) {
       entered.complete();
       return GatedIo(
         'throwing-probe',
@@ -429,7 +429,7 @@ void main() {
     ];
     h.backend.choice = Ok(fileLocation('B', h.f.directory('B')));
     h.backend.probe =
-        (_, __) => ImmediateIo('probe', Ok((owned: receipt, cleaned: false)));
+        (_, _) => ImmediateIo('probe', Ok((owned: receipt, cleaned: false)));
     expect(
       (await h.catalog.chooseFolderCandidate() as Fail).problem.code,
       ProblemCode.io,

@@ -112,7 +112,7 @@ class _StorageSettingsSectionState
                       const Text('Read-only on this platform.'),
                   ],),
               loading: () => const Text('Loading storage…'),
-              error: (_, __) =>
+              error: (_, _) =>
                   const Text('Storage unavailable. Try reopening Settings.'),
             ),
             if (_error != null)

@@ -48,7 +48,7 @@ void main() {
     // knowledge, exactly what a human with sqlite3 would do.
     final raw =
         sqlite.sqlite3.open(written.path, mode: sqlite.OpenMode.readOnly);
-    addTearDown(raw.dispose);
+    addTearDown(raw.close);
     final rows = raw.select(
       'SELECT id, transcript_timings, synced_seq FROM dumps WHERE id = ?',
       ['d1'],
@@ -68,7 +68,7 @@ void main() {
 
     final raw =
         sqlite.sqlite3.open(written.path, mode: sqlite.OpenMode.readOnly);
-    addTearDown(raw.dispose);
+    addTearDown(raw.close);
     expect(raw.select('PRAGMA user_version').single.values.single, 30);
   });
 }

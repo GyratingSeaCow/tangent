@@ -140,7 +140,7 @@ Future<_MemoryStore> _mount(
           discoveryFactory: () => _FakeDiscovery(servers),
           pairingFactory: (_) => pairing,
           localAddress: () async => localAddress,
-          clientFactory: (_, __) => _FakeClient(),
+          clientFactory: (_, _) => _FakeClient(),
         ),
       ),
     ),

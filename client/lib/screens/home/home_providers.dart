@@ -294,7 +294,7 @@ final transcriptionNotificationOwnerProvider = Provider<void>((ref) {
   // resumed at launch) is announced rather than waiting for its next event.
   ref.listen(
     serverTranscriptionServiceProvider,
-    (_, __) => sync(),
+    (_, _) => sync(),
     fireImmediately: true,
   );
   ref.onDispose(() => unawaited(notifier.dispose()));

@@ -262,9 +262,9 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
     final modeFilter = ref.watch(dumpModeFilterProvider);
     final transcriptFilter = ref.watch(transcriptFilterProvider);
     final showingSearch = query.trim().isNotEmpty;
-    ref.listen(searchQueryProvider, (_, __) => _selection.cancel());
-    ref.listen(dumpModeFilterProvider, (_, __) => _selection.cancel());
-    ref.listen(transcriptFilterProvider, (_, __) => _selection.cancel());
+    ref.listen(searchQueryProvider, (_, _) => _selection.cancel());
+    ref.listen(dumpModeFilterProvider, (_, _) => _selection.cancel());
+    ref.listen(transcriptFilterProvider, (_, _) => _selection.cancel());
     final PresentedDumpResults? results =
         _restrictToFilterIds(presented.valueOrNull);
     if (results != null) {
@@ -945,7 +945,7 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
           child: ListView.separated(
             shrinkWrap: true,
             itemCount: summary.failures.length,
-            separatorBuilder: (_, __) => const Divider(height: 12),
+            separatorBuilder: (_, _) => const Divider(height: 12),
             itemBuilder: (BuildContext context, int index) {
               final BulkFailure failure = summary.failures[index];
               return Column(
@@ -1213,7 +1213,7 @@ class _DumpListState extends State<_DumpList> {
       return ListView.separated(
         padding: listBottomInset(context),
         itemCount: widget.dumps.length,
-        separatorBuilder: (_, __) => const Divider(height: 1),
+        separatorBuilder: (_, _) => const Divider(height: 1),
         itemBuilder: (context, index) => _rowTile(widget.dumps[index]),
       );
     }

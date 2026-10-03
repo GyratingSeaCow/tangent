@@ -1253,7 +1253,7 @@ void main() {
             container.read(transcriptionRecoveryOwnerProvider);
             subscription = container.listen(
               serverTranscriptionServiceProvider,
-              (_, __) {},
+              (_, _) {},
             );
             await container
                 .read(serverTranscriptionServiceProvider)

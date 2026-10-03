@@ -54,9 +54,9 @@ class _PresentedEpoch {
 
 final _presentedEpochProvider = Provider<_PresentedEpoch>((ref) {
   final epoch = _PresentedEpoch();
-  ref.listen(searchQueryProvider, (_, __) => epoch.generation++);
-  ref.listen(dumpModeFilterProvider, (_, __) => epoch.generation++);
-  ref.listen(transcriptFilterProvider, (_, __) => epoch.generation++);
+  ref.listen(searchQueryProvider, (_, _) => epoch.generation++);
+  ref.listen(dumpModeFilterProvider, (_, _) => epoch.generation++);
+  ref.listen(transcriptFilterProvider, (_, _) => epoch.generation++);
   return epoch;
 });
 

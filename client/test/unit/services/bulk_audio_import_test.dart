@@ -59,7 +59,7 @@ void main() {
     final summary = await runBulkImport(
       files: [picked('a.opus'), picked('b.mp3'), picked('c.wav')],
       runner: runner,
-      onProgress: (_, __, ___) {},
+      onProgress: (_, _, _) {},
     );
 
     expect(
@@ -79,7 +79,7 @@ void main() {
     final summary = await runBulkImport(
       files: [picked('a.opus'), picked('b.mp3')],
       runner: runner,
-      onProgress: (_, __, ___) {},
+      onProgress: (_, _, _) {},
     );
 
     expect(summary.imported, 1, reason: 'b still imports after a threw');
@@ -92,7 +92,7 @@ void main() {
     await runBulkImport(
       files: [picked('meeting.m4a')],
       runner: runner,
-      onProgress: (_, __, ___) {},
+      onProgress: (_, _, _) {},
     );
 
     expect(runner.modes, ['brain_dump']);

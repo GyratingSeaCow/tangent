@@ -642,7 +642,7 @@ void main() {
       final h = CatalogHarness();
       addTearDown(h.close);
       await unbind(h, 'fixture-unknown');
-      h.backend.legacy = (_, __) async =>
+      h.backend.legacy = (_, _) async =>
           Fail((code: code, message: 'synthetic capture failure'));
       expect(
         await h.catalog.bootstrapLegacyBindings(

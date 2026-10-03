@@ -190,7 +190,7 @@ class _NotebookImageBlockWidgetState extends State<NotebookImageBlockWidget> {
       gaplessPlayback: true,
       // A block whose bytes no longer decode still occupies its place
       // honestly instead of vanishing.
-      errorBuilder: (_, __, ___) => Container(
+      errorBuilder: (_, _, _) => Container(
         width: block.width,
         height: block.height,
         alignment: Alignment.center,

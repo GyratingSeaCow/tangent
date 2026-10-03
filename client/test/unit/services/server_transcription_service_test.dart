@@ -2215,7 +2215,7 @@ void main() {
     });
     final fake = _FakeTranscriptionClient(
       completedTranscript: 'unused',
-      onEnqueue: (_, __, ___) async {
+      onEnqueue: (_, _, _) async {
         enqueueStarted.complete();
         await releaseEnqueue.future;
         throw const ApiException(
@@ -2275,7 +2275,7 @@ void main() {
     final beforeFailures = (await db.getDump('r1'))!;
     final fake = _FakeTranscriptionClient(
       completedTranscript: 'unused',
-      onEnqueue: (_, __, ___) => throw const ApiException(
+      onEnqueue: (_, _, _) => throw const ApiException(
         statusCode: 422,
         code: 'http_error',
         message: 'definitive recovery rejection',
@@ -3383,7 +3383,7 @@ void main() {
     final stalledEnqueue = Completer<TranscriptionJobSnapshot>();
     final fake = _FakeTranscriptionClient(
       completedTranscript: 'unused',
-      onEnqueue: (_, __, ___) => stalledEnqueue.future,
+      onEnqueue: (_, _, _) => stalledEnqueue.future,
     );
     final service = ServerTranscriptionService(
       client: fake,
@@ -3444,7 +3444,7 @@ void main() {
     final fake = _FakeTranscriptionClient(
       completedTranscript: 'unused',
       onCreate: () => stalledCreate.future,
-      onEnqueue: (_, __, ___) => throw const ApiException(
+      onEnqueue: (_, _, _) => throw const ApiException(
         statusCode: 404,
         code: 'http_error',
         message: "Dump 'r1' not found",
@@ -3490,7 +3490,7 @@ void main() {
     final fake = _FakeTranscriptionClient(
       completedTranscript: 'unused',
       onUpload: () => stalledUpload.future,
-      onEnqueue: (_, __, ___) => throw const ApiException(
+      onEnqueue: (_, _, _) => throw const ApiException(
         statusCode: 422,
         code: 'missing_audio',
         message: "No audio file uploaded for dump 'r1'. "
@@ -3934,7 +3934,7 @@ void main() {
     storage.pathFor('r1').deleteSync();
     final fake = _FakeTranscriptionClient(
       completedTranscript: 'unused',
-      onEnqueue: (_, __, ___) => throw const ApiException(
+      onEnqueue: (_, _, _) => throw const ApiException(
         statusCode: 422,
         code: 'missing_audio',
         message: "No audio file uploaded for dump 'r1'. "
@@ -5058,7 +5058,7 @@ void main() {
     );
     final failing = _FakeTranscriptionClient(
       completedTranscript: 'unused',
-      onEnqueue: (_, __, ___) => throw const ApiException(
+      onEnqueue: (_, _, _) => throw const ApiException(
         statusCode: 503,
         code: 'unavailable',
         message: 'offline',

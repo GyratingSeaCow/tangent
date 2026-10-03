@@ -109,7 +109,7 @@ void main() {
     final dir = createResolvedTempSync('notebook-migration-');
     final file = File('${dir.path}/fixture.sqlite');
     final fixture = oldStorageDatabase(4, path: file.path);
-    fixture.dispose();
+    fixture.close();
 
     var db = LocalDb.forTesting(NativeDatabase(file));
     await db.listDumps();
@@ -124,7 +124,7 @@ void main() {
     final before = sqlRows(sql, 'dumps');
     final queue = sqlRows(sql, 'sync_queue');
     final locations = sqlRows(sql, 'storage_locations');
-    sql.dispose();
+    sql.close();
 
     db = LocalDb.forTesting(NativeDatabase(file));
     addTearDown(() => dir.deleteSync(recursive: true));
@@ -132,7 +132,7 @@ void main() {
     await db.close();
 
     sql = sqlite3.open(file.path);
-    addTearDown(sql.dispose);
+    addTearDown(sql.close);
     expect(sql.userVersion, 30);
     expect(_columnNames(sql, 'notebooks'), _notebookColumns);
     // v8 adds folder_id to dumps, so compare the columns the fixture had:

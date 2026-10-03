@@ -350,7 +350,7 @@ class _AskScreenState extends ConsumerState<AskScreen> {
           Expanded(
             child: history.when(
               loading: () => const Center(child: CircularProgressIndicator()),
-              error: (_, __) =>
+              error: (_, _) =>
                   const Center(child: Text('Could not load Ask history.')),
               // Chat order: reversed so the view STARTS at the newest message
               // (offset 0 = bottom) and stays there as answers arrive —

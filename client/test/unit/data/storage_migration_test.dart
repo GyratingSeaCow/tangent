@@ -241,7 +241,7 @@ void main() {
     final sql = oldStorageDatabase(4, path: file.path);
     final before = sqlRows(sql, 'dumps');
     final queue = sqlRows(sql, 'sync_queue');
-    sql.dispose();
+    sql.close();
     var db = LocalDb.forTesting(NativeDatabase(file));
     addTearDown(() async {
       await db.close();

@@ -16,7 +16,7 @@ void main() {
       searchResultsProvider.overrideWith((_) => const Stream.empty()),
     ],);
     addTearDown(c.dispose);
-    final sub = c.listen(presentedDumpsProvider, (_, __) {});
+    final sub = c.listen(presentedDumpsProvider, (_, _) {});
     addTearDown(sub.close);
     final first = c.read(presentedDumpsProvider).requireValue;
     expect(first.rows.single.id, 'fixture-a');

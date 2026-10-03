@@ -9,7 +9,7 @@ void main() {
       (tester) async {
     var opens = 0;
     final service = CountingDeletion();
-    await mountSelection(tester, service, onOpen: (_, __) => opens++);
+    await mountSelection(tester, service, onOpen: (_, _) => opens++);
     await tester.longPress(find.text('fixture-a'));
     await pumpSelection(tester);
     expect(find.byKey(const ValueKey('dump-select-fixture-a')), findsOneWidget);

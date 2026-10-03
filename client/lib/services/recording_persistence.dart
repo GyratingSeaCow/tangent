@@ -667,7 +667,7 @@ class RecordingPersistence {
     final List<ImportedEntry> matches;
     if (single != null) {
       final entry = _value(await _runSettled(lease, () => single));
-      matches = <ImportedEntry>[if (entry != null) entry];
+      matches = <ImportedEntry>[?entry];
     } else {
       final entries = _value(
         await _runSettled(lease, () => _backend.listRecordingsAt(r.location)),

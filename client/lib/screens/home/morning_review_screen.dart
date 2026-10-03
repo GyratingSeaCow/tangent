@@ -167,8 +167,8 @@ Future<void> openMorningReview(BuildContext context) =>
         settings: const RouteSettings(name: kMorningReviewRouteName),
         transitionDuration: const Duration(milliseconds: 420),
         reverseTransitionDuration: const Duration(milliseconds: 280),
-        pageBuilder: (_, __, ___) => const MorningReviewScreen(),
-        transitionsBuilder: (_, Animation<double> animation, __, Widget child) {
+        pageBuilder: (_, _, _) => const MorningReviewScreen(),
+        transitionsBuilder: (_, Animation<double> animation, _, Widget child) {
           final Animation<double> curved = CurvedAnimation(
             parent: animation,
             curve: Curves.easeOutCubic,

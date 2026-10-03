@@ -33,7 +33,7 @@ void main() {
     final Database a = sqlite3.open(path)
       ..execute('CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)');
     configureSqlite(a);
-    a.dispose();
+    a.close();
 
     // Another ISOLATE holds a write transaction for [holdMs] — exactly the
     // shape of the bug (a WorkManager isolate mid-write while the app
@@ -75,7 +75,7 @@ void main() {
 
     final Database b = sqlite3.open(path);
     configureSqlite(b);
-    addTearDown(b.dispose);
+    addTearDown(b.close);
     final Stopwatch clock = Stopwatch()..start();
     release.send(null); // "about to block" — the holder's hold starts now
     // Without a busy handler this throws code 5 in well under a millisecond.
@@ -121,7 +121,7 @@ void main() {
   });
   test('configureSqlite turns on WAL and a 5 s busy timeout', () {
     final Database db = sqlite3.open(path);
-    addTearDown(db.dispose);
+    addTearDown(db.close);
     configureSqlite(db);
     expect(db.select('PRAGMA journal_mode').first.values.first, 'wal');
     expect(db.select('PRAGMA busy_timeout').first.values.first, 5000);
@@ -156,6 +156,6 @@ Future<void> _holdWriteLock(_HoldArgs args) async {
   await release.first;
   await Future<void>.delayed(Duration(milliseconds: args.holdMs));
   a.execute('COMMIT');
-  a.dispose();
+  a.close();
   args.done.send(null);
 }

@@ -84,7 +84,7 @@ void main() {
       overrides: [localDbProvider.overrideWithValue(db)],
     );
     final provider = dumpByIdProvider('auto-dispose-provider');
-    final subscription = container.listen(provider, (_, __) {});
+    final subscription = container.listen(provider, (_, _) {});
 
     try {
       await container.read(provider.future);

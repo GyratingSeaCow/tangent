@@ -303,7 +303,7 @@ Future<void> showAskSourceActions(
         ? const <ItemAction, String>{ItemAction.rename: 'Edit'}
         : const <ItemAction, String>{},
     disabledActions: <ItemAction, String>{
-      if (deleteBlocked != null) ItemAction.delete: deleteBlocked,
+      ItemAction.delete: ?deleteBlocked,
     },
   );
   if (action == null || !context.mounted) return;

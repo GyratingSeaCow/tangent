@@ -179,7 +179,7 @@ class TranscriptionClient {
       '/v1/dumps/$dumpId/transcribe',
       method: 'POST',
       data: {
-        if (model != null) 'model': model,
+        'model': ?model,
         'request_id': requestId,
         if (translate) 'translate': true,
       },
