@@ -11,10 +11,13 @@ matching) has shipped — confirmed by grep against `client/lib` / `server/app`.
 |---|------|------|-----------------|
 | 1 | **Morning Brief prompt polish (minor):** the brief phrased the recording *title* "Jeff Labeled" as a meeting attendee ("a meeting with Jeff Labeled"). All cited facts were grounded; this is title-vs-person disambiguation in the aggregate prompt, not invention. Optional tweak. | XS | None — Jeff's call whether it bothers him |
 | 2 | **riverpod 3 migration** (Dependabot #7) — real API migration, its own arc. | M | Unblocked by the SDK merge |
-| 3 | **Dependency wave part 2** — remaining majors on `feature/dependency-wave` (go_router 18, intl 0.20, just_audio 0.10, permission_handler 13, record 7, tray_manager 0.7, workmanager 0.10, crypto) + merge the branch (3 gated batches already on it). | S | In flight |
+| 3 | **permission_handler 13** — needs compileSdk 37, above AGP 9.1.0's max-recommended 36. Take with the next Android toolchain bump. | XS | Upstream (AGP) |
+| 5 | **tray_manager 0.7** — nativeapi-based API rewrite; `lib/services/win_tray.dart` needs a real migration (global `trayManager` gone, TrayListener no longer a mixin, Menu/MenuItem constructors changed). | S | None — small arc |
 | 4 | **plus-family dependency knot** — connectivity_plus 7 / device_info_plus 13 / share_plus 13 / flutter_secure_storage 11 / flutter_timezone 5 / dbus 0.8 only resolve together with a flutter_local_notifications DEV PRERELEASE (23.0.0-dev.x needs dbus ^0.8; 22.x stable needs ^0.7). Deferred until fln 23 stable; discontinued `js` stays in the graph until then. | S | Upstream (fln stable release) |
 
 ## Done 2026-10-03 (F-Droid review loop + v1.48.1/v1.48.2)
+
+- **Dependency wave MERGED to main** (`1082a19`, 7 gated batches): go_router 18, intl 0.20, just_audio 0.10, record 7, workmanager 0.10, flutter_lints 6, codegen+drift majors, in-constraint sweep. Merged-tree gates: +2885/0, analyze 0 errors, clean debug APK (stale incremental Kotlin state needed one `flutter clean`).
 
 - **F-Droid MR !50943 pipeline fully green** (all 9 jobs incl. `fdroid
   build` + `check apk` — F-Droid's own builder compiles Tangent).
