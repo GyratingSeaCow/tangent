@@ -8,7 +8,7 @@ part 'dump.freezed.dart';
 part 'dump.g.dart';
 
 @freezed
-class Dump with _$Dump {
+abstract class Dump with _$Dump {
   @JsonKey(name: 'mode')
   const factory Dump({
     required String id,

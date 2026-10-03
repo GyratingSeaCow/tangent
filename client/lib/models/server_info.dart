@@ -4,7 +4,7 @@ import 'package:freezed_annotation/freezed_annotation.dart';
 part 'server_info.freezed.dart';
 
 @freezed
-class ServerInfo with _$ServerInfo {
+abstract class ServerInfo with _$ServerInfo {
   const ServerInfo._();
 
   const factory ServerInfo({

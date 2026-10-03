@@ -24,7 +24,9 @@ class AckDb extends LocalDb {
   @override
   Future<T> commitOwnedCapture<T>(Future<T> Function() action) async {
     await super.commitOwnedCapture(action);
-    throw SqliteException(10, 'synthetic committed but acknowledgment lost');
+    throw SqliteException(
+        extendedResultCode: 10,
+        message: 'synthetic committed but acknowledgment lost');
   }
 }
 

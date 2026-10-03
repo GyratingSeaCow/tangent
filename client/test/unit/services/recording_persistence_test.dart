@@ -47,8 +47,8 @@ class CheckpointAckDb extends LocalDb {
       if (stage == loseStage) {
         lost = true;
         throw SqliteException(
-          10,
-          'fixture checkpoint committed, response lost',
+          extendedResultCode: 10,
+          message: 'fixture checkpoint committed, response lost',
         );
       }
     }
