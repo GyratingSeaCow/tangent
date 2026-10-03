@@ -1,0 +1,1 @@
+Fixed F-Droid compliance: APKs no longer embed Google's encrypted dependency-info block. No functional changes.

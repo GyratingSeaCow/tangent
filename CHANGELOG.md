@@ -5,6 +5,13 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.48.2 — 2026-10-03
+
+### Fixed
+- F-Droid: stop embedding Google's encrypted dependency-info signing
+  block in APKs (`dependenciesInfo.includeInApk = false`) — fdroid's
+  `check apk` rejects any APK carrying it. No functional change.
+
 ## 1.48.1 — 2026-10-03
 
 ### Changed

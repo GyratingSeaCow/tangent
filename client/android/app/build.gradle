@@ -18,6 +18,13 @@ if (keystorePropertiesFile.exists()) {
 
 android {
     namespace = "dev.tangent.tangent"
+
+    // F-Droid: AGP embeds a Google-encrypted dependency-info signing block
+    // by default; fdroid's check apk rejects any APK carrying it.
+    dependenciesInfo {
+        includeInApk = false
+        includeInBundle = false
+    }
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
