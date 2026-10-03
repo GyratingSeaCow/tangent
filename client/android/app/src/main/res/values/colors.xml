@@ -15,4 +15,16 @@
     <color name="widget_record_disc">#141719</color>
     <color name="widget_record_glyph">#D4FF47</color>
     <color name="widget_record_dot">#9B2594</color>
+
+    <!-- 2x2 notebook widget title. Light text on the widget's dark tile;
+         repeated in values-night with the same value — the tile keeps its
+         own chassis in both themes, like the record disc above. -->
+    <color name="widget_notebook_title">#E6E1E5</color>
+
+    <!-- 2x2 notebook widget tile: Tangent's dark surface with a subtle
+         outline, and the Material menu_book icon's lavender fill. Repeated
+         in values-night with the same values — same rationale as above. -->
+    <color name="widget_notebook_surface">#1D1B20</color>
+    <color name="widget_notebook_outline">#49454F</color>
+    <color name="widget_notebook_icon">#E8DEF8</color>
 </resources>

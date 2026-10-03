@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 2x2 notebook widget (layout/widget_notebook.xml). -->
+    <dimen name="widget_notebook_padding">8dp</dimen>
+    <dimen name="widget_notebook_icon_size">48dp</dimen>
+    <dimen name="widget_notebook_title_margin_top">6dp</dimen>
+    <dimen name="widget_notebook_title_text_size">12sp</dimen>
+
+    <!-- Notebook tile chassis (drawable/widget_notebook_bg.xml):
+         launcher-corner rounding and a hairline outline. -->
+    <dimen name="widget_notebook_corner_radius">24dp</dimen>
+    <dimen name="widget_notebook_outline_width">1dp</dimen>
+
+    <!-- 1x1 record widget (layout/widget_record.xml): 8dp outer margin so
+         the disc has breathing room in a 1x1 cell on Samsung launchers; the
+         inner padding keeps the glyph at the button's ratio (64 in 120). -->
+    <dimen name="widget_record_margin">8dp</dimen>
+    <dimen name="widget_record_padding">12dp</dimen>
+</resources>

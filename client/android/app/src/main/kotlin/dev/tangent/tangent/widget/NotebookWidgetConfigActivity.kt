@@ -13,6 +13,7 @@ import android.appwidget.AppWidgetManager
 import android.content.Intent
 import android.database.sqlite.SQLiteDatabase
 import android.os.Bundle
+import dev.tangent.tangent.R
 import java.io.File
 
 class NotebookWidgetConfigActivity : Activity() {
@@ -35,16 +36,16 @@ class NotebookWidgetConfigActivity : Activity() {
         val notebooks = loadNotebooks()
         if (notebooks.isEmpty()) {
             AlertDialog.Builder(this)
-                .setTitle("No notebooks yet")
-                .setMessage("Create a notebook in Tangent first, then add the widget.")
-                .setPositiveButton("OK") { _, _ -> finish() }
+                .setTitle(R.string.widget_config_no_notebooks_title)
+                .setMessage(R.string.widget_config_no_notebooks_message)
+                .setPositiveButton(android.R.string.ok) { _, _ -> finish() }
                 .setOnCancelListener { finish() }
                 .show()
             return
         }
 
         AlertDialog.Builder(this)
-            .setTitle("Open which notebook?")
+            .setTitle(R.string.widget_config_pick_title)
             .setItems(notebooks.map { it.second }.toTypedArray()) { _, which ->
                 val (id, title) = notebooks[which]
                 NotebookWidgetProvider.prefs(this).edit()

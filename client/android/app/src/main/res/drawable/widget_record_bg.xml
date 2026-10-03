@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The record button's disc: TangentColors.record, identical in both
-     themes (values/ and values-night/ both resolve to #FF3B30). -->
+<!-- The record tile's disc: the launcher icon's Blackout chassis, identical
+     in both themes (values/ and values-night/ both resolve to #141719). -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="oval">
   <solid android:color="@color/widget_record_disc" />
