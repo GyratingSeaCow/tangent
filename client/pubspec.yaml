@@ -1,5 +1,5 @@
 name: tangent
-description: "Self-hosted voice brain-dump app for ADHD brains."
+description: "Self-hosted voice and text brain dumps, notes, notebooks and to-dos."
 publish_to: 'none'
 version: 1.48.0+63
 
