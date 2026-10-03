@@ -5,6 +5,22 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.48.1 — 2026-10-03
+
+### Changed
+- Toolchain: Flutter 3.27.1 → 3.47.6 (Dart 3.13); Android build chain to
+  AGP 9.1.0 / Kotlin 2.4.0 / Gradle 9.3.1 / Java 17 with core library
+  desugaring; SDK floors now `flutter >=3.47.0` / `dart >=3.10.0`.
+- Home-screen widgets: hardcoded strings, dimensions and colors moved to
+  Android resources (with night-mode mirrors) — no visual change.
+- App description rebranded: "Voice/Text Brain Dumps" (README, F-Droid
+  listing, pubspec); ADHD framing dropped.
+
+### Fixed
+- F-Droid builds: the release signing fallback used a multiline ternary
+  that fdroidserver's signing-key stripper mangled into unparseable
+  gradle; collapsed to a single line (no behavior change).
+
 ## 1.48.0 — 2026-10-02
 
 ### Added

@@ -1,0 +1,4 @@
+Toolchain upgrade: Flutter 3.47.6, Android Gradle Plugin 9.1, Kotlin 2.4, Java 17.
+Widget internals: hardcoded values moved to Android resources (no visual change).
+New description: self-hosted voice and text brain dumps, notes, notebooks and to-dos.
+Fixed F-Droid build compatibility (release signing fallback).

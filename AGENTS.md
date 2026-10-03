@@ -50,9 +50,11 @@ ADH2/
 
 ## Status
 
-Shipping — **v1.48.0** (see CHANGELOG.md). Client and server are both
-implemented and tested (2883
-Flutter tests, 777 server tests, 129 Kotlin tests). The client runs
+Shipping — **v1.48.1** (see CHANGELOG.md). Client and server are both
+implemented and tested (2885
+Flutter tests, 777 server tests, 129 Kotlin tests). Toolchain:
+Flutter 3.47.6 / Dart 3.13, AGP 9.1 / Kotlin 2.4 / Gradle 9.3.1 /
+Java 17 (v1.48.1). The client runs
 natively on Linux AND Windows (tray icon, global record hotkey,
 close-to-tray, single instance, right-click = long-press; AppImage and
 Inno Setup installer under `packaging/`) — verified on CachyOS/KDE
