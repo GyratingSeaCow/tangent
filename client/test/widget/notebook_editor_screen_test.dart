@@ -500,18 +500,6 @@ void main() {
               ),
         ),
       );
-      final CustomPaint gridPaint = tester.widget<CustomPaint>(
-        find.descendant(of: grid, matching: find.byType(CustomPaint)),
-      );
-      final NotebookTablePainter painter =
-          gridPaint.painter! as NotebookTablePainter;
-      expect(painter.debugLastVisitedCellCount, 40);
-      expect(
-        painter.debugLastVisibleRange,
-        (firstRow: 0, lastRow: 7, firstColumn: 0, lastColumn: 4),
-        reason: 'the real editor tree must paint only its 600x352 viewport',
-      );
-
       final List<SingleChildScrollView> tableScrolls = tester
           .widgetList<SingleChildScrollView>(
             find.descendant(
@@ -532,13 +520,66 @@ void main() {
                 scroll.scrollDirection == Axis.vertical,
           )
           .controller!;
+      NotebookTablePainter tablePainter() =>
+          tester
+              .widget<CustomPaint>(
+                find.descendant(of: grid, matching: find.byType(CustomPaint)),
+              )
+              .painter!
+              as NotebookTablePainter;
+      final Finder renderedViewport = find.descendant(
+        of: table,
+        matching: find.byWidgetPredicate(
+          (Widget widget) =>
+              widget.key is ValueKey<String> &&
+              (widget.key! as ValueKey<String>).value.startsWith(
+                'notebook-table-viewport-',
+              ),
+        ),
+      );
+      void expectPainterMatchesRenderedViewport() {
+        final Size renderedSize = tester.getSize(renderedViewport);
+        expect(horizontal.position.viewportDimension, renderedSize.width);
+        expect(vertical.position.viewportDimension, renderedSize.height);
+        expect(tablePainter().debugLastViewport!.size, renderedSize);
+      }
+
+      expect(tablePainter().debugLastVisitedCellCount, 40);
+      expect(
+        tablePainter().debugLastVisibleRange,
+        (firstRow: 0, lastRow: 7, firstColumn: 0, lastColumn: 4),
+        reason: 'the real editor tree must paint only its rendered viewport',
+      );
+      expectPainterMatchesRenderedViewport();
+      final Size normalViewport = tester.getSize(renderedViewport);
+
+      await tester.tap(find.byIcon(Icons.draw));
+      await tester.pump();
+      final Size drawingViewport = tester.getSize(renderedViewport);
+      expect(
+        drawingViewport.width,
+        greaterThan(normalViewport.width),
+        reason: 'hiding the drag grip gives its width to the table viewport',
+      );
+      expectPainterMatchesRenderedViewport();
+      expect(
+        tablePainter().debugLastVisitedCellCount,
+        48,
+        reason: 'the extra rendered column sliver must be painted in draw mode',
+      );
+
+      await tester.tap(find.byIcon(Icons.draw));
+      await tester.pump();
+      expect(tester.getSize(renderedViewport), normalViewport);
+      expectPainterMatchesRenderedViewport();
+
       horizontal.jumpTo(horizontal.position.maxScrollExtent);
       vertical.jumpTo(vertical.position.maxScrollExtent);
       await tester.pump();
 
-      expect(painter.debugLastVisitedCellCount, 40);
+      expect(tablePainter().debugLastVisitedCellCount, 40);
       expect(
-        painter.debugLastVisibleRange,
+        tablePainter().debugLastVisibleRange,
         (firstRow: 92, lastRow: 99, firstColumn: 95, lastColumn: 99),
         reason: 'scroll offsets must move the bounded paint window',
       );

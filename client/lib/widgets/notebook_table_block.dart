@@ -143,18 +143,29 @@ class _NotebookTableBlockWidgetState extends State<NotebookTableBlockWidget> {
           color: NotebookInkCanvas.backgroundColor,
         ),
         child: ClipRect(
+          key: ValueKey<String>('notebook-table-viewport-${block.id}'),
           child: Scrollbar(
-            controller: _horizontal,
-            thumbVisibility: block.contentWidth > block.viewportWidth,
-            child: SingleChildScrollView(
+            key: ValueKey<String>(
+              'notebook-table-vertical-scrollbar-${block.id}',
+            ),
+            controller: _vertical,
+            thumbVisibility: block.contentHeight > block.viewportHeight,
+            notificationPredicate: (ScrollNotification notification) =>
+                notification.metrics.axis == Axis.vertical,
+            child: Scrollbar(
+              key: ValueKey<String>(
+                'notebook-table-horizontal-scrollbar-${block.id}',
+              ),
               controller: _horizontal,
-              scrollDirection: Axis.horizontal,
-              child: SizedBox(
-                width: block.contentWidth,
-                height: block.viewportHeight,
-                child: Scrollbar(
-                  controller: _vertical,
-                  thumbVisibility: block.contentHeight > block.viewportHeight,
+              thumbVisibility: block.contentWidth > block.viewportWidth,
+              notificationPredicate: (ScrollNotification notification) =>
+                  notification.metrics.axis == Axis.horizontal,
+              child: SingleChildScrollView(
+                controller: _horizontal,
+                scrollDirection: Axis.horizontal,
+                child: SizedBox(
+                  width: block.contentWidth,
+                  height: block.viewportHeight,
                   child: SingleChildScrollView(
                     controller: _vertical,
                     child: SizedBox(
@@ -178,10 +189,6 @@ class _NotebookTableBlockWidgetState extends State<NotebookTableBlockWidget> {
                                 block: block,
                                 horizontal: _horizontal,
                                 vertical: _vertical,
-                                viewportSize: Size(
-                                  block.viewportWidth,
-                                  block.viewportHeight,
-                                ),
                               ),
                             ),
                           ),
@@ -256,7 +263,6 @@ class NotebookTablePainter extends CustomPainter {
     required this.block,
     required ScrollController horizontal,
     required ScrollController vertical,
-    required this.viewportSize,
   }) : _horizontal = horizontal,
        _vertical = vertical,
        super(repaint: Listenable.merge(<Listenable>[horizontal, vertical]));
@@ -264,14 +270,18 @@ class NotebookTablePainter extends CustomPainter {
   final NotebookTableBlock block;
   final ScrollController _horizontal;
   final ScrollController _vertical;
-  final Size viewportSize;
 
   NotebookTableCellRange? _debugLastVisibleRange;
+  Rect? _debugLastViewport;
   int _debugLastVisitedCellCount = 0;
 
   /// The row and column window visited by the most recent paint.
   @visibleForTesting
   NotebookTableCellRange? get debugLastVisibleRange => _debugLastVisibleRange;
+
+  /// The actual scroll window used by the most recent paint.
+  @visibleForTesting
+  Rect? get debugLastViewport => _debugLastViewport;
 
   /// The number of cells visited by the most recent paint.
   @visibleForTesting
@@ -280,17 +290,23 @@ class NotebookTablePainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     _debugLastVisibleRange = null;
+    _debugLastViewport = null;
     _debugLastVisitedCellCount = 0;
-    final double horizontalOffset = _horizontal.hasClients
-        ? _horizontal.offset
-        : 0;
-    final double verticalOffset = _vertical.hasClients ? _vertical.offset : 0;
+    final ScrollPosition? horizontalPosition = _horizontal.hasClients
+        ? _horizontal.position
+        : null;
+    final ScrollPosition? verticalPosition = _vertical.hasClients
+        ? _vertical.position
+        : null;
+    final double horizontalOffset = horizontalPosition?.pixels ?? 0;
+    final double verticalOffset = verticalPosition?.pixels ?? 0;
     final Rect viewport = Rect.fromLTWH(
       horizontalOffset,
       verticalOffset,
-      viewportSize.width,
-      viewportSize.height,
+      horizontalPosition?.viewportDimension ?? size.width,
+      verticalPosition?.viewportDimension ?? size.height,
     ).intersect(Offset.zero & size);
+    _debugLastViewport = viewport;
     if (viewport.isEmpty) return;
     final NotebookTableCellRange range = visibleNotebookTableCells(
       clip: viewport,
@@ -343,11 +359,9 @@ class NotebookTablePainter extends CustomPainter {
     }
   }
 
+  // The paint canvas keeps the full content size while an ancestor can change
+  // the scroll viewport (for example when draw mode hides the drag grip).
+  // Repaint on rebuild so [paint] samples the post-layout ScrollPositions.
   @override
-  bool shouldRepaint(covariant NotebookTablePainter oldDelegate) =>
-      oldDelegate.block != block ||
-      oldDelegate.block.cells != block.cells ||
-      oldDelegate.viewportSize != viewportSize ||
-      oldDelegate._horizontal != _horizontal ||
-      oldDelegate._vertical != _vertical;
+  bool shouldRepaint(covariant NotebookTablePainter oldDelegate) => true;
 }

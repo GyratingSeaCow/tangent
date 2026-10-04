@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tangent/models/notebook.dart';
 import 'package:tangent/widgets/notebook_table_block.dart';
@@ -21,6 +22,72 @@ void main() {
     expect(range.lastColumn, 4);
     expect(painted, 40);
     expect(painted, lessThan(10000));
+  });
+
+  testWidgets('vertical scrollbar thumb stays inside the rendered viewport', (
+    WidgetTester tester,
+  ) async {
+    const NotebookTableBlock table = NotebookTableBlock(
+      id: 'scrollbar-probe',
+      rows: 100,
+      columns: 100,
+      x: 0,
+      y: 0,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.windows),
+        home: const Scaffold(
+          body: NotebookTableBlockWidget(
+            block: table,
+            onCellChanged: _ignoreCellChange,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final Finder viewport = find.byKey(
+      const ValueKey<String>('notebook-table-viewport-scrollbar-probe'),
+    );
+    final Finder verticalScrollbar = find.byKey(
+      const ValueKey<String>(
+        'notebook-table-vertical-scrollbar-scrollbar-probe',
+      ),
+    );
+    final Rect viewportRect = tester.getRect(viewport);
+    final Rect scrollbarRect = tester.getRect(verticalScrollbar);
+    expect(scrollbarRect, viewportRect);
+
+    final Finder rawVerticalScrollbar = find
+        .descendant(
+          of: verticalScrollbar,
+          matching: find.byWidgetPredicate(
+            (Widget widget) => widget is RawScrollbar,
+          ),
+        )
+        .first;
+    final dynamic scrollbarState = tester.state(rawVerticalScrollbar);
+    final ScrollbarPainter thumbPainter =
+        scrollbarState.scrollbarPainter as ScrollbarPainter;
+    Offset? thumbPoint;
+    for (double y = 0; y < scrollbarRect.height; y++) {
+      final Offset candidate = Offset(scrollbarRect.width - 4, y);
+      if (thumbPainter.hitTestOnlyThumbInteractive(
+        candidate,
+        PointerDeviceKind.mouse,
+      )) {
+        thumbPoint = scrollbarRect.topLeft + candidate;
+        break;
+      }
+    }
+    expect(thumbPoint, isNotNull);
+    expect(
+      viewportRect.contains(thumbPoint!),
+      isTrue,
+      reason: 'the visible vertical thumb must paint inside the table window',
+    );
   });
 
   testWidgets('100x100 table mounts at most the active cell TextField', (
@@ -70,3 +137,5 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 }
+
+void _ignoreCellChange(int row, int column, String value) {}
