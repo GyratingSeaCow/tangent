@@ -243,6 +243,165 @@ void main() {
       expect(todo.boardOrder, 9);
       expect(todo.syncDirty, isFalse);
     });
+
+    test('a newer remote body merges into a migration-dirtied todo before '
+        'its placement pushes', () async {
+      await db.customStatement(
+        'INSERT INTO todos(id,text,created_at,updated_at,column_id,board_order,'
+        "sync_dirty,synced_seq) VALUES('migrated','old body',"
+        "'2026-09-01T00:00:00.000Z','2026-09-01T00:00:00.000Z',"
+        "'todo-column-todo',7,1,4)",
+      );
+      await db.customStatement(
+        'INSERT INTO settings(key,value) VALUES('
+        "'todo_kanban_backfill:migrated','7')",
+      );
+      client.pullPages = <SyncPullPage>[
+        SyncPullPage(
+          changes: <RemoteChange>[
+            todoChange(
+              id: 'migrated',
+              seq: 90,
+              payload: <String, dynamic>{
+                ...fullPayload(
+                  text: 'new body from peer',
+                  updatedAt: '2026-10-03T10:00:00.000Z',
+                  doneAt: '2026-10-03T09:00:00.000Z',
+                ),
+                'column_id': null,
+                'board_order': 0,
+              },
+            ),
+          ],
+          headSeq: 90,
+          hasMore: false,
+        ),
+      ];
+      client.pushResults = const <PushResult>[
+        PushResult(
+          entityId: 'migrated',
+          entityType: 'todo',
+          seq: 91,
+          applied: true,
+        ),
+      ];
+
+      final SyncReport report = await build().syncNow();
+
+      expect(report.outcome, SyncOutcome.success);
+      final TodoRow row = (await db.getTodoRow('migrated'))!;
+      expect(row.body, 'new body from peer');
+      expect(row.doneAt, '2026-10-03T09:00:00.000Z');
+      expect(row.columnId, defaultTodoColumnId);
+      expect(row.boardOrder, 7);
+      expect(row.syncDirty, isFalse);
+      expect(await db.pendingTodoBoardOrder('migrated'), isNull);
+      final Map<String, dynamic> pushed = client.pushedChanges!.single;
+      expect(pushed['payload']['text'], 'new body from peer');
+      expect(pushed['payload']['column_id'], defaultTodoColumnId);
+    });
+
+    test('fresh epoch seeds accept a remote rename and delete', () async {
+      await repo.ensureColumns();
+      client.pullPages = <SyncPullPage>[
+        SyncPullPage(
+          changes: <RemoteChange>[
+            RemoteChange(
+              seq: 80,
+              entityType: 'todo_column',
+              entityId: defaultTodoColumnId,
+              op: SyncOp.upsert,
+              payload: <String, dynamic>{
+                'name': 'Inbox from peer',
+                'sort_order': 0,
+                'created_at': '2026-09-01T00:00:00.000Z',
+                'updated_at': '2026-10-01T00:00:00.000Z',
+                'deleted_at': null,
+              },
+              deviceId: 'peer-device',
+            ),
+            RemoteChange(
+              seq: 81,
+              entityType: 'todo_column',
+              entityId: 'todo-column-progress',
+              op: SyncOp.upsert,
+              payload: <String, dynamic>{
+                'name': 'In Progress',
+                'sort_order': 1,
+                'created_at': '2026-09-01T00:00:00.000Z',
+                'updated_at': '2026-10-02T00:00:00.000Z',
+                'deleted_at': '2026-10-02T00:00:00.000Z',
+              },
+              deviceId: 'peer-device',
+            ),
+          ],
+          headSeq: 81,
+          hasMore: false,
+        ),
+      ];
+
+      await build().syncNow();
+
+      final TodoColumnRow renamed = (await repo.listColumns()).firstWhere(
+        (column) => column.id == defaultTodoColumnId,
+      );
+      expect(renamed.name, 'Inbox from peer');
+      expect(renamed.syncDirty, isFalse);
+      expect(
+        (await db.getTodoColumnRow('todo-column-progress'))!.deletedAt,
+        '2026-10-02T00:00:00.000Z',
+      );
+    });
+
+    test(
+      'seq-zero stale acknowledgements install canonical todos and columns',
+      () async {
+        final TodoRow todo = await repo.add('stale local body');
+        final TodoColumnRow column = (await repo.listColumns()).first;
+        client.pushResults = <PushResult>[
+          PushResult(
+            entityId: todo.id,
+            entityType: 'todo',
+            seq: 0,
+            applied: true,
+            canonicalPayload: <String, dynamic>{
+              ...fullPayload(
+                text: 'canonical todo',
+                updatedAt: '2126-01-01T00:00:00.000Z',
+              ),
+              'column_id': 'server-column',
+              'board_order': 5,
+            },
+          ),
+          PushResult(
+            entityId: column.id,
+            entityType: 'todo_column',
+            seq: 0,
+            applied: true,
+            canonicalPayload: <String, dynamic>{
+              'name': 'Canonical lane',
+              'sort_order': 4,
+              'created_at': column.createdAt,
+              'updated_at': '2126-01-01T00:00:00.000Z',
+              'deleted_at': '2126-01-01T00:00:00.000Z',
+            },
+          ),
+        ];
+
+        await build().syncNow();
+
+        final TodoRow canonicalTodo = (await db.getTodoRow(todo.id))!;
+        expect(canonicalTodo.body, 'canonical todo');
+        expect(canonicalTodo.columnId, 'server-column');
+        expect(canonicalTodo.syncDirty, isFalse);
+        final TodoColumnRow canonicalColumn = (await db.getTodoColumnRow(
+          column.id,
+        ))!;
+        expect(canonicalColumn.name, 'Canonical lane');
+        expect(canonicalColumn.deletedAt, isNotNull);
+        expect(canonicalColumn.syncDirty, isFalse);
+      },
+    );
   });
 
   group('folders (v1.24.0)', () {

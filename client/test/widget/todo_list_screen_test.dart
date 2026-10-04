@@ -788,6 +788,129 @@ void main() {
       await unmount(tester);
     });
 
+    testWidgets('card bodies and empty lane bodies are full DragTargets', (
+      tester,
+    ) async {
+      final TodoRepository repo = await mount(tester);
+      final TodoRow card = await repo.add('drop on me');
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(TodoListScreen.viewToggleKey));
+      await tester.pumpAndSettle();
+      final String progress = (await repo.listColumns())[1].id;
+
+      expect(
+        tester.widget<DragTarget<TodoRow>>(
+          find.byKey(TodoListScreen.cardDropKey(defaultTodoColumnId, card.id)),
+        ),
+        isA<DragTarget<TodoRow>>(),
+      );
+      expect(
+        tester.widget<DragTarget<TodoRow>>(
+          find.byKey(TodoListScreen.emptyLaneDropKey(progress)),
+        ),
+        isA<DragTarget<TodoRow>>(),
+      );
+      expect(
+        tester
+            .getSize(find.byKey(TodoListScreen.emptyLaneDropKey(progress)))
+            .height,
+        greaterThan(100),
+        reason: 'the empty body, not only a ten-pixel strip, accepts drops',
+      );
+      await unmount(tester);
+    });
+
+    testWidgets('a 360x880 phone lane scrolls to its twentieth usable card', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(360, 880);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        'todo_board_view': true,
+      });
+      final TodoRepository repo = TodoRepository(db: db);
+      final List<TodoRow> rows = <TodoRow>[];
+      for (int i = 0; i < 20; i++) {
+        rows.add(await repo.add('phone card ${i + 1}'));
+      }
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: <Override>[localDbProvider.overrideWithValue(db)],
+          child: const MaterialApp(home: TodoListScreen()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final Finder lane = find.byKey(
+        TodoListScreen.laneScrollKey(defaultTodoColumnId),
+      );
+      expect(lane, findsOneWidget);
+      final Finder laneScrollable = find.descendant(
+        of: find.byKey(TodoListScreen.columnKey(defaultTodoColumnId)),
+        matching: find.byType(Scrollable),
+      );
+      expect(laneScrollable, findsOneWidget);
+      final ScrollableState laneState = tester.state<ScrollableState>(
+        laneScrollable,
+      );
+      expect(laneState.position.maxScrollExtent, greaterThan(0));
+      final Rect laneRect = tester.getRect(lane);
+      await tester.flingFrom(
+        Offset(laneRect.right - 2, laneRect.center.dy),
+        const Offset(0, -500),
+        1500,
+      );
+      await tester.pumpAndSettle();
+      expect(laneState.position.pixels, greaterThan(0));
+      laneState.position.jumpTo(laneState.position.maxScrollExtent);
+      await tester.pumpAndSettle();
+      final Finder lastCard = find.byKey(TodoListScreen.cardKey(rows.last.id));
+      expect(lastCard.hitTestable(), findsOneWidget);
+      expect(tester.takeException(), isNull, reason: 'no vertical overflow');
+
+      await tester.tap(find.byKey(Key('todo-check-${rows.last.id}')));
+      await tester.pumpAndSettle();
+      expect((await db.getTodoRow(rows.last.id))!.doneAt, isNotNull);
+      await unmount(tester);
+    });
+
+    testWidgets('delete count excludes fallback-only unresolved references', (
+      tester,
+    ) async {
+      final TodoRepository repo = await mount(tester);
+      await repo.ensureColumns();
+      await db.applyRemoteTodo(
+        id: 'unresolved-card',
+        text: 'visible fallback',
+        createdAt: '2026-09-27T10:00:00.000Z',
+        updatedAt: '2026-09-27T10:00:00.000Z',
+        columnId: 'not-pulled-column',
+        seq: 3,
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(TodoListScreen.viewToggleKey));
+      await tester.pumpAndSettle();
+      expect(find.text('visible fallback'), findsOneWidget);
+
+      await tester.tap(
+        find.byKey(TodoListScreen.columnMenuKey(defaultTodoColumnId)),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Delete'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('Choose the column that remains the default destination.'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('Move 1 card'), findsNothing);
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      await unmount(tester);
+    });
+
     testWidgets(
       'non-empty delete prompts for destination and keeps every card',
         (tester) async {

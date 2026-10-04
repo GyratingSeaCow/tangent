@@ -10,11 +10,16 @@ List mode deliberately ignores those board-placement fields.
 ## Migration and sync
 
 Client schema 33 creates `todo_columns` and adds the two placement fields.
-During upgrade it inserts three stable default columns, assigns existing to-dos
-to **To Do**, gives them deterministic row order, and marks the affected rows
-dirty so placement reaches other devices. A fresh database seeds on the first
-to-do creation or first board open. The server migration adds the matching
-table and fields and admits `todo_column` to the change log.
+During upgrade it inserts three stable default columns with an epoch timestamp,
+assigns existing to-dos to **To Do**, gives them deterministic row order, and
+marks formerly clean rows with local migration metadata. Pull may then install a
+newer server body before sync re-applies and pushes only the owed placement.
+Fresh defaults use the same merge-safe epoch stamp, so a remote rename or soft
+delete wins. A fresh database seeds on the first to-do creation or first board
+open. The server migration adds the matching table and fields and admits
+`todo_column` to the change log. A stale last-write-wins acknowledgement carries
+the canonical server row so the client does not clean a rejected local copy and
+leave ghost content behind.
 
 Columns sync as `todo_column` entities; `column_id` and `board_order` travel in
 the existing `todo` payload. Column deletion is a synced soft delete. The fixed
@@ -23,7 +28,8 @@ duplicate defaults.
 
 ## Interaction contract
 
-- Direct card drag is the primary board move and reorder gesture.
+- Direct card drag is the primary board move and reorder gesture. Insertion
+  strips, full card bodies, and the full body of an empty lane accept drops.
 - Board mode has no row long-press or multi-select. This avoids a gesture
   conflict with drag. Card editing and deletion remain under the **⋮** action.
 - The checkbox changes completion only. It never changes `column_id`, so a
@@ -35,9 +41,12 @@ duplicate defaults.
 
 ## Defaults and deletion
 
-When there are no live columns, the repository seeds **To Do**, **In Progress**,
-and **Done**, in that order. New cards enter the first live column. Orphaned
-card references are repaired to that column when columns are ensured.
+When there are no live columns, the repository inserts missing defaults **To
+Do**, **In Progress**, and **Done**, in that order. Existing tombstones are never
+resurrected; if all three fixed ids were retired, a new fallback lane preserves
+the one-live-column invariant. New cards enter the first live column. Only null
+placements are assigned when columns are ensured. Non-null unresolved references
+remain untouched because their remote column may not have pulled yet.
 
 The final live column cannot be deleted. Deleting any other column requires a
 live destination; for a nonempty column all cards are moved to that destination
@@ -50,5 +59,5 @@ before the source column is soft-deleted, in one local transaction.
 - Ordering uses compact integer positions. It is not a sequence CRDT, so
   concurrent offline reorders use the existing sync conflict rules rather than
   preserving both users' orderings.
-- The board is one horizontal scroller of fixed-width lanes; there is no
-  compact layout or independent per-lane vertical scrolling.
+- The board is one horizontal scroller of fixed-width lanes. Each lane scrolls
+  vertically within the available viewport; there is no compact lane layout.

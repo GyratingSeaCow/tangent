@@ -58,6 +58,12 @@ class TodoListScreen extends ConsumerStatefulWidget {
   static Key columnKey(String id) => Key('todo-column-$id');
   static Key columnMenuKey(String id) => Key('todo-column-menu-$id');
   static Key cardKey(String id) => Key('todo-board-card-$id');
+  static Key laneScrollKey(String columnId) =>
+      Key('todo-lane-scroll-$columnId');
+  static Key cardDropKey(String columnId, String todoId) =>
+      Key('todo-card-drop-$columnId-$todoId');
+  static Key emptyLaneDropKey(String columnId) =>
+      Key('todo-empty-drop-$columnId');
   static Key dropKey(String columnId, int index) =>
       Key('todo-drop-$columnId-$index');
 
@@ -679,10 +685,20 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
     for (final List<TodoRow> lane in lanes.values) {
       lane.sort((a, b) => a.boardOrder.compareTo(b.boardOrder));
     }
+    final EdgeInsets padding = EdgeInsets.fromLTRB(
+      12,
+      12,
+      12,
+      listBottomInset(context).bottom,
+    );
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        final double laneHeight = (constraints.maxHeight - padding.vertical)
+            .clamp(180.0, double.infinity);
     return SingleChildScrollView(
       key: const Key('todo-board-scroll'),
       scrollDirection: Axis.horizontal,
-      padding: EdgeInsets.fromLTRB(12, 12, 12, listBottomInset(context).bottom),
+          padding: padding,
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
@@ -693,6 +709,7 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
               lanes[columns[i].id]!,
               i,
               columns,
+                  laneHeight,
             ),
             const SizedBox(width: 12),
           ],
@@ -708,6 +725,8 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
         ],
       ),
     );
+      },
+    );
   }
 
   Widget _buildBoardColumn(
@@ -716,13 +735,12 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
     List<TodoRow> cards,
     int columnIndex,
     List<TodoColumnRow> columns,
+    double height,
   ) {
     return Container(
       key: TodoListScreen.columnKey(column.id),
       width: 300,
-      constraints: BoxConstraints(
-        minHeight: MediaQuery.sizeOf(context).height * .45,
-      ),
+      height: height,
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surfaceContainerLow,
         borderRadius: BorderRadius.circular(12),
@@ -750,7 +768,7 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
                         .read(todoRepositoryProvider)
                         .reorderColumn(column.id, columnIndex + 1);
                   case 'delete':
-                    await _deleteColumn(column, cards, columns);
+                    await _deleteColumn(column, columns);
                 }
               },
               itemBuilder: (_) => <PopupMenuEntry<String>>[
@@ -768,11 +786,27 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
             ),
           ),
           const Divider(height: 1),
-          for (int i = 0; i <= cards.length; i++) ...<Widget>[
-            _boardDropTarget(column.id, i),
-            if (i < cards.length) _buildBoardCard(context, cards[i]),
-          ],
-          const SizedBox(height: 8),
+          Expanded(
+            child: cards.isEmpty
+                ? _emptyLaneDropTarget(column.id)
+                : ListView.builder(
+                    key: TodoListScreen.laneScrollKey(column.id),
+                    padding: const EdgeInsets.only(bottom: 8),
+                    itemCount: cards.length * 2 + 1,
+                    itemBuilder: (BuildContext context, int itemIndex) {
+                      if (itemIndex.isEven) {
+                        return _boardDropTarget(column.id, itemIndex ~/ 2);
+                      }
+                      final int cardIndex = itemIndex ~/ 2;
+                      return _boardCardDropTarget(
+                        column.id,
+                        cardIndex,
+                        cards[cardIndex],
+                        _buildBoardCard(context, cards[cardIndex]),
+                      );
+                    },
+                  ),
+          ),
         ],
       ),
     );
@@ -795,6 +829,56 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
               : Theme.of(context).colorScheme.primaryContainer,
           borderRadius: BorderRadius.circular(8),
         ),
+      ),
+    );
+  }
+
+  Widget _emptyLaneDropTarget(String columnId) {
+    return DragTarget<TodoRow>(
+      key: TodoListScreen.emptyLaneDropKey(columnId),
+      onWillAcceptWithDetails: (_) => true,
+      onAcceptWithDetails: (details) => ref
+          .read(todoRepositoryProvider)
+          .moveOnBoard(details.data.id, columnId, 0),
+      builder: (context, candidates, rejected) => AnimatedContainer(
+        key: TodoListScreen.dropKey(columnId, 0),
+        duration: const Duration(milliseconds: 100),
+        alignment: Alignment.center,
+        color: candidates.isEmpty
+            ? Colors.transparent
+            : Theme.of(context).colorScheme.primaryContainer,
+        child: Text(
+          'Drop a card here',
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+      ),
+    );
+  }
+
+  Widget _boardCardDropTarget(
+    String columnId,
+    int index,
+    TodoRow todo,
+    Widget child,
+  ) {
+    return DragTarget<TodoRow>(
+      key: TodoListScreen.cardDropKey(columnId, todo.id),
+      onWillAcceptWithDetails: (_) => true,
+      onAcceptWithDetails: (details) => ref
+          .read(todoRepositoryProvider)
+          .moveOnBoard(details.data.id, columnId, index),
+      builder: (context, candidates, rejected) => AnimatedContainer(
+        duration: const Duration(milliseconds: 100),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          border: candidates.isEmpty
+              ? null
+              : Border.all(
+                  color: Theme.of(context).colorScheme.primary,
+                  width: 2,
+                ),
+        ),
+        child: child,
       ),
     );
   }
@@ -879,9 +963,11 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
 
   Future<void> _deleteColumn(
     TodoColumnRow column,
-    List<TodoRow> cards,
     List<TodoColumnRow> columns,
   ) async {
+    final TodoRepository repo = ref.read(todoRepositoryProvider);
+    final int cardCount = await repo.countTodosInColumn(column.id);
+    if (!mounted) return;
     final List<TodoColumnRow> destinations = columns
         .where((c) => c.id != column.id)
         .toList();
@@ -894,9 +980,9 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
             Text(
-              cards.isEmpty
+              cardCount == 0
                   ? 'Choose the column that remains the default destination.'
-                  : 'Move ${cards.length} card${cards.length == 1 ? '' : 's'} to:',
+                  : 'Move $cardCount card${cardCount == 1 ? '' : 's'} to:',
             ),
             for (final TodoColumnRow destination in destinations)
               ListTile(
@@ -915,7 +1001,7 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
       ),
     );
     if (destination == null || !mounted) return;
-    await ref.read(todoRepositoryProvider).deleteColumn(column.id, destination);
+    await repo.deleteColumn(column.id, destination);
   }
 
   /// The time chip's label and tint: Overdue (red) / Today / the date.

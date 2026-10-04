@@ -12,6 +12,7 @@ const List<(String, String)> defaultTodoColumns = <(String, String)>[
   ('todo-column-progress', 'In Progress'),
   ('todo-column-done', 'Done'),
 ];
+const String _defaultColumnSeedStamp = '1970-01-01T00:00:00.000Z';
 
 /// Local persistence for to-do items (To Do arc Phase 1).
 ///
@@ -67,7 +68,6 @@ class TodoRepository {
     await _db.transaction(() async {
       List<TodoColumnRow> live = await listColumns();
       if (live.isEmpty) {
-        final String stamp = _stamp();
         for (int i = 0; i < defaultTodoColumns.length; i++) {
           final (String id, String name) = defaultTodoColumns[i];
           await _db
@@ -77,30 +77,37 @@ class TodoRepository {
                   id: id,
                   name: name,
                   sortOrder: i,
-                  createdAt: stamp,
-                  updatedAt: stamp,
+                  createdAt: _defaultColumnSeedStamp,
+                  updatedAt: _defaultColumnSeedStamp,
                 ),
                 mode: InsertMode.insertOrIgnore,
               );
-          await (_db.update(
-            _db.todoColumns,
-          )..where((c) => c.id.equals(id))).write(
-            TodoColumnsCompanion(
-              name: Value(name),
-              sortOrder: Value(i),
-              updatedAt: Value(stamp),
-              deletedAt: const Value(null),
-              syncDirty: const Value(true),
-            ),
-          );
         }
         live = await listColumns();
+        if (live.isEmpty) {
+          // Every conventional id is already a tombstone. Never resurrect
+          // those remote decisions; create one genuinely new fallback lane.
+          final String stamp = _stamp();
+          await _db
+              .into(_db.todoColumns)
+              .insert(
+                TodoColumnsCompanion.insert(
+                  id: 'todo-column-${_idFactory()}',
+                  name: 'To Do',
+                  sortOrder: 0,
+                  createdAt: stamp,
+                  updatedAt: stamp,
+            ),
+          );
+        live = await listColumns();
+      }
       }
       final String first = live.first.id;
-      final Set<String> liveIds = live.map((c) => c.id).toSet();
       final List<TodoRow> rows = await _db.select(_db.todos).get();
       for (final TodoRow row in rows) {
-        if (row.columnId != null && liveIds.contains(row.columnId)) continue;
+        // A non-null unknown id may resolve on a later pull. Rehoming it now
+        // would overwrite that placement, including on newer deleted rows.
+        if (row.deletedAt != null || row.columnId != null) continue;
         await _write(row.id, TodosCompanion(columnId: Value(first)));
       }
     });
@@ -256,7 +263,8 @@ class TodoRepository {
     return rows.map((r) => r.boardOrder).reduce((a, b) => a > b ? a : b) + 1;
   }
 
-  /// Moves [todoId] to [columnId] at [index], compacting both lanes.
+  /// Moves [todoId] to [columnId] at [index], changing only the moved card and
+  /// records whose integer position actually shifts.
   Future<void> moveOnBoard(String todoId, String columnId, int index) async {
     await _db.transaction(() async {
       final TodoRow? moving = await _db.getTodoRow(todoId);
@@ -283,6 +291,7 @@ class TodoRepository {
           lane.insert(adjusted.clamp(0, lane.length), moving);
         }
         for (int i = 0; i < lane.length; i++) {
+          if (lane[i].columnId == laneId && lane[i].boardOrder == i) continue;
           await _write(
             lane[i].id,
             TodosCompanion(columnId: Value(laneId), boardOrder: Value(i)),
@@ -317,13 +326,17 @@ class TodoRepository {
   Future<void> renameColumn(String id, String rawName) async {
     final String name = rawName.trim();
     if (name.isEmpty) throw ArgumentError('Column name cannot be empty');
-    await (_db.update(_db.todoColumns)..where((c) => c.id.equals(id))).write(
+    final int changed =
+        await (_db.update(
+          _db.todoColumns,
+        )..where((c) => c.id.equals(id) & c.deletedAt.isNull())).write(
       TodoColumnsCompanion(
         name: Value(name),
         updatedAt: Value(_stamp()),
         syncDirty: const Value(true),
       ),
     );
+    if (changed != 1) throw StateError('Column is not live: $id');
   }
 
   Future<void> reorderColumn(String id, int newIndex) async {
@@ -355,6 +368,9 @@ class TodoRepository {
       if (columns.length <= 1) {
         throw StateError('A board needs at least one column');
       }
+      if (!columns.any((c) => c.id == id)) {
+        throw StateError('Column is not live: $id');
+      }
       if (id == destinationId || !columns.any((c) => c.id == destinationId)) {
         throw ArgumentError('Choose another live destination column');
       }
@@ -382,6 +398,14 @@ class TodoRepository {
         ),
       );
     });
+  }
+
+  Future<int> countTodosInColumn(String id) async {
+    final Expression<int> count = _db.todos.id.count();
+    final query = _db.selectOnly(_db.todos)
+      ..addColumns(<Expression<Object>>[count])
+      ..where(_db.todos.columnId.equals(id));
+    return (await query.getSingle()).read(count) ?? 0;
   }
 
   /// [moveToFolder] for a multi-select set, one transaction.

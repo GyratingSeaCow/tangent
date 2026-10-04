@@ -342,6 +342,20 @@ void main() {
       expect(row['column_id'], defaultTodoColumnId);
       expect(row['board_order'], isNonNegative);
       expect(row['sync_dirty'], 1, reason: 'the new reference must sync');
+      expect(
+        await db.pendingTodoBoardOrder('old'),
+        isNonNegative,
+        reason: 'sync must merge a newer remote body before pushing placement',
+      );
+      expect(
+        sql
+            .select(
+              "SELECT updated_at FROM todo_columns WHERE id='todo-column-todo'",
+            )
+            .single['updated_at'],
+        '1970-01-01T00:00:00.000Z',
+        reason: 'defaults are merge-safe placeholders, not user edits',
+      );
     },
   );
 }

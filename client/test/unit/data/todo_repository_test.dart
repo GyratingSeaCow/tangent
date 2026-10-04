@@ -245,4 +245,108 @@ void main() {
       expect(after.syncedSeq, isNull);
     },
   );
+
+  test(
+    'moveOnBoard dirties only the moved card and cards whose order shifts',
+    () async {
+      final TodoRow a = await repo.add('a');
+      final TodoRow b = await repo.add('b');
+      final TodoRow c = await repo.add('c');
+      final TodoRow d = await repo.add('d');
+      for (final TodoRow row in <TodoRow>[a, b, c, d]) {
+        await db.markTodoSynced(row.id, seq: 1, pushedUpdatedAt: row.updatedAt);
+      }
+      await db.applyRemoteTodo(
+        id: d.id,
+        text: 'd changed concurrently',
+        createdAt: d.createdAt,
+        updatedAt: '2026-09-27T12:00:01.000Z',
+        columnId: d.columnId,
+        boardOrder: d.boardOrder,
+        seq: 2,
+      );
+
+      clock = clock.add(const Duration(minutes: 1));
+      await repo.moveOnBoard(c.id, defaultTodoColumnId, 1);
+
+      expect((await rowOf(a.id)).syncDirty, isFalse);
+      expect((await rowOf(d.id)).syncDirty, isFalse);
+      expect((await rowOf(d.id)).body, 'd changed concurrently');
+      expect((await rowOf(b.id)).syncDirty, isTrue, reason: 'b shifted right');
+      expect((await rowOf(c.id)).syncDirty, isTrue, reason: 'c moved');
+    },
+  );
+
+  test(
+    'ensureColumns preserves unresolved references and deleted row stamps',
+    () async {
+      await repo.ensureColumns();
+      await db.applyRemoteTodo(
+        id: 'future-live',
+        text: 'wait for its lane',
+        createdAt: '2026-09-27T10:00:00.000Z',
+        updatedAt: '2026-09-27T10:00:00.000Z',
+        columnId: 'peer-column-not-pulled-yet',
+        seq: 3,
+      );
+      await db.applyRemoteTodo(
+        id: 'future-deleted',
+        text: 'retired elsewhere',
+        createdAt: '2026-09-27T10:00:00.000Z',
+        updatedAt: '2026-09-27T11:00:00.000Z',
+        deletedAt: '2026-09-27T11:00:00.000Z',
+        columnId: 'peer-column-not-pulled-yet',
+        seq: 4,
+      );
+
+      await repo.ensureColumns();
+
+      for (final String id in <String>['future-live', 'future-deleted']) {
+        final TodoRow row = (await db.getTodoRow(id))!;
+        expect(row.columnId, 'peer-column-not-pulled-yet');
+        expect(row.syncDirty, isFalse);
+      }
+      expect(
+        (await db.getTodoRow('future-deleted'))!.updatedAt,
+        '2026-09-27T11:00:00.000Z',
+      );
+    },
+  );
+
+  test(
+    'column counts match rows deleteColumn will move, not UI fallbacks',
+    () async {
+      final List<TodoColumnRow> columns = await repo.ensureColumns();
+      final TodoRow actual = await repo.add('actual');
+      final TodoRow deleted = await repo.add('deleted actual');
+      await repo.softDelete(deleted.id);
+      await db.applyRemoteTodo(
+        id: 'unresolved',
+        text: 'shown in fallback only',
+        createdAt: '2026-09-27T10:00:00.000Z',
+        updatedAt: '2026-09-27T10:00:00.000Z',
+        columnId: 'future-column',
+        seq: 5,
+      );
+
+      expect(await repo.countTodosInColumn(columns.first.id), 2);
+      await repo.deleteColumn(columns.first.id, columns[1].id);
+      expect((await rowOf(actual.id)).columnId, columns[1].id);
+      expect((await rowOf(deleted.id)).columnId, columns[1].id);
+      expect((await db.getTodoRow('unresolved'))!.columnId, 'future-column');
+    },
+  );
+
+  test('rename and delete reject non-live source columns', () async {
+    final List<TodoColumnRow> columns = await repo.ensureColumns();
+    final TodoColumnRow retired = columns.last;
+    await repo.deleteColumn(retired.id, columns.first.id);
+
+    await expectLater(repo.renameColumn(retired.id, 'Ghost'), throwsStateError);
+    await expectLater(
+      repo.deleteColumn(retired.id, columns.first.id),
+      throwsStateError,
+    );
+    expect((await db.getTodoColumnRow(retired.id))!.name, retired.name);
+  });
 }

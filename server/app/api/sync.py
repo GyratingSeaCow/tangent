@@ -624,7 +624,7 @@ def _apply_todo(
         if existing is not None and _instant_value(incoming_updated) <= _instant_value(
             existing["updated_at"]
         ):
-            return False, None
+            return False, _todo_sync_payload(existing)
         if existing is not None:
             deleted_at = p.get("deleted_at", incoming_updated)
             _iso_instant(deleted_at, "deleted_at")
@@ -646,7 +646,7 @@ def _apply_todo(
     if existing is not None and _instant_value(updated_at) <= _instant_value(
         existing["updated_at"]
     ):
-        return False, None
+        return False, _todo_sync_payload(existing)
 
     def nullable(field: str) -> str | None:
         value = p[field] if field in p else (existing[field] if existing is not None else None)
@@ -727,7 +727,14 @@ def _apply_todo_column(
     created_at = _iso_instant(p["created_at"], "created_at")
     updated_at = _iso_instant(p["updated_at"], "updated_at")
     if existing is not None and _instant_value(updated_at) <= _instant_value(existing["updated_at"]):
-        return False, None
+        return False, {
+            "id": existing["id"],
+            "name": existing["name"],
+            "sort_order": existing["sort_order"],
+            "created_at": existing["created_at"],
+            "updated_at": existing["updated_at"],
+            "deleted_at": existing["deleted_at"],
+        }
     deleted_at = p.get(
         "deleted_at", existing["deleted_at"] if existing is not None else None
     )
@@ -1194,6 +1201,7 @@ def sync_push(
                             entity_type=change.entity_type,
                             seq=0,
                             status="applied",
+                            canonical_payload=publish_payload,
                         )
                     )
                     continue
@@ -1206,6 +1214,7 @@ def sync_push(
                             entity_type=change.entity_type,
                             seq=0,
                             status="applied",
+                            canonical_payload=publish_payload,
                         )
                     )
                     continue

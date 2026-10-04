@@ -1275,9 +1275,10 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
               await m.addColumn(todos, todos.boardOrder);
             }
 
-            // Existing rows need a real default immediately and must re-push
-            // the new reference. Fixed ids make simultaneous upgrades converge.
-            const String stamp = '2026-10-04T00:00:00.000Z';
+            // Seed values are deliberately older than any real user edit. A peer
+            // may already have renamed or retired one of these fixed ids; its
+            // canonical row must beat this placeholder during the first sync.
+            const String stamp = '1970-01-01T00:00:00.000Z';
             await customStatement(
               'INSERT OR IGNORE INTO todo_columns '
               '(id,name,sort_order,created_at,updated_at,sync_dirty) VALUES '
@@ -1287,6 +1288,21 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
               <Object>[stamp],
             );
             if (todoInfo.isNotEmpty) {
+              // Synthetic/sideways old schemas may predate the settings table even
+              // when their user_version is newer. The marker is local metadata, so
+              // create its table defensively before recording any rows.
+              final bool settingsExist = (await customSelect(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='settings'",
+              ).get()).isNotEmpty;
+              if (!settingsExist) await m.createTable(localSettings);
+              // Remember exactly which formerly-clean rows owe only the new board
+              // placement. Pull runs before push; sync can accept a newer remote
+              // body, then re-apply just this placement with a fresh stamp.
+              await customStatement(
+                'INSERT OR REPLACE INTO settings(key,value) '
+                'SELECT \'todo_kanban_backfill:\' || id, CAST(rowid AS TEXT) '
+                'FROM todos WHERE column_id IS NULL AND sync_dirty=0',
+              );
               await customStatement(
                 "UPDATE todos SET column_id='todo-column-todo', "
                 'board_order=rowid, sync_dirty=1 '
@@ -2220,6 +2236,41 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   /// a present null is authoritative (an undated todo, an unchecked todo).
   static const Object absentTodoField = Object();
 
+  static const String todoBoardBackfillPrefix = 'todo_kanban_backfill:';
+
+  /// The migrated placement owed by a formerly-clean todo, or null when this
+  /// row was not dirtied solely by the Kanban upgrade.
+  Future<int?> pendingTodoBoardOrder(String id) async {
+    final LocalSettingRow? marker =
+        await (select(localSettings)
+              ..where((s) => s.key.equals('$todoBoardBackfillPrefix$id')))
+            .getSingleOrNull();
+    return marker == null ? null : int.tryParse(marker.value);
+  }
+
+  /// Re-applies only the placement after a newer canonical server body lands.
+  Future<void> restorePendingTodoBoardPlacement(
+    String id, {
+    required String updatedAt,
+  }) async {
+    final int? order = await pendingTodoBoardOrder(id);
+    if (order == null) return;
+    await (update(todos)..where((t) => t.id.equals(id))).write(
+      TodosCompanion(
+        columnId: const Value('todo-column-todo'),
+        boardOrder: Value(order),
+        updatedAt: Value(updatedAt),
+        syncDirty: const Value(true),
+      ),
+    );
+  }
+
+  Future<void> completeTodoBoardBackfill(String id) async {
+    await (delete(
+      localSettings,
+    )..where((s) => s.key.equals('$todoBoardBackfillPrefix$id'))).go();
+  }
+
   /// One todo row, or null. Used by merge to see what is already here.
   Future<TodoRow?> getTodoRow(String id) =>
       (select(todos)..where((t) => t.id.equals(id))).getSingleOrNull();
@@ -2332,7 +2383,6 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     Object? deletedAt = absentTodoField,
   }) async {
     final TodoColumnRow? existing = await getTodoColumnRow(id);
-    if (existing?.syncDirty == true) return;
     if (existing != null && existing.updatedAt.compareTo(updatedAt) > 0) return;
     await into(todoColumns).insert(
       TodoColumnsCompanion.insert(

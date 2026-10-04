@@ -162,6 +162,9 @@ def test_stale_todo_update_is_dropped(todo_api):
             "payload": payload,
         }]).json()["results"][0]
         assert result["status"] == "applied"
+    assert result["seq"] == 0
+    assert result["canonical_payload"]["text"] == "fresh"
+    assert result["canonical_payload"]["updated_at"] == fresh["updated_at"]
     assert db.execute("SELECT text FROM todos WHERE id = 'todo-stale'").fetchone()[0] == "fresh"
     assert db.execute(
         "SELECT COUNT(*) FROM change_log WHERE entity_type='todo' AND entity_id='todo-stale'"
@@ -478,6 +481,8 @@ def test_todo_column_upsert_stale_write_and_soft_delete_round_trip(todo_api):
     }]).json()["results"][0]
     assert stale["status"] == "applied"
     assert stale["seq"] == 0
+    assert stale["canonical_payload"]["name"] == "In review"
+    assert stale["canonical_payload"]["updated_at"] == column["updated_at"]
     assert db.execute(
         "SELECT name FROM todo_columns WHERE id = 'column-review'"
     ).fetchone()[0] == "In review"
