@@ -160,6 +160,22 @@ void main() {
             kNotebookImportBlockHeight,
       );
     });
+
+    test('a table contributes its full bounded viewport to content bottom', () {
+      final double bottom = notebookContentBottom(
+        const <NotebookBlock>[
+          NotebookTableBlock(
+            id: 'table',
+            rows: 100,
+            columns: 100,
+            x: 16,
+            y: 400,
+          ),
+        ],
+        const <InkStroke>[],
+      );
+      expect(bottom, 400 + kNotebookTableMaxViewportHeight);
+    });
   });
 
   group('importDumpsIntoNotebook', () {

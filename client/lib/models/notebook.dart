@@ -200,10 +200,79 @@ sealed class NotebookBlock {
           width: width.toDouble(),
           height: height.toDouble(),
         );
+      case 'table':
+        final rows = raw['rows'];
+        final columns = raw['columns'];
+        final x = raw['x'];
+        final y = raw['y'];
+        if (rows is! int ||
+            columns is! int ||
+            rows < 1 ||
+            rows > kNotebookTableMaxDimension ||
+            columns < 1 ||
+            columns > kNotebookTableMaxDimension ||
+            x is! num ||
+            y is! num) {
+          return NotebookUnknownBlock(raw);
+        }
+        final Map<int, String>? cells = _decodeTableCells(
+          raw['cells'],
+          rows: rows,
+          columns: columns,
+        );
+        if (cells == null) return NotebookUnknownBlock(raw);
+        return NotebookTableBlock(
+          id: id,
+          rows: rows,
+          columns: columns,
+          x: x.toDouble(),
+          y: y.toDouble(),
+          cells: cells,
+        );
       default:
         return NotebookUnknownBlock(raw);
     }
   }
+}
+
+/// Largest supported row or column count for one notebook table.
+const int kNotebookTableMaxDimension = 100;
+
+/// Fixed cell geometry in canonical notebook-page pixels.
+const double kNotebookTableCellWidth = 120;
+const double kNotebookTableCellHeight = 44;
+
+/// Large tables scroll inside a bounded viewport instead of widening the page.
+const double kNotebookTableMaxViewportWidth = 600;
+const double kNotebookTableMaxViewportHeight = 352;
+
+Map<int, String>? _decodeTableCells(
+  Object? raw, {
+  required int rows,
+  required int columns,
+}) {
+  // Empty cells are the default and are omitted from the wire format. This
+  // keeps a new 100x100 table small instead of writing 10,000 empty strings.
+  if (raw == null) return <int, String>{};
+  if (raw is! List) return null;
+  final Map<int, String> cells = <int, String>{};
+  for (final Object? entry in raw) {
+    if (entry is! Map<String, dynamic>) return null;
+    final Object? row = entry['r'];
+    final Object? column = entry['c'];
+    final Object? text = entry['text'];
+    if (row is! int ||
+        column is! int ||
+        text is! String ||
+        row < 0 ||
+        row >= rows ||
+        column < 0 ||
+        column >= columns) {
+      return null;
+    }
+    if (text.isNotEmpty) cells[row * columns + column] = text;
+  }
+  return cells;
 }
 
 /// Tolerant `stamps` reader: a missing, mistyped, or partly garbage list
@@ -416,6 +485,104 @@ class NotebookImageBlock extends NotebookBlock {
         'width': width,
         'height': height,
       };
+}
+
+/// An editable grid positioned on the notebook page.
+///
+/// Cell contents are stored sparsely by row-major index. Empty cells do not
+/// consume document JSON, which matters at the supported 100x100 maximum.
+/// The editor paints only the visible grid window and mounts at most one
+/// TextField for the cell currently being edited.
+class NotebookTableBlock extends NotebookBlock {
+  const NotebookTableBlock({
+    required this.id,
+    required this.rows,
+    required this.columns,
+    required this.x,
+    required this.y,
+    this.cells = const <int, String>{},
+  })  : assert(rows >= 1 && rows <= kNotebookTableMaxDimension),
+        assert(columns >= 1 && columns <= kNotebookTableMaxDimension);
+
+  @override
+  final String id;
+  final int rows;
+  final int columns;
+  final double x;
+  final double y;
+
+  /// Non-empty cell values keyed by `row * columns + column`.
+  final Map<int, String> cells;
+
+  double get contentWidth => columns * kNotebookTableCellWidth;
+  double get contentHeight => rows * kNotebookTableCellHeight;
+  double get viewportWidth => contentWidth < kNotebookTableMaxViewportWidth
+      ? contentWidth
+      : kNotebookTableMaxViewportWidth;
+  double get viewportHeight => contentHeight < kNotebookTableMaxViewportHeight
+      ? contentHeight
+      : kNotebookTableMaxViewportHeight;
+
+  String cellAt(int row, int column) {
+    assert(row >= 0 && row < rows);
+    assert(column >= 0 && column < columns);
+    return cells[row * columns + column] ?? '';
+  }
+
+  NotebookTableBlock copyWith({
+    double? x,
+    double? y,
+    Map<int, String>? cells,
+  }) =>
+      NotebookTableBlock(
+        id: id,
+        rows: rows,
+        columns: columns,
+        x: x ?? this.x,
+        y: y ?? this.y,
+        cells: cells ?? this.cells,
+      );
+
+  NotebookTableBlock copyWithCell(int row, int column, String text) {
+    assert(row >= 0 && row < rows);
+    assert(column >= 0 && column < columns);
+    final int index = row * columns + column;
+    final Map<int, String> changed = <int, String>{...cells};
+    if (text.isEmpty) {
+      changed.remove(index);
+    } else {
+      changed[index] = text;
+    }
+    return copyWith(cells: changed);
+  }
+
+  @override
+  Map<String, dynamic> toJson() {
+    final List<MapEntry<int, String>> ordered = cells.entries
+        .where((MapEntry<int, String> entry) => entry.value.isNotEmpty)
+        .toList(growable: false)
+      ..sort(
+        (MapEntry<int, String> a, MapEntry<int, String> b) =>
+            a.key.compareTo(b.key),
+      );
+    return <String, dynamic>{
+      'kind': 'table',
+      'id': id,
+      'rows': rows,
+      'columns': columns,
+      'x': x,
+      'y': y,
+      if (ordered.isNotEmpty)
+        'cells': <Map<String, dynamic>>[
+          for (final MapEntry<int, String> entry in ordered)
+            <String, dynamic>{
+              'r': entry.key ~/ columns,
+              'c': entry.key % columns,
+              'text': entry.value,
+            },
+        ],
+    };
+  }
 }
 
 /// A block this build cannot interpret, retained byte-for-byte.

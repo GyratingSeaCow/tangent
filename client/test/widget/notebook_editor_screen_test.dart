@@ -18,11 +18,13 @@ import 'package:tangent/screens/dump/dumps_providers.dart';
 import 'package:tangent/screens/notebook/notebook_editor_screen.dart';
 import 'package:tangent/screens/settings/ai_summaries_section.dart'
     show summariesEnabledProvider;
+import 'package:tangent/services/notebook_import.dart';
 import 'package:tangent/services/notebook_persistence.dart';
 import 'package:tangent/services/recording_playback.dart';
 import 'package:tangent/widgets/dump_picker_sheet.dart';
 import 'package:tangent/widgets/notebook_dump_card.dart';
 import 'package:tangent/widgets/notebook_ink_canvas.dart';
+import 'package:tangent/widgets/notebook_table_block.dart';
 
 import '../support/fake_notebook_repository.dart';
 
@@ -429,6 +431,194 @@ void main() {
     await unmount(tester);
   });
 
+  testWidgets(
+    'Table insertion caps size, virtualizes the real editor, edits and saves',
+    (WidgetTester tester) async {
+      await mountEditor(
+        tester,
+        notebook: testNotebook(
+          id: 'nb-1',
+          blocks: const <NotebookBlock>[
+            NotebookTextBlock(
+              id: 'above',
+              text: 'existing content',
+              x: 16,
+              y: 200,
+            ),
+          ],
+          strokes: const <InkStroke>[
+            InkStroke(
+              id: 'ink-low',
+              width: 3,
+              points: <InkPoint>[InkPoint(x: 20, y: 500)],
+            ),
+          ],
+        ),
+      );
+
+      await tester.tap(find.byKey(const ValueKey('notebook-insert-menu')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('notebook-insert-table')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Insert table'), findsOneWidget);
+      await tester.enterText(
+        find.byKey(const ValueKey('notebook-table-rows')),
+        '101',
+      );
+      await tester.tap(find.byKey(const ValueKey('notebook-table-create')));
+      await tester.pump();
+      expect(find.text('1–100'), findsOneWidget);
+      expect(find.byType(NotebookTableBlockWidget), findsNothing);
+
+      await tester.enterText(
+        find.byKey(const ValueKey('notebook-table-rows')),
+        '100',
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('notebook-table-columns')),
+        '100',
+      );
+      await tester.tap(find.byKey(const ValueKey('notebook-table-create')));
+      await tester.pumpAndSettle();
+
+      final Finder table = find.byType(NotebookTableBlockWidget);
+      expect(table, findsOneWidget);
+      expect(
+        find.descendant(of: table, matching: find.byType(TextField)),
+        findsNothing,
+        reason: '10,000 cells must not become 10,000 TextFields',
+      );
+
+      final Finder grid = find.descendant(
+        of: table,
+        matching: find.byWidgetPredicate(
+          (Widget widget) =>
+              widget.key is ValueKey<String> &&
+              (widget.key! as ValueKey<String>).value.startsWith(
+                'notebook-table-grid-',
+              ),
+        ),
+      );
+      final List<SingleChildScrollView> tableScrolls = tester
+          .widgetList<SingleChildScrollView>(
+            find.descendant(
+              of: table,
+              matching: find.byType(SingleChildScrollView),
+            ),
+          )
+          .toList(growable: false);
+      final ScrollController horizontal = tableScrolls
+          .singleWhere(
+            (SingleChildScrollView scroll) =>
+                scroll.scrollDirection == Axis.horizontal,
+          )
+          .controller!;
+      final ScrollController vertical = tableScrolls
+          .singleWhere(
+            (SingleChildScrollView scroll) =>
+                scroll.scrollDirection == Axis.vertical,
+          )
+          .controller!;
+      NotebookTablePainter tablePainter() =>
+          tester
+              .widget<CustomPaint>(
+                find.descendant(of: grid, matching: find.byType(CustomPaint)),
+              )
+              .painter!
+              as NotebookTablePainter;
+      final Finder renderedViewport = find.descendant(
+        of: table,
+        matching: find.byWidgetPredicate(
+          (Widget widget) =>
+              widget.key is ValueKey<String> &&
+              (widget.key! as ValueKey<String>).value.startsWith(
+                'notebook-table-viewport-',
+              ),
+        ),
+      );
+      void expectPainterMatchesRenderedViewport() {
+        final Size renderedSize = tester.getSize(renderedViewport);
+        expect(horizontal.position.viewportDimension, renderedSize.width);
+        expect(vertical.position.viewportDimension, renderedSize.height);
+        expect(tablePainter().debugLastViewport!.size, renderedSize);
+      }
+
+      expect(tablePainter().debugLastVisitedCellCount, 40);
+      expect(
+        tablePainter().debugLastVisibleRange,
+        (firstRow: 0, lastRow: 7, firstColumn: 0, lastColumn: 4),
+        reason: 'the real editor tree must paint only its rendered viewport',
+      );
+      expectPainterMatchesRenderedViewport();
+      final Size normalViewport = tester.getSize(renderedViewport);
+
+      await tester.tap(find.byIcon(Icons.draw));
+      await tester.pump();
+      final Size drawingViewport = tester.getSize(renderedViewport);
+      expect(
+        drawingViewport.width,
+        greaterThan(normalViewport.width),
+        reason: 'hiding the drag grip gives its width to the table viewport',
+      );
+      expectPainterMatchesRenderedViewport();
+      expect(
+        tablePainter().debugLastVisitedCellCount,
+        48,
+        reason: 'the extra rendered column sliver must be painted in draw mode',
+      );
+
+      await tester.tap(find.byIcon(Icons.draw));
+      await tester.pump();
+      expect(tester.getSize(renderedViewport), normalViewport);
+      expectPainterMatchesRenderedViewport();
+
+      horizontal.jumpTo(horizontal.position.maxScrollExtent);
+      vertical.jumpTo(vertical.position.maxScrollExtent);
+      await tester.pump();
+
+      expect(tablePainter().debugLastVisitedCellCount, 40);
+      expect(
+        tablePainter().debugLastVisibleRange,
+        (firstRow: 92, lastRow: 99, firstColumn: 95, lastColumn: 99),
+        reason: 'scroll offsets must move the bounded paint window',
+      );
+
+      horizontal.jumpTo(0);
+      vertical.jumpTo(0);
+      await tester.pump();
+      await tester.tapAt(tester.getTopLeft(grid) + const Offset(20, 20));
+      await tester.pump();
+      final Finder cellEditor = find.descendant(
+        of: table,
+        matching: find.byType(TextField),
+      );
+      expect(cellEditor, findsOneWidget);
+      await tester.enterText(cellEditor, 'budget');
+      await tester.pump();
+
+      await tester.tap(find.byIcon(Icons.save));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      final NotebookTableBlock saved = repository.saved.single.document.blocks
+          .whereType<NotebookTableBlock>()
+          .single;
+      expect(saved.rows, 100);
+      expect(saved.columns, 100);
+      expect(saved.x, kNotebookImportX);
+      expect(
+        saved.y,
+        500 + kNotebookImportSpacing,
+        reason: 'the table must land below the lowest ink, not over it',
+      );
+      expect(saved.cellAt(0, 0), 'budget');
+      expect(tester.takeException(), isNull);
+
+      await unmount(tester);
+    },
+  );
+
   testWidgets('Add recordings embeds the picked dumps as cards',
       (tester) async {
     await mountEditor(
@@ -516,6 +706,7 @@ void main() {
       for (final String label in <String>[
         'Text block',
         'Checkbox',
+        'Table',
         'Recording',
         'Meeting notes',
         'Text note',
@@ -2623,6 +2814,38 @@ void main() {
         canonicalWidth,
         greaterThanOrEqualTo(960),
         reason: 'a dump card at x=800 reaches 960 at the minimum block width',
+      );
+      await unmount(tester);
+    });
+
+    testWidgets('a table near the right edge is not clipped', (tester) async {
+      tester.view.physicalSize = const Size(475, 751);
+      tester.view.devicePixelRatio = 1.0;
+      await mountEditor(
+        tester,
+        notebook: testNotebook(
+          id: 'nb-1',
+          title: 'Right-edge table',
+          blocks: const <NotebookBlock>[
+            NotebookTableBlock(
+              id: 'table-1',
+              rows: 100,
+              columns: 100,
+              x: 700,
+              y: 40,
+            ),
+          ],
+        ),
+        setViewSize: false,
+      );
+
+      final double canonicalWidth = tester
+          .getSize(find.byType(NotebookInkCanvas))
+          .width;
+      expect(
+        canonicalWidth,
+        greaterThanOrEqualTo(700 + kNotebookTableMaxViewportWidth + 56),
+        reason: 'the page must include the table viewport and its controls',
       );
       await unmount(tester);
     });
