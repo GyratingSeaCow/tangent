@@ -198,6 +198,21 @@ def test_search_notes_never_sees_deleted(client):
     assert types == {"notebook"}
 
 
+def test_search_notes_excludes_password_protected_notebooks(client):
+    cli, token, path = client
+    _seed(path)
+    conn = _db(path)
+    conn.execute(
+        "UPDATE notebooks SET password_hash='hash', password_salt='salt', "
+        "password_iterations=210000 WHERE id='nb-1'"
+    )
+    conn.commit()
+    conn.close()
+
+    payload = _call_tool(cli, token, "search_notes", {"query": "florist orchids"})
+    assert all(hit["entity_id"] != "nb-1" for hit in payload["results"])
+
+
 def test_list_recordings_excludes_deleted_and_flags(client):
     cli, token, path = client
     _seed(path)
@@ -242,6 +257,30 @@ def test_get_notebook_includes_typed_text_and_ink_words(client):
     assert payload["title"] == "Ideas"
     assert "florist" in payload["text"]
     assert payload["handwriting_words"] == ["Zeppelin"]
+
+
+def test_get_notebook_denies_password_protected_content(client):
+    cli, token, path = client
+    _seed(path)
+    conn = _db(path)
+    conn.execute(
+        "UPDATE notebooks SET password_hash='hash', password_salt='salt', "
+        "password_iterations=210000 WHERE id='nb-1'"
+    )
+    conn.commit()
+    conn.close()
+
+    response = _rpc(
+        cli,
+        token,
+        "tools/call",
+        {"name": "get_notebook", "arguments": {"notebook_id": "nb-1"}},
+    )
+    assert response.status_code == 200
+    result = response.json()["result"]
+    assert result["isError"] is True
+    assert "password protected" in result["content"][0]["text"]
+    assert "florist" not in result["content"][0]["text"]
 
 
 def test_list_todos_default_hides_done(client):
