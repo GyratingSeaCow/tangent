@@ -5,12 +5,36 @@
 // the cached file, and evicts the decoded FileImage after it scrolls away.
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 
-import 'package:flutter/foundation.dart' show ValueListenable;
+import 'package:flutter/foundation.dart'
+    show ValueListenable, visibleForTesting;
 import 'package:flutter/material.dart';
 
 import '../models/notebook.dart';
 import '../services/notebook_pdf_import.dart';
+
+const double kNotebookPdfMaxDeviceScale = 3;
+const int kNotebookPdfMaxRasterDimension = 8000;
+
+@visibleForTesting
+(int, int) notebookPdfRasterSize(
+  NotebookPdfPageBlock block,
+  double devicePixelRatio,
+) {
+  final double requested = devicePixelRatio.clamp(
+    1,
+    kNotebookPdfMaxDeviceScale,
+  );
+  final double capped = math.min(
+    requested,
+    kNotebookPdfMaxRasterDimension / math.max(block.width, block.height),
+  );
+  return (
+    (block.width * capped).round().clamp(1, kNotebookPdfMaxRasterDimension),
+    (block.height * capped).round().clamp(1, kNotebookPdfMaxRasterDimension),
+  );
+}
 
 class NotebookPdfPageBlockWidget extends StatefulWidget {
   const NotebookPdfPageBlockWidget({
@@ -39,6 +63,7 @@ class _NotebookPdfPageBlockWidgetState
   Object? _error;
   int _generation = 0;
   bool _loading = false;
+  double? _devicePixelRatio;
 
   Rect get _pageRect => Rect.fromLTWH(
     widget.block.x,
@@ -51,6 +76,17 @@ class _NotebookPdfPageBlockWidgetState
   void initState() {
     super.initState();
     widget.visiblePageRect.addListener(_visibilityChanged);
+    scheduleMicrotask(_visibilityChanged);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final double next = MediaQuery.devicePixelRatioOf(context);
+    if (_devicePixelRatio != null && _devicePixelRatio != next) {
+      _releaseImage();
+    }
+    _devicePixelRatio = next;
     scheduleMicrotask(_visibilityChanged);
   }
 
@@ -113,11 +149,16 @@ class _NotebookPdfPageBlockWidgetState
       _error = null;
     });
     try {
+      final (int width, int height) = notebookPdfRasterSize(
+        widget.block,
+        _devicePixelRatio ?? 1,
+      );
       final File file = await widget.loader.loadPage(
+        documentId: widget.block.documentId,
         sourceData: widget.sourceData!,
         pageNumber: widget.block.pageNumber,
-        width: (widget.block.width * 2).round(),
-        height: (widget.block.height * 2).round(),
+        width: width,
+        height: height,
       );
       if (!mounted || generation != _generation) return;
       setState(() {

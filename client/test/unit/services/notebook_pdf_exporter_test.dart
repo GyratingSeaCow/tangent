@@ -14,18 +14,19 @@ import 'dart:ui' as ui;
 import 'dart:ui' show Color;
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:image/image.dart' as img;
 import 'package:tangent/models/notebook.dart';
 import 'package:tangent/services/notebook_pdf_exporter.dart';
 import 'package:tangent/services/notebook_pdf_import.dart';
 import 'package:tangent/widgets/notebook_ink_canvas.dart';
 
 InkStroke stroke(String id, List<(double, double)> pts) => InkStroke(
-      id: id,
-      width: 3,
-      points: <InkPoint>[
-        for (final (double x, double y) in pts) InkPoint(x: x, y: y),
-      ],
-    );
+  id: id,
+  width: 3,
+  points: <InkPoint>[
+    for (final (double x, double y) in pts) InkPoint(x: x, y: y),
+  ],
+);
 
 /// The exported page's raster, recovered from the PDF's own bytes.
 class _PageRaster {
@@ -98,14 +99,28 @@ _PageRaster _pageRasterOf(Uint8List pdf) {
     allowInvalid: true,
   );
   final int width = int.parse(RegExp(r'/Width\s*(\d+)').firstMatch(dict)![1]!);
-  final int height =
-      int.parse(RegExp(r'/Height\s*(\d+)').firstMatch(dict)![1]!);
-  final int length =
-      int.parse(RegExp(r'/Length\s*(\d+)').firstMatch(dict)![1]!);
-  final int dataStart = streamStart + 'stream\n'.length;
-  final Uint8List rgb = Uint8List.fromList(
-    zlib.decode(pdf.sublist(dataStart, dataStart + length)),
+  final int height = int.parse(
+    RegExp(r'/Height\s*(\d+)').firstMatch(dict)![1]!,
   );
+  final int length = int.parse(
+    RegExp(r'/Length\s*(\d+)').firstMatch(dict)![1]!,
+  );
+  final int dataStart = streamStart + 'stream\n'.length;
+  final Uint8List payload = pdf.sublist(dataStart, dataStart + length);
+  final Uint8List rgb;
+  if (dict.contains('/DCTDecode')) {
+    final img.Image decoded = img.decodeJpg(payload)!;
+    final Uint8List channels = Uint8List(decoded.width * decoded.height * 3);
+    var offset = 0;
+    for (final img.Pixel pixel in decoded) {
+      channels[offset++] = pixel.r.toInt();
+      channels[offset++] = pixel.g.toInt();
+      channels[offset++] = pixel.b.toInt();
+    }
+    rgb = channels;
+  } else {
+    rgb = Uint8List.fromList(zlib.decode(payload));
+  }
   expect(
     rgb.length,
     width * height * 3,
@@ -121,14 +136,12 @@ _PageRaster _pageRasterOf(Uint8List pdf) {
 /// the mapping needs only the raster size and the content box: pad falls out
 /// as (rasterWidth/2 - contentWidth) / 2 per side.
 int _rx(_PageRaster raster, double x, double contentLeft, double contentRight) {
-  final double pad =
-      (raster.width / 2 - (contentRight - contentLeft)) / 2;
+  final double pad = (raster.width / 2 - (contentRight - contentLeft)) / 2;
   return ((x - contentLeft + pad) * 2).round();
 }
 
 int _ry(_PageRaster raster, double y, double contentTop, double contentBottom) {
-  final double pad =
-      (raster.height / 2 - (contentBottom - contentTop)) / 2;
+  final double pad = (raster.height / 2 - (contentBottom - contentTop)) / 2;
   return ((y - contentTop + pad) * 2).round();
 }
 
@@ -190,7 +203,6 @@ void _expectPixel(
   expect(actual.$3.toDouble(), closeTo(wanted.$3, delta), reason: reason);
 }
 
-
 class _RecordingPdfLoader implements PdfPageRasterLoader {
   _RecordingPdfLoader(this.directory, this.png);
 
@@ -201,6 +213,7 @@ class _RecordingPdfLoader implements PdfPageRasterLoader {
 
   @override
   Future<File> loadPage({
+    required String documentId,
     required String sourceData,
     required int pageNumber,
     required int width,
@@ -211,6 +224,31 @@ class _RecordingPdfLoader implements PdfPageRasterLoader {
     final File file = File('${directory.path}/page-$pageNumber.png');
     file.writeAsBytesSync(png);
     return Future<File>.value(file);
+  }
+}
+
+class _SolidPageRenderer implements PdfPagePngRenderer {
+  _SolidPageRenderer(this.png);
+
+  final Uint8List png;
+  int calls = 0;
+  int active = 0;
+  int maxActive = 0;
+
+  @override
+  Future<Uint8List> renderPage({
+    required File source,
+    required int pageNumber,
+    required int width,
+    required int height,
+  }) async {
+    calls++;
+    active++;
+    maxActive = active > maxActive ? active : maxActive;
+    expect(await source.readAsBytes(), <int>[112, 100, 102]);
+    await Future<void>.delayed(Duration.zero);
+    active--;
+    return png;
   }
 }
 
@@ -273,39 +311,44 @@ void main() {
     expect(bytes.length, greaterThan(3000));
   });
 
-  test('a coloured pen stroke renders its colour into the page raster',
-      () async {
-    // A red line across the page: content box x 10..90, y 20..20.
-    final bytes = await renderNotebookPdf(
-      const NotebookExportSource(
-        title: 'red ink',
-        document: NotebookDocument.empty(),
-        strokes: <InkStroke>[
-          InkStroke(
-            id: 'pen-red',
-            width: 6,
-            colour: InkColor.red,
-            points: <InkPoint>[InkPoint(x: 10, y: 20), InkPoint(x: 90, y: 20)],
-          ),
-        ],
-      ),
-    );
+  test(
+    'a coloured pen stroke renders its colour into the page raster',
+    () async {
+      // A red line across the page: content box x 10..90, y 20..20.
+      final bytes = await renderNotebookPdf(
+        const NotebookExportSource(
+          title: 'red ink',
+          document: NotebookDocument.empty(),
+          strokes: <InkStroke>[
+            InkStroke(
+              id: 'pen-red',
+              width: 6,
+              colour: InkColor.red,
+              points: <InkPoint>[
+                InkPoint(x: 10, y: 20),
+                InkPoint(x: 90, y: 20),
+              ],
+            ),
+          ],
+        ),
+      );
 
-    final _PageRaster raster = _pageRasterOf(Uint8List.fromList(bytes));
-    // Mid-stroke: the pen's own opaque red, not white and not background.
-    _expectPixel(
-      raster.at(_rx(raster, 50, 10, 90), _ry(raster, 20, 20, 20)),
-      _opaqueRgb(InkColor.red),
-      reason: 'mid-stroke pixel should be InkColor.red',
-    );
-    // Well clear of the stroke: the page background, proving the sample
-    // mapping is not just reading a page flooded with one colour.
-    _expectPixel(
-      raster.at(_rx(raster, 50, 10, 90), _ry(raster, 34, 20, 20)),
-      _bgRgb(),
-      reason: 'off-stroke pixel should be the page background',
-    );
-  });
+      final _PageRaster raster = _pageRasterOf(Uint8List.fromList(bytes));
+      // Mid-stroke: the pen's own opaque red, not white and not background.
+      _expectPixel(
+        raster.at(_rx(raster, 50, 10, 90), _ry(raster, 20, 20, 20)),
+        _opaqueRgb(InkColor.red),
+        reason: 'mid-stroke pixel should be InkColor.red',
+      );
+      // Well clear of the stroke: the page background, proving the sample
+      // mapping is not just reading a page flooded with one colour.
+      _expectPixel(
+        raster.at(_rx(raster, 50, 10, 90), _ry(raster, 34, 20, 20)),
+        _bgRgb(),
+        reason: 'off-stroke pixel should be the page background',
+      );
+    },
+  );
 
   test('handwriting shows through a translucent highlighter band', () async {
     // The pen stroke is stored FIRST and the highlighter SECOND: only the
@@ -351,8 +394,7 @@ void main() {
     );
   });
 
-  test('a wide highlighter at the content edge keeps its whole band',
-      () async {
+  test('a wide highlighter at the content edge keeps its whole band', () async {
     // Width 12 -> a 48-logical-px band, whose half (24) overhangs the old
     // fixed inflate(20) padding: the page came out too short and sliced
     // 4 logical px off each side of the mark.
@@ -380,7 +422,8 @@ void main() {
     expect(
       raster.height,
       greaterThanOrEqualTo((bandHeight * 2).round()),
-      reason: 'page too short for the band: the padding does not cover '
+      reason:
+          'page too short for the band: the padding does not cover '
           'width * kHighlighterWidthFactor / 2',
     );
     // A pixel near the band's top edge — canvas y 29, INSIDE the band
@@ -399,95 +442,100 @@ void main() {
     );
   });
 
-  test('an image block renders its actual pixels into the page raster',
-      () async {
-    // A solid red 4x4 PNG stretched to an 80x60 block at (40, 60). The
-    // content box is decided by the block's NOMINAL footprint (300x90 from
-    // its origin), which exceeds the image itself: x 40..340, y 60..150.
-    final String red = await _solidPngBase64(const Color(0xFFFF0000), 4, 4);
-    final bytes = await renderNotebookPdf(
-      NotebookExportSource(
-        title: 'picture',
-        document: NotebookDocument(<NotebookBlock>[
-          NotebookImageBlock(
-            id: 'img-1',
-            data: red,
-            mime: 'image/png',
-            x: 40,
-            y: 60,
-            width: 80,
-            height: 60,
-          ),
-        ]),
-        strokes: const <InkStroke>[],
-      ),
-    );
+  test(
+    'an image block renders its actual pixels into the page raster',
+    () async {
+      // A solid red 4x4 PNG stretched to an 80x60 block at (40, 60). The
+      // content box is decided by the block's NOMINAL footprint (300x90 from
+      // its origin), which exceeds the image itself: x 40..340, y 60..150.
+      final String red = await _solidPngBase64(const Color(0xFFFF0000), 4, 4);
+      final bytes = await renderNotebookPdf(
+        NotebookExportSource(
+          title: 'picture',
+          document: NotebookDocument(<NotebookBlock>[
+            NotebookImageBlock(
+              id: 'img-1',
+              data: red,
+              mime: 'image/png',
+              x: 40,
+              y: 60,
+              width: 80,
+              height: 60,
+            ),
+          ]),
+          strokes: const <InkStroke>[],
+        ),
+      );
 
-    final _PageRaster raster = _pageRasterOf(Uint8List.fromList(bytes));
-    // Image centre, canvas (80, 90): the fixture's own red, not the page
-    // background and not the old '\u{1F5BC} Picture' placeholder.
-    _expectPixel(
-      raster.at(_rx(raster, 80, 40, 340), _ry(raster, 90, 60, 150)),
-      (255, 0, 0),
-      reason: 'image-centre pixel should be the fixture red',
-    );
-    // Interior near the image's bottom-right, well inside the dest rect but
-    // away from its centre: red everywhere the block claims, proving the
-    // image fills its stored width x height (the editor's BoxFit.fill).
-    _expectPixel(
-      raster.at(_rx(raster, 110, 40, 340), _ry(raster, 115, 60, 150)),
-      (255, 0, 0),
-      reason: 'image interior near bottom-right should be the fixture red',
-    );
-    // Clear of the image (canvas 200, 130): page background — the control
-    // that proves the samples above are not reading a red-flooded page.
-    _expectPixel(
-      raster.at(_rx(raster, 200, 40, 340), _ry(raster, 130, 60, 150)),
-      _bgRgb(),
-      reason: 'off-image pixel should be the page background',
-    );
-  });
+      final _PageRaster raster = _pageRasterOf(Uint8List.fromList(bytes));
+      // Image centre, canvas (80, 90): the fixture's own red, not the page
+      // background and not the old '\u{1F5BC} Picture' placeholder.
+      _expectPixel(
+        raster.at(_rx(raster, 80, 40, 340), _ry(raster, 90, 60, 150)),
+        (255, 0, 0),
+        reason: 'image-centre pixel should be the fixture red',
+      );
+      // Interior near the image's bottom-right, well inside the dest rect but
+      // away from its centre: red everywhere the block claims, proving the
+      // image fills its stored width x height (the editor's BoxFit.fill).
+      _expectPixel(
+        raster.at(_rx(raster, 110, 40, 340), _ry(raster, 115, 60, 150)),
+        (255, 0, 0),
+        reason: 'image interior near bottom-right should be the fixture red',
+      );
+      // Clear of the image (canvas 200, 130): page background — the control
+      // that proves the samples above are not reading a red-flooded page.
+      _expectPixel(
+        raster.at(_rx(raster, 200, 40, 340), _ry(raster, 130, 60, 150)),
+        _bgRgb(),
+        reason: 'off-image pixel should be the page background',
+      );
+    },
+  );
 
-  test('a corrupt image block falls back to the placeholder, export survives',
-      () async {
-    // Valid base64, but the bytes are no image any codec accepts: the block
-    // must keep its placeholder card and the rest of the export must live.
-    final String garbage =
-        base64Encode(Uint8List.fromList(List<int>.generate(64, (i) => i)));
-    final bytes = await renderNotebookPdf(
-      NotebookExportSource(
-        title: 'broken picture',
-        document: NotebookDocument(<NotebookBlock>[
-          NotebookImageBlock(
-            id: 'img-bad',
-            data: garbage,
-            mime: 'image/png',
-            x: 40,
-            y: 60,
-            width: 80,
-            height: 60,
-          ),
-        ]),
-        strokes: const <InkStroke>[],
-      ),
-    );
+  test(
+    'a corrupt image block falls back to the placeholder, export survives',
+    () async {
+      // Valid base64, but the bytes are no image any codec accepts: the block
+      // must keep its placeholder card and the rest of the export must live.
+      final String garbage = base64Encode(
+        Uint8List.fromList(List<int>.generate(64, (i) => i)),
+      );
+      final bytes = await renderNotebookPdf(
+        NotebookExportSource(
+          title: 'broken picture',
+          document: NotebookDocument(<NotebookBlock>[
+            NotebookImageBlock(
+              id: 'img-bad',
+              data: garbage,
+              mime: 'image/png',
+              x: 40,
+              y: 60,
+              width: 80,
+              height: 60,
+            ),
+          ]),
+          strokes: const <InkStroke>[],
+        ),
+      );
 
-    // The export completed and produced a real PDF, not a crash.
-    expect(utf8.decode(bytes.sublist(0, 5)), '%PDF-');
-    final _PageRaster raster = _pageRasterOf(Uint8List.fromList(bytes));
-    // Inside the image's claimed rect but below the placeholder's text line
-    // and inside its unfilled card: background, not image pixels — the
-    // block fell back instead of painting garbage.
-    _expectPixel(
-      raster.at(_rx(raster, 80, 40, 340), _ry(raster, 100, 60, 150)),
-      _bgRgb(),
-      reason: 'a corrupt image paints no pixels where the image would be',
-    );
-  });
+      // The export completed and produced a real PDF, not a crash.
+      expect(utf8.decode(bytes.sublist(0, 5)), '%PDF-');
+      final _PageRaster raster = _pageRasterOf(Uint8List.fromList(bytes));
+      // Inside the image's claimed rect but below the placeholder's text line
+      // and inside its unfilled card: background, not image pixels — the
+      // block fell back instead of painting garbage.
+      _expectPixel(
+        raster.at(_rx(raster, 80, 40, 340), _ry(raster, 100, 60, 150)),
+        _bgRgb(),
+        reason: 'a corrupt image paints no pixels where the image would be',
+      );
+    },
+  );
 
   test(
     'imported pages export in order with ink composited over page pixels',
-      () async {
+    () async {
       final Directory temp = Directory.systemTemp.createTempSync('pdf-export-');
       addTearDown(() => temp.deleteSync(recursive: true));
       final String white = await _solidPngBase64(const Color(0xFFFFFFFF), 2, 2);
@@ -558,8 +606,147 @@ void main() {
     },
   );
 
-  test('an image block and ink strokes coexist on the exported page',
-      () async {
+  test(
+    '100 imported pages use the real disk loader and retain JPEG, not raw RGB',
+    () async {
+      final Directory temp = Directory.systemTemp.createTempSync(
+        'pdf-export-100-',
+      );
+      addTearDown(() => temp.deleteSync(recursive: true));
+      final String white = await _solidPngBase64(const Color(0xFFFFFFFF), 2, 2);
+      final _SolidPageRenderer renderer = _SolidPageRenderer(
+        base64Decode(white),
+      );
+      var decodeCalls = 0;
+      final NotebookPdfPageCache loader = NotebookPdfPageCache(
+        renderer: renderer,
+        cacheDirectory: () async => temp,
+        decodeSource: (String encoded) {
+          decodeCalls++;
+          return base64Decode(encoded);
+        },
+      );
+      final List<NotebookBlock> pages = <NotebookBlock>[
+        for (int index = 0; index < 100; index++)
+          NotebookPdfPageBlock(
+            id: 'page-$index',
+            documentId: 'doc-100',
+            pageNumber: index + 1,
+            pageCount: 100,
+            data: index == 0 ? 'cGRm' : null,
+            x: 0,
+            y: index * 24,
+            width: 20,
+            height: 20,
+          ),
+      ];
+
+      final Uint8List bytes = await renderNotebookPdf(
+        NotebookExportSource(
+          title: 'hundred pages',
+          document: NotebookDocument(pages),
+          strokes: const <InkStroke>[],
+        ),
+        pdfPageLoader: loader,
+      );
+
+      final String wire = latin1.decode(bytes, allowInvalid: true);
+      expect(RegExp(r'/Type\s*/Page(?!s)').allMatches(wire), hasLength(100));
+      expect(RegExp(r'/DCTDecode').allMatches(wire), hasLength(100));
+      expect(renderer.calls, 100);
+      expect(
+        renderer.maxActive,
+        1,
+        reason: 'pages must composite sequentially',
+      );
+      expect(
+        decodeCalls,
+        1,
+        reason: 'the real cache must decode one source, not once per page',
+      );
+    },
+  );
+
+  test(
+    'mixed canvas content is emitted as an overview before PDF pages',
+    () async {
+      final Directory temp = Directory.systemTemp.createTempSync('pdf-mixed-');
+      addTearDown(() => temp.deleteSync(recursive: true));
+      final String white = await _solidPngBase64(const Color(0xFFFFFFFF), 2, 2);
+      final String red = await _solidPngBase64(const Color(0xFFFF0000), 2, 2);
+      final _RecordingPdfLoader loader = _RecordingPdfLoader(
+        temp,
+        base64Decode(white),
+      );
+      final Uint8List bytes = await renderNotebookPdf(
+        NotebookExportSource(
+          title: 'mixed',
+          document: NotebookDocument(<NotebookBlock>[
+            const NotebookTextBlock(id: 'text', text: 'Keep me', x: 20, y: 20),
+            NotebookImageBlock(
+              id: 'image',
+              data: red,
+              mime: 'image/png',
+              x: 40,
+              y: 80,
+              width: 80,
+              height: 60,
+            ),
+            const NotebookPdfPageBlock(
+              id: 'pdf-1',
+              documentId: 'mixed-doc',
+              pageNumber: 1,
+              pageCount: 2,
+              data: 'cGRm',
+              x: 10,
+              y: 500,
+              width: 100,
+              height: 100,
+            ),
+            const NotebookPdfPageBlock(
+              id: 'pdf-2',
+              documentId: 'mixed-doc',
+              pageNumber: 2,
+              pageCount: 2,
+              x: 10,
+              y: 620,
+              width: 100,
+              height: 100,
+            ),
+          ]),
+          strokes: const <InkStroke>[
+            InkStroke(
+              id: 'preexisting-ink',
+              width: 6,
+              colour: InkColor.blue,
+              points: <InkPoint>[
+                InkPoint(x: 20, y: 180),
+                InkPoint(x: 200, y: 180),
+              ],
+            ),
+          ],
+        ),
+        pdfPageLoader: loader,
+      );
+
+      final String wire = latin1.decode(bytes, allowInvalid: true);
+      expect(RegExp(r'/Type\s*/Page(?!s)').allMatches(wire), hasLength(3));
+      expect(loader.pages, <int>[1, 2]);
+      final _PageRaster overview = _pageRasterOf(bytes);
+      _expectPixel(
+        overview.at(_rx(overview, 80, 20, 340), _ry(overview, 110, 20, 180)),
+        (255, 0, 0),
+        reason: 'the pre-existing image must survive on the overview page',
+      );
+      _expectPixel(
+        overview.at(_rx(overview, 180, 20, 340), _ry(overview, 180, 20, 180)),
+        _opaqueRgb(InkColor.blue),
+        reason: 'pre-existing ink must survive on the overview page',
+      );
+    },
+  );
+
+  test('an image block and ink strokes coexist on the exported page', () async {
     // The red image from the pixel test plus a blue pen line above it:
     // content box x 40..340 (stroke and nominal footprint agree),
     // y 20..150 (stroke top, block nominal bottom).
@@ -583,10 +770,7 @@ void main() {
             id: 'pen-blue',
             width: 6,
             colour: InkColor.blue,
-            points: <InkPoint>[
-              InkPoint(x: 40, y: 20),
-              InkPoint(x: 340, y: 20),
-            ],
+            points: <InkPoint>[InkPoint(x: 40, y: 20), InkPoint(x: 340, y: 20)],
           ),
         ],
       ),

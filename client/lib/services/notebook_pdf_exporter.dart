@@ -13,6 +13,7 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/painting.dart';
+import 'package:image/image.dart' as img;
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 
@@ -37,6 +38,10 @@ class NotebookExportSource {
 /// numbers the lasso uses for block hit-testing.
 const Size _kBlockFallbackSize = Size(300, 90);
 
+/// Imported pages are embedded as compressed JPEGs. The pdf package passes
+/// JPEG bytes through instead of retaining a raw RGB copy for every page.
+const int kNotebookPdfJpegQuality = 85;
+
 /// Renders [source] to a single-page PDF and returns its bytes.
 ///
 /// The content bounding box (ink + blocks, plus padding) decides the page
@@ -56,6 +61,15 @@ Future<Uint8List> renderNotebookPdf(
       pdfPageLoader ?? NotebookPdfPageCache(),
     );
   }
+  final pw.Document pdf = pw.Document(title: source.title);
+  await _addCanvasOverviewPage(pdf, source);
+  return pdf.save();
+}
+
+Future<void> _addCanvasOverviewPage(
+  pw.Document pdf,
+  NotebookExportSource source,
+) async {
   final ui.Rect bounds = _contentBounds(source);
   // Image bytes are decoded UP FRONT (the block painter is synchronous);
   // a block whose bytes fail to decode simply has no entry here and keeps
@@ -96,7 +110,6 @@ Future<Uint8List> renderNotebookPdf(
     throw StateError('Could not encode the notebook image');
   }
 
-  final pw.Document pdf = pw.Document(title: source.title);
   final pw.MemoryImage pageImage = pw.MemoryImage(png.buffer.asUint8List());
   pdf.addPage(
     pw.Page(
@@ -111,21 +124,15 @@ Future<Uint8List> renderNotebookPdf(
           children: <pw.Widget>[
             pw.Text(
               source.title.isEmpty ? '(untitled)' : source.title,
-              style: pw.TextStyle(
-                fontSize: 14,
-                fontWeight: pw.FontWeight.bold,
-              ),
+              style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold),
             ),
             pw.SizedBox(height: 8),
-            pw.Expanded(
-              child: pw.Image(pageImage, fit: pw.BoxFit.contain),
-            ),
+            pw.Expanded(child: pw.Image(pageImage, fit: pw.BoxFit.contain)),
           ],
         ),
       ),
     ),
   );
-  return pdf.save();
 }
 
 /// Re-exports imported pages as real PDF pages in notebook block order.
@@ -140,21 +147,33 @@ Future<Uint8List> _renderImportedPdfPages(
   PdfPageRasterLoader loader,
 ) async {
   final pw.Document pdf = pw.Document(title: source.title);
-  final Map<String, ui.Image> images = await _decodeImages(source.document);
+  final NotebookExportSource? overview = _canvasOverview(source, pages);
+  if (overview != null) await _addCanvasOverviewPage(pdf, overview);
   for (final NotebookPdfPageBlock page in pages) {
     final String? sourceData = pdfSourceDataFor(page, source.document.blocks);
     if (sourceData == null) {
       throw StateError('PDF source is unavailable for page ${page.pageNumber}');
     }
-    final int pixelWidth = (page.width * 2).ceil().clamp(1, 8000);
-    final int pixelHeight = (page.height * 2).ceil().clamp(1, 8000);
+    final int pixelWidth = (page.width * 2).round().clamp(1, 8000);
+    final int pixelHeight = (page.height * 2).round().clamp(1, 8000);
     final File rasterFile = await loader.loadPage(
+      documentId: page.documentId,
       sourceData: sourceData,
       pageNumber: page.pageNumber,
       width: pixelWidth,
       height: pixelHeight,
     );
     final Uint8List rasterBytes = await rasterFile.readAsBytes();
+    final ui.Rect pageRect = ui.Rect.fromLTWH(
+      page.x,
+      page.y,
+      page.width,
+      page.height,
+    );
+    final Map<String, ui.Image> images = await _decodeImages(
+      source.document,
+      bounds: pageRect,
+    );
     final Uint8List annotated = await _annotatePdfPage(
       source: source,
       page: page,
@@ -163,6 +182,9 @@ Future<Uint8List> _renderImportedPdfPages(
       pixelHeight: pixelHeight,
       images: images,
     );
+    for (final ui.Image decoded in images.values) {
+      decoded.dispose();
+    }
     final pw.MemoryImage image = pw.MemoryImage(annotated);
     pdf.addPage(
       pw.Page(
@@ -176,10 +198,35 @@ Future<Uint8List> _renderImportedPdfPages(
       ),
     );
   }
-  for (final ui.Image decoded in images.values) {
-    decoded.dispose();
-  }
   return pdf.save();
+}
+
+NotebookExportSource? _canvasOverview(
+  NotebookExportSource source,
+  List<NotebookPdfPageBlock> pages,
+) {
+  final List<NotebookBlock> blocks = source.document.blocks
+      .where((NotebookBlock block) => block is! NotebookPdfPageBlock)
+      .toList(growable: false);
+  final List<ui.Rect> pageRects = <ui.Rect>[
+    for (final NotebookPdfPageBlock page in pages)
+      ui.Rect.fromLTWH(page.x, page.y, page.width, page.height),
+  ];
+  final List<InkStroke> outsidePageInk = source.strokes
+      .where(
+        (InkStroke stroke) => stroke.points.any(
+          (InkPoint point) => !pageRects.any(
+            (ui.Rect page) => page.contains(ui.Offset(point.x, point.y)),
+          ),
+        ),
+      )
+      .toList(growable: false);
+  if (blocks.isEmpty && outsidePageInk.isEmpty) return null;
+  return NotebookExportSource(
+    title: '${source.title} - canvas overview',
+    document: NotebookDocument(blocks),
+    strokes: outsidePageInk,
+  );
 }
 
 Future<Uint8List> _annotatePdfPage({
@@ -223,12 +270,26 @@ Future<Uint8List> _annotatePdfPage({
     pixelWidth,
     pixelHeight,
   );
-  final ByteData? png = await composed.toByteData(
-    format: ui.ImageByteFormat.png,
+  final ByteData? rgba = await composed.toByteData(
+    format: ui.ImageByteFormat.rawStraightRgba,
   );
   composed.dispose();
-  if (png == null) throw StateError('Could not encode annotated PDF page');
-  return png.buffer.asUint8List();
+  if (rgba == null) throw StateError('Could not encode annotated PDF page');
+  final Uint8List pixels = rgba.buffer.asUint8List(
+    rgba.offsetInBytes,
+    rgba.lengthInBytes,
+  );
+  final img.Image jpegSource = img.Image.fromBytes(
+    width: pixelWidth,
+    height: pixelHeight,
+    bytes: pixels.buffer,
+    bytesOffset: pixels.offsetInBytes,
+    numChannels: 4,
+    order: img.ChannelOrder.rgba,
+  );
+  return Uint8List.fromList(
+    img.encodeJpg(jpegSource, quality: kNotebookPdfJpegQuality),
+  );
 }
 
 const double _kPagePad = 24;
@@ -239,10 +300,19 @@ const double _kTitleBand = 30;
 /// Corrupt bytes (a failed base64 or codec) skip the block instead of
 /// throwing: one damaged picture must not lose the rest of the page, and
 /// [_paintBlocks] keeps the text placeholder for any id missing here.
-Future<Map<String, ui.Image>> _decodeImages(NotebookDocument document) async {
+Future<Map<String, ui.Image>> _decodeImages(
+  NotebookDocument document, {
+  ui.Rect? bounds,
+}) async {
   final Map<String, ui.Image> images = <String, ui.Image>{};
   for (final NotebookBlock block in document.blocks) {
     if (block is! NotebookImageBlock) continue;
+    if (bounds != null &&
+        !bounds.overlaps(
+          ui.Rect.fromLTWH(block.x, block.y, block.width, block.height),
+        )) {
+      continue;
+    }
     try {
       final Uint8List bytes = base64Decode(block.data);
       final ui.Codec codec = await ui.instantiateImageCodec(bytes);
@@ -285,13 +355,13 @@ ui.Rect _contentBounds(NotebookExportSource source) {
   for (final NotebookBlock block in source.document.blocks) {
     final (double x, double y) = switch (block) {
       NotebookTextBlock(:final double? x, :final double? y) => (
-          x ?? 16,
-          y ?? fallbackY
-        ),
+        x ?? 16,
+        y ?? fallbackY,
+      ),
       NotebookCheckboxBlock(:final double? x, :final double? y) => (
-          x ?? 16,
-          y ?? fallbackY
-        ),
+        x ?? 16,
+        y ?? fallbackY,
+      ),
       NotebookDumpCardBlock(:final double x, :final double y) => (x, y),
       NotebookImageBlock(:final double x, :final double y) => (x, y),
       NotebookPdfPageBlock(:final double x, :final double y) => (x, y),
@@ -368,17 +438,17 @@ void _paintBlocks(
         ('${checked ? '\u2611' : '\u2610'} $text', x, y),
       // The dump's title lives in another table; the export marks the spot.
       NotebookDumpCardBlock(:final double x, :final double y) => (
-          '\u{1F399} Recording',
-          x,
-          y
-        ),
+        '\u{1F399} Recording',
+        x,
+        y,
+      ),
       // Reached only when the block's bytes failed to decode upfront:
       // the placeholder still marks the picture's place and footprint.
       NotebookImageBlock(:final double x, :final double y) => (
-          '\u{1F5BC} Picture',
-          x,
-          y
-        ),
+        '\u{1F5BC} Picture',
+        x,
+        y,
+      ),
       NotebookPdfPageBlock() => ('', null, null),
       NotebookTableBlock() => ('', null, null),
       NotebookUnknownBlock() => ('', null, null),
@@ -395,10 +465,7 @@ void _paintBlocks(
     final TextPainter painter = TextPainter(
       text: TextSpan(
         text: text,
-        style: TextStyle(
-          color: NotebookInkCanvas.inkColor,
-          fontSize: 14,
-        ),
+        style: TextStyle(color: NotebookInkCanvas.inkColor, fontSize: 14),
       ),
       textDirection: TextDirection.ltr,
       maxLines: 4,

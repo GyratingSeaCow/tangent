@@ -24,6 +24,38 @@ class _Inspector implements PdfDocumentInspector {
   }
 }
 
+class _LengthOnlyXFile extends XFile {
+  _LengthOnlyXFile(this.reportedLength) : super('must-not-be-read.pdf');
+
+  final int reportedLength;
+  bool readAttempted = false;
+
+  @override
+  Future<int> length() async => reportedLength;
+
+  @override
+  Future<Uint8List> readAsBytes() async {
+    readAttempted = true;
+    throw StateError('oversized PDF bytes were read');
+  }
+}
+
+class _FlexibleRenderer implements PdfPagePngRenderer {
+  final List<int> pages = <int>[];
+
+  @override
+  Future<Uint8List> renderPage({
+    required File source,
+    required int pageNumber,
+    required int width,
+    required int height,
+  }) async {
+    expect(await source.readAsBytes(), <int>[1, 2, 3, 4]);
+    pages.add(pageNumber);
+    return Uint8List.fromList(<int>[0x89, 0x50, 0x4E, 0x47, pageNumber]);
+  }
+}
+
 class _CountingRenderer implements PdfPagePngRenderer {
   int calls = 0;
 
@@ -114,6 +146,51 @@ void main() {
   );
 
   test(
+    'system picker refuses over-limit PDF before reading any bytes',
+    () async {
+      final _LengthOnlyXFile file = _LengthOnlyXFile(
+        kNotebookPdfMaxSourceBytes + 1,
+      );
+      final _Inspector inspector = _Inspector(const <Size>[Size(100, 100)]);
+      final SystemNotebookPdfPicker picker = SystemNotebookPdfPicker(
+        inspector: inspector,
+        chooseFile: () async => file,
+      );
+
+      await expectLater(
+        picker.pick(),
+        throwsA(
+          isA<PdfImportTooLargeException>().having(
+            (PdfImportTooLargeException error) => error.toString(),
+            'message',
+            contains('20 MB'),
+          ),
+        ),
+      );
+      expect(file.readAttempted, isFalse);
+      expect(inspector.calls, 0);
+    },
+  );
+
+  test('system picker accepts the exact source-size boundary', () async {
+    final Directory temp = await Directory.systemTemp.createTemp('pdf-limit-');
+    addTearDown(() => temp.delete(recursive: true));
+    final File file = File('${temp.path}/boundary.pdf');
+    file.openSync(mode: FileMode.write)
+      ..truncateSync(kNotebookPdfMaxSourceBytes)
+      ..closeSync();
+    final _Inspector inspector = _Inspector(const <Size>[Size(100, 100)]);
+    final SystemNotebookPdfPicker picker = SystemNotebookPdfPicker(
+      inspector: inspector,
+      chooseFile: () async => XFile(file.path),
+    );
+
+    final PickedPdf picked = (await picker.pick())!;
+    expect(picked.bytes.length, kNotebookPdfMaxSourceBytes);
+    expect(inspector.calls, 1);
+  });
+
+  test(
     'PDF pages land below content and ink in source order with one byte copy',
     () {
       final PickedPdf picked = PickedPdf(
@@ -178,12 +255,14 @@ void main() {
 
     final List<File> files = await Future.wait(<Future<File>>[
       cache.loadPage(
+        documentId: 'doc',
         sourceData: source,
         pageNumber: 2,
         width: 200,
         height: 300,
       ),
       cache.loadPage(
+        documentId: 'doc',
         sourceData: source,
         pageNumber: 2,
         width: 200,
@@ -191,6 +270,7 @@ void main() {
       ),
     ]);
     final File again = await cache.loadPage(
+      documentId: 'doc',
       sourceData: source,
       pageNumber: 2,
       width: 200,
@@ -206,6 +286,56 @@ void main() {
     expect(again.path, files[0].path);
     expect(await again.readAsBytes(), <int>[0x89, 0x50, 0x4E, 0x47, 1]);
   });
+
+  test(
+    'disk cache keys by document id and decodes one source for many pages',
+    () async {
+      final Directory temp = await Directory.systemTemp.createTemp(
+        'pdf-source-',
+      );
+      addTearDown(() => temp.delete(recursive: true));
+      final _FlexibleRenderer renderer = _FlexibleRenderer();
+      var decodeCalls = 0;
+      final NotebookPdfPageCache cache = NotebookPdfPageCache(
+        renderer: renderer,
+        cacheDirectory: () async => temp,
+        decodeSource: (String source) {
+          decodeCalls++;
+          return base64Decode(source);
+        },
+      );
+      final String source = base64Encode(<int>[1, 2, 3, 4]);
+
+      await cache.loadPage(
+        documentId: 'stable-document-id',
+        sourceData: source,
+        pageNumber: 1,
+        width: 100,
+        height: 100,
+      );
+      await cache.loadPage(
+        documentId: 'stable-document-id',
+        sourceData: source,
+        pageNumber: 2,
+        width: 100,
+        height: 100,
+      );
+
+      expect(renderer.pages, <int>[1, 2]);
+      expect(
+        decodeCalls,
+        1,
+        reason: 'source base64 must be decoded once, with no per-page hashing',
+      );
+      expect(
+        await Directory('${temp.path}/notebook_pdf_pages')
+            .list()
+            .where((FileSystemEntity entry) => entry.path.endsWith('.pdf'))
+            .length,
+        1,
+      );
+    },
+  );
 
   test('pdfrx inspects and renders a real locally generated PDF', () async {
     final Uint8List bytes = await _twoPagePdf();

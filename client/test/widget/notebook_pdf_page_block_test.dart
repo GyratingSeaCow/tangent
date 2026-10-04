@@ -15,15 +15,20 @@ class _RecordingLoader implements PdfPageRasterLoader {
   final Directory directory;
   final Uint8List png;
   final List<int> pages = <int>[];
+  final List<String> documentIds = <String>[];
+  final List<(int, int)> sizes = <(int, int)>[];
 
   @override
   Future<File> loadPage({
+    required String documentId,
     required String sourceData,
     required int pageNumber,
     required int width,
     required int height,
   }) {
     pages.add(pageNumber);
+    documentIds.add(documentId);
+    sizes.add((width, height));
     final File file = File('${directory.path}/page-$pageNumber.png');
     if (!file.existsSync()) file.writeAsBytesSync(png);
     return Future<File>.value(file);
@@ -36,6 +41,26 @@ const String _tinyPngBase64 =
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('raster dimensions follow DPR with a sane scale and dimension cap', () {
+    const NotebookPdfPageBlock page = NotebookPdfPageBlock(
+      id: 'page',
+      documentId: 'doc',
+      pageNumber: 1,
+      pageCount: 1,
+      data: 'cGRm',
+      x: 0,
+      y: 0,
+      width: 688,
+      height: 1000,
+    );
+    expect(notebookPdfRasterSize(page, 2.6), (1789, 2600));
+    expect(notebookPdfRasterSize(page, 9), (2064, 3000));
+    expect(
+      notebookPdfRasterSize(page.copyWith(width: 4000, height: 10000), 3),
+      (3200, 8000),
+    );
+  });
 
   testWidgets('100 page blocks raster only pages near the viewport', (
     WidgetTester tester,
@@ -93,6 +118,7 @@ void main() {
     expect(loader.pages, <int>[
       1,
     ], reason: 'mounting 100 blocks must not decode 100 pages into RAM');
+    expect(loader.documentIds, <String>['doc']);
 
     visible.value = const Rect.fromLTWH(0, 50 * step, 720, 800);
     await tester.pump();

@@ -10,6 +10,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -31,6 +32,20 @@ const double kNotebookPdfPageWidth = 688;
 
 /// Blank canvas between consecutive imported PDF pages.
 const double kNotebookPdfPageSpacing = kNotebookImportSpacing;
+
+/// Source PDFs are embedded in notebook JSON, so their encoded copy is paid
+/// again during saves, sync, and durable-file writes. Keep the same bounded
+/// spirit as image import instead of allowing an arbitrary 50-200 MB scan.
+const int kNotebookPdfMaxSourceBytes = 20 * 1024 * 1024;
+
+class PdfImportTooLargeException implements Exception {
+  const PdfImportTooLargeException(this.bytes);
+
+  final int bytes;
+
+  @override
+  String toString() => 'PDF is larger than the 20 MB import limit';
+}
 
 class PickedPdf {
   const PickedPdf({
@@ -106,6 +121,10 @@ class SystemNotebookPdfPicker implements NotebookPdfPicker {
   Future<PickedPdf?> pick() async {
     final XFile? file = await _chooseFile();
     if (file == null) return null;
+    final int length = await file.length();
+    if (length > kNotebookPdfMaxSourceBytes) {
+      throw PdfImportTooLargeException(length);
+    }
     final Uint8List bytes = await file.readAsBytes();
     if (bytes.isEmpty) throw const FormatException('The PDF is empty');
     final List<Size> pageSizes = await _inspector.inspect(bytes);
@@ -175,6 +194,7 @@ String? pdfSourceDataFor(
 /// Page-raster seam used by the editor and exporter.
 abstract interface class PdfPageRasterLoader {
   Future<File> loadPage({
+    required String documentId,
     required String sourceData,
     required int pageNumber,
     required int width,
@@ -265,16 +285,21 @@ class NotebookPdfPageCache implements PdfPageRasterLoader {
   NotebookPdfPageCache({
     PdfPagePngRenderer renderer = const PdfrxPagePngRenderer(),
     Future<Directory> Function()? cacheDirectory,
+    FutureOr<Uint8List> Function(String)? decodeSource,
   }) : _renderer = renderer,
-       _cacheDirectory = cacheDirectory ?? getTemporaryDirectory;
+       _cacheDirectory = cacheDirectory ?? getTemporaryDirectory,
+       _decodeSource = decodeSource ?? _decodePdfSource;
 
   final PdfPagePngRenderer _renderer;
   final Future<Directory> Function() _cacheDirectory;
+  final FutureOr<Uint8List> Function(String) _decodeSource;
   final Map<String, Future<File>> _inFlight = <String, Future<File>>{};
-  final Map<String, Future<File>> _sourceWrites = <String, Future<File>>{};
+  final Map<String, Future<File>> _sources = <String, Future<File>>{};
+  Future<Directory>? _rootFuture;
 
   @override
   Future<File> loadPage({
+    required String documentId,
     required String sourceData,
     required int pageNumber,
     required int width,
@@ -283,21 +308,15 @@ class NotebookPdfPageCache implements PdfPageRasterLoader {
     if (pageNumber < 1 || width < 1 || height < 1) {
       throw ArgumentError('Invalid PDF render request');
     }
-    final Uint8List bytes;
-    try {
-      bytes = base64Decode(sourceData);
-    } on FormatException {
-      throw const FormatException('Stored PDF source is not valid base64');
-    }
-    final String hash = sha256.convert(bytes).toString();
-    final String key = '$hash-p$pageNumber-${width}x$height';
+    if (documentId.isEmpty) throw ArgumentError('Missing PDF document id');
+    final String key = '$documentId-p$pageNumber-${width}x$height';
     return _inFlight.putIfAbsent(
       key,
       () =>
           _loadOrRender(
             key: key,
-            sourceHash: hash,
-            sourceBytes: bytes,
+            documentId: documentId,
+            sourceData: sourceData,
             pageNumber: pageNumber,
             width: width,
             height: height,
@@ -309,24 +328,19 @@ class NotebookPdfPageCache implements PdfPageRasterLoader {
 
   Future<File> _loadOrRender({
     required String key,
-    required String sourceHash,
-    required Uint8List sourceBytes,
+    required String documentId,
+    required String sourceData,
     required int pageNumber,
     required int width,
     required int height,
   }) async {
-    final Directory root = Directory(
-      p.join((await _cacheDirectory()).path, 'notebook_pdf_pages'),
-    );
-    await root.create(recursive: true);
+    final Directory root = await _root();
     final File target = File(p.join(root.path, '$key.png'));
     if (await target.exists() && await target.length() > 0) return target;
 
-    final File source = await _sourceWrites.putIfAbsent(
-      sourceHash,
-      () => _materializeSource(root, sourceHash, sourceBytes).whenComplete(() {
-        _sourceWrites.remove(sourceHash);
-      }),
+    final File source = await _sources.putIfAbsent(
+      documentId,
+      () => _materializeSource(root, documentId, sourceData),
     );
     final Uint8List png = await _renderer.renderPage(
       source: source,
@@ -343,16 +357,45 @@ class NotebookPdfPageCache implements PdfPageRasterLoader {
 
   Future<File> _materializeSource(
     Directory root,
-    String sourceHash,
-    Uint8List sourceBytes,
+    String documentId,
+    String sourceData,
   ) async {
-    final File source = File(p.join(root.path, '$sourceHash.pdf'));
-    if (await source.exists() && await source.length() == sourceBytes.length) {
+    final File source = File(p.join(root.path, '$documentId.pdf'));
+    if (await source.exists() && await source.length() > 0) {
       return source;
+    }
+    final Uint8List sourceBytes;
+    try {
+      sourceBytes = await _decodeSource(sourceData);
+    } on FormatException {
+      throw const FormatException('Stored PDF source is not valid base64');
     }
     final File temporary = File('${source.path}.partial');
     await temporary.writeAsBytes(sourceBytes, flush: true);
     if (await source.exists()) await source.delete();
     return temporary.rename(source.path);
   }
+
+  Future<Directory> _root() => _rootFuture ??= _prepareRoot();
+
+  Future<Directory> _prepareRoot() async {
+    final Directory root = Directory(
+      p.join((await _cacheDirectory()).path, 'notebook_pdf_pages'),
+    );
+    await root.create(recursive: true);
+    final DateTime cutoff = DateTime.now().subtract(const Duration(days: 7));
+    await for (final FileSystemEntity entry in root.list()) {
+      try {
+        if ((await entry.stat()).modified.isBefore(cutoff)) {
+          await entry.delete();
+        }
+      } on FileSystemException {
+        // Best-effort cache maintenance must never block page rendering.
+      }
+    }
+    return root;
+  }
 }
+
+Future<Uint8List> _decodePdfSource(String sourceData) =>
+    Isolate.run(() => base64Decode(sourceData));
