@@ -191,6 +191,8 @@ def _todo_payload(row: sqlite3.Row) -> dict[str, Any]:
         "source": row["source"],
         "source_ref": row["source_ref"],
         "folder_id": row["folder_id"],
+        "column_id": row["column_id"],
+        "board_order": row["board_order"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
         "deleted_at": row["deleted_at"],

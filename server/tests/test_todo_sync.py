@@ -76,7 +76,13 @@ def test_push_stores_and_pull_fans_todo_without_opt_in(todo_api):
         headers=_headers(token),
     ).json()
     change = next(c for c in pulled["changes"] if c["entity_type"] == "todo")
-    assert change["payload"] == {"id": "todo-1", **_todo(), "folder_id": None}
+    assert change["payload"] == {
+        "id": "todo-1",
+        **_todo(),
+        "folder_id": None,
+        "column_id": None,
+        "board_order": 0,
+    }
 
 
 def test_todo_folder_id_round_trips(todo_api):
@@ -413,3 +419,99 @@ def test_device_upsert_of_folder_preserves_google_list_and_omits_it_from_feed(to
     for payload in payloads:
         assert "google_tasklist_id" not in payload
     assert payloads[-1]["name"] == "Personal stuff"
+
+
+def test_todo_board_placement_round_trips_and_absent_keys_preserve(todo_api):
+    client, token, db = todo_api
+    placed = {**_todo(), "column_id": "column-progress", "board_order": 7}
+    assert _push(client, token, [{
+        "entity_type": "todo", "entity_id": "placed", "op": "upsert",
+        "payload": placed,
+    }]).json()["results"][0]["status"] == "applied"
+
+    narrower = _todo("renamed", "2026-09-27T12:01:00Z")
+    assert _push(client, token, [{
+        "entity_type": "todo", "entity_id": "placed", "op": "upsert",
+        "payload": narrower,
+    }]).json()["results"][0]["status"] == "applied"
+    row = db.execute(
+        "SELECT column_id, board_order FROM todos WHERE id = 'placed'"
+    ).fetchone()
+    assert tuple(row) == ("column-progress", 7)
+
+    feed = client.get(
+        "/v1/sync/pull",
+        params={"device_id": "device-bbbb-2", "since_seq": 0},
+        headers=_headers(token),
+    ).json()["changes"]
+    payload = [c["payload"] for c in feed if c["entity_id"] == "placed"][-1]
+    assert payload["column_id"] == "column-progress"
+    assert payload["board_order"] == 7
+
+
+def test_todo_column_upsert_stale_write_and_soft_delete_round_trip(todo_api):
+    client, token, db = todo_api
+    column = {
+        "name": "In review",
+        "sort_order": 2,
+        "created_at": "2026-09-27T11:00:00Z",
+        "updated_at": "2026-09-27T12:00:00Z",
+        "deleted_at": None,
+    }
+    first = _push(client, token, [{
+        "entity_type": "todo_column", "entity_id": "column-review",
+        "op": "upsert", "payload": column,
+    }]).json()["results"][0]
+    assert first["status"] == "applied"
+    assert tuple(db.execute(
+        "SELECT name, sort_order, deleted_at FROM todo_columns "
+        "WHERE id = 'column-review'"
+    ).fetchone()) == ("In review", 2, None)
+
+    stale = _push(client, token, [{
+        "entity_type": "todo_column", "entity_id": "column-review",
+        "op": "upsert", "payload": {
+            **column,
+            "name": "stale name",
+            "updated_at": "2026-09-27T11:59:00Z",
+        },
+    }]).json()["results"][0]
+    assert stale["status"] == "applied"
+    assert stale["seq"] == 0
+    assert db.execute(
+        "SELECT name FROM todo_columns WHERE id = 'column-review'"
+    ).fetchone()[0] == "In review"
+
+    deleted = _push(client, token, [{
+        "entity_type": "todo_column", "entity_id": "column-review",
+        "op": "upsert", "payload": {
+            **column,
+            "updated_at": "2026-09-27T12:01:00Z",
+            "deleted_at": "2026-09-27T12:01:00Z",
+        },
+    }]).json()["results"][0]
+    assert deleted["status"] == "applied"
+    assert db.execute(
+        "SELECT deleted_at FROM todo_columns WHERE id = 'column-review'"
+    ).fetchone()[0] == "2026-09-27T12:01:00Z"
+
+    feed = client.get(
+        "/v1/sync/pull",
+        params={"device_id": "device-bbbb-2", "since_seq": 0},
+        headers=_headers(token),
+    ).json()["changes"]
+    changes = [c for c in feed if c["entity_type"] == "todo_column"]
+    assert [c["op"] for c in changes] == ["upsert", "upsert"]
+    assert changes[-1]["payload"]["deleted_at"] == "2026-09-27T12:01:00Z"
+
+
+def test_todo_board_order_rejects_non_integer(todo_api):
+    client, token, _ = todo_api
+    response = _push(client, token, [{
+        "entity_type": "todo", "entity_id": "bad-order", "op": "upsert",
+        "payload": {**_todo(), "board_order": "first"},
+    }])
+    assert response.status_code == 200
+    result = response.json()["results"][0]
+    assert result["status"] == "rejected"
+    assert result["reason"] == "todo board_order must be an integer"

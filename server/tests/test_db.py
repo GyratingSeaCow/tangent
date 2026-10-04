@@ -312,3 +312,78 @@ def test_change_log_check_migration_preserves_seqs(tmp_path):
     new_seq = conn.execute("SELECT MAX(seq) FROM change_log").fetchone()[0]
     assert new_seq > 2, "AUTOINCREMENT must continue past copied rows"
     conn.close()
+
+
+def test_todo_kanban_migration_is_additive_and_sync_aware(tmp_path):
+    data = tmp_path / "data"
+    data.mkdir()
+    db_file = data / "tangent.db"
+    conn = sqlite3.connect(db_file)
+    conn.executescript(
+        """
+        CREATE TABLE todos (
+            id TEXT PRIMARY KEY,
+            text TEXT NOT NULL,
+            done_at TEXT,
+            due_date TEXT,
+            source TEXT NOT NULL DEFAULT 'manual',
+            source_ref TEXT,
+            folder_id TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            deleted_at TEXT,
+            google_task_id TEXT,
+            google_updated TEXT,
+            google_tasklist_id TEXT
+        );
+        INSERT INTO todos
+            (id, text, created_at, updated_at)
+        VALUES ('legacy-todo', 'keep me', '2026-01-01', '2026-01-01');
+        CREATE TABLE change_log (
+            seq INTEGER PRIMARY KEY AUTOINCREMENT,
+            entity_type TEXT NOT NULL CHECK (
+                entity_type IN ('dump','notebook','note','folder','ink_index',
+                                'todo','calendar_event','ask_message')
+            ),
+            entity_id TEXT NOT NULL,
+            op TEXT NOT NULL CHECK (op IN ('upsert', 'delete')),
+            device_id TEXT NOT NULL,
+            payload TEXT,
+            created_at INTEGER NOT NULL
+        );
+        INSERT INTO change_log
+            (entity_type, entity_id, op, device_id, payload, created_at)
+        VALUES ('todo', 'legacy-todo', 'upsert', 'dev-1', '{}', 100);
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    init_db(str(data))
+    init_db(str(data))
+
+    conn = sqlite3.connect(db_file)
+    todo_columns = {row[1]: row for row in conn.execute("PRAGMA table_info(todos)")}
+    legacy = conn.execute(
+        "SELECT text, column_id, board_order FROM todos WHERE id='legacy-todo'"
+    ).fetchone()
+    tables = {row[0] for row in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'"
+    )}
+    before_seq = conn.execute("SELECT MAX(seq) FROM change_log").fetchone()[0]
+    conn.execute(
+        "INSERT INTO change_log "
+        "(entity_type,entity_id,op,device_id,payload,created_at) "
+        "VALUES ('todo_column','column-1','upsert','dev-1','{}',101)"
+    )
+    after_seq = conn.execute("SELECT MAX(seq) FROM change_log").fetchone()[0]
+    conn.close()
+
+    assert "column_id" in todo_columns
+    assert todo_columns["column_id"][3] == 0
+    assert "board_order" in todo_columns
+    assert todo_columns["board_order"][3] == 1
+    assert legacy == ("keep me", None, 0)
+    assert "todo_columns" in tables
+    assert before_seq == 1
+    assert after_seq == 2

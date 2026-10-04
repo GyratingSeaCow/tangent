@@ -8560,6 +8560,29 @@ class $TodosTable extends Todos with TableInfo<$TodosTable, TodoRow> {
       'CHECK ("pinned" IN (0, 1))',
     ),
   );
+  static const VerificationMeta _columnIdMeta = const VerificationMeta(
+    'columnId',
+  );
+  @override
+  late final GeneratedColumn<String> columnId = GeneratedColumn<String>(
+    'column_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _boardOrderMeta = const VerificationMeta(
+    'boardOrder',
+  );
+  @override
+  late final GeneratedColumn<int> boardOrder = GeneratedColumn<int>(
+    'board_order',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
   @override
   List<GeneratedColumn> get $columns => [
     id,
@@ -8576,6 +8599,8 @@ class $TodosTable extends Todos with TableInfo<$TodosTable, TodoRow> {
     folderId,
     captureFingerprint,
     pinned,
+    columnId,
+    boardOrder,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -8681,6 +8706,18 @@ class $TodosTable extends Todos with TableInfo<$TodosTable, TodoRow> {
         pinned.isAcceptableOrUnknown(data['pinned']!, _pinnedMeta),
       );
     }
+    if (data.containsKey('column_id')) {
+      context.handle(
+        _columnIdMeta,
+        columnId.isAcceptableOrUnknown(data['column_id']!, _columnIdMeta),
+      );
+    }
+    if (data.containsKey('board_order')) {
+      context.handle(
+        _boardOrderMeta,
+        boardOrder.isAcceptableOrUnknown(data['board_order']!, _boardOrderMeta),
+      );
+    }
     return context;
   }
 
@@ -8746,6 +8783,14 @@ class $TodosTable extends Todos with TableInfo<$TodosTable, TodoRow> {
         DriftSqlType.bool,
         data['${effectivePrefix}pinned'],
       ),
+      columnId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}column_id'],
+      ),
+      boardOrder: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}board_order'],
+      )!,
     );
   }
 
@@ -8800,6 +8845,13 @@ class TodoRow extends DataClass implements Insertable<TodoRow> {
 
   /// User pin. Nullable for an additive, appearance-preserving migration.
   final bool? pinned;
+
+  /// The Kanban lane. Nullable only so old databases can be upgraded safely;
+  /// repository writes always assign the first live column.
+  final String? columnId;
+
+  /// Stable order within a lane. List mode deliberately ignores it.
+  final int boardOrder;
   const TodoRow({
     required this.id,
     required this.body,
@@ -8815,6 +8867,8 @@ class TodoRow extends DataClass implements Insertable<TodoRow> {
     this.folderId,
     this.captureFingerprint,
     this.pinned,
+    this.columnId,
+    required this.boardOrder,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -8849,6 +8903,10 @@ class TodoRow extends DataClass implements Insertable<TodoRow> {
     if (!nullToAbsent || pinned != null) {
       map['pinned'] = Variable<bool>(pinned);
     }
+    if (!nullToAbsent || columnId != null) {
+      map['column_id'] = Variable<String>(columnId);
+    }
+    map['board_order'] = Variable<int>(boardOrder);
     return map;
   }
 
@@ -8884,6 +8942,10 @@ class TodoRow extends DataClass implements Insertable<TodoRow> {
       pinned: pinned == null && nullToAbsent
           ? const Value.absent()
           : Value(pinned),
+      columnId: columnId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(columnId),
+      boardOrder: Value(boardOrder),
     );
   }
 
@@ -8909,6 +8971,8 @@ class TodoRow extends DataClass implements Insertable<TodoRow> {
         json['captureFingerprint'],
       ),
       pinned: serializer.fromJson<bool?>(json['pinned']),
+      columnId: serializer.fromJson<String?>(json['columnId']),
+      boardOrder: serializer.fromJson<int>(json['boardOrder']),
     );
   }
   @override
@@ -8929,6 +8993,8 @@ class TodoRow extends DataClass implements Insertable<TodoRow> {
       'folderId': serializer.toJson<String?>(folderId),
       'captureFingerprint': serializer.toJson<String?>(captureFingerprint),
       'pinned': serializer.toJson<bool?>(pinned),
+      'columnId': serializer.toJson<String?>(columnId),
+      'boardOrder': serializer.toJson<int>(boardOrder),
     };
   }
 
@@ -8947,6 +9013,8 @@ class TodoRow extends DataClass implements Insertable<TodoRow> {
     Value<String?> folderId = const Value.absent(),
     Value<String?> captureFingerprint = const Value.absent(),
     Value<bool?> pinned = const Value.absent(),
+    Value<String?> columnId = const Value.absent(),
+    int? boardOrder,
   }) => TodoRow(
     id: id ?? this.id,
     body: body ?? this.body,
@@ -8964,6 +9032,8 @@ class TodoRow extends DataClass implements Insertable<TodoRow> {
         ? captureFingerprint.value
         : this.captureFingerprint,
     pinned: pinned.present ? pinned.value : this.pinned,
+    columnId: columnId.present ? columnId.value : this.columnId,
+    boardOrder: boardOrder ?? this.boardOrder,
   );
   TodoRow copyWithCompanion(TodosCompanion data) {
     return TodoRow(
@@ -8983,6 +9053,10 @@ class TodoRow extends DataClass implements Insertable<TodoRow> {
           ? data.captureFingerprint.value
           : this.captureFingerprint,
       pinned: data.pinned.present ? data.pinned.value : this.pinned,
+      columnId: data.columnId.present ? data.columnId.value : this.columnId,
+      boardOrder: data.boardOrder.present
+          ? data.boardOrder.value
+          : this.boardOrder,
     );
   }
 
@@ -9002,7 +9076,9 @@ class TodoRow extends DataClass implements Insertable<TodoRow> {
           ..write('syncedSeq: $syncedSeq, ')
           ..write('folderId: $folderId, ')
           ..write('captureFingerprint: $captureFingerprint, ')
-          ..write('pinned: $pinned')
+          ..write('pinned: $pinned, ')
+          ..write('columnId: $columnId, ')
+          ..write('boardOrder: $boardOrder')
           ..write(')'))
         .toString();
   }
@@ -9023,6 +9099,8 @@ class TodoRow extends DataClass implements Insertable<TodoRow> {
     folderId,
     captureFingerprint,
     pinned,
+    columnId,
+    boardOrder,
   );
   @override
   bool operator ==(Object other) =>
@@ -9041,7 +9119,9 @@ class TodoRow extends DataClass implements Insertable<TodoRow> {
           other.syncedSeq == this.syncedSeq &&
           other.folderId == this.folderId &&
           other.captureFingerprint == this.captureFingerprint &&
-          other.pinned == this.pinned);
+          other.pinned == this.pinned &&
+          other.columnId == this.columnId &&
+          other.boardOrder == this.boardOrder);
 }
 
 class TodosCompanion extends UpdateCompanion<TodoRow> {
@@ -9059,6 +9139,8 @@ class TodosCompanion extends UpdateCompanion<TodoRow> {
   final Value<String?> folderId;
   final Value<String?> captureFingerprint;
   final Value<bool?> pinned;
+  final Value<String?> columnId;
+  final Value<int> boardOrder;
   final Value<int> rowid;
   const TodosCompanion({
     this.id = const Value.absent(),
@@ -9075,6 +9157,8 @@ class TodosCompanion extends UpdateCompanion<TodoRow> {
     this.folderId = const Value.absent(),
     this.captureFingerprint = const Value.absent(),
     this.pinned = const Value.absent(),
+    this.columnId = const Value.absent(),
+    this.boardOrder = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   TodosCompanion.insert({
@@ -9092,6 +9176,8 @@ class TodosCompanion extends UpdateCompanion<TodoRow> {
     this.folderId = const Value.absent(),
     this.captureFingerprint = const Value.absent(),
     this.pinned = const Value.absent(),
+    this.columnId = const Value.absent(),
+    this.boardOrder = const Value.absent(),
     this.rowid = const Value.absent(),
   }) : id = Value(id),
        body = Value(body),
@@ -9112,6 +9198,8 @@ class TodosCompanion extends UpdateCompanion<TodoRow> {
     Expression<String>? folderId,
     Expression<String>? captureFingerprint,
     Expression<bool>? pinned,
+    Expression<String>? columnId,
+    Expression<int>? boardOrder,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -9129,6 +9217,8 @@ class TodosCompanion extends UpdateCompanion<TodoRow> {
       if (folderId != null) 'folder_id': folderId,
       if (captureFingerprint != null) 'capture_fingerprint': captureFingerprint,
       if (pinned != null) 'pinned': pinned,
+      if (columnId != null) 'column_id': columnId,
+      if (boardOrder != null) 'board_order': boardOrder,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -9148,6 +9238,8 @@ class TodosCompanion extends UpdateCompanion<TodoRow> {
     Value<String?>? folderId,
     Value<String?>? captureFingerprint,
     Value<bool?>? pinned,
+    Value<String?>? columnId,
+    Value<int>? boardOrder,
     Value<int>? rowid,
   }) {
     return TodosCompanion(
@@ -9165,6 +9257,8 @@ class TodosCompanion extends UpdateCompanion<TodoRow> {
       folderId: folderId ?? this.folderId,
       captureFingerprint: captureFingerprint ?? this.captureFingerprint,
       pinned: pinned ?? this.pinned,
+      columnId: columnId ?? this.columnId,
+      boardOrder: boardOrder ?? this.boardOrder,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -9214,6 +9308,12 @@ class TodosCompanion extends UpdateCompanion<TodoRow> {
     if (pinned.present) {
       map['pinned'] = Variable<bool>(pinned.value);
     }
+    if (columnId.present) {
+      map['column_id'] = Variable<String>(columnId.value);
+    }
+    if (boardOrder.present) {
+      map['board_order'] = Variable<int>(boardOrder.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -9237,6 +9337,521 @@ class TodosCompanion extends UpdateCompanion<TodoRow> {
           ..write('folderId: $folderId, ')
           ..write('captureFingerprint: $captureFingerprint, ')
           ..write('pinned: $pinned, ')
+          ..write('columnId: $columnId, ')
+          ..write('boardOrder: $boardOrder, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $TodoColumnsTable extends TodoColumns
+    with TableInfo<$TodoColumnsTable, TodoColumnRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $TodoColumnsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<String> id = GeneratedColumn<String>(
+    'id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _nameMeta = const VerificationMeta('name');
+  @override
+  late final GeneratedColumn<String> name = GeneratedColumn<String>(
+    'name',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _sortOrderMeta = const VerificationMeta(
+    'sortOrder',
+  );
+  @override
+  late final GeneratedColumn<int> sortOrder = GeneratedColumn<int>(
+    'sort_order',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _createdAtMeta = const VerificationMeta(
+    'createdAt',
+  );
+  @override
+  late final GeneratedColumn<String> createdAt = GeneratedColumn<String>(
+    'created_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _updatedAtMeta = const VerificationMeta(
+    'updatedAt',
+  );
+  @override
+  late final GeneratedColumn<String> updatedAt = GeneratedColumn<String>(
+    'updated_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _deletedAtMeta = const VerificationMeta(
+    'deletedAt',
+  );
+  @override
+  late final GeneratedColumn<String> deletedAt = GeneratedColumn<String>(
+    'deleted_at',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _syncDirtyMeta = const VerificationMeta(
+    'syncDirty',
+  );
+  @override
+  late final GeneratedColumn<bool> syncDirty = GeneratedColumn<bool>(
+    'sync_dirty',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("sync_dirty" IN (0, 1))',
+    ),
+    defaultValue: const Constant(true),
+  );
+  static const VerificationMeta _syncedSeqMeta = const VerificationMeta(
+    'syncedSeq',
+  );
+  @override
+  late final GeneratedColumn<int> syncedSeq = GeneratedColumn<int>(
+    'synced_seq',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    name,
+    sortOrder,
+    createdAt,
+    updatedAt,
+    deletedAt,
+    syncDirty,
+    syncedSeq,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'todo_columns';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<TodoColumnRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    } else if (isInserting) {
+      context.missing(_idMeta);
+    }
+    if (data.containsKey('name')) {
+      context.handle(
+        _nameMeta,
+        name.isAcceptableOrUnknown(data['name']!, _nameMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_nameMeta);
+    }
+    if (data.containsKey('sort_order')) {
+      context.handle(
+        _sortOrderMeta,
+        sortOrder.isAcceptableOrUnknown(data['sort_order']!, _sortOrderMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_sortOrderMeta);
+    }
+    if (data.containsKey('created_at')) {
+      context.handle(
+        _createdAtMeta,
+        createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_createdAtMeta);
+    }
+    if (data.containsKey('updated_at')) {
+      context.handle(
+        _updatedAtMeta,
+        updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_updatedAtMeta);
+    }
+    if (data.containsKey('deleted_at')) {
+      context.handle(
+        _deletedAtMeta,
+        deletedAt.isAcceptableOrUnknown(data['deleted_at']!, _deletedAtMeta),
+      );
+    }
+    if (data.containsKey('sync_dirty')) {
+      context.handle(
+        _syncDirtyMeta,
+        syncDirty.isAcceptableOrUnknown(data['sync_dirty']!, _syncDirtyMeta),
+      );
+    }
+    if (data.containsKey('synced_seq')) {
+      context.handle(
+        _syncedSeqMeta,
+        syncedSeq.isAcceptableOrUnknown(data['synced_seq']!, _syncedSeqMeta),
+      );
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  TodoColumnRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return TodoColumnRow(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}id'],
+      )!,
+      name: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}name'],
+      )!,
+      sortOrder: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}sort_order'],
+      )!,
+      createdAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}created_at'],
+      )!,
+      updatedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}updated_at'],
+      )!,
+      deletedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}deleted_at'],
+      ),
+      syncDirty: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}sync_dirty'],
+      )!,
+      syncedSeq: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}synced_seq'],
+      ),
+    );
+  }
+
+  @override
+  $TodoColumnsTable createAlias(String alias) {
+    return $TodoColumnsTable(attachedDatabase, alias);
+  }
+}
+
+class TodoColumnRow extends DataClass implements Insertable<TodoColumnRow> {
+  final String id;
+  final String name;
+  final int sortOrder;
+  final String createdAt;
+  final String updatedAt;
+  final String? deletedAt;
+  final bool syncDirty;
+  final int? syncedSeq;
+  const TodoColumnRow({
+    required this.id,
+    required this.name,
+    required this.sortOrder,
+    required this.createdAt,
+    required this.updatedAt,
+    this.deletedAt,
+    required this.syncDirty,
+    this.syncedSeq,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<String>(id);
+    map['name'] = Variable<String>(name);
+    map['sort_order'] = Variable<int>(sortOrder);
+    map['created_at'] = Variable<String>(createdAt);
+    map['updated_at'] = Variable<String>(updatedAt);
+    if (!nullToAbsent || deletedAt != null) {
+      map['deleted_at'] = Variable<String>(deletedAt);
+    }
+    map['sync_dirty'] = Variable<bool>(syncDirty);
+    if (!nullToAbsent || syncedSeq != null) {
+      map['synced_seq'] = Variable<int>(syncedSeq);
+    }
+    return map;
+  }
+
+  TodoColumnsCompanion toCompanion(bool nullToAbsent) {
+    return TodoColumnsCompanion(
+      id: Value(id),
+      name: Value(name),
+      sortOrder: Value(sortOrder),
+      createdAt: Value(createdAt),
+      updatedAt: Value(updatedAt),
+      deletedAt: deletedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(deletedAt),
+      syncDirty: Value(syncDirty),
+      syncedSeq: syncedSeq == null && nullToAbsent
+          ? const Value.absent()
+          : Value(syncedSeq),
+    );
+  }
+
+  factory TodoColumnRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return TodoColumnRow(
+      id: serializer.fromJson<String>(json['id']),
+      name: serializer.fromJson<String>(json['name']),
+      sortOrder: serializer.fromJson<int>(json['sortOrder']),
+      createdAt: serializer.fromJson<String>(json['createdAt']),
+      updatedAt: serializer.fromJson<String>(json['updatedAt']),
+      deletedAt: serializer.fromJson<String?>(json['deletedAt']),
+      syncDirty: serializer.fromJson<bool>(json['syncDirty']),
+      syncedSeq: serializer.fromJson<int?>(json['syncedSeq']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<String>(id),
+      'name': serializer.toJson<String>(name),
+      'sortOrder': serializer.toJson<int>(sortOrder),
+      'createdAt': serializer.toJson<String>(createdAt),
+      'updatedAt': serializer.toJson<String>(updatedAt),
+      'deletedAt': serializer.toJson<String?>(deletedAt),
+      'syncDirty': serializer.toJson<bool>(syncDirty),
+      'syncedSeq': serializer.toJson<int?>(syncedSeq),
+    };
+  }
+
+  TodoColumnRow copyWith({
+    String? id,
+    String? name,
+    int? sortOrder,
+    String? createdAt,
+    String? updatedAt,
+    Value<String?> deletedAt = const Value.absent(),
+    bool? syncDirty,
+    Value<int?> syncedSeq = const Value.absent(),
+  }) => TodoColumnRow(
+    id: id ?? this.id,
+    name: name ?? this.name,
+    sortOrder: sortOrder ?? this.sortOrder,
+    createdAt: createdAt ?? this.createdAt,
+    updatedAt: updatedAt ?? this.updatedAt,
+    deletedAt: deletedAt.present ? deletedAt.value : this.deletedAt,
+    syncDirty: syncDirty ?? this.syncDirty,
+    syncedSeq: syncedSeq.present ? syncedSeq.value : this.syncedSeq,
+  );
+  TodoColumnRow copyWithCompanion(TodoColumnsCompanion data) {
+    return TodoColumnRow(
+      id: data.id.present ? data.id.value : this.id,
+      name: data.name.present ? data.name.value : this.name,
+      sortOrder: data.sortOrder.present ? data.sortOrder.value : this.sortOrder,
+      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+      deletedAt: data.deletedAt.present ? data.deletedAt.value : this.deletedAt,
+      syncDirty: data.syncDirty.present ? data.syncDirty.value : this.syncDirty,
+      syncedSeq: data.syncedSeq.present ? data.syncedSeq.value : this.syncedSeq,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('TodoColumnRow(')
+          ..write('id: $id, ')
+          ..write('name: $name, ')
+          ..write('sortOrder: $sortOrder, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('deletedAt: $deletedAt, ')
+          ..write('syncDirty: $syncDirty, ')
+          ..write('syncedSeq: $syncedSeq')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    id,
+    name,
+    sortOrder,
+    createdAt,
+    updatedAt,
+    deletedAt,
+    syncDirty,
+    syncedSeq,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is TodoColumnRow &&
+          other.id == this.id &&
+          other.name == this.name &&
+          other.sortOrder == this.sortOrder &&
+          other.createdAt == this.createdAt &&
+          other.updatedAt == this.updatedAt &&
+          other.deletedAt == this.deletedAt &&
+          other.syncDirty == this.syncDirty &&
+          other.syncedSeq == this.syncedSeq);
+}
+
+class TodoColumnsCompanion extends UpdateCompanion<TodoColumnRow> {
+  final Value<String> id;
+  final Value<String> name;
+  final Value<int> sortOrder;
+  final Value<String> createdAt;
+  final Value<String> updatedAt;
+  final Value<String?> deletedAt;
+  final Value<bool> syncDirty;
+  final Value<int?> syncedSeq;
+  final Value<int> rowid;
+  const TodoColumnsCompanion({
+    this.id = const Value.absent(),
+    this.name = const Value.absent(),
+    this.sortOrder = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+    this.deletedAt = const Value.absent(),
+    this.syncDirty = const Value.absent(),
+    this.syncedSeq = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  TodoColumnsCompanion.insert({
+    required String id,
+    required String name,
+    required int sortOrder,
+    required String createdAt,
+    required String updatedAt,
+    this.deletedAt = const Value.absent(),
+    this.syncDirty = const Value.absent(),
+    this.syncedSeq = const Value.absent(),
+    this.rowid = const Value.absent(),
+  }) : id = Value(id),
+       name = Value(name),
+       sortOrder = Value(sortOrder),
+       createdAt = Value(createdAt),
+       updatedAt = Value(updatedAt);
+  static Insertable<TodoColumnRow> custom({
+    Expression<String>? id,
+    Expression<String>? name,
+    Expression<int>? sortOrder,
+    Expression<String>? createdAt,
+    Expression<String>? updatedAt,
+    Expression<String>? deletedAt,
+    Expression<bool>? syncDirty,
+    Expression<int>? syncedSeq,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (name != null) 'name': name,
+      if (sortOrder != null) 'sort_order': sortOrder,
+      if (createdAt != null) 'created_at': createdAt,
+      if (updatedAt != null) 'updated_at': updatedAt,
+      if (deletedAt != null) 'deleted_at': deletedAt,
+      if (syncDirty != null) 'sync_dirty': syncDirty,
+      if (syncedSeq != null) 'synced_seq': syncedSeq,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  TodoColumnsCompanion copyWith({
+    Value<String>? id,
+    Value<String>? name,
+    Value<int>? sortOrder,
+    Value<String>? createdAt,
+    Value<String>? updatedAt,
+    Value<String?>? deletedAt,
+    Value<bool>? syncDirty,
+    Value<int?>? syncedSeq,
+    Value<int>? rowid,
+  }) {
+    return TodoColumnsCompanion(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      sortOrder: sortOrder ?? this.sortOrder,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+      deletedAt: deletedAt ?? this.deletedAt,
+      syncDirty: syncDirty ?? this.syncDirty,
+      syncedSeq: syncedSeq ?? this.syncedSeq,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<String>(id.value);
+    }
+    if (name.present) {
+      map['name'] = Variable<String>(name.value);
+    }
+    if (sortOrder.present) {
+      map['sort_order'] = Variable<int>(sortOrder.value);
+    }
+    if (createdAt.present) {
+      map['created_at'] = Variable<String>(createdAt.value);
+    }
+    if (updatedAt.present) {
+      map['updated_at'] = Variable<String>(updatedAt.value);
+    }
+    if (deletedAt.present) {
+      map['deleted_at'] = Variable<String>(deletedAt.value);
+    }
+    if (syncDirty.present) {
+      map['sync_dirty'] = Variable<bool>(syncDirty.value);
+    }
+    if (syncedSeq.present) {
+      map['synced_seq'] = Variable<int>(syncedSeq.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('TodoColumnsCompanion(')
+          ..write('id: $id, ')
+          ..write('name: $name, ')
+          ..write('sortOrder: $sortOrder, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('deletedAt: $deletedAt, ')
+          ..write('syncDirty: $syncDirty, ')
+          ..write('syncedSeq: $syncedSeq, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -11877,6 +12492,7 @@ abstract class _$LocalDb extends GeneratedDatabase {
   );
   late final $LocalSettingsTable localSettings = $LocalSettingsTable(this);
   late final $TodosTable todos = $TodosTable(this);
+  late final $TodoColumnsTable todoColumns = $TodoColumnsTable(this);
   late final $CalendarEventsTable calendarEvents = $CalendarEventsTable(this);
   late final $AskMessagesTable askMessages = $AskMessagesTable(this);
   late final $AskSourceVisitsTable askSourceVisits = $AskSourceVisitsTable(
@@ -11904,6 +12520,7 @@ abstract class _$LocalDb extends GeneratedDatabase {
     inkIndexEntries,
     localSettings,
     todos,
+    todoColumns,
     calendarEvents,
     askMessages,
     askSourceVisits,
@@ -16317,6 +16934,8 @@ typedef $$TodosTableCreateCompanionBuilder =
       Value<String?> folderId,
       Value<String?> captureFingerprint,
       Value<bool?> pinned,
+      Value<String?> columnId,
+      Value<int> boardOrder,
       Value<int> rowid,
     });
 typedef $$TodosTableUpdateCompanionBuilder =
@@ -16335,6 +16954,8 @@ typedef $$TodosTableUpdateCompanionBuilder =
       Value<String?> folderId,
       Value<String?> captureFingerprint,
       Value<bool?> pinned,
+      Value<String?> columnId,
+      Value<int> boardOrder,
       Value<int> rowid,
     });
 
@@ -16413,6 +17034,16 @@ class $$TodosTableFilterComposer extends Composer<_$LocalDb, $TodosTable> {
 
   ColumnFilters<bool> get pinned => $composableBuilder(
     column: $table.pinned,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get columnId => $composableBuilder(
+    column: $table.columnId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get boardOrder => $composableBuilder(
+    column: $table.boardOrder,
     builder: (column) => ColumnFilters(column),
   );
 }
@@ -16494,6 +17125,16 @@ class $$TodosTableOrderingComposer extends Composer<_$LocalDb, $TodosTable> {
     column: $table.pinned,
     builder: (column) => ColumnOrderings(column),
   );
+
+  ColumnOrderings<String> get columnId => $composableBuilder(
+    column: $table.columnId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get boardOrder => $composableBuilder(
+    column: $table.boardOrder,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$TodosTableAnnotationComposer extends Composer<_$LocalDb, $TodosTable> {
@@ -16547,6 +17188,14 @@ class $$TodosTableAnnotationComposer extends Composer<_$LocalDb, $TodosTable> {
 
   GeneratedColumn<bool> get pinned =>
       $composableBuilder(column: $table.pinned, builder: (column) => column);
+
+  GeneratedColumn<String> get columnId =>
+      $composableBuilder(column: $table.columnId, builder: (column) => column);
+
+  GeneratedColumn<int> get boardOrder => $composableBuilder(
+    column: $table.boardOrder,
+    builder: (column) => column,
+  );
 }
 
 class $$TodosTableTableManager
@@ -16591,6 +17240,8 @@ class $$TodosTableTableManager
                 Value<String?> folderId = const Value.absent(),
                 Value<String?> captureFingerprint = const Value.absent(),
                 Value<bool?> pinned = const Value.absent(),
+                Value<String?> columnId = const Value.absent(),
+                Value<int> boardOrder = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => TodosCompanion(
                 id: id,
@@ -16607,6 +17258,8 @@ class $$TodosTableTableManager
                 folderId: folderId,
                 captureFingerprint: captureFingerprint,
                 pinned: pinned,
+                columnId: columnId,
+                boardOrder: boardOrder,
                 rowid: rowid,
               ),
           createCompanionCallback:
@@ -16625,6 +17278,8 @@ class $$TodosTableTableManager
                 Value<String?> folderId = const Value.absent(),
                 Value<String?> captureFingerprint = const Value.absent(),
                 Value<bool?> pinned = const Value.absent(),
+                Value<String?> columnId = const Value.absent(),
+                Value<int> boardOrder = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => TodosCompanion.insert(
                 id: id,
@@ -16641,6 +17296,8 @@ class $$TodosTableTableManager
                 folderId: folderId,
                 captureFingerprint: captureFingerprint,
                 pinned: pinned,
+                columnId: columnId,
+                boardOrder: boardOrder,
                 rowid: rowid,
               ),
           withReferenceMapper: (p0) => p0
@@ -16668,6 +17325,272 @@ typedef $$TodosTableProcessedTableManager =
       $$TodosTableUpdateCompanionBuilder,
       (TodoRow, BaseReferences<_$LocalDb, $TodosTable, TodoRow>),
       TodoRow,
+      PrefetchHooks Function()
+    >;
+typedef $$TodoColumnsTableCreateCompanionBuilder =
+    TodoColumnsCompanion Function({
+      required String id,
+      required String name,
+      required int sortOrder,
+      required String createdAt,
+      required String updatedAt,
+      Value<String?> deletedAt,
+      Value<bool> syncDirty,
+      Value<int?> syncedSeq,
+      Value<int> rowid,
+    });
+typedef $$TodoColumnsTableUpdateCompanionBuilder =
+    TodoColumnsCompanion Function({
+      Value<String> id,
+      Value<String> name,
+      Value<int> sortOrder,
+      Value<String> createdAt,
+      Value<String> updatedAt,
+      Value<String?> deletedAt,
+      Value<bool> syncDirty,
+      Value<int?> syncedSeq,
+      Value<int> rowid,
+    });
+
+class $$TodoColumnsTableFilterComposer
+    extends Composer<_$LocalDb, $TodoColumnsTable> {
+  $$TodoColumnsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get name => $composableBuilder(
+    column: $table.name,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get sortOrder => $composableBuilder(
+    column: $table.sortOrder,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get deletedAt => $composableBuilder(
+    column: $table.deletedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get syncDirty => $composableBuilder(
+    column: $table.syncDirty,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get syncedSeq => $composableBuilder(
+    column: $table.syncedSeq,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$TodoColumnsTableOrderingComposer
+    extends Composer<_$LocalDb, $TodoColumnsTable> {
+  $$TodoColumnsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get name => $composableBuilder(
+    column: $table.name,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get sortOrder => $composableBuilder(
+    column: $table.sortOrder,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get deletedAt => $composableBuilder(
+    column: $table.deletedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<bool> get syncDirty => $composableBuilder(
+    column: $table.syncDirty,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get syncedSeq => $composableBuilder(
+    column: $table.syncedSeq,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$TodoColumnsTableAnnotationComposer
+    extends Composer<_$LocalDb, $TodoColumnsTable> {
+  $$TodoColumnsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<String> get name =>
+      $composableBuilder(column: $table.name, builder: (column) => column);
+
+  GeneratedColumn<int> get sortOrder =>
+      $composableBuilder(column: $table.sortOrder, builder: (column) => column);
+
+  GeneratedColumn<String> get createdAt =>
+      $composableBuilder(column: $table.createdAt, builder: (column) => column);
+
+  GeneratedColumn<String> get updatedAt =>
+      $composableBuilder(column: $table.updatedAt, builder: (column) => column);
+
+  GeneratedColumn<String> get deletedAt =>
+      $composableBuilder(column: $table.deletedAt, builder: (column) => column);
+
+  GeneratedColumn<bool> get syncDirty =>
+      $composableBuilder(column: $table.syncDirty, builder: (column) => column);
+
+  GeneratedColumn<int> get syncedSeq =>
+      $composableBuilder(column: $table.syncedSeq, builder: (column) => column);
+}
+
+class $$TodoColumnsTableTableManager
+    extends
+        RootTableManager<
+          _$LocalDb,
+          $TodoColumnsTable,
+          TodoColumnRow,
+          $$TodoColumnsTableFilterComposer,
+          $$TodoColumnsTableOrderingComposer,
+          $$TodoColumnsTableAnnotationComposer,
+          $$TodoColumnsTableCreateCompanionBuilder,
+          $$TodoColumnsTableUpdateCompanionBuilder,
+          (
+            TodoColumnRow,
+            BaseReferences<_$LocalDb, $TodoColumnsTable, TodoColumnRow>,
+          ),
+          TodoColumnRow,
+          PrefetchHooks Function()
+        > {
+  $$TodoColumnsTableTableManager(_$LocalDb db, $TodoColumnsTable table)
+    : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$TodoColumnsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$TodoColumnsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$TodoColumnsTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback:
+              ({
+                Value<String> id = const Value.absent(),
+                Value<String> name = const Value.absent(),
+                Value<int> sortOrder = const Value.absent(),
+                Value<String> createdAt = const Value.absent(),
+                Value<String> updatedAt = const Value.absent(),
+                Value<String?> deletedAt = const Value.absent(),
+                Value<bool> syncDirty = const Value.absent(),
+                Value<int?> syncedSeq = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => TodoColumnsCompanion(
+                id: id,
+                name: name,
+                sortOrder: sortOrder,
+                createdAt: createdAt,
+                updatedAt: updatedAt,
+                deletedAt: deletedAt,
+                syncDirty: syncDirty,
+                syncedSeq: syncedSeq,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String id,
+                required String name,
+                required int sortOrder,
+                required String createdAt,
+                required String updatedAt,
+                Value<String?> deletedAt = const Value.absent(),
+                Value<bool> syncDirty = const Value.absent(),
+                Value<int?> syncedSeq = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => TodoColumnsCompanion.insert(
+                id: id,
+                name: name,
+                sortOrder: sortOrder,
+                createdAt: createdAt,
+                updatedAt: updatedAt,
+                deletedAt: deletedAt,
+                syncDirty: syncDirty,
+                syncedSeq: syncedSeq,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map(
+                (e) => (
+                  e.readTable<$TodoColumnsTable, TodoColumnRow>(table),
+                  BaseReferences<_$LocalDb, $TodoColumnsTable, TodoColumnRow>(
+                    db,
+                    table,
+                    e,
+                  ),
+                ),
+              )
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$TodoColumnsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$LocalDb,
+      $TodoColumnsTable,
+      TodoColumnRow,
+      $$TodoColumnsTableFilterComposer,
+      $$TodoColumnsTableOrderingComposer,
+      $$TodoColumnsTableAnnotationComposer,
+      $$TodoColumnsTableCreateCompanionBuilder,
+      $$TodoColumnsTableUpdateCompanionBuilder,
+      (
+        TodoColumnRow,
+        BaseReferences<_$LocalDb, $TodoColumnsTable, TodoColumnRow>,
+      ),
+      TodoColumnRow,
       PrefetchHooks Function()
     >;
 typedef $$CalendarEventsTableCreateCompanionBuilder =
@@ -18035,6 +18958,8 @@ class $LocalDbManager {
       $$LocalSettingsTableTableManager(_db, _db.localSettings);
   $$TodosTableTableManager get todos =>
       $$TodosTableTableManager(_db, _db.todos);
+  $$TodoColumnsTableTableManager get todoColumns =>
+      $$TodoColumnsTableTableManager(_db, _db.todoColumns);
   $$CalendarEventsTableTableManager get calendarEvents =>
       $$CalendarEventsTableTableManager(_db, _db.calendarEvents);
   $$AskMessagesTableTableManager get askMessages =>

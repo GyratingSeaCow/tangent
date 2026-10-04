@@ -116,8 +116,7 @@ void main() {
       tester.getTopLeft(find.byKey(key)).dy;
 
   group('quick-add', () {
-    testWidgets(
-        'submit adds the item, clears the field, and KEEPS the '
+    testWidgets('submit adds the item, clears the field, and KEEPS the '
         'keyboard for chained entry', (tester) async {
       await mount(tester);
 
@@ -131,8 +130,9 @@ void main() {
       await settle(tester);
 
       expect(find.text('buy thermal paste'), findsOneWidget);
-      final TextField field =
-          tester.widget(find.byKey(TodoListScreen.quickAddFieldKey));
+      final TextField field = tester.widget(
+        find.byKey(TodoListScreen.quickAddFieldKey),
+      );
       expect(field.controller!.text, isEmpty, reason: 'field clears');
       expect(
         field.focusNode!.hasFocus,
@@ -153,8 +153,7 @@ void main() {
       await unmount(tester);
     });
 
-    testWidgets(
-        'an armed date chip dates the NEXT item only, and a new item '
+    testWidgets('an armed date chip dates the NEXT item only, and a new item '
         'lands unfiled', (tester) async {
       final TodoRepository repo = await mount(tester);
 
@@ -205,8 +204,7 @@ void main() {
     });
   });
 
-  testWidgets(
-      'checking an item strikes it and moves it to Done in the '
+  testWidgets('checking an item strikes it and moves it to Done in the '
       'same frame', (tester) async {
     final TodoRepository repo = await mount(tester);
     final TodoRow added = await repo.add('do the thing');
@@ -286,8 +284,7 @@ void main() {
     await unmount(tester);
   });
 
-  testWidgets(
-      '⋮ → Delete is soft with a 5 s undo snackbar, and Undo '
+  testWidgets('⋮ → Delete is soft with a 5 s undo snackbar, and Undo '
       'restores the item', (tester) async {
     final TodoRepository repo = await mount(tester);
     final TodoRow added = await repo.add('nearly lost');
@@ -325,16 +322,19 @@ void main() {
     await unmount(tester);
   });
 
-  testWidgets(
-      'with no folders the list is flat, in due-date order, with a '
+  testWidgets('with no folders the list is flat, in due-date order, with a '
       'time chip per row (Overdue red / Today / date)', (tester) async {
     final TodoRepository repo = await mount(tester);
     final TodoRow someday = await repo.add('someday item');
-    final TodoRow overdue =
-        await repo.add('overdue item', dueDate: '2026-09-20');
+    final TodoRow overdue = await repo.add(
+      'overdue item',
+      dueDate: '2026-09-20',
+    );
     final TodoRow later = await repo.add('later item', dueDate: '2026-10-03');
-    final TodoRow today =
-        await repo.add('today item', dueDate: todoDateKey(fixedNow));
+    final TodoRow today = await repo.add(
+      'today item',
+      dueDate: todoDateKey(fixedNow),
+    );
     await settle(tester);
 
     expect(find.byKey(TodoListScreen.unfiledHeaderKey), findsNothing);
@@ -366,8 +366,9 @@ void main() {
     await unmount(tester);
   });
 
-  testWidgets('tapping the text opens inline edit and submit saves it',
-      (tester) async {
+  testWidgets('tapping the text opens inline edit and submit saves it', (
+    tester,
+  ) async {
     final TodoRepository repo = await mount(tester);
     final TodoRow added = await repo.add('tpyo');
     await settle(tester);
@@ -394,12 +395,13 @@ void main() {
     await unmount(tester);
   });
 
-  testWidgets(
-      'long-pressing the date chip clears the due date (still a '
+  testWidgets('long-pressing the date chip clears the due date (still a '
       'chip gesture, not selection)', (tester) async {
     final TodoRepository repo = await mount(tester);
-    final TodoRow added =
-        await repo.add('dated', dueDate: todoDateKey(fixedNow));
+    final TodoRow added = await repo.add(
+      'dated',
+      dueDate: todoDateKey(fixedNow),
+    );
     await settle(tester);
     expect(find.text('Today'), findsOneWidget);
 
@@ -416,8 +418,7 @@ void main() {
   });
 
   group('folders', () {
-    testWidgets(
-        'folder sections: alphabetical headers with counts, empty '
+    testWidgets('folder sections: alphabetical headers with counts, empty '
         'folders shown, No folder last, one Done at the bottom; headers '
         'collapse on tap', (tester) async {
       final TodoRepository repo = await mount(tester);
@@ -455,8 +456,7 @@ void main() {
       await unmount(tester);
     });
 
-    testWidgets(
-        '⋮ → Move → picker files the row under the chosen folder, '
+    testWidgets('⋮ → Move → picker files the row under the chosen folder, '
         'and New folder creates a SHARED folder row', (tester) async {
       final TodoRepository repo = await mount(tester);
       final String shop = await db.createFolder(name: 'Shop');
@@ -503,10 +503,10 @@ void main() {
       await unmount(tester);
     });
 
-    testWidgets(
-        'folder header long-press opens the shared rename/delete '
-        'sheet — never selection; No folder and Done have no actions',
-        (tester) async {
+    testWidgets('folder header long-press opens the shared rename/delete '
+        'sheet — never selection; No folder and Done have no actions', (
+      tester,
+    ) async {
       final TodoRepository repo = await mount(tester);
       final String shop = await db.createFolder(name: 'Shop');
       final TodoRow item = await repo.add('loose');
@@ -546,8 +546,7 @@ void main() {
   });
 
   group('multi-select', () {
-    testWidgets(
-        'row long-press enters selection: toolbar with count, ⋮ '
+    testWidgets('row long-press enters selection: toolbar with count, ⋮ '
         'hidden, tap toggles, × cancels', (tester) async {
       final TodoRepository repo = await mount(tester);
       final TodoRow a = await repo.add('alpha');
@@ -634,8 +633,7 @@ void main() {
       await unmount(tester);
     });
 
-    testWidgets(
-        'bulk Delete confirms ONCE, soft-deletes the set, and one '
+    testWidgets('bulk Delete confirms ONCE, soft-deletes the set, and one '
         'Undo restores all of them', (tester) async {
       final TodoRepository repo = await mount(tester);
       final TodoRow a = await repo.add('alpha');
@@ -679,8 +677,9 @@ void main() {
       await unmount(tester);
     });
 
-    testWidgets('back cancels selection first instead of leaving the screen',
-        (tester) async {
+    testWidgets('back cancels selection first instead of leaving the screen', (
+      tester,
+    ) async {
       final TodoRepository repo = await mountPushed(tester);
       final TodoRow a = await repo.add('alpha');
       await settle(tester);
@@ -712,15 +711,184 @@ void main() {
     });
   });
 
-  group('google chip', () {
-    testWidgets('a "G" chip marks ONLY rows whose source is google',
+  group('kanban board', () {
+    testWidgets('toggle persists and board seeds the three default columns', (
+      tester,
+    ) async {
+      final TodoRepository repo = await mount(tester);
+      final TodoRow todo = await repo.add('board card');
+      await settle(tester);
+
+      await tester.tap(find.byKey(TodoListScreen.viewToggleKey));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('todo-board-scroll')), findsOneWidget);
+      expect(find.text('To Do (1)'), findsOneWidget);
+      expect(find.text('In Progress (0)'), findsOneWidget);
+      expect(find.text('Done (0)'), findsOneWidget);
+      expect(find.byKey(TodoListScreen.cardKey(todo.id)), findsOneWidget);
+      await tester.longPress(find.byKey(TodoListScreen.cardKey(todo.id)));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(TodoListScreen.selectCancelKey),
+        findsNothing,
+        reason: 'board long-press must not enter list multi-select',
+      );
+      await tester.tap(find.byKey(Key('todo-check-${todo.id}')));
+      await tester.pumpAndSettle();
+      final TodoRow checked = (await db.getTodoRow(todo.id))!;
+      expect(checked.doneAt, isNotNull);
+      expect(checked.columnId, defaultTodoColumnId);
+      expect(find.byKey(TodoListScreen.cardKey(todo.id)), findsOneWidget);
+
+      await unmount(tester);
+      await mount(tester);
+      expect(
+        find.byKey(const Key('todo-board-scroll')),
+        findsOneWidget,
+        reason: 'the selected view survives a screen restart',
+      );
+      await unmount(tester);
+    });
+
+    testWidgets('direct drag moves across columns and reorders within a lane', (
+      tester,
+    ) async {
+      final TodoRepository repo = await mount(tester);
+      final TodoRow a = await repo.add('alpha');
+      final TodoRow b = await repo.add('beta');
+      final TodoRow c = await repo.add('gamma');
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(TodoListScreen.viewToggleKey));
+      await tester.pumpAndSettle();
+      final String progress = (await repo.listColumns())[1].id;
+
+      await tester.drag(
+        find.byKey(TodoListScreen.cardKey(b.id)),
+        tester.getCenter(find.byKey(TodoListScreen.dropKey(progress, 0))) -
+            tester.getCenter(find.byKey(TodoListScreen.cardKey(b.id))),
+      );
+      await tester.pumpAndSettle();
+      expect((await db.getTodoRow(b.id))!.columnId, progress);
+
+      await tester.drag(
+        find.byKey(TodoListScreen.cardKey(c.id)),
+        tester.getCenter(
+              find.byKey(TodoListScreen.dropKey(defaultTodoColumnId, 0)),
+            ) -
+            tester.getCenter(find.byKey(TodoListScreen.cardKey(c.id))),
+      );
+      await tester.pumpAndSettle();
+      final List<TodoRow> lane =
+          (await repo.listTodos())
+              .where((row) => row.columnId == defaultTodoColumnId)
+              .toList()
+            ..sort((x, y) => x.boardOrder.compareTo(y.boardOrder));
+      expect(lane.map((row) => row.id), <String>[c.id, a.id]);
+      await unmount(tester);
+    });
+
+    testWidgets(
+      'non-empty delete prompts for destination and keeps every card',
         (tester) async {
+        final TodoRepository repo = await mount(tester);
+        final TodoRow card = await repo.add('must survive');
+        final List<TodoColumnRow> columns = await repo.listColumns();
+        final TodoColumnRow progress = columns[1];
+        final TodoColumnRow done = columns[2];
+        await repo.moveOnBoard(card.id, progress.id, 0);
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(TodoListScreen.viewToggleKey));
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.byKey(TodoListScreen.columnMenuKey(progress.id)));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Delete'));
+        await tester.pumpAndSettle();
+
+        expect(find.text('Move 1 card to:'), findsOneWidget);
+        await tester.tap(find.text(done.name).last);
+        await tester.pumpAndSettle();
+
+        final TodoRow kept = (await db.getTodoRow(card.id))!;
+        expect(kept.columnId, done.id);
+        expect(kept.deletedAt, isNull);
+        expect(find.text('must survive'), findsOneWidget);
+        expect(find.byKey(TodoListScreen.columnKey(progress.id)), findsNothing);
+        await unmount(tester);
+      },
+    );
+
+    testWidgets(
+      'columns can be added, renamed, and reordered from their menu',
+      (tester) async {
+        await mount(tester);
+        await tester.tap(find.byKey(TodoListScreen.viewToggleKey));
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.byKey(TodoListScreen.addColumnKey));
+        await tester.pumpAndSettle();
+        await tester.enterText(
+          find.byKey(TodoListScreen.columnNameFieldKey),
+          'Waiting',
+        );
+        await tester.tap(find.byKey(TodoListScreen.columnSaveKey));
+        await tester.pumpAndSettle();
+        TodoColumnRow waiting = (await TodoRepository(
+          db: db,
+        ).listColumns()).singleWhere((column) => column.name == 'Waiting');
+
+        await tester.drag(
+          find.byKey(const Key('todo-board-scroll')),
+          const Offset(-500, 0),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(TodoListScreen.columnMenuKey(waiting.id)));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Rename'));
+        await tester.pumpAndSettle();
+        await tester.enterText(
+          find.byKey(TodoListScreen.columnNameFieldKey),
+          'Blocked',
+        );
+        await tester.tap(find.byKey(TodoListScreen.columnSaveKey));
+        await tester.pumpAndSettle();
+        waiting = (await TodoRepository(
+          db: db,
+        ).listColumns()).singleWhere((column) => column.id == waiting.id);
+        expect(waiting.name, 'Blocked');
+
+        await tester.drag(
+          find.byKey(const Key('todo-board-scroll')),
+          const Offset(-500, 0),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(TodoListScreen.columnMenuKey(waiting.id)));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Move left'));
+        await tester.pumpAndSettle();
+        expect((await TodoRepository(db: db).listColumns())[2].id, waiting.id);
+        await unmount(tester);
+      },
+    );
+  });
+
+  group('google chip', () {
+    testWidgets('a "G" chip marks ONLY rows whose source is google', (
+      tester,
+    ) async {
       final TodoRepository repo = await mount(tester);
       final TodoRow manual = await repo.add('Buy milk');
-      final TodoRow voice =
-          await repo.add('Call Sam', source: 'voice', sourceRef: 'dump-1');
-      final TodoRow google =
-          await repo.add('Renew passport', source: 'google', sourceRef: 'gt-1');
+      final TodoRow voice = await repo.add(
+        'Call Sam',
+        source: 'voice',
+        sourceRef: 'dump-1',
+      );
+      final TodoRow google = await repo.add(
+        'Renew passport',
+        source: 'google',
+        sourceRef: 'gt-1',
+      );
       await settle(tester);
 
       expect(find.byKey(Key('todo-row-${manual.id}')), findsOneWidget);
@@ -749,11 +917,8 @@ final List<String> _callLog = <String>[];
 /// a socket: `baseUrl` is a non-routable placeholder and every method the
 /// screen touches is overridden.
 class _FakeGoogleClient extends SummariesClient {
-  _FakeGoogleClient({
-    required this.status,
-    this.syncError,
-    this.syncNowThrows,
-  }) : super(baseUrl: 'http://unused.invalid');
+  _FakeGoogleClient({required this.status, this.syncError, this.syncNowThrows})
+    : super(baseUrl: 'http://unused.invalid');
 
   final String status;
   final String? syncError;
@@ -837,8 +1002,7 @@ class _WifiConnectivity implements ConnectivityService {
 
 void syncButtonTests() {
   group('To Do sync button (v1.29.0)', () {
-    testWidgets(
-        'the app bar has the shared sync button and a tap pulls, '
+    testWidgets('the app bar has the shared sync button and a tap pulls, '
         'then pushes the dirty to-do', (tester) async {
       final LocalDb db = LocalDb.forTesting(NativeDatabase.memory());
       addTearDown(db.close);
@@ -884,7 +1048,7 @@ void syncButtonTests() {
         contains('todo'),
         reason: 'the dirty to-do travels in the same press',
       );
-      expect(find.text('Synced: sent 1'), findsOneWidget);
+      expect(find.text('Synced: sent 4'), findsOneWidget);
       // The snackbar's dismiss timer outlives the test otherwise.
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump(const Duration(milliseconds: 1));
@@ -942,30 +1106,34 @@ void syncButtonTests() {
 
     testWidgets(
         'connected: one Google cycle runs AFTER the device push and the '
-        'snackbar says so', (tester) async {
-      final (_RecordingSyncClient client, _FakeGoogleClient google) =
-          await tapSync(tester, google: _FakeGoogleClient(status: 'connected'));
+      'snackbar says so',
+      (tester) async {
+        final (
+          _RecordingSyncClient client,
+          _FakeGoogleClient google,
+        ) = await tapSync(
+          tester,
+          google: _FakeGoogleClient(status: 'connected'),
+        );
 
       expect(client.pulls, 1);
       expect(google.syncNowCalls, 1, reason: 'exactly one Google cycle');
       // The whole point of L4: Google must receive the state the server has
       // AFTER this press. A hook that ran first would forward the stale row.
-      expect(
-        _callLog,
-        <String>[
+        expect(_callLog, <String>[
           'device-pull',
           'device-push',
           'google-status',
           'google-sync-now',
-        ],
-        reason: 'device sync completes before any Google call',
-      );
-      expect(find.text('Synced: sent 1 · Google updated'), findsOneWidget);
+        ], reason: 'device sync completes before any Google call');
+        expect(find.text('Synced: sent 4 · Google updated'), findsOneWidget);
       await unmount(tester);
-    });
+      },
+    );
 
-    testWidgets('not connected: no Google call, message unchanged',
-        (tester) async {
+    testWidgets('not connected: no Google call, message unchanged', (
+      tester,
+    ) async {
       final (_, _FakeGoogleClient google) = await tapSync(
         tester,
         google: _FakeGoogleClient(status: 'disconnected'),
@@ -973,7 +1141,7 @@ void syncButtonTests() {
 
       expect(google.statusCalls, 1, reason: 'the status IS consulted');
       expect(google.syncNowCalls, 0, reason: 'but nothing is pushed');
-      expect(find.text('Synced: sent 1'), findsOneWidget);
+      expect(find.text('Synced: sent 4'), findsOneWidget);
       expect(find.textContaining('Google'), findsNothing);
       await unmount(tester);
     });
@@ -984,12 +1152,13 @@ void syncButtonTests() {
         google: _FakeGoogleClient(status: 'reauth_required'),
       );
       expect(google.syncNowCalls, 0);
-      expect(find.text('Synced: sent 1'), findsOneWidget);
+      expect(find.text('Synced: sent 4'), findsOneWidget);
       await unmount(tester);
     });
 
-    testWidgets('the cycle ran but Google reported an error: named',
-        (tester) async {
+    testWidgets('the cycle ran but Google reported an error: named', (
+      tester,
+    ) async {
       await tapSync(
         tester,
         google: _FakeGoogleClient(
@@ -999,15 +1168,16 @@ void syncButtonTests() {
       );
       expect(
         find.text(
-          'Synced: sent 1 · Google: HTTP 503 from tasks.googleapis.com',
+          'Synced: sent 4 · Google: HTTP 503 from tasks.googleapis.com',
         ),
         findsOneWidget,
       );
       await unmount(tester);
     });
 
-    testWidgets('the Google call throws: the device sync is still reported',
-        (tester) async {
+    testWidgets('the Google call throws: the device sync is still reported', (
+      tester,
+    ) async {
       await tapSync(
         tester,
         google: _FakeGoogleClient(
@@ -1022,7 +1192,7 @@ void syncButtonTests() {
       // The device sync DID succeed; the follow-up's failure is appended,
       // never allowed to swallow the sentence or crash the button.
       expect(
-        find.text('Synced: sent 1 · Google: Google unreachable'),
+        find.text('Synced: sent 4 · Google: Google unreachable'),
         findsOneWidget,
       );
       expect(tester.takeException(), isNull);

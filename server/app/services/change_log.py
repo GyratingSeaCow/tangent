@@ -20,16 +20,16 @@ import time
 from typing import Any, Literal
 
 EntityType = Literal[
-    "dump", "notebook", "note", "folder", "ink_index", "todo", "calendar_event",
-    "ask_message", "tag", "tag_assignment"
+    "dump", "notebook", "note", "folder", "ink_index", "todo", "todo_column",
+    "calendar_event", "ask_message", "tag", "tag_assignment"
 ]
 Op = Literal["upsert", "delete"]
 
 #: Entity types the log accepts. Kept beside the DB CHECK constraint so a new
 #: kind fails loudly here rather than as an opaque IntegrityError.
 ENTITY_TYPES: frozenset[str] = frozenset(
-    {"dump", "notebook", "note", "folder", "ink_index", "todo", "calendar_event",
-     "ask_message", "tag", "tag_assignment"}
+    {"dump", "notebook", "note", "folder", "ink_index", "todo", "todo_column",
+     "calendar_event", "ask_message", "tag", "tag_assignment"}
 )
 
 

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../data/local_db.dart';
 import '../../data/notebook_repository.dart' show foldersProvider;
@@ -27,6 +28,9 @@ import 'todo_grouping.dart';
 /// long-press a row = multi-select; ⋮ on the row = Move / Edit / Delete;
 /// long-press a folder header = rename/delete the folder, never selection;
 /// long-press the date chip = clear the due date (it is a chip, not the row).
+/// In board mode, direct drag owns card movement and ⋮ owns card actions, so
+/// long-press multi-select is deliberately disabled to avoid competing gesture
+/// meanings. Checking a card changes completion only; it never moves columns.
 class TodoListScreen extends ConsumerStatefulWidget {
   const TodoListScreen({super.key, this.autofocusQuickAdd = false});
 
@@ -46,6 +50,16 @@ class TodoListScreen extends ConsumerStatefulWidget {
   static const Key selectDoneKey = Key('todo-select-done');
   static const Key selectDeleteKey = Key('todo-select-delete');
   static const Key bulkDeleteConfirmKey = Key('todo-bulk-delete-confirm');
+  static const Key viewToggleKey = Key('todo-view-toggle');
+  static const Key addColumnKey = Key('todo-add-column');
+  static const Key columnNameFieldKey = Key('todo-column-name-field');
+  static const Key columnSaveKey = Key('todo-column-save');
+  static const Key columnDeleteConfirmKey = Key('todo-column-delete-confirm');
+  static Key columnKey(String id) => Key('todo-column-$id');
+  static Key columnMenuKey(String id) => Key('todo-column-menu-$id');
+  static Key cardKey(String id) => Key('todo-board-card-$id');
+  static Key dropKey(String columnId, int index) =>
+      Key('todo-drop-$columnId-$index');
 
   @override
   ConsumerState<TodoListScreen> createState() => _TodoListScreenState();
@@ -63,8 +77,9 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
   /// link is pushed: `reauth_required` / `error` would fail again and
   /// Settings already shows those states with the right verb.
   Future<String?> _pushToGoogle() async {
-    final SummariesClient client =
-        await ref.read(summariesClientProvider.future);
+    final SummariesClient client = await ref.read(
+      summariesClientProvider.future,
+    );
     final GoogleTasksStatus before = await client.getGoogleTasksStatus();
     if (before.status != GoogleTasksLinkStatus.connected) return null;
     final GoogleTasksStatus after = await client.syncGoogleTasksNow();
@@ -91,6 +106,8 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
 
   static const String _doneSectionKey = 'done';
   static const String _unfiledSectionKey = 'unfiled';
+  static const String _boardPreferenceKey = 'todo_board_view';
+  bool _board = false;
 
   /// Multi-select state. [_selecting] is the mode flag (the toolbar and
   /// PopScope key off it); [_selected] is the set, pruned every build so a
@@ -101,6 +118,7 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
   @override
   void initState() {
     super.initState();
+    _loadViewPreference();
     if (widget.autofocusQuickAdd) {
       // Post-frame: the field must be mounted before it can take focus.
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -115,6 +133,28 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
     _quickAddFocus.dispose();
     _editController.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadViewPreference() async {
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    final bool board = prefs.getBool(_boardPreferenceKey) ?? false;
+    if (!mounted) return;
+    setState(() => _board = board);
+    if (board) await ref.read(todoRepositoryProvider).ensureColumns();
+  }
+
+  Future<void> _toggleView() async {
+    final bool board = !_board;
+    setState(() {
+      _board = board;
+      if (board) {
+        _selecting = false;
+        _selected.clear();
+      }
+    });
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_boardPreferenceKey, board);
+    if (board) await ref.read(todoRepositoryProvider).ensureColumns();
   }
 
   Future<void> _submitQuickAdd(String raw) async {
@@ -144,7 +184,8 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
 
   Future<void> _editDueDate(TodoRow todo) async {
     final DateTime now = todoNow();
-    final DateTime initial = DateTime.tryParse(todo.dueDate ?? '') ??
+    final DateTime initial =
+        DateTime.tryParse(todo.dueDate ?? '') ??
         DateTime(now.year, now.month, now.day);
     final DateTime? picked = await showDatePicker(
       context: context,
@@ -228,9 +269,9 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
           .moveToFolder(todo.id, dest.folderId);
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not move to-do: $error')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Could not move to-do: $error')));
     }
   }
 
@@ -327,9 +368,9 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
           .moveManyToFolder(ids, dest.folderId);
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not move to-dos: $error')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Could not move to-dos: $error')));
       return;
     }
     if (mounted) _cancelSelection();
@@ -399,6 +440,9 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
   @override
   Widget build(BuildContext context) {
     final AsyncValue<List<TodoRow>> todos = ref.watch(todosProvider);
+    final AsyncValue<List<TodoColumnRow>> columns = ref.watch(
+      todoColumnsProvider,
+    );
     final List<Folder> folders =
         ref.watch(foldersProvider).valueOrNull ?? const <Folder>[];
     final List<TodoRow> rows = todos.valueOrNull ?? const <TodoRow>[];
@@ -427,6 +471,16 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
                 // ride the document sync, and a list that can only be
                 // synced from ANOTHER screen hides its own staleness.
                 actions: <Widget>[
+                  IconButton(
+                    key: TodoListScreen.viewToggleKey,
+                    icon: Icon(
+                      _board
+                          ? Icons.view_list_outlined
+                          : Icons.view_kanban_outlined,
+                    ),
+                    tooltip: _board ? 'Show list' : 'Show board',
+                    onPressed: _toggleView,
+                  ),
                   SyncButton(
                     engineProvider: documentSyncEngineProvider,
                     afterSync: _pushToGoogle,
@@ -439,8 +493,15 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
             const Divider(height: 1),
             Expanded(
               child: todos.when(
-                data: (List<TodoRow> data) =>
-                    _buildSections(context, data, folders),
+                data: (List<TodoRow> data) => _board
+                    ? columns.when(
+                        data: (value) => _buildBoard(context, data, value),
+                        loading: () =>
+                            const Center(child: CircularProgressIndicator()),
+                        error: (Object e, _) =>
+                            Center(child: Text('Could not load columns: $e')),
+                      )
+                    : _buildSections(context, data, folders),
                 loading: () => const Center(child: CircularProgressIndicator()),
                 error: (Object e, _) =>
                     Center(child: Text('Could not load: $e')),
@@ -593,6 +654,270 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
     return ListView(padding: listBottomInset(context), children: children);
   }
 
+  Widget _buildBoard(
+    BuildContext context,
+    List<TodoRow> rows,
+    List<TodoColumnRow> columns,
+  ) {
+    if (columns.isEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) ref.read(todoRepositoryProvider).ensureColumns();
+      });
+      return const Center(child: CircularProgressIndicator());
+    }
+    final Set<String> liveIds = columns.map((c) => c.id).toSet();
+    final String fallback = columns.first.id;
+    final Map<String, List<TodoRow>> lanes = <String, List<TodoRow>>{
+      for (final TodoColumnRow column in columns) column.id: <TodoRow>[],
+    };
+    for (final TodoRow row in rows) {
+      final String id = liveIds.contains(row.columnId)
+          ? row.columnId!
+          : fallback;
+      lanes[id]!.add(row);
+    }
+    for (final List<TodoRow> lane in lanes.values) {
+      lane.sort((a, b) => a.boardOrder.compareTo(b.boardOrder));
+    }
+    return SingleChildScrollView(
+      key: const Key('todo-board-scroll'),
+      scrollDirection: Axis.horizontal,
+      padding: EdgeInsets.fromLTRB(12, 12, 12, listBottomInset(context).bottom),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          for (int i = 0; i < columns.length; i++) ...<Widget>[
+            _buildBoardColumn(
+              context,
+              columns[i],
+              lanes[columns[i].id]!,
+              i,
+              columns,
+            ),
+            const SizedBox(width: 12),
+          ],
+          SizedBox(
+            width: 240,
+            child: OutlinedButton.icon(
+              key: TodoListScreen.addColumnKey,
+              onPressed: () => _editColumnName(),
+              icon: const Icon(Icons.add),
+              label: const Text('Add column'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBoardColumn(
+    BuildContext context,
+    TodoColumnRow column,
+    List<TodoRow> cards,
+    int columnIndex,
+    List<TodoColumnRow> columns,
+  ) {
+    return Container(
+      key: TodoListScreen.columnKey(column.id),
+      width: 300,
+      constraints: BoxConstraints(
+        minHeight: MediaQuery.sizeOf(context).height * .45,
+      ),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          ListTile(
+            dense: true,
+            title: Text('${column.name} (${cards.length})'),
+            trailing: PopupMenuButton<String>(
+              key: TodoListScreen.columnMenuKey(column.id),
+              tooltip: 'Column actions',
+              onSelected: (String action) async {
+                switch (action) {
+                  case 'rename':
+                    await _editColumnName(column: column);
+                  case 'left':
+                    await ref
+                        .read(todoRepositoryProvider)
+                        .reorderColumn(column.id, columnIndex - 1);
+                  case 'right':
+                    await ref
+                        .read(todoRepositoryProvider)
+                        .reorderColumn(column.id, columnIndex + 1);
+                  case 'delete':
+                    await _deleteColumn(column, cards, columns);
+                }
+              },
+              itemBuilder: (_) => <PopupMenuEntry<String>>[
+                const PopupMenuItem(value: 'rename', child: Text('Rename')),
+                if (columnIndex > 0)
+                  const PopupMenuItem(value: 'left', child: Text('Move left')),
+                if (columnIndex < columns.length - 1)
+                  const PopupMenuItem(
+                    value: 'right',
+                    child: Text('Move right'),
+                  ),
+                if (columns.length > 1)
+                  const PopupMenuItem(value: 'delete', child: Text('Delete')),
+              ],
+            ),
+          ),
+          const Divider(height: 1),
+          for (int i = 0; i <= cards.length; i++) ...<Widget>[
+            _boardDropTarget(column.id, i),
+            if (i < cards.length) _buildBoardCard(context, cards[i]),
+          ],
+          const SizedBox(height: 8),
+        ],
+      ),
+    );
+  }
+
+  Widget _boardDropTarget(String columnId, int index) {
+    return DragTarget<TodoRow>(
+      key: TodoListScreen.dropKey(columnId, index),
+      onWillAcceptWithDetails: (_) => true,
+      onAcceptWithDetails: (details) => ref
+          .read(todoRepositoryProvider)
+          .moveOnBoard(details.data.id, columnId, index),
+      builder: (context, candidates, rejected) => AnimatedContainer(
+        duration: const Duration(milliseconds: 100),
+        height: candidates.isEmpty ? 10 : 36,
+        margin: const EdgeInsets.symmetric(horizontal: 8),
+        decoration: BoxDecoration(
+          color: candidates.isEmpty
+              ? Colors.transparent
+              : Theme.of(context).colorScheme.primaryContainer,
+          borderRadius: BorderRadius.circular(8),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBoardCard(BuildContext context, TodoRow todo) {
+    final bool done = todo.doneAt != null;
+    final TodoRepository repo = ref.read(todoRepositoryProvider);
+    final Widget card = Card(
+      key: TodoListScreen.cardKey(todo.id),
+      margin: const EdgeInsets.symmetric(horizontal: 8),
+      child: ListTile(
+        dense: true,
+        leading: Checkbox(
+          key: Key('todo-check-${todo.id}'),
+          value: done,
+          onChanged: (_) => repo.toggle(todo.id),
+        ),
+        title: Text(
+          todo.body,
+          style: done
+              ? const TextStyle(decoration: TextDecoration.lineThrough)
+              : null,
+        ),
+        subtitle: todo.dueDate == null ? null : Text(todo.dueDate!),
+        trailing: IconButton(
+          key: Key('todo-menu-${todo.id}'),
+          icon: const Icon(Icons.more_vert),
+          tooltip: 'More',
+          onPressed: () => _showRowMenu(todo),
+        ),
+      ),
+    );
+    // Board mode gives the row gesture to drag immediately. It deliberately
+    // has no long-press selection gesture; checkbox and ⋮ remain explicit.
+    return Draggable<TodoRow>(
+      data: todo,
+      feedback: Material(
+        elevation: 6,
+        borderRadius: BorderRadius.circular(12),
+        child: SizedBox(width: 284, child: card),
+      ),
+      childWhenDragging: Opacity(opacity: .3, child: card),
+      child: card,
+    );
+  }
+
+  Future<void> _editColumnName({TodoColumnRow? column}) async {
+    String draft = column?.name ?? '';
+    final String? name = await showDialog<String>(
+      context: context,
+      builder: (BuildContext dialogContext) => AlertDialog(
+        title: Text(column == null ? 'Add column' : 'Rename column'),
+        content: TextFormField(
+          key: TodoListScreen.columnNameFieldKey,
+          initialValue: draft,
+          autofocus: true,
+          onChanged: (String value) => draft = value,
+          onFieldSubmitted: (String value) =>
+              Navigator.pop(dialogContext, value),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            key: TodoListScreen.columnSaveKey,
+            onPressed: () => Navigator.pop(dialogContext, draft),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    if (name == null || name.trim().isEmpty || !mounted) return;
+    final TodoRepository repo = ref.read(todoRepositoryProvider);
+    if (column == null) {
+      await repo.addColumn(name);
+    } else {
+      await repo.renameColumn(column.id, name);
+    }
+  }
+
+  Future<void> _deleteColumn(
+    TodoColumnRow column,
+    List<TodoRow> cards,
+    List<TodoColumnRow> columns,
+  ) async {
+    final List<TodoColumnRow> destinations = columns
+        .where((c) => c.id != column.id)
+        .toList();
+    final String? destination = await showDialog<String>(
+      context: context,
+      builder: (BuildContext dialogContext) => AlertDialog(
+        title: Text('Delete ${column.name}?'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text(
+              cards.isEmpty
+                  ? 'Choose the column that remains the default destination.'
+                  : 'Move ${cards.length} card${cards.length == 1 ? '' : 's'} to:',
+            ),
+            for (final TodoColumnRow destination in destinations)
+              ListTile(
+                leading: const Icon(Icons.arrow_forward),
+                title: Text(destination.name),
+                onTap: () => Navigator.pop(dialogContext, destination.id),
+              ),
+          ],
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
+    );
+    if (destination == null || !mounted) return;
+    await ref.read(todoRepositoryProvider).deleteColumn(column.id, destination);
+  }
+
   /// The time chip's label and tint: Overdue (red) / Today / the date.
   ({String label, bool overdue})? _chipFor(TodoRow todo, DateTime now) {
     final String? due = todo.dueDate;
@@ -614,11 +939,7 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
       mainAxisSize: MainAxisSize.min,
       children: <Widget>[
         if (todo.pinned == true) ...<Widget>[
-          Icon(
-            Icons.push_pin,
-            key: Key('todo-pin-${todo.id}'),
-            size: 14,
-          ),
+          Icon(Icons.push_pin, key: Key('todo-pin-${todo.id}'), size: 14),
           const SizedBox(width: 6),
         ],
         Flexible(

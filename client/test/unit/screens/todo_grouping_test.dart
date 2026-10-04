@@ -30,6 +30,7 @@ void main() {
       syncedSeq: null,
       folderId: folderId,
       pinned: pinned,
+      boardOrder: 0,
     );
   }
 
@@ -245,6 +246,7 @@ void main() {
       syncDirty: true,
       syncedSeq: null,
       folderId: null,
+      boardOrder: 0,
     );
     final sections = groupTodos(
       todos: <TodoRow>[

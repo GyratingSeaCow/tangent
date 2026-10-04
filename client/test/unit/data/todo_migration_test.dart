@@ -3,6 +3,7 @@ import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqlite3/sqlite3.dart';
 import 'package:tangent/data/local_db.dart';
+import 'package:tangent/data/todo_repository.dart';
 import '../../support/storage_migration_fixture.dart';
 
 /// v23 (To Do arc Phase 1): the todos table arrives.
@@ -28,13 +29,16 @@ const _todoColumns = [
   'capture_fingerprint',
   // v29: user pin; nullable means old rows remain visually unpinned.
   'pinned',
+  // v33: synced Kanban placement.
+  'column_id',
+  'board_order',
 ];
 
 List<Object?> _columnNames(Database db, String table) =>
     db.select('PRAGMA table_info($table)').map((r) => r['name']).toList();
 
 void main() {
-  test('a fresh database is created at v25 with the todos table', () async {
+  test('a fresh database is created at v33 with todos and columns', () async {
     final sql = sqlite3.openInMemory();
     final db = LocalDb.forTesting(NativeDatabase.opened(sql));
     addTearDown(db.close);
@@ -44,6 +48,16 @@ void main() {
     expect(db.schemaVersion, 33);
     expect(sql.userVersion, 33);
     expect(_columnNames(sql, 'todos'), _todoColumns);
+    expect(_columnNames(sql, 'todo_columns'), <String>[
+      'id',
+      'name',
+      'sort_order',
+      'created_at',
+      'updated_at',
+      'deleted_at',
+      'sync_dirty',
+      'synced_seq',
+    ]);
     sql.execute(
       'INSERT INTO todos(id,text,created_at,updated_at) '
       "VALUES('t1','x','2026-09-27T00:00:00Z','2026-09-27T00:00:00Z')",
@@ -63,7 +77,8 @@ void main() {
     );
   });
 
-  test('upgrading an old database gains todos and preserves every dump row',
+  test(
+    'upgrading an old database gains todos and preserves every dump row',
       () async {
     final sql = oldStorageDatabase(4);
     final before = sqlRows(sql, 'dumps');
@@ -73,7 +88,7 @@ void main() {
 
     await db.listDumps();
 
-    expect(sql.userVersion, 33);
+    expect(sql.userVersion, 34);
     expect(_columnNames(sql, 'todos'), _todoColumns);
     expect(
       sqlRows(sql, 'dumps')
@@ -85,10 +100,10 @@ void main() {
           .toList(),
       before,
     );
-  });
+    },
+  );
 
-  test(
-      'the migration is guarded: a database that somehow already has a '
+  test('the migration is guarded: a database that somehow already has a '
       'todos table upgrades without error and keeps its rows', () async {
     final sql = oldStorageDatabase(4);
     // Simulate a partial earlier run (or a sideways build) that created
@@ -160,8 +175,10 @@ void main() {
 
     expect(sql.userVersion, 33);
     expect(_columnNames(sql, 'todos'), _todoColumns);
-    final rows = sql.select('SELECT id, text, due_date, folder_id FROM todos '
-        'ORDER BY id');
+    final rows = sql.select(
+      'SELECT id, text, due_date, folder_id FROM todos '
+      'ORDER BY id',
+    );
     expect(rows.length, 2, reason: 'no row is lost by the upgrade');
     expect(rows[0]['text'], 'milk');
     expect(rows[0]['due_date'], '2026-10-01');
@@ -170,7 +187,8 @@ void main() {
     expect(rows[1]['folder_id'], isNull);
   });
 
-  test('v24 -> v25 adds a null capture_fingerprint and changes no data',
+  test(
+    'v24 -> v25 adds a null capture_fingerprint and changes no data',
       () async {
     final sql = oldStorageDatabase(4);
     // A v24 todos table exactly as v1.24.0 left it (folder_id, no
@@ -207,7 +225,7 @@ void main() {
 
     await db.listDumps();
 
-    expect(sql.userVersion, 33);
+    expect(sql.userVersion, 34);
     expect(_columnNames(sql, 'todos'), _todoColumns);
     final rows = sqlRows(sql, 'todos');
     expect(rows.length, 2, reason: 'no row is lost by the upgrade');
@@ -218,14 +236,28 @@ void main() {
       rows
           .map(
             (Map<String, Object?> row) => <String, Object?>{
-              for (final String name in before.first.keys) name: row[name],
+                for (final String name in before.first.keys)
+                  if (name != 'sync_dirty') name: row[name],
             },
           )
           .toList(),
-      before,
-      reason: 'every pre-existing column is byte-for-byte unchanged',
+        before
+            .map(
+              (Map<String, Object?> row) => <String, Object?>{
+                for (final String name in row.keys)
+                  if (name != 'sync_dirty') name: row[name],
+              },
+            )
+            .toList(),
+        reason: 'the board reference is the only data change',
+      );
+      expect(
+        rows.map((row) => row['sync_dirty']),
+        everyElement(1),
+        reason: 'the newly assigned column reference must sync',
+      );
+    },
     );
-  });
 
   test('v24 -> v25 is guarded when the column already exists', () async {
     final sql = oldStorageDatabase(4);
@@ -256,4 +288,60 @@ void main() {
     expect(sql.userVersion, 33);
     expect(_columnNames(sql, 'todos'), _todoColumns);
   });
+
+  test(
+    'oldest supported upgrade seeds columns and assigns every old todo',
+    () async {
+      final Database sql = oldStorageDatabase(4);
+      sql.execute('''
+      CREATE TABLE todos (
+        id TEXT NOT NULL PRIMARY KEY,
+        text TEXT NOT NULL,
+        done_at TEXT NULL,
+        due_date TEXT NULL,
+        source TEXT NOT NULL DEFAULT 'manual',
+        source_ref TEXT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        deleted_at TEXT NULL,
+        sync_dirty INTEGER NOT NULL DEFAULT 0,
+        synced_seq INTEGER NULL
+      )
+    ''');
+      sql.execute(
+        "INSERT INTO todos VALUES ('old','kept',NULL,NULL,'manual',NULL,"
+        "'2025-01-01T00:00:00Z','2025-01-01T00:00:00Z',NULL,0,7)",
+      );
+      sql.userVersion = 23;
+      final LocalDb db = LocalDb.forTesting(NativeDatabase.opened(sql));
+      addTearDown(db.close);
+
+      await db.listDumps();
+
+      expect(sql.userVersion, 33);
+      expect(
+        sql
+            .select(
+              'SELECT id,name,sort_order FROM todo_columns '
+              'WHERE deleted_at IS NULL ORDER BY sort_order',
+            )
+            .map((row) => <Object?>[row['id'], row['name'], row['sort_order']])
+            .toList(),
+        <List<Object?>>[
+          <Object?>['todo-column-todo', 'To Do', 0],
+          <Object?>['todo-column-progress', 'In Progress', 1],
+          <Object?>['todo-column-done', 'Done', 2],
+        ],
+      );
+      final Row row = sql
+          .select(
+            "SELECT text,column_id,board_order,sync_dirty FROM todos WHERE id='old'",
+          )
+          .single;
+      expect(row['text'], 'kept');
+      expect(row['column_id'], defaultTodoColumnId);
+      expect(row['board_order'], isNonNegative);
+      expect(row['sync_dirty'], 1, reason: 'the new reference must sync');
+    },
+  );
 }

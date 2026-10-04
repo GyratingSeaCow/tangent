@@ -22,6 +22,7 @@ void main() {
         syncDirty: true,
         syncedSeq: null,
         folderId: null,
+        boardOrder: 0,
       );
 
   group('nextFireTime', () {
