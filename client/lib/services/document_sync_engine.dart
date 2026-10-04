@@ -21,6 +21,7 @@ import '../data/local_db.dart';
 import '../models/sync_change.dart';
 import 'connectivity_service.dart';
 import 'calendar_voice_capture.dart';
+import 'notebook_password.dart';
 import 'todo_voice_capture.dart';
 import 'transcription_client.dart';
 
@@ -780,6 +781,31 @@ class DocumentSyncEngine extends ChangeNotifier {
   ) async {
     final Object? doc = payload['doc'];
     final Object? ink = payload['ink'];
+    // Null and absence can never unprotect a local notebook. A non-null
+    // verifier is accepted only as a complete, bounded tuple, before any
+    // password attempt can feed its iteration count into PBKDF2.
+    Object? passwordHash = LocalDb.absentPasswordMetadata;
+    String? passwordSalt;
+    int? passwordIterations;
+    final Object? incomingPasswordHash = payload['password_hash'];
+    if (incomingPasswordHash != null) {
+      final Object? incomingPasswordSalt = payload['password_salt'];
+      final Object? incomingPasswordIterations = payload['password_iterations'];
+      if (incomingPasswordHash is! String ||
+          incomingPasswordHash.isEmpty ||
+          incomingPasswordSalt is! String ||
+          incomingPasswordSalt.isEmpty ||
+          incomingPasswordIterations is! int ||
+          incomingPasswordIterations < notebookPasswordMinIterations ||
+          incomingPasswordIterations > notebookPasswordMaxIterations) {
+        throw const FormatException(
+          'Invalid notebook password verifier metadata',
+        );
+      }
+      passwordHash = incomingPasswordHash;
+      passwordSalt = incomingPasswordSalt;
+      passwordIterations = incomingPasswordIterations;
+    }
     await _db.applyRemoteNotebook(
       id: id,
       title: payload['title'] as String? ?? 'Notebook',
@@ -811,12 +837,9 @@ class DocumentSyncEngine extends ChangeNotifier {
       pinned: payload.containsKey('pinned')
           ? payload['pinned']
           : LocalDb.absentPinnedField,
-      passwordHash: payload.containsKey('password_hash')
-          ? payload['password_hash'] as String?
-          : LocalDb.absentPasswordMetadata,
-      passwordSalt: payload['password_salt'] as String?,
-      passwordIterations:
-          (payload['password_iterations'] as num?)?.toInt(),
+      passwordHash: passwordHash,
+      passwordSalt: passwordSalt,
+      passwordIterations: passwordIterations,
       seq: seq,
     );
   }
@@ -869,11 +892,15 @@ class DocumentSyncEngine extends ChangeNotifier {
             // it says "unfiled", and the server stores it verbatim.
             'folder_id': row.folderId,
             'pinned': row.pinned == true,
-            // The plaintext password never leaves the password dialog. Peers
-            // receive only the salted PBKDF2 verifier metadata.
-            'password_hash': row.passwordHash,
-            'password_salt': row.passwordSalt,
-            'password_iterations': row.passwordIterations,
+            // The plaintext password never leaves the password dialog. A
+            // complete verifier can install/rotate protection on peers. An
+            // unprotected row omits these keys: ordinary sync is deliberately
+            // not an authenticated "turn protection off" operation.
+            if (row.passwordHash != null) ...<String, dynamic>{
+              'password_hash': row.passwordHash,
+              'password_salt': row.passwordSalt,
+              'password_iterations': row.passwordIterations,
+            },
           },
         },
       for (final DumpRow row in dirtyDumps)

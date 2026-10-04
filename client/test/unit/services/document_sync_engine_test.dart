@@ -144,7 +144,7 @@ void main() {
     expect(state.deviceId, first);
   });
 
-  test('notebook password verifier metadata pushes, pulls, preserves and clears',
+  test('notebook verifier sync installs protection but null never removes it',
       () async {
     await db.into(db.notebooks).insert(
           NotebooksCompanion.insert(
@@ -263,9 +263,81 @@ void main() {
     local = await (db.select(db.notebooks)
           ..where((row) => row.id.equals('protected-local')))
         .getSingle();
-    expect(local.passwordHash, isNull);
-    expect(local.passwordSalt, isNull);
-    expect(local.passwordIterations, isNull);
+    expect(local.passwordHash, 'hash-local');
+    expect(local.passwordSalt, 'salt-local');
+    expect(local.passwordIterations, 210000);
+
+    // Once an explicit local authenticated operation removes protection, an
+    // ordinary notebook push omits verifier keys rather than asking the server
+    // (and every peer) to unprotect it.
+    await (db.update(db.notebooks)
+          ..where((row) => row.id.equals('protected-local')))
+        .write(
+      const NotebooksCompanion(
+        passwordHash: Value<String?>(null),
+        passwordSalt: Value<String?>(null),
+        passwordIterations: Value<int?>(null),
+        syncDirty: Value<bool>(true),
+      ),
+    );
+    client
+      ..pullPages = const <SyncPullPage>[]
+      ..pushResults = const <PushResult>[
+        PushResult(
+          entityId: 'protected-local',
+          entityType: 'notebook',
+          seq: 5,
+          applied: true,
+        ),
+      ];
+    await engine.syncNow();
+    final Map<String, dynamic> unprotectedPush =
+        client.pushedChanges!.singleWhere(
+      (Map<String, dynamic> row) => row['entity_id'] == 'protected-local',
+    );
+    expect(unprotectedPush['payload'], isNot(contains('password_hash')));
+    expect(unprotectedPush['payload'], isNot(contains('password_salt')));
+    expect(unprotectedPush['payload'], isNot(contains('password_iterations')));
+  });
+
+  test('hostile synced password iterations are rejected before storage',
+      () async {
+    client.pullPages = <SyncPullPage>[
+      const SyncPullPage(
+        changes: <RemoteChange>[
+          RemoteChange(
+            entityType: 'notebook',
+            entityId: 'hostile-password-metadata',
+            op: SyncOp.upsert,
+            payload: <String, dynamic>{
+              'title': 'Hostile',
+              'created_at': 1,
+              'updated_at': 2,
+              'doc': '{"blocks":[]}',
+              'ink': '{"strokes":[]}',
+              'password_hash': 'hash',
+              'password_salt': 'salt',
+              'password_iterations': 1000001,
+            },
+            seq: 1,
+            deviceId: 'hostile-peer',
+          ),
+        ],
+        headSeq: 1,
+        hasMore: false,
+      ),
+    ];
+
+    final SyncReport report =
+        await build(label: () async => 'test').syncNow();
+
+    expect(report.outcome, SyncOutcome.failed);
+    expect(
+      report.error,
+      contains('Invalid notebook password verifier metadata'),
+    );
+    expect(await db.getNotebookRow('hostile-password-metadata'), isNull);
+    expect((await db.syncState(newDeviceId: 'unused')).lastPulledSeq, 0);
   });
 
   group('folder sync', () {

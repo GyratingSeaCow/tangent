@@ -15,6 +15,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 /// The iteration count is stored beside each hash, so it can be raised later
 /// without making existing notebooks unreadable.
 const int notebookPasswordIterations = 210000;
+const int notebookPasswordMinIterations = 100000;
+const int notebookPasswordMaxIterations = 1000000;
 const int _saltLength = 16;
 const int _derivedKeyLength = 32;
 
@@ -42,8 +44,9 @@ Future<NotebookPasswordMetadata> hashNotebookPassword(
   if (password.isEmpty) {
     throw const FormatException('Password must not be empty');
   }
-  if (iterations < 100000) {
-    throw const FormatException('PBKDF2 iteration count is too low');
+  if (iterations < notebookPasswordMinIterations ||
+      iterations > notebookPasswordMaxIterations) {
+    throw const FormatException('PBKDF2 iteration count is out of range');
   }
   final Random source = random ?? Random.secure();
   final Uint8List salt = Uint8List.fromList(
@@ -66,7 +69,14 @@ Future<bool> verifyNotebookPassword({
   required String salt,
   required int iterations,
 }) async {
-  if (password.isEmpty || iterations < 100000) return false;
+  // Check the work factor before decoding or entering the isolate. Synced and
+  // durable metadata are untrusted; without an upper bound a hostile verifier
+  // can turn one password attempt into effectively unbounded CPU work.
+  if (password.isEmpty ||
+      iterations < notebookPasswordMinIterations ||
+      iterations > notebookPasswordMaxIterations) {
+    return false;
+  }
   late final Uint8List expected;
   late final Uint8List decodedSalt;
   try {

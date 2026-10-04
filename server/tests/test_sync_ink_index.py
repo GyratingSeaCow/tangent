@@ -149,7 +149,8 @@ class TestPushStoresInk:
         ).fetchone()
         assert tuple(row) == ("hash-value", "salt-value", 210000)
 
-        # Explicit null is the synced meaning of "turn protection off".
+        # Explicit null is not an authenticated unprotect operation. A paired
+        # peer must not be able to remove the held verifier through sync.
         unprotect = dict(payload)
         unprotect.update(
             password_hash=None,
@@ -174,7 +175,7 @@ class TestPushStoresInk:
             "SELECT password_hash, password_salt, password_iterations "
             "FROM notebooks WHERE id = 'nb-private'"
         ).fetchone()
-        assert tuple(row) == (None, None, None)
+        assert tuple(row) == ("hash-value", "salt-value", 210000)
 
     def test_rejects_incomplete_password_metadata(self, authed_client):
         client, token = authed_client
@@ -197,6 +198,46 @@ class TestPushStoresInk:
             headers=_auth(token),
         )
         assert response.json()["results"][0]["status"] == "rejected"
+
+    def test_rejects_excessive_password_iterations_without_changing_row(
+        self, authed_client, db
+    ):
+        client, token = authed_client
+        _push_notebook(client, token, nb_id="nb-private", ink=False)
+        db.execute(
+            "UPDATE notebooks SET password_hash = ?, password_salt = ?, "
+            "password_iterations = ? WHERE id = ?",
+            ("held-hash", "held-salt", 210000, "nb-private"),
+        )
+        db.commit()
+
+        response = client.post(
+            "/v1/sync/push",
+            json={
+                "device_id": "device-hostile",
+                "changes": [{
+                    "entity_type": "notebook",
+                    "entity_id": "nb-private",
+                    "op": "upsert",
+                    "payload": {
+                        "title": "Hostile metadata",
+                        "doc": {"blocks": []},
+                        "created_at": 1,
+                        "password_hash": "hostile-hash",
+                        "password_salt": "hostile-salt",
+                        "password_iterations": 1_000_001,
+                    },
+                }],
+            },
+            headers=_auth(token),
+        )
+
+        assert response.json()["results"][0]["status"] == "rejected"
+        row = db.execute(
+            "SELECT password_hash, password_salt, password_iterations "
+            "FROM notebooks WHERE id = 'nb-private'"
+        ).fetchone()
+        assert tuple(row) == ("held-hash", "held-salt", 210000)
 
     def test_pushed_ink_is_stored_and_the_worker_sees_the_strokes(
         self, authed_client, db

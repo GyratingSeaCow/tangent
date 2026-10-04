@@ -1916,18 +1916,19 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     final bool? effectivePinned = identical(pinned, absentPinnedField)
         ? existing?.pinned
         : _wireBool(pinned);
-    final String? effectivePasswordHash =
-        identical(passwordHash, absentPasswordMetadata)
-            ? existing?.passwordHash
-            : passwordHash as String?;
+    final bool preservePassword =
+        identical(passwordHash, absentPasswordMetadata) || passwordHash == null;
+    final String? effectivePasswordHash = preservePassword
+        ? existing?.passwordHash
+        : passwordHash as String;
     final String? effectivePasswordSalt =
-        identical(passwordHash, absentPasswordMetadata)
+        preservePassword
             ? existing?.passwordSalt
             : effectivePasswordHash == null
                 ? null
                 : passwordSalt;
     final int? effectivePasswordIterations =
-        identical(passwordHash, absentPasswordMetadata)
+        preservePassword
             ? existing?.passwordIterations
             : effectivePasswordHash == null
                 ? null
@@ -1963,8 +1964,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   /// for [applyRemoteNotebook]'s folderId: null MEANS unfiled there.
   static const Object absentFolderId = Object();
 
-  /// A peer predating password metadata sent no verifier fields. Explicit
-  /// null disables protection; absence preserves what this device already has.
+  /// A peer predating password metadata sent no verifier fields. Missing and
+  /// explicit null both preserve protection; sync is never an authenticated
+  /// request to remove a verifier.
   static const Object absentPasswordMetadata = Object();
 
   /// Removes a notebook the server says was deleted elsewhere.

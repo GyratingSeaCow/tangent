@@ -683,31 +683,32 @@ def _apply_document(
             )
         else:
             ink = existing["ink"] if existing is not None else None
-        if "password_hash" in p:
-            password_hash = p["password_hash"]
-            if password_hash is None:
-                password_salt = None
-                password_iterations = None
-            else:
-                if not isinstance(password_hash, str) or not password_hash:
-                    raise ValueError("password_hash must be a non-empty string")
-                password_salt = p.get("password_salt")
-                password_iterations = p.get("password_iterations")
-                if not isinstance(password_salt, str) or not password_salt:
-                    raise ValueError("protected notebook requires password_salt")
-                if (
-                    type(password_iterations) is not int
-                    or password_iterations < 100_000
-                ):
-                    raise ValueError(
-                        "protected notebook requires sane password_iterations"
-                    )
-        else:
+        # Sync may install or rotate a verifier, but it may never remove one.
+        # Missing fields come from older peers; explicit nulls can also be
+        # forged by any paired device and are therefore not an authenticated
+        # "turn protection off" operation. Both preserve the held verifier.
+        incoming_password_hash = p.get("password_hash")
+        if incoming_password_hash is None:
             password_hash = existing["password_hash"] if existing is not None else None
             password_salt = existing["password_salt"] if existing is not None else None
             password_iterations = (
                 existing["password_iterations"] if existing is not None else None
             )
+        else:
+            password_hash = incoming_password_hash
+            if not isinstance(password_hash, str) or not password_hash:
+                raise ValueError("password_hash must be a non-empty string")
+            password_salt = p.get("password_salt")
+            password_iterations = p.get("password_iterations")
+            if not isinstance(password_salt, str) or not password_salt:
+                raise ValueError("protected notebook requires password_salt")
+            if (
+                type(password_iterations) is not int
+                or not 100_000 <= password_iterations <= 1_000_000
+            ):
+                raise ValueError(
+                    "protected notebook requires sane password_iterations"
+                )
         conn.execute(
             """
             INSERT INTO notebooks
