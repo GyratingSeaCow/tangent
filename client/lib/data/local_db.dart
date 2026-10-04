@@ -1917,10 +1917,10 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
         ? existing?.pinned
         : _wireBool(pinned);
     final bool preservePassword =
-        identical(passwordHash, absentPasswordMetadata) || passwordHash == null;
+        identical(passwordHash, absentPasswordMetadata);
     final String? effectivePasswordHash = preservePassword
         ? existing?.passwordHash
-        : passwordHash as String;
+        : passwordHash as String?;
     final String? effectivePasswordSalt =
         preservePassword
             ? existing?.passwordSalt
@@ -1964,9 +1964,8 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   /// for [applyRemoteNotebook]'s folderId: null MEANS unfiled there.
   static const Object absentFolderId = Object();
 
-  /// A peer predating password metadata sent no verifier fields. Missing and
-  /// explicit null both preserve protection; sync is never an authenticated
-  /// request to remove a verifier.
+  /// A peer predating password metadata sent no verifier fields. Missing
+  /// preserves protection; explicit null is an authoritative clear.
   static const Object absentPasswordMetadata = Object();
 
   /// Removes a notebook the server says was deleted elsewhere.

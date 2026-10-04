@@ -161,15 +161,19 @@ class NotebookRepository {
             folderId: Value<String?>(existingFolderId),
             ruling: Value<String?>(notebook.ruling.wireValue),
             lastPenStyle: Value<String?>(notebook.lastPenStyle?.wireValue),
-            passwordHash: Value<String?>(
-              notebook.passwordHash ?? existing?.passwordHash,
-            ),
-            passwordSalt: Value<String?>(
-              notebook.passwordSalt ?? existing?.passwordSalt,
-            ),
-            passwordIterations: Value<int?>(
-              notebook.passwordIterations ?? existing?.passwordIterations,
-            ),
+            // A legacy durable file has no verifier keys and therefore cannot
+            // speak about protection. A current file always has the keys;
+            // present nulls are the durable, authoritative "unprotected"
+            // state and must clear a verifier left in the working copy.
+            passwordHash: Value<String?>(notebook.passwordMetadataPresent
+                ? notebook.passwordHash
+                : existing?.passwordHash),
+            passwordSalt: Value<String?>(notebook.passwordMetadataPresent
+                ? notebook.passwordSalt
+                : existing?.passwordSalt),
+            passwordIterations: Value<int?>(notebook.passwordMetadataPresent
+                ? notebook.passwordIterations
+                : existing?.passwordIterations),
           ),
         );
   }

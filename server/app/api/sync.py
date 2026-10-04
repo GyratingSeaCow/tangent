@@ -683,19 +683,22 @@ def _apply_document(
             )
         else:
             ink = existing["ink"] if existing is not None else None
-        # Sync may install or rotate a verifier, but it may never remove one.
-        # Missing fields come from older peers; explicit nulls can also be
-        # forged by any paired device and are therefore not an authenticated
-        # "turn protection off" operation. Both preserve the held verifier.
-        incoming_password_hash = p.get("password_hash")
-        if incoming_password_hash is None:
+        # Missing comes from an older peer and preserves the held tuple.
+        # Present null is the current wire representation of "unprotected".
+        if "password_hash" not in p:
             password_hash = existing["password_hash"] if existing is not None else None
             password_salt = existing["password_salt"] if existing is not None else None
             password_iterations = (
                 existing["password_iterations"] if existing is not None else None
             )
+        elif p["password_hash"] is None:
+            if p.get("password_salt") is not None or p.get("password_iterations") is not None:
+                raise ValueError("unprotected notebook requires null password metadata")
+            password_hash = None
+            password_salt = None
+            password_iterations = None
         else:
-            password_hash = incoming_password_hash
+            password_hash = p["password_hash"]
             if not isinstance(password_hash, str) or not password_hash:
                 raise ValueError("password_hash must be a non-empty string")
             password_salt = p.get("password_salt")

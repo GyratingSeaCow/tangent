@@ -39,6 +39,7 @@ class Notebook implements NotebookHeader {
     this.passwordHash,
     this.passwordSalt,
     this.passwordIterations,
+    this.passwordMetadataPresent = true,
   });
 
   @override
@@ -83,6 +84,10 @@ class Notebook implements NotebookHeader {
   final String? passwordHash;
   final String? passwordSalt;
   final int? passwordIterations;
+
+  /// False only for a decoded legacy durable file that predates verifier
+  /// fields. Present nulls are an authoritative unprotected state.
+  final bool passwordMetadataPresent;
   @override
   bool get passwordProtected => passwordHash != null;
 
@@ -108,6 +113,7 @@ class Notebook implements NotebookHeader {
         passwordHash: passwordHash,
         passwordSalt: passwordSalt,
         passwordIterations: passwordIterations,
+        passwordMetadataPresent: passwordMetadataPresent,
       );
 }
 

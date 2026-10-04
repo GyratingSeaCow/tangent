@@ -9,6 +9,7 @@ import 'package:tangent/data/local_db.dart';
 import 'package:tangent/data/notebook_repository.dart';
 import 'package:tangent/models/notebook.dart';
 import 'package:tangent/screens/home/home_screen.dart' show localDbProvider;
+import 'package:tangent/services/notebook_persistence.dart';
 
 void main() {
   late LocalDb db;
@@ -116,6 +117,36 @@ void main() {
     final Notebook protectedTwo = (await repository.getNotebook(two.id))!;
     expect(protectedOne.passwordSalt, isNot(protectedTwo.passwordSalt));
     expect(protectedOne.passwordHash, isNot(protectedTwo.passwordHash));
+  });
+
+  test('durable explicit null clears protection while legacy absence preserves',
+      () async {
+    final NotebookRepository repository = build();
+    final Notebook created = await repository.createNotebook(title: 'Private');
+    await repository.setPassword(created.id, 'first password');
+    Notebook protected = (await repository.getNotebook(created.id))!;
+
+    final Map<String, dynamic> explicitOpen =
+        jsonDecode(encodeNotebookFile(protected)) as Map<String, dynamic>;
+    explicitOpen
+      ..['passwordHash'] = null
+      ..['passwordSalt'] = null
+      ..['passwordIterations'] = null;
+    await repository.upsertNotebook(
+      decodeNotebookFile(jsonEncode(explicitOpen)),
+    );
+    expect((await repository.getNotebook(created.id))!.passwordHash, isNull);
+
+    await repository.setPassword(created.id, 'second password');
+    protected = (await repository.getNotebook(created.id))!;
+    final String heldHash = protected.passwordHash!;
+    final Map<String, dynamic> legacy =
+        jsonDecode(encodeNotebookFile(protected)) as Map<String, dynamic>
+          ..remove('passwordHash')
+          ..remove('passwordSalt')
+          ..remove('passwordIterations');
+    await repository.upsertNotebook(decodeNotebookFile(jsonEncode(legacy)));
+    expect((await repository.getNotebook(created.id))!.passwordHash, heldHash);
   });
 
   test('saveNotebook persists blocks and ink and bumps updated_at', () async {

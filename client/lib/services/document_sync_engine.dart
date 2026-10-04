@@ -781,14 +781,22 @@ class DocumentSyncEngine extends ChangeNotifier {
   ) async {
     final Object? doc = payload['doc'];
     final Object? ink = payload['ink'];
-    // Null and absence can never unprotect a local notebook. A non-null
-    // verifier is accepted only as a complete, bounded tuple, before any
-    // password attempt can feed its iteration count into PBKDF2.
+    // Missing means an older peer and preserves the local tuple. Present null
+    // is an authoritative unprotected state. A non-null verifier is accepted
+    // only as a complete, bounded tuple before PBKDF2 can consume its count.
     Object? passwordHash = LocalDb.absentPasswordMetadata;
     String? passwordSalt;
     int? passwordIterations;
     final Object? incomingPasswordHash = payload['password_hash'];
-    if (incomingPasswordHash != null) {
+    if (payload.containsKey('password_hash') && incomingPasswordHash == null) {
+      if (payload['password_salt'] != null ||
+          payload['password_iterations'] != null) {
+        throw const FormatException(
+          'Invalid notebook password verifier metadata',
+        );
+      }
+      passwordHash = null;
+    } else if (incomingPasswordHash != null) {
       final Object? incomingPasswordSalt = payload['password_salt'];
       final Object? incomingPasswordIterations = payload['password_iterations'];
       if (incomingPasswordHash is! String ||
@@ -893,14 +901,12 @@ class DocumentSyncEngine extends ChangeNotifier {
             'folder_id': row.folderId,
             'pinned': row.pinned == true,
             // The plaintext password never leaves the password dialog. A
-            // complete verifier can install/rotate protection on peers. An
-            // unprotected row omits these keys: ordinary sync is deliberately
-            // not an authenticated "turn protection off" operation.
-            if (row.passwordHash != null) ...<String, dynamic>{
-              'password_hash': row.passwordHash,
-              'password_salt': row.passwordSalt,
-              'password_iterations': row.passwordIterations,
-            },
+            // complete verifier installs/rotates protection on peers; explicit
+            // nulls remove it. Omitting the keys is reserved for legacy peers
+            // and means "preserve whatever you already hold".
+            'password_hash': row.passwordHash,
+            'password_salt': row.passwordSalt,
+            'password_iterations': row.passwordIterations,
           },
         },
       for (final DumpRow row in dirtyDumps)

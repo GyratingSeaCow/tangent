@@ -144,7 +144,7 @@ void main() {
     expect(state.deviceId, first);
   });
 
-  test('notebook verifier sync installs protection but null never removes it',
+  test('notebook verifier sync preserves missing, clears null, and relocks',
       () async {
     await db.into(db.notebooks).insert(
           NotebooksCompanion.insert(
@@ -263,13 +263,12 @@ void main() {
     local = await (db.select(db.notebooks)
           ..where((row) => row.id.equals('protected-local')))
         .getSingle();
-    expect(local.passwordHash, 'hash-local');
-    expect(local.passwordSalt, 'salt-local');
-    expect(local.passwordIterations, 210000);
+    expect(local.passwordHash, isNull);
+    expect(local.passwordSalt, isNull);
+    expect(local.passwordIterations, isNull);
 
-    // Once an explicit local authenticated operation removes protection, an
-    // ordinary notebook push omits verifier keys rather than asking the server
-    // (and every peer) to unprotect it.
+    // An unprotected current peer states all three nulls explicitly so the
+    // server and every other current peer clear their held verifier.
     await (db.update(db.notebooks)
           ..where((row) => row.id.equals('protected-local')))
         .write(
@@ -295,9 +294,38 @@ void main() {
         client.pushedChanges!.singleWhere(
       (Map<String, dynamic> row) => row['entity_id'] == 'protected-local',
     );
-    expect(unprotectedPush['payload'], isNot(contains('password_hash')));
-    expect(unprotectedPush['payload'], isNot(contains('password_salt')));
-    expect(unprotectedPush['payload'], isNot(contains('password_iterations')));
+    expect(unprotectedPush['payload']['password_hash'], isNull);
+    expect(unprotectedPush['payload']['password_salt'], isNull);
+    expect(unprotectedPush['payload']['password_iterations'], isNull);
+
+    // The first peer can protect the notebook again after observing the
+    // remote clear; the new bounded tuple is sent in full.
+    await (db.update(db.notebooks)
+          ..where((row) => row.id.equals('protected-local')))
+        .write(
+      const NotebooksCompanion(
+        passwordHash: Value<String?>('hash-relocked'),
+        passwordSalt: Value<String?>('salt-relocked'),
+        passwordIterations: Value<int?>(230000),
+        syncDirty: Value<bool>(true),
+      ),
+    );
+    client.pushResults = const <PushResult>[
+      PushResult(
+        entityId: 'protected-local',
+        entityType: 'notebook',
+        seq: 6,
+        applied: true,
+      ),
+    ];
+    await engine.syncNow();
+    final Map<String, dynamic> relockedPush =
+        client.pushedChanges!.singleWhere(
+      (Map<String, dynamic> row) => row['entity_id'] == 'protected-local',
+    );
+    expect(relockedPush['payload']['password_hash'], 'hash-relocked');
+    expect(relockedPush['payload']['password_salt'], 'salt-relocked');
+    expect(relockedPush['payload']['password_iterations'], 230000);
   });
 
   test('hostile synced password iterations are rejected before storage',

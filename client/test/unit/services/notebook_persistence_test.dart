@@ -100,9 +100,23 @@ void main() {
     expect(payload['ink'], isA<Map<String, dynamic>>());
     expect(
       payload.keys.toSet(),
-      {'schema', 'id', 'title', 'createdAt', 'updatedAt', 'doc', 'ink'},
+      {
+        'schema',
+        'id',
+        'title',
+        'createdAt',
+        'updatedAt',
+        'doc',
+        'ink',
+        'passwordHash',
+        'passwordSalt',
+        'passwordIterations',
+      },
       reason: 'one self-contained file per notebook, no sidecar',
     );
+    expect(payload['passwordHash'], isNull);
+    expect(payload['passwordSalt'], isNull);
+    expect(payload['passwordIterations'], isNull);
     expect(
       Directory(notebookDirectory(h)).listSync().length,
       1,

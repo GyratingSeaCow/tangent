@@ -37,13 +37,12 @@ String encodeNotebookFile(Notebook notebook) => jsonEncode({
       // per save, for byte-identical output.
       'doc': notebook.document.toJson(),
       'ink': notebook.ink.toJson(),
-      // Verifier only: never plaintext. Omit the tuple when protection is off
-      // so schema-1 files written before password protection remain readable.
-      if (notebook.passwordHash != null) ...{
-        'passwordHash': notebook.passwordHash,
-        'passwordSalt': notebook.passwordSalt,
-        'passwordIterations': notebook.passwordIterations,
-      },
+      // Verifier only: never plaintext. Current files always state protection
+      // explicitly. That lets adoption distinguish an authoritative null
+      // (clear an old working-copy verifier) from a legacy file with no keys.
+      'passwordHash': notebook.passwordHash,
+      'passwordSalt': notebook.passwordSalt,
+      'passwordIterations': notebook.passwordIterations,
     });
 
 /// Decodes a durable notebook payload.
@@ -84,6 +83,7 @@ Notebook decodeNotebookFile(String source) {
   final Object? passwordHash = decoded['passwordHash'];
   final Object? passwordSalt = decoded['passwordSalt'];
   final Object? passwordIterations = decoded['passwordIterations'];
+  final bool passwordMetadataPresent = decoded.containsKey('passwordHash');
   if (passwordHash == null) {
     if (passwordSalt != null || passwordIterations != null) {
       invalid('Notebook password verifier metadata is incomplete');
@@ -107,6 +107,7 @@ Notebook decodeNotebookFile(String source) {
     passwordHash: passwordHash as String?,
     passwordSalt: passwordSalt as String?,
     passwordIterations: passwordIterations as int?,
+    passwordMetadataPresent: passwordMetadataPresent,
   );
 }
 
@@ -231,7 +232,7 @@ class NotebookPersistence {
   }
 
   /// Authenticates locally before removing protection, then republishes the
-  /// explicit local result. Ordinary sync payloads cannot perform this action.
+  /// explicit local result, including present-null verifier fields.
   Future<bool> removePassword(String id, String password) async {
     if (!await _repository.removePassword(id, password)) return false;
     final Notebook? unprotected = await _repository.getNotebook(id);

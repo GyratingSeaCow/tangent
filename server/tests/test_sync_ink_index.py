@@ -105,7 +105,7 @@ def _push_notebook(client, token, nb_id="nb-ink", ink=True, title="Ink", op="ups
 
 
 class TestPushStoresInk:
-    def test_password_metadata_round_trips_and_old_peers_do_not_erase_it(
+    def test_password_metadata_missing_preserves_null_clears_and_peer_relocks(
         self, authed_client, db
     ):
         client, token = authed_client
@@ -149,8 +149,7 @@ class TestPushStoresInk:
         ).fetchone()
         assert tuple(row) == ("hash-value", "salt-value", 210000)
 
-        # Explicit null is not an authenticated unprotect operation. A paired
-        # peer must not be able to remove the held verifier through sync.
+        # A current peer states the unprotected state with explicit nulls.
         unprotect = dict(payload)
         unprotect.update(
             password_hash=None,
@@ -175,7 +174,35 @@ class TestPushStoresInk:
             "SELECT password_hash, password_salt, password_iterations "
             "FROM notebooks WHERE id = 'nb-private'"
         ).fetchone()
-        assert tuple(row) == ("hash-value", "salt-value", 210000)
+        assert tuple(row) == (None, None, None)
+
+        # A second peer can protect the notebook again after observing the
+        # clear; the fresh verifier tuple replaces the null state.
+        relock = dict(payload)
+        relock.update(
+            password_hash="hash-relocked",
+            password_salt="salt-relocked",
+            password_iterations=230000,
+        )
+        response = client.post(
+            "/v1/sync/push",
+            json={
+                "device_id": "device-peer",
+                "changes": [{
+                    "entity_type": "notebook",
+                    "entity_id": "nb-private",
+                    "op": "upsert",
+                    "payload": relock,
+                }],
+            },
+            headers=_auth(token),
+        )
+        assert response.json()["results"][0]["status"] == "applied"
+        row = db.execute(
+            "SELECT password_hash, password_salt, password_iterations "
+            "FROM notebooks WHERE id = 'nb-private'"
+        ).fetchone()
+        assert tuple(row) == ("hash-relocked", "salt-relocked", 230000)
 
     def test_rejects_incomplete_password_metadata(self, authed_client):
         client, token = authed_client
