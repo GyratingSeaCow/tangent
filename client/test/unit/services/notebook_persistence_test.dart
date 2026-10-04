@@ -150,6 +150,60 @@ void main() {
     expect(card.y, 340);
   });
 
+  test('password verifier survives a real durable-file reinstall round-trip',
+      () async {
+    final h = CatalogHarness();
+    addTearDown(h.close);
+    await h.bootstrap();
+    final repository = repositoryFor(h);
+    final persistence = persistenceFor(h, repository: repository);
+    final Notebook created =
+        await persistence.createNotebook(title: 'Durably private');
+
+    await persistence.setPassword(created.id, 'correct horse battery staple');
+    final Map<String, dynamic> payload = jsonDecode(
+      await notebookFile(h, created.id).readAsString(),
+    ) as Map<String, dynamic>;
+    expect(payload['passwordHash'], isA<String>());
+    expect(payload['passwordSalt'], isA<String>());
+    expect(payload['passwordIterations'], 210000);
+
+    // Simulate uninstall/reinstall: the durable file stays while SQLite is
+    // empty, then adoption recreates the row from the real published bytes.
+    await h.f.db.customStatement('DELETE FROM notebooks');
+    expect(await repository.getNotebook(created.id), isNull);
+    final NotebookAdoptionResult result = await persistence.importNotebooks();
+    expect(result.problems, isEmpty);
+    expect(result.adoptedIds, <String>[created.id]);
+    expect(
+      await repository.verifyPassword(
+        created.id,
+        'correct horse battery staple',
+      ),
+      isTrue,
+    );
+    expect(await repository.verifyPassword(created.id, 'wrong'), isFalse);
+  });
+
+  test('durable files reject PBKDF2 iterations above the maximum', () {
+    final Notebook protected = sampleNotebook(
+      'hostile-durable',
+      when: DateTime.fromMillisecondsSinceEpoch(1, isUtc: true),
+    );
+    final Map<String, dynamic> payload =
+        jsonDecode(encodeNotebookFile(protected)) as Map<String, dynamic>;
+    payload.addAll(<String, dynamic>{
+      'passwordHash': 'hash',
+      'passwordSalt': 'salt',
+      'passwordIterations': 1000001,
+    });
+
+    expect(
+      () => decodeNotebookFile(jsonEncode(payload)),
+      throwsA(isA<StorageFault>()),
+    );
+  });
+
   test('import adopts a durable file that has no database row', () async {
     final h = CatalogHarness();
     addTearDown(h.close);

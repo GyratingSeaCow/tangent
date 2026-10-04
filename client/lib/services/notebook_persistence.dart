@@ -8,6 +8,7 @@ import '../data/storage/storage_codec.dart';
 import '../data/storage/storage_contract.dart';
 import '../data/storage/storage_providers.dart';
 import '../models/notebook.dart';
+import 'notebook_password.dart';
 
 /// Result of re-adopting durable notebook files from the selected folder.
 /// (Named "adoption", not "import": `NotebookImportResult` is the dump →
@@ -36,6 +37,13 @@ String encodeNotebookFile(Notebook notebook) => jsonEncode({
       // per save, for byte-identical output.
       'doc': notebook.document.toJson(),
       'ink': notebook.ink.toJson(),
+      // Verifier only: never plaintext. Omit the tuple when protection is off
+      // so schema-1 files written before password protection remain readable.
+      if (notebook.passwordHash != null) ...{
+        'passwordHash': notebook.passwordHash,
+        'passwordSalt': notebook.passwordSalt,
+        'passwordIterations': notebook.passwordIterations,
+      },
     });
 
 /// Decodes a durable notebook payload.
@@ -73,6 +81,22 @@ Notebook decodeNotebookFile(String source) {
     invalid('Notebook document fields are missing or mistyped');
   }
   StorageCodec.validateLiteralId(id);
+  final Object? passwordHash = decoded['passwordHash'];
+  final Object? passwordSalt = decoded['passwordSalt'];
+  final Object? passwordIterations = decoded['passwordIterations'];
+  if (passwordHash == null) {
+    if (passwordSalt != null || passwordIterations != null) {
+      invalid('Notebook password verifier metadata is incomplete');
+    }
+  } else if (passwordHash is! String ||
+      passwordHash.isEmpty ||
+      passwordSalt is! String ||
+      passwordSalt.isEmpty ||
+      passwordIterations is! int ||
+      passwordIterations < notebookPasswordMinIterations ||
+      passwordIterations > notebookPasswordMaxIterations) {
+    invalid('Notebook password verifier metadata is invalid');
+  }
   return Notebook(
     id: id,
     title: title,
@@ -80,6 +104,9 @@ Notebook decodeNotebookFile(String source) {
     updatedAt: DateTime.fromMillisecondsSinceEpoch(updatedAt, isUtc: true),
     document: NotebookDocument.decode(jsonEncode(doc)),
     ink: NotebookInk.decode(jsonEncode(ink)),
+    passwordHash: passwordHash as String?,
+    passwordSalt: passwordSalt as String?,
+    passwordIterations: passwordIterations as int?,
   );
 }
 
@@ -188,6 +215,33 @@ class NotebookPersistence {
     }
     await _publish(saved);
     return saved;
+  }
+
+  /// Enables protection in the working copy and republishes the verifier with
+  /// the durable notebook. A reinstall must not silently turn protection off.
+  Future<void> setPassword(String id, String password) async {
+    await _repository.setPassword(id, password);
+    final Notebook? protected = await _repository.getNotebook(id);
+    if (protected == null) {
+      throw StorageFault(
+        (code: ProblemCode.absent, message: 'Notebook row disappeared'),
+      );
+    }
+    await _publish(protected);
+  }
+
+  /// Authenticates locally before removing protection, then republishes the
+  /// explicit local result. Ordinary sync payloads cannot perform this action.
+  Future<bool> removePassword(String id, String password) async {
+    if (!await _repository.removePassword(id, password)) return false;
+    final Notebook? unprotected = await _repository.getNotebook(id);
+    if (unprotected == null) {
+      throw StorageFault(
+        (code: ProblemCode.absent, message: 'Notebook row disappeared'),
+      );
+    }
+    await _publish(unprotected);
+    return true;
   }
 
   /// Deletes the row and its durable file.

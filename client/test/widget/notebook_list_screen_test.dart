@@ -45,6 +45,14 @@ class _ForwardingNotebookPersistence implements NotebookPersistence {
   }
 
   @override
+  Future<void> setPassword(String id, String password) =>
+      _repository.setPassword(id, password);
+
+  @override
+  Future<bool> removePassword(String id, String password) =>
+      _repository.removePassword(id, password);
+
+  @override
   Future<ComponentResult> deleteNotebook(String id) async {
     await _repository.deleteNotebook(id);
     return (state: ComponentState.removed, problem: null);
@@ -359,6 +367,57 @@ void main() {
       const Duration(seconds: 30),
     );
     expect(find.byType(NotebookEditorScreen), findsOneWidget);
+    await unmount(tester);
+  });
+
+  testWidgets(
+      'Turn Off Password Protection rejects a wrong password and stays protected',
+      (tester) async {
+    final NotebookPasswordMetadata metadata =
+        fakeNotebookPasswordMetadata('right password');
+    await mountList(
+      tester,
+      seed: <Notebook>[
+        testNotebook(
+          id: 'nb-stays-protected',
+          title: 'Private',
+          passwordHash: metadata.hash,
+          passwordSalt: metadata.salt,
+          passwordIterations: metadata.iterations,
+        ),
+      ],
+    );
+
+    await tester.tap(
+      find.byKey(const ValueKey<String>('notebook-menu-nb-stays-protected')),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Turn Off Password Protection'), findsOneWidget);
+    await tester.tap(
+      find.byKey(ItemActionSheet.keyFor(ItemAction.passwordProtection)),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Turn off password protection'), findsOneWidget);
+
+    await tester.enterText(
+      find.byKey(const ValueKey<String>('notebook-current-password')),
+      'wrong password',
+    );
+    await tester.tap(
+      find.byKey(const ValueKey<String>('notebook-password-submit')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Wrong password'), findsOneWidget);
+    expect(find.text('Turn off password protection'), findsOneWidget);
+    final Notebook stillProtected =
+        (await repository.getNotebook('nb-stays-protected'))!;
+    expect(stillProtected.passwordProtected, isTrue);
+    expect(stillProtected.passwordHash, metadata.hash);
+    expect(
+      find.byKey(const ValueKey<String>('notebook-lock-nb-stays-protected')),
+      findsOneWidget,
+    );
     await unmount(tester);
   });
 

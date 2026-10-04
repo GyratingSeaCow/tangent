@@ -440,6 +440,8 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
   Future<void> _togglePasswordProtection(NotebookHeader notebook) async {
     final NotebookRepository repository =
         ref.read(notebookRepositoryProvider);
+    final NotebookPersistence persistence =
+        ref.read(notebookPersistenceProvider);
     final NotebookUnlockRegistry unlocks =
         ref.read(notebookUnlockRegistryProvider);
     if (!notebook.passwordProtected) {
@@ -448,7 +450,7 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
         notebookTitle: notebook.title,
       );
       if (password == null || !mounted) return;
-      await repository.setPassword(notebook.id, password);
+      await persistence.setPassword(notebook.id, password);
       final Notebook? protected = await repository.getNotebook(notebook.id);
       if (protected?.passwordHash != null) {
         unlocks.unlock(notebook.id, protected!.passwordHash!);
@@ -462,7 +464,7 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
       title: 'Turn off password protection',
       confirmLabel: 'Turn off',
       verify: (String password) =>
-          repository.removePassword(notebook.id, password),
+          persistence.removePassword(notebook.id, password),
     );
     if (removed) unlocks.lock(notebook.id);
   }
