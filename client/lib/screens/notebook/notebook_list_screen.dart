@@ -438,8 +438,6 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
   }
 
   Future<void> _togglePasswordProtection(NotebookHeader notebook) async {
-    final NotebookRepository repository =
-        ref.read(notebookRepositoryProvider);
     final NotebookPersistence persistence =
         ref.read(notebookPersistenceProvider);
     final NotebookUnlockRegistry unlocks =
@@ -451,10 +449,9 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
       );
       if (password == null || !mounted) return;
       await persistence.setPassword(notebook.id, password);
-      final Notebook? protected = await repository.getNotebook(notebook.id);
-      if (protected?.passwordHash != null) {
-        unlocks.unlock(notebook.id, protected!.passwordHash!);
-      }
+      // Enabling protection closes the current session immediately. The next
+      // open or protected action must prove knowledge of the new password.
+      unlocks.lock(notebook.id);
       return;
     }
 

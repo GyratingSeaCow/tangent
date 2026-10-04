@@ -310,6 +310,17 @@ void main() {
       find.byKey(const ValueKey<String>('notebook-lock-nb-protect')),
       findsOneWidget,
     );
+
+    await tester.tap(
+      find.byKey(const ValueKey<String>('notebook-row-nb-protect')),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey<String>('notebook-current-password')),
+      findsOneWidget,
+      reason: 'new protection must lock immediately, not unlock this process',
+    );
+    expect(find.byType(NotebookEditorScreen), findsNothing);
     await unmount(tester);
   });
 
