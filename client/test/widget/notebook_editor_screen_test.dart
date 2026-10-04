@@ -432,7 +432,7 @@ void main() {
   });
 
   testWidgets(
-    'Table insertion enforces the cap, lands below content, edits and saves',
+    'Table insertion caps size, virtualizes the real editor, edits and saves',
     (WidgetTester tester) async {
       await mountEditor(
         tester,
@@ -500,6 +500,52 @@ void main() {
               ),
         ),
       );
+      final CustomPaint gridPaint = tester.widget<CustomPaint>(
+        find.descendant(of: grid, matching: find.byType(CustomPaint)),
+      );
+      final NotebookTablePainter painter =
+          gridPaint.painter! as NotebookTablePainter;
+      expect(painter.debugLastVisitedCellCount, 40);
+      expect(
+        painter.debugLastVisibleRange,
+        (firstRow: 0, lastRow: 7, firstColumn: 0, lastColumn: 4),
+        reason: 'the real editor tree must paint only its 600x352 viewport',
+      );
+
+      final List<SingleChildScrollView> tableScrolls = tester
+          .widgetList<SingleChildScrollView>(
+            find.descendant(
+              of: table,
+              matching: find.byType(SingleChildScrollView),
+            ),
+          )
+          .toList(growable: false);
+      final ScrollController horizontal = tableScrolls
+          .singleWhere(
+            (SingleChildScrollView scroll) =>
+                scroll.scrollDirection == Axis.horizontal,
+          )
+          .controller!;
+      final ScrollController vertical = tableScrolls
+          .singleWhere(
+            (SingleChildScrollView scroll) =>
+                scroll.scrollDirection == Axis.vertical,
+          )
+          .controller!;
+      horizontal.jumpTo(horizontal.position.maxScrollExtent);
+      vertical.jumpTo(vertical.position.maxScrollExtent);
+      await tester.pump();
+
+      expect(painter.debugLastVisitedCellCount, 40);
+      expect(
+        painter.debugLastVisibleRange,
+        (firstRow: 92, lastRow: 99, firstColumn: 95, lastColumn: 99),
+        reason: 'scroll offsets must move the bounded paint window',
+      );
+
+      horizontal.jumpTo(0);
+      vertical.jumpTo(0);
+      await tester.pump();
       await tester.tapAt(tester.getTopLeft(grid) + const Offset(20, 20));
       await tester.pump();
       final Finder cellEditor = find.descendant(

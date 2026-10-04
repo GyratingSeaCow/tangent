@@ -174,7 +174,15 @@ class _NotebookTableBlockWidgetState extends State<NotebookTableBlockWidget> {
                                 block.contentWidth,
                                 block.contentHeight,
                               ),
-                              painter: NotebookTablePainter(block),
+                              painter: NotebookTablePainter(
+                                block: block,
+                                horizontal: _horizontal,
+                                vertical: _vertical,
+                                viewportSize: Size(
+                                  block.viewportWidth,
+                                  block.viewportHeight,
+                                ),
+                              ),
                             ),
                           ),
                           if (editingRow != null && editingColumn != null)
@@ -242,21 +250,54 @@ class _NotebookTableBlockWidgetState extends State<NotebookTableBlockWidget> {
   }
 }
 
-/// Paints only the table cells intersecting the canvas's current clip.
+/// Paints only the table cells intersecting the scroll viewport.
 class NotebookTablePainter extends CustomPainter {
-  const NotebookTablePainter(this.block);
+  NotebookTablePainter({
+    required this.block,
+    required ScrollController horizontal,
+    required ScrollController vertical,
+    required this.viewportSize,
+  }) : _horizontal = horizontal,
+       _vertical = vertical,
+       super(repaint: Listenable.merge(<Listenable>[horizontal, vertical]));
 
   final NotebookTableBlock block;
+  final ScrollController _horizontal;
+  final ScrollController _vertical;
+  final Size viewportSize;
+
+  NotebookTableCellRange? _debugLastVisibleRange;
+  int _debugLastVisitedCellCount = 0;
+
+  /// The row and column window visited by the most recent paint.
+  @visibleForTesting
+  NotebookTableCellRange? get debugLastVisibleRange => _debugLastVisibleRange;
+
+  /// The number of cells visited by the most recent paint.
+  @visibleForTesting
+  int get debugLastVisitedCellCount => _debugLastVisitedCellCount;
 
   @override
   void paint(Canvas canvas, Size size) {
-    final Rect clip = canvas.getLocalClipBounds().intersect(Offset.zero & size);
-    if (clip.isEmpty) return;
+    _debugLastVisibleRange = null;
+    _debugLastVisitedCellCount = 0;
+    final double horizontalOffset = _horizontal.hasClients
+        ? _horizontal.offset
+        : 0;
+    final double verticalOffset = _vertical.hasClients ? _vertical.offset : 0;
+    final Rect viewport = Rect.fromLTWH(
+      horizontalOffset,
+      verticalOffset,
+      viewportSize.width,
+      viewportSize.height,
+    ).intersect(Offset.zero & size);
+    if (viewport.isEmpty) return;
     final NotebookTableCellRange range = visibleNotebookTableCells(
-      clip: clip,
+      clip: viewport,
       rows: block.rows,
       columns: block.columns,
     );
+    _debugLastVisibleRange = range;
     final Paint border = Paint()
       ..color = NotebookInkCanvas.inkColor.withValues(alpha: 0.4)
       ..style = PaintingStyle.stroke
@@ -270,6 +311,7 @@ class NotebookTablePainter extends CustomPainter {
         column <= range.lastColumn;
         column++
       ) {
+        _debugLastVisitedCellCount++;
         final Rect cell = Rect.fromLTWH(
           column * kNotebookTableCellWidth,
           row * kNotebookTableCellHeight,
@@ -303,5 +345,9 @@ class NotebookTablePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant NotebookTablePainter oldDelegate) =>
-      oldDelegate.block != block || oldDelegate.block.cells != block.cells;
+      oldDelegate.block != block ||
+      oldDelegate.block.cells != block.cells ||
+      oldDelegate.viewportSize != viewportSize ||
+      oldDelegate._horizontal != _horizontal ||
+      oldDelegate._vertical != _vertical;
 }
