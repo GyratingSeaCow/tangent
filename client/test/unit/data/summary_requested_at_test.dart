@@ -119,7 +119,7 @@ void main() {
     addTearDown(db.close);
     await db.listDumps();
 
-    expect(raw.userVersion, 33);
+    expect(raw.userVersion, 34);
     expect(_columns(raw, 'dumps'), contains('summary_requested_at'));
     final DumpRow row = (await db.getDump('old'))!;
     expect(row.summaryRequestedAt, isNull);
@@ -135,7 +135,7 @@ void main() {
     final LocalDb db = LocalDb.forTesting(NativeDatabase.opened(raw));
     addTearDown(db.close);
     await expectLater(db.listDumps(), completes);
-    expect(raw.userVersion, 33);
+    expect(raw.userVersion, 34);
   });
 
   test(

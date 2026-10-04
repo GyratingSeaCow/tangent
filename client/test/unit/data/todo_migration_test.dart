@@ -29,7 +29,7 @@ const _todoColumns = [
   'capture_fingerprint',
   // v29: user pin; nullable means old rows remain visually unpinned.
   'pinned',
-  // v33: synced Kanban placement.
+  // v34: synced Kanban placement.
   'column_id',
   'board_order',
 ];
@@ -38,15 +38,15 @@ List<Object?> _columnNames(Database db, String table) =>
     db.select('PRAGMA table_info($table)').map((r) => r['name']).toList();
 
 void main() {
-  test('a fresh database is created at v33 with todos and columns', () async {
+  test('a fresh database is created at v34 with todos and columns', () async {
     final sql = sqlite3.openInMemory();
     final db = LocalDb.forTesting(NativeDatabase.opened(sql));
     addTearDown(db.close);
 
     await db.listDumps();
 
-    expect(db.schemaVersion, 33);
-    expect(sql.userVersion, 33);
+    expect(db.schemaVersion, 34);
+    expect(sql.userVersion, 34);
     expect(_columnNames(sql, 'todos'), _todoColumns);
     expect(_columnNames(sql, 'todo_columns'), <String>[
       'id',
@@ -134,7 +134,7 @@ void main() {
 
     await db.listDumps();
 
-    expect(sql.userVersion, 33);
+    expect(sql.userVersion, 34);
     expect(_columnNames(sql, 'todos'), _todoColumns);
     expect(
       sql.select("SELECT text FROM todos WHERE id='kept'").single['text'],
@@ -173,7 +173,7 @@ void main() {
 
     await db.listDumps();
 
-    expect(sql.userVersion, 33);
+    expect(sql.userVersion, 34);
     expect(_columnNames(sql, 'todos'), _todoColumns);
     final rows = sql.select(
       'SELECT id, text, due_date, folder_id FROM todos '
@@ -285,7 +285,7 @@ void main() {
 
     await expectLater(db.listDumps(), completes);
 
-    expect(sql.userVersion, 33);
+    expect(sql.userVersion, 34);
     expect(_columnNames(sql, 'todos'), _todoColumns);
   });
 
@@ -318,7 +318,7 @@ void main() {
 
       await db.listDumps();
 
-      expect(sql.userVersion, 33);
+      expect(sql.userVersion, 34);
       expect(
         sql
             .select(

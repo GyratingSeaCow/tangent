@@ -26,7 +26,7 @@ void main() {
     final LocalDb db = LocalDb.forTesting(NativeDatabase.opened(sql));
     addTearDown(db.close);
     await db.listDumps();
-    expect(sql.userVersion, 33);
+    expect(sql.userVersion, 34);
     // v29 adds the auto-file columns and v30 the pin flags to dumps
     // (nullable, arriving null), so compare the columns the fixture had:
     // this test is about existing rows surviving the upgrade, not about
@@ -58,7 +58,7 @@ void main() {
     final LocalDb db = LocalDb.forTesting(NativeDatabase.opened(sql));
     addTearDown(db.close);
     await db.listDumps();
-    expect(sql.userVersion, 33);
+    expect(sql.userVersion, 34);
     expect(
       sql.select("SELECT name FROM sqlite_master WHERE name='ask_messages'"),
       isNotEmpty,
@@ -94,7 +94,7 @@ void main() {
     addTearDown(db.close);
     await db.listDumps();
 
-    expect(sql.userVersion, 33);
+    expect(sql.userVersion, 34);
     expect(
       sql.select(
         "SELECT name FROM sqlite_master WHERE name='ask_source_visits'",

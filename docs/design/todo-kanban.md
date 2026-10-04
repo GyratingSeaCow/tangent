@@ -9,7 +9,7 @@ List mode deliberately ignores those board-placement fields.
 
 ## Migration and sync
 
-Client schema 33 creates `todo_columns` and adds the two placement fields.
+Client schema 34 creates `todo_columns` and adds the two placement fields.
 During upgrade it inserts three stable default columns with an epoch timestamp,
 assigns existing to-dos to **To Do**, gives them deterministic row order, and
 marks formerly clean rows with local migration metadata. Pull may then install a

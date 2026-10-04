@@ -1048,6 +1048,10 @@ def _migrate_change_log_ask_message_entity(conn: sqlite3.Connection) -> None:
         value in (ddl[0] or "") for value in ("'ask_message'", "'todo_column'")
     ):
         return
+    prior = conn.execute(
+        "SELECT seq FROM sqlite_sequence WHERE name = 'change_log'"
+    ).fetchone()
+    prior_seq = int(prior[0]) if prior is not None else 0
     conn.executescript(
         """
         PRAGMA foreign_keys = OFF;
@@ -1075,9 +1079,11 @@ def _migrate_change_log_ask_message_entity(conn: sqlite3.Connection) -> None:
         PRAGMA foreign_keys = ON;
         """
     )
+    conn.execute("DELETE FROM sqlite_sequence WHERE name = 'change_log'")
     conn.execute(
-        "INSERT OR REPLACE INTO sqlite_sequence (name, seq) "
-        "SELECT 'change_log', COALESCE(MAX(seq), 0) FROM change_log"
+        "INSERT INTO sqlite_sequence (name, seq) "
+        "SELECT 'change_log', MAX(?, COALESCE(MAX(seq), 0)) FROM change_log",
+        (prior_seq,),
     )
 
 

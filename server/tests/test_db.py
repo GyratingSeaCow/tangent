@@ -343,7 +343,8 @@ def test_todo_kanban_migration_is_additive_and_sync_aware(tmp_path):
             seq INTEGER PRIMARY KEY AUTOINCREMENT,
             entity_type TEXT NOT NULL CHECK (
                 entity_type IN ('dump','notebook','note','folder','ink_index',
-                                'todo','calendar_event','ask_message')
+                                'todo','calendar_event','ask_message','tag',
+                                'tag_assignment')
             ),
             entity_id TEXT NOT NULL,
             op TEXT NOT NULL CHECK (op IN ('upsert', 'delete')),
@@ -353,7 +354,8 @@ def test_todo_kanban_migration_is_additive_and_sync_aware(tmp_path):
         );
         INSERT INTO change_log
             (entity_type, entity_id, op, device_id, payload, created_at)
-        VALUES ('todo', 'legacy-todo', 'upsert', 'dev-1', '{}', 100);
+        VALUES ('todo', 'legacy-todo', 'upsert', 'dev-1', '{}', 100),
+               ('tag', 'tag-1', 'upsert', 'dev-1', '{}', 100);
         """
     )
     conn.commit()
@@ -371,6 +373,9 @@ def test_todo_kanban_migration_is_additive_and_sync_aware(tmp_path):
         "SELECT name FROM sqlite_master WHERE type='table'"
     )}
     before_seq = conn.execute("SELECT MAX(seq) FROM change_log").fetchone()[0]
+    preserved = conn.execute(
+        "SELECT seq, entity_type FROM change_log ORDER BY seq"
+    ).fetchall()
     conn.execute(
         "INSERT INTO change_log "
         "(entity_type,entity_id,op,device_id,payload,created_at) "
@@ -385,5 +390,6 @@ def test_todo_kanban_migration_is_additive_and_sync_aware(tmp_path):
     assert todo_columns["board_order"][3] == 1
     assert legacy == ("keep me", None, 0)
     assert "todo_columns" in tables
-    assert before_seq == 1
-    assert after_seq == 2
+    assert preserved == [(1, "todo"), (2, "tag")]
+    assert before_seq == 2
+    assert after_seq == 3
