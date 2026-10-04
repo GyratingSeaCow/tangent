@@ -665,7 +665,8 @@ def _apply_document(
         # SEPARATE fields, and a payload without ink (title edit, old app)
         # must not erase the strokes the server already holds.
         existing = conn.execute(
-            "SELECT folder_id, ink FROM notebooks WHERE id = ?",
+            "SELECT folder_id, ink, password_hash, password_salt, "
+            "password_iterations, password_hash_prev FROM notebooks WHERE id = ?",
             (change.entity_id,),
         ).fetchone()
         folder_id = (
@@ -682,19 +683,133 @@ def _apply_document(
             )
         else:
             ink = existing["ink"] if existing is not None else None
+        # password_hash_prev is both transition proof and a one-generation
+        # tombstone. Missing metadata is an old peer and preserves the state.
+        if "password_hash" not in p:
+            password_hash = existing["password_hash"] if existing is not None else None
+            password_salt = existing["password_salt"] if existing is not None else None
+            password_iterations = (
+                existing["password_iterations"] if existing is not None else None
+            )
+            password_hash_prev = (
+                existing["password_hash_prev"] if existing is not None else None
+            )
+        elif p["password_hash"] is None:
+            if p.get("password_salt") is not None or p.get("password_iterations") is not None:
+                raise ValueError("unprotected notebook requires null password metadata")
+            incoming_prev = p.get("password_hash_prev")
+            if incoming_prev is not None and (
+                not isinstance(incoming_prev, str) or not incoming_prev
+            ):
+                raise ValueError("password_hash_prev must be a non-empty string or null")
+            held_hash = existing["password_hash"] if existing is not None else None
+            held_prev = existing["password_hash_prev"] if existing is not None else None
+            if existing is None:
+                # A fresh/reset server has no generation to defend. Preserve
+                # the durable tuple verbatim, including its clear tombstone.
+                password_hash = None
+                password_salt = None
+                password_iterations = None
+                password_hash_prev = incoming_prev
+            elif held_hash is not None:
+                if incoming_prev == held_hash:
+                    password_hash = None
+                    password_salt = None
+                    password_iterations = None
+                    password_hash_prev = held_hash
+                else:
+                    # A causally stale peer may still have a legitimate body
+                    # edit. Land that edit without letting its verifier tuple
+                    # weaken or replace the canonical server generation.
+                    password_hash = held_hash
+                    password_salt = existing["password_salt"]
+                    password_iterations = existing["password_iterations"]
+                    password_hash_prev = held_prev
+            elif held_prev is not None:
+                password_hash = None
+                password_salt = None
+                password_iterations = None
+                password_hash_prev = held_prev
+            else:
+                password_hash = None
+                password_salt = None
+                password_iterations = None
+                password_hash_prev = None
+        else:
+            password_hash = p["password_hash"]
+            if not isinstance(password_hash, str) or not password_hash:
+                raise ValueError("password_hash must be a non-empty string")
+            password_salt = p.get("password_salt")
+            password_iterations = p.get("password_iterations")
+            if not isinstance(password_salt, str) or not password_salt:
+                raise ValueError("protected notebook requires password_salt")
+            if (
+                type(password_iterations) is not int
+                or not 100_000 <= password_iterations <= 1_000_000
+            ):
+                raise ValueError(
+                    "protected notebook requires sane password_iterations"
+                )
+            incoming_prev = p.get("password_hash_prev")
+            if incoming_prev is not None and (
+                not isinstance(incoming_prev, str) or not incoming_prev
+            ):
+                raise ValueError("password_hash_prev must be a non-empty string or null")
+            held_hash = existing["password_hash"] if existing is not None else None
+            held_prev = existing["password_hash_prev"] if existing is not None else None
+            if existing is None:
+                # A fresh/reset server has no generation to compare against.
+                # The incoming durable tuple is the only canonical state.
+                password_hash_prev = incoming_prev
+            elif password_hash == held_hash:
+                # An ordinary body edit re-pushes the current hash. Keep the
+                # entire canonical tuple: changing its salt/iterations while
+                # retaining the hash would make the password unverifiable.
+                password_salt = existing["password_salt"]
+                password_iterations = existing["password_iterations"]
+                password_hash_prev = held_prev
+            elif held_hash is not None:
+                if incoming_prev == held_hash:
+                    password_hash_prev = held_hash
+                else:
+                    password_hash = held_hash
+                    password_salt = existing["password_salt"]
+                    password_iterations = existing["password_iterations"]
+                    password_hash_prev = held_prev
+            elif held_prev is not None:
+                if incoming_prev == held_prev and password_hash != held_prev:
+                    password_hash_prev = held_prev
+                else:
+                    password_hash = None
+                    password_salt = None
+                    password_iterations = None
+                    password_hash_prev = held_prev
+            else:
+                if incoming_prev is None:
+                    password_hash_prev = None
+                else:
+                    password_hash = None
+                    password_salt = None
+                    password_iterations = None
+                    password_hash_prev = None
         conn.execute(
             """
             INSERT INTO notebooks
                 (id, title, doc, ink, created_at, updated_at, deleted_at,
-                 origin_device_id, folder_id)
-            VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)
+                 origin_device_id, folder_id, password_hash, password_salt,
+                 password_iterations, password_hash_prev)
+            VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
                 doc = excluded.doc,
                 ink = excluded.ink,
                 updated_at = excluded.updated_at,
                 deleted_at = NULL,
-                folder_id = excluded.folder_id
+                folder_id = excluded.folder_id,
+                password_hash = excluded.password_hash,
+                password_salt = excluded.password_salt,
+                password_iterations = excluded.password_iterations,
+                password_hash_prev = excluded.password_hash_prev
             """,
             (
                 change.entity_id,
@@ -705,6 +820,10 @@ def _apply_document(
                 now,
                 change.device_id,
                 folder_id,
+                password_hash,
+                password_salt,
+                password_iterations,
+                password_hash_prev,
             ),
         )
         return
@@ -807,6 +926,22 @@ def sync_push(
                         ]
             elif change.entity_type == "notebook":
                 _apply_document(db, "notebooks", change, now)
+                if change.op != "delete" and change.payload is not None:
+                    stored = db.execute(
+                        "SELECT password_hash, password_salt, password_iterations, "
+                        "password_hash_prev FROM notebooks WHERE id = ?",
+                        (change.entity_id,),
+                    ).fetchone()
+                    if stored is not None:
+                        publish_payload = dict(change.payload)
+                        publish_payload["password_hash"] = stored["password_hash"]
+                        publish_payload["password_salt"] = stored["password_salt"]
+                        publish_payload["password_iterations"] = stored[
+                            "password_iterations"
+                        ]
+                        publish_payload["password_hash_prev"] = stored[
+                            "password_hash_prev"
+                        ]
                 # The OCR worker re-derives this notebook's index (a delete
                 # purges it) — queued after the whole batch commits.
                 reindex_ids.append(change.entity_id)
@@ -873,6 +1008,25 @@ def sync_push(
                 entity_type=change.entity_type,
                 error=str(exc),
             )
+            canonical_payload = None
+            if change.entity_type == "notebook":
+                try:
+                    canonical = db.execute(
+                        "SELECT password_hash, password_salt, password_iterations, "
+                        "password_hash_prev FROM notebooks WHERE id = ?",
+                        (change.entity_id,),
+                    ).fetchone()
+                    if canonical is not None:
+                        canonical_payload = {
+                            "password_hash": canonical["password_hash"],
+                            "password_salt": canonical["password_salt"],
+                            "password_iterations": canonical["password_iterations"],
+                            "password_hash_prev": canonical["password_hash_prev"],
+                        }
+                except sqlite3.Error:
+                    # Preserve the original per-entity rejection if even the
+                    # readback failed; the client will keep the row dirty.
+                    pass
             results.append(
                 SyncPushResult(
                     entity_id=change.entity_id,
@@ -880,6 +1034,7 @@ def sync_push(
                     seq=0,
                     status="rejected",
                     reason=str(exc),
+                    canonical_payload=canonical_payload,
                 )
             )
 

@@ -8,6 +8,7 @@ import '../data/storage/storage_codec.dart';
 import '../data/storage/storage_contract.dart';
 import '../data/storage/storage_providers.dart';
 import '../models/notebook.dart';
+import 'notebook_password.dart';
 
 /// Result of re-adopting durable notebook files from the selected folder.
 /// (Named "adoption", not "import": `NotebookImportResult` is the dump →
@@ -15,7 +16,7 @@ import '../models/notebook.dart';
 typedef NotebookAdoptionResult = ({
   List<String> adoptedIds,
   List<String> keptLocalIds,
-  List<StorageProblem> problems
+  List<StorageProblem> problems,
 });
 
 /// Current durable payload version. A file written by a newer build keeps its
@@ -36,6 +37,15 @@ String encodeNotebookFile(Notebook notebook) => jsonEncode({
       // per save, for byte-identical output.
       'doc': notebook.document.toJson(),
       'ink': notebook.ink.toJson(),
+      // Verifier only: never plaintext. Current files always state protection
+      // explicitly. That lets adoption distinguish an authoritative null
+      // (clear an old working-copy verifier) from a legacy file with no keys.
+      'passwordHash': notebook.passwordHash,
+      'passwordSalt': notebook.passwordSalt,
+      'passwordIterations': notebook.passwordIterations,
+      // The previous verifier is the causal proof for clear/rotation and the
+      // tombstone that keeps a stale folder-sharing device from re-protecting.
+      'passwordHashPrev': notebook.passwordHashPrev,
     });
 
 /// Decodes a durable notebook payload.
@@ -73,6 +83,28 @@ Notebook decodeNotebookFile(String source) {
     invalid('Notebook document fields are missing or mistyped');
   }
   StorageCodec.validateLiteralId(id);
+  final Object? passwordHash = decoded['passwordHash'];
+  final Object? passwordSalt = decoded['passwordSalt'];
+  final Object? passwordIterations = decoded['passwordIterations'];
+  final Object? passwordHashPrev = decoded['passwordHashPrev'];
+  final bool passwordMetadataPresent = decoded.containsKey('passwordHash');
+  if (passwordHash == null) {
+    if (passwordSalt != null || passwordIterations != null) {
+      invalid('Notebook password verifier metadata is incomplete');
+    }
+  } else if (passwordHash is! String ||
+      passwordHash.isEmpty ||
+      passwordSalt is! String ||
+      passwordSalt.isEmpty ||
+      passwordIterations is! int ||
+      passwordIterations < notebookPasswordMinIterations ||
+      passwordIterations > notebookPasswordMaxIterations) {
+    invalid('Notebook password verifier metadata is invalid');
+  }
+  if (passwordHashPrev != null &&
+      (passwordHashPrev is! String || passwordHashPrev.isEmpty)) {
+    invalid('Notebook password verifier predecessor is invalid');
+  }
   return Notebook(
     id: id,
     title: title,
@@ -80,6 +112,11 @@ Notebook decodeNotebookFile(String source) {
     updatedAt: DateTime.fromMillisecondsSinceEpoch(updatedAt, isUtc: true),
     document: NotebookDocument.decode(jsonEncode(doc)),
     ink: NotebookInk.decode(jsonEncode(ink)),
+    passwordHash: passwordHash as String?,
+    passwordSalt: passwordSalt as String?,
+    passwordIterations: passwordIterations as int?,
+    passwordHashPrev: passwordHashPrev as String?,
+    passwordMetadataPresent: passwordMetadataPresent,
   );
 }
 
@@ -133,7 +170,7 @@ class NotebookPersistence {
         state.problem ??
             (
               code: ProblemCode.unavailable,
-              message: 'No default recording folder'
+              message: 'No default recording folder',
             ),
       );
     }
@@ -179,15 +216,42 @@ class NotebookPersistence {
     await _repository.saveNotebook(notebook);
     final saved = await _repository.getNotebook(notebook.id);
     if (saved == null) {
-      throw StorageFault(
-        (
-          code: ProblemCode.absent,
-          message: 'Notebook row disappeared during save'
-        ),
-      );
+      throw StorageFault((
+        code: ProblemCode.absent,
+        message: 'Notebook row disappeared during save',
+      ));
     }
     await _publish(saved);
     return saved;
+  }
+
+  /// Enables protection in the working copy and republishes the verifier with
+  /// the durable notebook. A reinstall must not silently turn protection off.
+  Future<void> setPassword(String id, String password) async {
+    await _repository.setPassword(id, password);
+    final Notebook? protected = await _repository.getNotebook(id);
+    if (protected == null) {
+      throw StorageFault((
+        code: ProblemCode.absent,
+        message: 'Notebook row disappeared',
+      ));
+    }
+    await _publish(protected);
+  }
+
+  /// Authenticates locally before removing protection, then republishes the
+  /// explicit local result, including present-null verifier fields.
+  Future<bool> removePassword(String id, String password) async {
+    if (!await _repository.removePassword(id, password)) return false;
+    final Notebook? unprotected = await _repository.getNotebook(id);
+    if (unprotected == null) {
+      throw StorageFault((
+        code: ProblemCode.absent,
+        message: 'Notebook row disappeared',
+      ));
+    }
+    await _publish(unprotected);
+    return true;
   }
 
   /// Deletes the row and its durable file.
@@ -216,8 +280,8 @@ class NotebookPersistence {
         state: ComponentState.failed,
         problem: (
           code: ProblemCode.conflict,
-          message: 'Ambiguous durable notebook document'
-        )
+          message: 'Ambiguous durable notebook document',
+        ),
       );
     }
     return _settled(
@@ -255,21 +319,17 @@ class NotebookPersistence {
       return (
         adoptedIds: adopted,
         keptLocalIds: keptLocal,
-        problems: [
-          e.problem,
-        ]
+        problems: [e.problem],
       );
     }
     for (final document in documents) {
       try {
         final notebook = decodeNotebookFile(document.content);
         if (document.name != notebookFileName(notebook.id)) {
-          throw const StorageFault(
-            (
-              code: ProblemCode.invalid,
-              message: 'Notebook document name and identity differ'
-            ),
-          );
+          throw const StorageFault((
+            code: ProblemCode.invalid,
+            message: 'Notebook document name and identity differ',
+          ));
         }
         final existing = await _repository.getNotebook(notebook.id);
         if (existing != null &&

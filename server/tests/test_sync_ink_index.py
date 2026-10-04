@@ -105,6 +105,331 @@ def _push_notebook(client, token, nb_id="nb-ink", ink=True, title="Ink", op="ups
 
 
 class TestPushStoresInk:
+    def test_password_cas_preserves_verifier_and_lands_stale_body_edits(
+        self, authed_client, db
+    ):
+        client, token = authed_client
+        payload = {
+            "title": "Private",
+            "doc": {"blocks": []},
+            "ink": {"strokes": []},
+            "created_at": 1,
+            "password_hash": "hash-value",
+            "password_salt": "salt-value",
+            "password_iterations": 210000,
+        }
+        response = client.post(
+            "/v1/sync/push",
+            json={
+                "device_id": "device-new",
+                "changes": [{
+                    "entity_type": "notebook",
+                    "entity_id": "nb-private",
+                    "op": "upsert",
+                    "payload": payload,
+                }],
+            },
+            headers=_auth(token),
+        )
+        assert response.json()["results"][0]["status"] == "applied"
+        pulled = client.get(
+            "/v1/sync/pull?device_id=device-peer&since_seq=0",
+            headers=_auth(token),
+        ).json()
+        change = next(c for c in pulled["changes"] if c["entity_id"] == "nb-private")
+        assert change["payload"]["password_hash"] == "hash-value"
+        assert change["payload"]["password_salt"] == "salt-value"
+        assert change["payload"]["password_iterations"] == 210000
+
+        # An old app sends no verifier keys. Absence preserves protection.
+        _push_notebook(client, token, nb_id="nb-private", ink=False, title="Old edit")
+        row = db.execute(
+            "SELECT password_hash, password_salt, password_iterations "
+            "FROM notebooks WHERE id = 'nb-private'"
+        ).fetchone()
+        assert tuple(row) == ("hash-value", "salt-value", 210000)
+
+        # A current-version peer that edited before learning about the enable
+        # sends explicit nulls. Its title/body still land, while H is preserved.
+        unauthenticated = dict(payload)
+        unauthenticated.update(
+            title="Stale unprotected title",
+            doc={"blocks": [{"text": "stale body edit"}]},
+            ink={"strokes": [{"id": "stale-ink"}]},
+            password_hash=None,
+            password_salt=None,
+            password_iterations=None,
+        )
+        response = client.post(
+            "/v1/sync/push",
+            json={
+                "device_id": "device-stale-unprotected",
+                "changes": [{
+                    "entity_type": "notebook",
+                    "entity_id": "nb-private",
+                    "op": "upsert",
+                    "payload": unauthenticated,
+                }],
+            },
+            headers=_auth(token),
+        )
+        assert response.json()["results"][0]["status"] == "applied"
+        row = db.execute(
+            "SELECT title, doc, ink, password_hash, password_salt, "
+            "password_iterations, password_hash_prev "
+            "FROM notebooks WHERE id = 'nb-private'"
+        ).fetchone()
+        assert row["title"] == "Stale unprotected title"
+        assert json.loads(row["doc"])["blocks"][0]["text"] == "stale body edit"
+        assert json.loads(row["ink"])["strokes"][0]["id"] == "stale-ink"
+        assert tuple(row)[3:] == ("hash-value", "salt-value", 210000, None)
+
+        # The published change must carry server truth, not the stale nulls.
+        pulled = client.get(
+            "/v1/sync/pull?device_id=device-canonical-peer&since_seq=2",
+            headers=_auth(token),
+        ).json()
+        canonical = next(
+            c for c in pulled["changes"] if c["entity_id"] == "nb-private"
+        )
+        assert canonical["payload"]["title"] == "Stale unprotected title"
+        assert canonical["payload"]["password_hash"] == "hash-value"
+        assert canonical["payload"]["password_salt"] == "salt-value"
+        assert canonical["payload"]["password_iterations"] == 210000
+        assert canonical["payload"]["password_hash_prev"] is None
+
+        wrong = dict(unauthenticated, password_hash_prev="wrong-hash")
+        response = client.post(
+            "/v1/sync/push",
+            json={
+                "device_id": "device-new",
+                "changes": [{
+                    "entity_type": "notebook",
+                    "entity_id": "nb-private",
+                    "op": "upsert",
+                    "payload": wrong,
+                }],
+            },
+            headers=_auth(token),
+        )
+        assert response.json()["results"][0]["status"] == "applied"
+        assert db.execute(
+            "SELECT password_hash FROM notebooks WHERE id = 'nb-private'"
+        ).fetchone()[0] == "hash-value"
+
+        # Turn Off proves knowledge of H locally. The server clears and
+        # republishes the same predecessor so every peer can apply the inbound
+        # null to the matching generation.
+        authenticated = dict(unauthenticated, password_hash_prev="hash-value")
+        response = client.post(
+            "/v1/sync/push",
+            json={
+                "device_id": "device-new",
+                "changes": [{
+                    "entity_type": "notebook",
+                    "entity_id": "nb-private",
+                    "op": "upsert",
+                    "payload": authenticated,
+                }],
+            },
+            headers=_auth(token),
+        )
+        assert response.json()["results"][0]["status"] == "applied"
+        row = db.execute(
+            "SELECT password_hash, password_salt, password_iterations, "
+            "password_hash_prev "
+            "FROM notebooks WHERE id = 'nb-private'"
+        ).fetchone()
+        assert tuple(row) == (None, None, None, "hash-value")
+        for device_id in ("device-peer-a", "device-peer-b"):
+            pulled = client.get(
+                f"/v1/sync/pull?device_id={device_id}&since_seq=2",
+                headers=_auth(token),
+            ).json()
+            clear = [
+                c for c in pulled["changes"]
+                if c["entity_id"] == "nb-private"
+            ][-1]
+            assert clear["payload"]["password_hash"] is None
+            assert clear["payload"]["password_hash_prev"] == "hash-value"
+
+        # A stale device still carrying H cannot replay that cleared tuple,
+        # but its body edit is valid and must not be discarded.
+        stale = dict(payload, title="Stale protected title")
+        response = client.post(
+            "/v1/sync/push",
+            json={
+                "device_id": "device-stale",
+                "changes": [{
+                    "entity_type": "notebook",
+                    "entity_id": "nb-private",
+                    "op": "upsert",
+                    "payload": stale,
+                }],
+            },
+            headers=_auth(token),
+        )
+        assert response.json()["results"][0]["status"] == "applied"
+        assert tuple(db.execute(
+            "SELECT title, password_hash, password_hash_prev "
+            "FROM notebooks WHERE id = 'nb-private'"
+        ).fetchone()) == ("Stale protected title", None, "hash-value")
+
+        # A device that observed the tombstone can genuinely enable a fresh
+        # verifier by presenting the cleared generation as its predecessor.
+        relock = dict(
+            payload,
+            password_hash="hash-relocked",
+            password_salt="salt-relocked",
+            password_iterations=230000,
+            password_hash_prev="hash-value",
+        )
+        response = client.post(
+            "/v1/sync/push",
+            json={
+                "device_id": "device-peer",
+                "changes": [{
+                    "entity_type": "notebook",
+                    "entity_id": "nb-private",
+                    "op": "upsert",
+                    "payload": relock,
+                }],
+            },
+            headers=_auth(token),
+        )
+        assert response.json()["results"][0]["status"] == "applied"
+        row = db.execute(
+            "SELECT password_hash, password_salt, password_iterations, "
+            "password_hash_prev FROM notebooks WHERE id = 'nb-private'"
+        ).fetchone()
+        assert tuple(row) == (
+            "hash-relocked", "salt-relocked", 230000, "hash-value"
+        )
+
+    def test_first_seen_notebook_accepts_durable_predecessor_tuple(
+        self, authed_client, db
+    ):
+        client, token = authed_client
+        cases = (
+            (
+                "nb-rotated-first-seen",
+                {
+                    "password_hash": "hash-current",
+                    "password_salt": "salt-current",
+                    "password_iterations": 210000,
+                    "password_hash_prev": "hash-previous",
+                },
+                ("hash-current", "salt-current", 210000, "hash-previous"),
+            ),
+            (
+                "nb-cleared-first-seen",
+                {
+                    "password_hash": None,
+                    "password_salt": None,
+                    "password_iterations": None,
+                    "password_hash_prev": "hash-cleared",
+                },
+                (None, None, None, "hash-cleared"),
+            ),
+        )
+        for notebook_id, verifier, expected in cases:
+            response = client.post(
+                "/v1/sync/push",
+                json={
+                    "device_id": "device-new",
+                    "changes": [{
+                        "entity_type": "notebook",
+                        "entity_id": notebook_id,
+                        "op": "upsert",
+                        "payload": {
+                            "title": "Recovered",
+                            "doc": {"blocks": []},
+                            "ink": {"strokes": []},
+                            "created_at": 1,
+                            **verifier,
+                        },
+                    }],
+                },
+                headers=_auth(token),
+            )
+            assert response.json()["results"][0]["status"] == "applied"
+            row = db.execute(
+                "SELECT password_hash, password_salt, password_iterations, "
+                "password_hash_prev FROM notebooks WHERE id = ?",
+                (notebook_id,),
+            ).fetchone()
+            assert tuple(row) == expected
+
+    def test_rejects_incomplete_password_metadata(self, authed_client):
+        client, token = authed_client
+        response = client.post(
+            "/v1/sync/push",
+            json={
+                "device_id": "device-new",
+                "changes": [{
+                    "entity_type": "notebook",
+                    "entity_id": "nb-bad-password",
+                    "op": "upsert",
+                    "payload": {
+                        "title": "Bad",
+                        "doc": {"blocks": []},
+                        "created_at": 1,
+                        "password_hash": "hash-without-salt",
+                    },
+                }],
+            },
+            headers=_auth(token),
+        )
+        assert response.json()["results"][0]["status"] == "rejected"
+
+    def test_rejects_excessive_password_iterations_without_changing_row(
+        self, authed_client, db
+    ):
+        client, token = authed_client
+        _push_notebook(client, token, nb_id="nb-private", ink=False)
+        db.execute(
+            "UPDATE notebooks SET password_hash = ?, password_salt = ?, "
+            "password_iterations = ? WHERE id = ?",
+            ("held-hash", "held-salt", 210000, "nb-private"),
+        )
+        db.commit()
+
+        response = client.post(
+            "/v1/sync/push",
+            json={
+                "device_id": "device-hostile",
+                "changes": [{
+                    "entity_type": "notebook",
+                    "entity_id": "nb-private",
+                    "op": "upsert",
+                    "payload": {
+                        "title": "Hostile metadata",
+                        "doc": {"blocks": []},
+                        "created_at": 1,
+                        "password_hash": "hostile-hash",
+                        "password_salt": "hostile-salt",
+                        "password_iterations": 1_000_001,
+                    },
+                }],
+            },
+            headers=_auth(token),
+        )
+
+        result = response.json()["results"][0]
+        assert result["status"] == "rejected"
+        assert "sane password_iterations" in result["reason"]
+        assert result["canonical_payload"] == {
+            "password_hash": "held-hash",
+            "password_salt": "held-salt",
+            "password_iterations": 210000,
+            "password_hash_prev": None,
+        }
+        row = db.execute(
+            "SELECT title, password_hash, password_salt, password_iterations "
+            "FROM notebooks WHERE id = 'nb-private'"
+        ).fetchone()
+        assert tuple(row) == ("Ink", "held-hash", "held-salt", 210000)
+
     def test_pushed_ink_is_stored_and_the_worker_sees_the_strokes(
         self, authed_client, db
     ):

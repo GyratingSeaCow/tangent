@@ -768,6 +768,8 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
       case ItemAction.duplicate:
       case ItemAction.share:
       case ItemAction.exportPdf:
+      case ItemAction.passwordProtection:
+      case ItemAction.lockNow:
         break;
     }
   }

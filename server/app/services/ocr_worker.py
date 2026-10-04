@@ -360,9 +360,14 @@ def reindex_notebook(
         now = int(_time.time())
 
     row = db.execute(
-        "SELECT ink, deleted_at FROM notebooks WHERE id = ?", (notebook_id,)
+        "SELECT ink, deleted_at, password_hash FROM notebooks WHERE id = ?",
+        (notebook_id,),
     ).fetchone()
-    if row is None or row["deleted_at"] is not None:
+    if (
+        row is None
+        or row["deleted_at"] is not None
+        or row["password_hash"] is not None
+    ):
         _purge_notebook(db, notebook_id, now)
         db.commit()
         return
@@ -486,6 +491,7 @@ def backfill_scan(db: sqlite3.Connection) -> list[str]:
         """
         SELECT id FROM notebooks
         WHERE deleted_at IS NULL
+          AND password_hash IS NULL
           AND ink IS NOT NULL
           AND id NOT IN (SELECT DISTINCT notebook_id FROM ink_index)
         ORDER BY updated_at DESC

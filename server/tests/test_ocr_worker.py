@@ -66,12 +66,21 @@ def _insert_notebook(
     nb_id: str,
     strokes: list[dict] | None,
     deleted: bool = False,
+    protected: bool = False,
 ) -> None:
     ink = json.dumps({"strokes": strokes}) if strokes is not None else None
     db.execute(
-        "INSERT INTO notebooks (id, title, doc, ink, created_at, updated_at, deleted_at) "
-        "VALUES (?, 'T', '{}', ?, 1, 1, ?)",
-        (nb_id, ink, 1 if deleted else None),
+        "INSERT INTO notebooks (id, title, doc, ink, created_at, updated_at, "
+        "deleted_at, password_hash, password_salt, password_iterations) "
+        "VALUES (?, 'T', '{}', ?, 1, 1, ?, ?, ?, ?)",
+        (
+            nb_id,
+            ink,
+            1 if deleted else None,
+            "protected-hash" if protected else None,
+            "protected-salt" if protected else None,
+            210000 if protected else None,
+        ),
     )
     db.commit()
 
@@ -236,6 +245,51 @@ class TestReindex:
         assert _rows(db, "nb-del") == []
         changes = _ink_changes(db, "nb-del")
         assert changes[-1]["op"] == "delete"
+
+    def test_protected_notebook_never_reaches_inference_and_purges_stale_index(
+        self, db
+    ):
+        _insert_notebook(
+            db,
+            "nb-private",
+            [_stroke("s-private", 0, 0)],
+            protected=True,
+        )
+        db.execute(
+            "INSERT INTO ink_index VALUES "
+            "('private:000', 'nb-private', 'private', 'secret', 'secret', "
+            "'[0,0,1,1]', '[\"s-private\"]', 'old', 1)"
+        )
+        db.commit()
+
+        def forbidden_infer(_image):
+            raise AssertionError("protected ink reached OCR inference")
+
+        ocr_worker.reindex_notebook(
+            db,
+            "nb-private",
+            infer=forbidden_infer,
+            now=2000,
+        )
+
+        assert _rows(db, "nb-private") == []
+        assert _ink_changes(db, "nb-private")[-1]["op"] == "delete"
+
+        db.execute(
+            "UPDATE notebooks SET password_hash=NULL, password_salt=NULL, "
+            "password_iterations=NULL, password_hash_prev='protected-hash' "
+            "WHERE id='nb-private'"
+        )
+        db.commit()
+        ocr_worker.reindex_notebook(
+            db,
+            "nb-private",
+            infer=lambda _image: "visible again",
+            now=3000,
+        )
+        assert [row["word_text"] for row in _rows(db, "nb-private")] == [
+            "visible again",
+        ]
 
     def test_missing_or_inkless_notebook_is_a_quiet_noop(self, db):
         ocr_worker.reindex_notebook(db, "ghost", infer=lambda img: "x", now=1000)
@@ -490,6 +544,12 @@ def test_backfill_scan_enqueues_only_unindexed_live_inked_notebooks(db):
     )
     _insert_notebook(db, "nb-pending", [_stroke("s-2", 0, 0)])
     _insert_notebook(db, "nb-deleted", [_stroke("s-3", 0, 0)], deleted=True)
+    _insert_notebook(
+        db,
+        "nb-protected",
+        [_stroke("s-4", 0, 0)],
+        protected=True,
+    )
     _insert_notebook(db, "nb-inkless", None)
     db.commit()
 

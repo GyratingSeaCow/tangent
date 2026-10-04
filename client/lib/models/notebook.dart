@@ -20,6 +20,8 @@ abstract interface class NotebookHeader {
   DateTime get updatedAt;
   String? get folderId;
   bool get pinned;
+  String? get passwordHash;
+  bool get passwordProtected;
 }
 
 class Notebook implements NotebookHeader {
@@ -34,6 +36,11 @@ class Notebook implements NotebookHeader {
     this.pinned = false,
     this.ruling = NotebookRuling.medium,
     this.lastPenStyle,
+    this.passwordHash,
+    this.passwordSalt,
+    this.passwordIterations,
+    this.passwordHashPrev,
+    this.passwordMetadataPresent = true,
   });
 
   @override
@@ -73,6 +80,23 @@ class Notebook implements NotebookHeader {
   /// rather than a global default. Null reads as the fountain default.
   final PenStyle? lastPenStyle;
 
+  /// PBKDF2 password verifier metadata. The plaintext password is never kept.
+  @override
+  final String? passwordHash;
+  final String? passwordSalt;
+  final int? passwordIterations;
+
+  /// Causal proof for the latest verifier transition. While unprotected this
+  /// is the cleared hash tombstone; while protected it is the predecessor that
+  /// authorized the install/rotation. It is a verifier, never plaintext.
+  final String? passwordHashPrev;
+
+  /// False only for a decoded legacy durable file that predates verifier
+  /// fields. Present metadata is still subject to causal proof validation.
+  final bool passwordMetadataPresent;
+  @override
+  bool get passwordProtected => passwordHash != null;
+
   Notebook copyWith({
     String? title,
     DateTime? updatedAt,
@@ -92,6 +116,11 @@ class Notebook implements NotebookHeader {
         pinned: pinned,
         ruling: ruling ?? this.ruling,
         lastPenStyle: lastPenStyle ?? this.lastPenStyle,
+        passwordHash: passwordHash,
+        passwordSalt: passwordSalt,
+        passwordIterations: passwordIterations,
+        passwordHashPrev: passwordHashPrev,
+        passwordMetadataPresent: passwordMetadataPresent,
       );
 }
 
@@ -864,7 +893,7 @@ enum InkColor {
             yellow,
             lime,
             highlightBlue,
-            pink,
+            pink
           ],
       };
 

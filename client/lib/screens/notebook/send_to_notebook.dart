@@ -15,8 +15,10 @@ import '../../models/notebook.dart';
 import '../../models/speaker_names.dart';
 import '../../services/notebook_import.dart';
 import '../../services/notebook_persistence.dart';
+import '../../services/notebook_password.dart';
 import '../../services/transcript_timings.dart';
 import '../../widgets/notebook_picker_sheet.dart';
+import '../../widgets/notebook_password_dialog.dart';
 import '../home/home_screen.dart' show localDbProvider;
 import '../settings/ai_summaries_section.dart' show summariesEnabledProvider;
 import 'import_shape_sheet.dart';
@@ -92,6 +94,25 @@ Future<void> sendDumpsToNotebook(
     suggestedTitle: suggestedTitle,
   );
   if (notebookId == null || !context.mounted) return;
+
+  final Notebook? destination =
+      await ref.read(notebookRepositoryProvider).getNotebook(notebookId);
+  if (destination == null || !context.mounted) return;
+  if (destination.passwordProtected) {
+    final NotebookUnlockRegistry unlocks =
+        ref.read(notebookUnlockRegistryProvider);
+    if (!unlocks.isUnlocked(notebookId, destination.passwordHash)) {
+      final bool accepted = await showNotebookUnlockDialog(
+        context,
+        notebookTitle: destination.title,
+        verify: (String password) => ref
+            .read(notebookRepositoryProvider)
+            .verifyPassword(notebookId, password),
+      );
+      if (!accepted || !context.mounted) return;
+      unlocks.unlock(notebookId, destination.passwordHash!);
+    }
+  }
 
   final bool offerSummary = ref.read(summariesEnabledProvider) ||
       dumps.any((DumpRow d) => (d.summary ?? '').trim().isNotEmpty);

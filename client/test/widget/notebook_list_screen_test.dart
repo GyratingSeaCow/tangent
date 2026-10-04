@@ -20,6 +20,7 @@ import 'package:tangent/screens/notebook/notebook_list_screen.dart';
 import 'package:tangent/screens/settings/handwriting_search_section.dart'
     show handwritingSearchEnabledProvider;
 import 'package:tangent/services/notebook_persistence.dart';
+import 'package:tangent/services/notebook_password.dart';
 import 'package:tangent/widgets/item_action_sheet.dart';
 
 import '../support/fake_notebook_repository.dart';
@@ -33,15 +34,29 @@ import '../support/fake_notebook_repository.dart';
 /// bare repository — the device found the editor and list wired to the wrong
 /// one, leaving orphan files in 'Tangent Notebooks'.
 class _ForwardingNotebookPersistence implements NotebookPersistence {
-  _ForwardingNotebookPersistence(this._repository);
+  _ForwardingNotebookPersistence(
+    this._repository, {
+    this.setPasswordError,
+  });
 
   final NotebookRepository _repository;
+  final Object? setPasswordError;
 
   @override
   Future<Notebook> saveNotebook(Notebook notebook) async {
     await _repository.saveNotebook(notebook);
     return notebook;
   }
+
+  @override
+  Future<void> setPassword(String id, String password) async {
+    if (setPasswordError != null) throw setPasswordError!;
+    await _repository.setPassword(id, password);
+  }
+
+  @override
+  Future<bool> removePassword(String id, String password) =>
+      _repository.removePassword(id, password);
 
   @override
   Future<ComponentResult> deleteNotebook(String id) async {
@@ -119,6 +134,8 @@ void main() {
     NotebookPdfShare? sharePdf,
     LocalDb? searchDb,
     bool searchEnabled = false,
+    NotebookUnlockRegistry? unlockRegistry,
+    Object? setPasswordError,
   }) async {
     tester.view.physicalSize = const Size(1080, 2340);
     tester.view.devicePixelRatio = 1.0;
@@ -140,8 +157,13 @@ void main() {
         overrides: <Override>[
           notebookRepositoryProvider.overrideWithValue(repository),
           notebookPersistenceProvider.overrideWithValue(
-            _ForwardingNotebookPersistence(repository),
+            _ForwardingNotebookPersistence(
+              repository,
+              setPasswordError: setPasswordError,
+            ),
           ),
+          if (unlockRegistry != null)
+            notebookUnlockRegistryProvider.overrideWithValue(unlockRegistry),
           dumpsProvider.overrideWith(
             (_) => Stream<List<DumpRow>>.value(const <DumpRow>[]),
           ),
@@ -235,6 +257,305 @@ void main() {
       findsNothing,
     );
     expect((await repository.getNotebook('nb-pinned'))!.pinned, isFalse);
+    await unmount(tester);
+  });
+
+  testWidgets(
+      'turning protection on requires the password twice and keeps the session unlocked',
+      (tester) async {
+    await mountList(
+      tester,
+      seed: <Notebook>[testNotebook(id: 'nb-protect', title: 'Private')],
+    );
+    expect(
+      find.byKey(const ValueKey<String>('notebook-lock-nb-protect')),
+      findsNothing,
+    );
+
+    await tester.tap(
+      find.byKey(const ValueKey<String>('notebook-menu-nb-protect')),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Turn On Password Protection'), findsOneWidget);
+    await tester.tap(
+      find.byKey(ItemActionSheet.keyFor(ItemAction.passwordProtection)),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey<String>('notebook-new-password')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey<String>('notebook-confirm-password')),
+      findsOneWidget,
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey<String>('notebook-new-password')),
+      'secret phrase',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey<String>('notebook-confirm-password')),
+      'different',
+    );
+    await tester.tap(
+      find.byKey(const ValueKey<String>('notebook-password-enable')),
+    );
+    await tester.pump();
+    expect(find.text('Passwords do not match'), findsOneWidget);
+
+    await tester.enterText(
+      find.byKey(const ValueKey<String>('notebook-confirm-password')),
+      'secret phrase',
+    );
+    await tester.tap(
+      find.byKey(const ValueKey<String>('notebook-password-enable')),
+    );
+    await tester.pumpAndSettle(
+      const Duration(milliseconds: 50),
+      EnginePhase.sendSemanticsUpdate,
+      const Duration(seconds: 30),
+    );
+
+    final Notebook protected = (await repository.getNotebook('nb-protect'))!;
+    expect(protected.passwordProtected, isTrue);
+    expect(protected.passwordHash, isNot(contains('secret phrase')));
+    expect(
+      find.byKey(const ValueKey<String>('notebook-lock-nb-protect')),
+      findsOneWidget,
+    );
+
+    await tester.tap(
+      find.byKey(const ValueKey<String>('notebook-row-nb-protect')),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey<String>('notebook-current-password')),
+      findsNothing,
+      reason: 'entering and confirming the new password unlocks this process',
+    );
+    expect(find.byType(NotebookEditorScreen), findsOneWidget);
+    await unmount(tester);
+  });
+
+  testWidgets(
+      'Lock Now is offered only while protected and unlocked, then the next open prompts',
+      (tester) async {
+    final NotebookPasswordMetadata metadata =
+        fakeNotebookPasswordMetadata('right password');
+    final NotebookUnlockRegistry unlocks = NotebookUnlockRegistry()
+      ..unlock('nb-unlocked', metadata.hash);
+    await mountList(
+      tester,
+      seed: <Notebook>[
+        testNotebook(id: 'nb-open', title: 'Open notebook'),
+        testNotebook(
+          id: 'nb-locked',
+          title: 'Already locked',
+          passwordHash: metadata.hash,
+          passwordSalt: metadata.salt,
+          passwordIterations: metadata.iterations,
+        ),
+        testNotebook(
+          id: 'nb-unlocked',
+          title: 'Unlocked private',
+          passwordHash: metadata.hash,
+          passwordSalt: metadata.salt,
+          passwordIterations: metadata.iterations,
+        ),
+      ],
+      unlockRegistry: unlocks,
+    );
+
+    for (final String id in <String>['nb-open', 'nb-locked']) {
+      await tester.tap(find.byKey(ValueKey<String>('notebook-menu-$id')));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(ItemActionSheet.keyFor(ItemAction.lockNow)),
+        findsNothing,
+        reason: '$id must not offer Lock Now',
+      );
+      await tester.tapAt(const Offset(20, 20));
+      await tester.pumpAndSettle();
+    }
+
+    await tester.tap(find.byKey(const ValueKey('notebook-view-toggle')));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const ValueKey('notebook-cover-menu-nb-unlocked')),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(ItemActionSheet.keyFor(ItemAction.lockNow)),
+      findsOneWidget,
+      reason: 'the cover menu shares the row menu Lock Now action',
+    );
+    await tester.tap(find.byKey(ItemActionSheet.keyFor(ItemAction.lockNow)));
+    await tester.pumpAndSettle();
+    expect(unlocks.isUnlocked('nb-unlocked', metadata.hash), isFalse);
+
+    await tester.tap(
+      find.byKey(const ValueKey('notebook-cover-nb-unlocked')),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey<String>('notebook-current-password')),
+      findsOneWidget,
+      reason: 'Lock Now must make the next open request the password',
+    );
+    expect(find.byType(NotebookEditorScreen), findsNothing);
+    expect(tester.takeException(), isNull);
+    await unmount(tester);
+  });
+
+  testWidgets('password enable failures show an error instead of escaping',
+      (tester) async {
+    await mountList(
+      tester,
+      seed: <Notebook>[
+        testNotebook(id: 'nb-persist-fails', title: 'Private'),
+      ],
+      setPasswordError: StateError('durable publication failed'),
+    );
+
+    await tester.tap(
+      find.byKey(const ValueKey<String>('notebook-menu-nb-persist-fails')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(ItemActionSheet.keyFor(ItemAction.passwordProtection)),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey<String>('notebook-new-password')),
+      'secret phrase',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey<String>('notebook-confirm-password')),
+      'secret phrase',
+    );
+    await tester.tap(
+      find.byKey(const ValueKey<String>('notebook-password-enable')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.textContaining('Could not turn on password protection:'),
+      findsOneWidget,
+    );
+    expect(
+      (await repository.getNotebook('nb-persist-fails'))!.passwordProtected,
+      isFalse,
+    );
+    expect(tester.takeException(), isNull);
+    await unmount(tester);
+  });
+
+  testWidgets('wrong password never opens a protected notebook',
+      (tester) async {
+    final NotebookPasswordMetadata metadata =
+        fakeNotebookPasswordMetadata('right password');
+    await mountList(
+      tester,
+      seed: <Notebook>[
+        testNotebook(
+          id: 'nb-locked',
+          title: 'Locked',
+          passwordHash: metadata.hash,
+          passwordSalt: metadata.salt,
+          passwordIterations: metadata.iterations,
+        ),
+      ],
+    );
+
+    await tester.tap(
+      find.byKey(const ValueKey<String>('notebook-row-nb-locked')),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey<String>('notebook-current-password')),
+      findsOneWidget,
+    );
+
+    await tester.enterText(
+      find.byKey(const ValueKey<String>('notebook-current-password')),
+      'wrong password',
+    );
+    await tester.tap(
+      find.byKey(const ValueKey<String>('notebook-password-submit')),
+    );
+    await tester.pumpAndSettle(
+      const Duration(milliseconds: 50),
+      EnginePhase.sendSemanticsUpdate,
+      const Duration(seconds: 30),
+    );
+    expect(find.text('Wrong password'), findsOneWidget);
+    expect(find.byType(NotebookEditorScreen), findsNothing);
+
+    await tester.enterText(
+      find.byKey(const ValueKey<String>('notebook-current-password')),
+      'right password',
+    );
+    await tester.tap(
+      find.byKey(const ValueKey<String>('notebook-password-submit')),
+    );
+    await tester.pumpAndSettle(
+      const Duration(milliseconds: 50),
+      EnginePhase.sendSemanticsUpdate,
+      const Duration(seconds: 30),
+    );
+    expect(find.byType(NotebookEditorScreen), findsOneWidget);
+    await unmount(tester);
+  });
+
+  testWidgets(
+      'Turn Off Password Protection rejects a wrong password and stays protected',
+      (tester) async {
+    final NotebookPasswordMetadata metadata =
+        fakeNotebookPasswordMetadata('right password');
+    await mountList(
+      tester,
+      seed: <Notebook>[
+        testNotebook(
+          id: 'nb-stays-protected',
+          title: 'Private',
+          passwordHash: metadata.hash,
+          passwordSalt: metadata.salt,
+          passwordIterations: metadata.iterations,
+        ),
+      ],
+    );
+
+    await tester.tap(
+      find.byKey(const ValueKey<String>('notebook-menu-nb-stays-protected')),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Turn Off Password Protection'), findsOneWidget);
+    await tester.tap(
+      find.byKey(ItemActionSheet.keyFor(ItemAction.passwordProtection)),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Turn off password protection'), findsOneWidget);
+
+    await tester.enterText(
+      find.byKey(const ValueKey<String>('notebook-current-password')),
+      'wrong password',
+    );
+    await tester.tap(
+      find.byKey(const ValueKey<String>('notebook-password-submit')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Wrong password'), findsOneWidget);
+    expect(find.text('Turn off password protection'), findsOneWidget);
+    final Notebook stillProtected =
+        (await repository.getNotebook('nb-stays-protected'))!;
+    expect(stillProtected.passwordProtected, isTrue);
+    expect(stillProtected.passwordHash, metadata.hash);
+    expect(
+      find.byKey(const ValueKey<String>('notebook-lock-nb-stays-protected')),
+      findsOneWidget,
+    );
     await unmount(tester);
   });
 

@@ -21,6 +21,7 @@ import '../data/local_db.dart';
 import '../models/sync_change.dart';
 import 'connectivity_service.dart';
 import 'calendar_voice_capture.dart';
+import 'notebook_password.dart';
 import 'todo_voice_capture.dart';
 import 'transcription_client.dart';
 
@@ -506,8 +507,9 @@ class DocumentSyncEngine extends ChangeNotifier {
   /// `google_*` fields, which only ever arrive this way.
   Future<void> _applyRemoteCalendarEvent(RemoteChange change) async {
     final Map<String, dynamic> payload = change.payload ?? const {};
-    final CalendarEventRow? local =
-        await _db.getCalendarEventRow(change.entityId);
+    final CalendarEventRow? local = await _db.getCalendarEventRow(
+      change.entityId,
+    );
     if (local != null && local.syncDirty == true) return;
     if (change.op == SyncOp.delete) {
       if (local != null && local.deletedAt == null) {
@@ -767,10 +769,7 @@ class DocumentSyncEngine extends ChangeNotifier {
         ),
       );
     }
-    await _db.applyRemoteInkIndex(
-      notebookId: change.entityId,
-      rows: rows,
-    );
+    await _db.applyRemoteInkIndex(notebookId: change.entityId, rows: rows);
   }
 
   Future<void> _writeRemote(
@@ -780,6 +779,60 @@ class DocumentSyncEngine extends ChangeNotifier {
   ) async {
     final Object? doc = payload['doc'];
     final Object? ink = payload['ink'];
+    // Verifier metadata is an untrusted subdocument. A malformed or causally
+    // invalid tuple is ignored while the rest of the notebook still lands, so
+    // one bad payload cannot poison this pull page's checkpoint forever.
+    final NotebookRow? existing = await _db.getNotebookRow(id);
+    Object? passwordHash = LocalDb.absentPasswordMetadata;
+    String? passwordSalt;
+    int? passwordIterations;
+    String? passwordHashPrev;
+    if (payload.containsKey('password_hash')) {
+      final Object? incomingHash = payload['password_hash'];
+      final Object? incomingSalt = payload['password_salt'];
+      final Object? incomingIterations = payload['password_iterations'];
+      final Object? incomingPrev = payload['password_hash_prev'];
+      final bool validPrev = incomingPrev == null ||
+          incomingPrev is String && incomingPrev.isNotEmpty;
+
+      if (incomingHash == null) {
+        // A clear is bounded by the verifier currently held locally.
+        // Missing/wrong predecessors and mixed null/non-null tuples preserve it.
+        if (incomingSalt == null &&
+            incomingIterations == null &&
+            validPrev &&
+            (existing == null ||
+                incomingPrev is String &&
+                    incomingPrev.isNotEmpty &&
+                    existing.passwordHash == incomingPrev)) {
+          passwordHash = null;
+          passwordHashPrev = incomingPrev as String?;
+        }
+      } else if (incomingHash is String &&
+          incomingHash.isNotEmpty &&
+          incomingSalt is String &&
+          incomingSalt.isNotEmpty &&
+          incomingIterations is int &&
+          incomingIterations >= notebookPasswordMinIterations &&
+          incomingIterations <= notebookPasswordMaxIterations &&
+          validPrev) {
+        final String? heldHash = existing?.passwordHash;
+        final String? heldPrev = existing?.passwordHashPrev;
+        final bool authorized = existing == null ||
+            incomingHash == heldHash ||
+            (heldHash != null
+                ? incomingPrev == heldHash
+                : heldPrev == null
+                    ? incomingPrev == null
+                    : incomingPrev == heldPrev && incomingHash != heldPrev);
+        if (authorized) {
+          passwordHash = incomingHash;
+          passwordSalt = incomingSalt;
+          passwordIterations = incomingIterations;
+          passwordHashPrev = incomingPrev as String?;
+        }
+      }
+    }
     await _db.applyRemoteNotebook(
       id: id,
       title: payload['title'] as String? ?? 'Notebook',
@@ -811,7 +864,46 @@ class DocumentSyncEngine extends ChangeNotifier {
       pinned: payload.containsKey('pinned')
           ? payload['pinned']
           : LocalDb.absentPinnedField,
+      passwordHash: passwordHash,
+      passwordSalt: passwordSalt,
+      passwordIterations: passwordIterations,
+      passwordHashPrev: passwordHashPrev,
       seq: seq,
+    );
+  }
+
+  Future<void> _rebaseRejectedNotebookPassword(
+    PushResult result,
+    int pushedUpdatedAt,
+  ) async {
+    final Map<String, dynamic>? canonical = result.canonicalPayload;
+    if (canonical == null || !canonical.containsKey('password_hash')) return;
+
+    final Object? hash = canonical['password_hash'];
+    final Object? salt = canonical['password_salt'];
+    final Object? iterations = canonical['password_iterations'];
+    final Object? previous = canonical['password_hash_prev'];
+    final bool validPrevious = previous == null ||
+        previous is String && previous.isNotEmpty;
+    final bool valid = validPrevious &&
+        (hash == null
+            ? salt == null && iterations == null
+            : hash is String &&
+                hash.isNotEmpty &&
+                salt is String &&
+                salt.isNotEmpty &&
+                iterations is int &&
+                iterations >= notebookPasswordMinIterations &&
+                iterations <= notebookPasswordMaxIterations);
+    if (!valid) return;
+
+    await _db.rebaseNotebookPasswordState(
+      result.entityId,
+      pushedUpdatedAt: pushedUpdatedAt,
+      passwordHash: hash as String?,
+      passwordSalt: salt as String?,
+      passwordIterations: iterations as int?,
+      passwordHashPrev: previous as String?,
     );
   }
 
@@ -863,6 +955,14 @@ class DocumentSyncEngine extends ChangeNotifier {
             // it says "unfiled", and the server stores it verbatim.
             'folder_id': row.folderId,
             'pinned': row.pinned == true,
+            // The plaintext password never leaves the password dialog. A
+            // complete verifier installs/rotates protection on peers. A null
+            // clears only when password_hash_prev matches the held verifier;
+            // the predecessor also persists as a stale-generation tombstone.
+            'password_hash': row.passwordHash,
+            'password_salt': row.passwordSalt,
+            'password_iterations': row.passwordIterations,
+            'password_hash_prev': row.passwordHashPrev,
           },
         },
       for (final DumpRow row in dirtyDumps)
@@ -971,10 +1071,23 @@ class DocumentSyncEngine extends ChangeNotifier {
     };
 
     int accepted = 0;
+    final List<String> rejections = <String>[];
     for (final PushResult result in results) {
-      // A rejected entity stays dirty and retries next cycle. Clearing the
-      // flag on a rejection would lose the edit silently.
-      if (!result.applied) continue;
+      // A rejected notebook stays dirty, but rebases a stale or malformed
+      // verifier tuple from the canonical server response. Its body retries
+      // next cycle with that tuple rather than sending the same bad state
+      // forever. The rejection is still surfaced as a failed sync below.
+      if (!result.applied) {
+        final int? was = pushedUpdatedAt[result.entityId];
+        if (result.entityType == 'notebook' && was != null) {
+          await _rebaseRejectedNotebookPassword(result, was);
+        }
+        rejections.add(
+          '${result.entityType}/${result.entityId}: '
+          '${result.reason ?? 'server rejected change'}',
+        );
+        continue;
+      }
       accepted++;
       // Dispatch on the entity TYPE, not on "was it in the notebook map":
       // an accepted dump would otherwise fall through to clearTombstone and
@@ -1045,6 +1158,9 @@ class DocumentSyncEngine extends ChangeNotifier {
           entityId: result.entityId,
         );
       }
+    }
+    if (rejections.isNotEmpty) {
+      throw StateError('Sync push rejected: ${rejections.join('; ')}');
     }
     return accepted;
   }

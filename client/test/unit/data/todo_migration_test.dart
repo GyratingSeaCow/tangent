@@ -41,8 +41,8 @@ void main() {
 
     await db.listDumps();
 
-    expect(db.schemaVersion, 30);
-    expect(sql.userVersion, 30);
+    expect(db.schemaVersion, 32);
+    expect(sql.userVersion, 32);
     expect(_columnNames(sql, 'todos'), _todoColumns);
     sql.execute(
       'INSERT INTO todos(id,text,created_at,updated_at) '
@@ -73,7 +73,7 @@ void main() {
 
     await db.listDumps();
 
-    expect(sql.userVersion, 30);
+    expect(sql.userVersion, 32);
     expect(_columnNames(sql, 'todos'), _todoColumns);
     expect(
       sqlRows(sql, 'dumps')
@@ -119,7 +119,7 @@ void main() {
 
     await db.listDumps();
 
-    expect(sql.userVersion, 30);
+    expect(sql.userVersion, 32);
     expect(_columnNames(sql, 'todos'), _todoColumns);
     expect(
       sql.select("SELECT text FROM todos WHERE id='kept'").single['text'],
@@ -158,7 +158,7 @@ void main() {
 
     await db.listDumps();
 
-    expect(sql.userVersion, 30);
+    expect(sql.userVersion, 32);
     expect(_columnNames(sql, 'todos'), _todoColumns);
     final rows = sql.select('SELECT id, text, due_date, folder_id FROM todos '
         'ORDER BY id');
@@ -207,7 +207,7 @@ void main() {
 
     await db.listDumps();
 
-    expect(sql.userVersion, 30);
+    expect(sql.userVersion, 32);
     expect(_columnNames(sql, 'todos'), _todoColumns);
     final rows = sqlRows(sql, 'todos');
     expect(rows.length, 2, reason: 'no row is lost by the upgrade');
@@ -253,7 +253,7 @@ void main() {
 
     await expectLater(db.listDumps(), completes);
 
-    expect(sql.userVersion, 30);
+    expect(sql.userVersion, 32);
     expect(_columnNames(sql, 'todos'), _todoColumns);
   });
 }

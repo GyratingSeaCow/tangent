@@ -55,7 +55,7 @@ void main() {
     );
     expect(rows.single['transcript_timings'], '{"segments":[],"peaks":[]}');
     expect(rows.single['synced_seq'], 7);
-    expect(raw.select('PRAGMA user_version').single.values.single, 30);
+    expect(raw.select('PRAGMA user_version').single.values.single, 32);
   });
 
   test('overwrites a stale snapshot instead of failing on it', () async {
@@ -69,6 +69,6 @@ void main() {
     final raw =
         sqlite.sqlite3.open(written.path, mode: sqlite.OpenMode.readOnly);
     addTearDown(raw.close);
-    expect(raw.select('PRAGMA user_version').single.values.single, 30);
+    expect(raw.select('PRAGMA user_version').single.values.single, 32);
   });
 }

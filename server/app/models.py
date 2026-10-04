@@ -273,6 +273,7 @@ class SyncPushResult(BaseModel):
     seq: int
     status: Literal["applied", "rejected"]
     reason: str | None = None
+    canonical_payload: dict[str, Any] | None = None
 
 
 class SyncPushResponse(BaseModel):

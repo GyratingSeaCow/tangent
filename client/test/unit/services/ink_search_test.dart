@@ -9,6 +9,7 @@ library;
 
 import 'dart:convert';
 
+import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tangent/data/local_db.dart';
@@ -54,6 +55,7 @@ void main() {
   Future<void> seedNotebook(
     String id,
     List<Map<String, dynamic>> blocks,
+    {bool passwordProtected = false,}
   ) async {
     await db.into(db.notebooks).insert(
           NotebooksCompanion.insert(
@@ -63,6 +65,15 @@ void main() {
             updatedAt: 2,
             docJson: jsonEncode({'blocks': blocks}),
             inkJson: '{}',
+            passwordHash: Value<String?>(
+              passwordProtected ? 'test-password-hash' : null,
+            ),
+            passwordSalt: Value<String?>(
+              passwordProtected ? 'test-password-salt' : null,
+            ),
+            passwordIterations: Value<int?>(
+              passwordProtected ? 210000 : null,
+            ),
           ),
         );
   }
@@ -320,9 +331,59 @@ void main() {
       );
       expect(await search.searchInNotebook('nb-1', '   '), isEmpty);
     });
+
+    test('protected content is hidden unless the unlocked editor opts in',
+        () async {
+      await seedNotebook(
+        'nb-private',
+        <Map<String, dynamic>>[
+          <String, dynamic>{
+            'kind': 'text',
+            'id': 'secret-block',
+            'text': 'launch code violet',
+          },
+        ],
+        passwordProtected: true,
+      );
+      await seedWord(
+        notebook: 'nb-private',
+        line: 'secret-line',
+        slot: 0,
+        text: 'violet',
+        bbox: <double>[0, 0, 20, 10],
+      );
+
+      expect(await search.searchInNotebook('nb-private', 'violet'), isEmpty);
+      expect(
+        await search.searchInNotebook(
+          'nb-private',
+          'violet',
+          allowProtected: true,
+        ),
+        hasLength(2),
+      );
+    });
   });
 
   group('searchNotebooks', () {
+    test('protected notebooks never appear in library search previews',
+        () async {
+      await seedNotebook(
+        'nb-private',
+        const <Map<String, dynamic>>[],
+        passwordProtected: true,
+      );
+      await seedWord(
+        notebook: 'nb-private',
+        line: 'line-secret',
+        slot: 0,
+        text: 'classified',
+        bbox: <double>[0, 0, 40, 10],
+      );
+
+      expect(await search.searchNotebooks('classified'), isEmpty);
+    });
+
     test('summaries count matches per notebook and carry a line snippet',
         () async {
       // nb-a: two matches on one line that reads "team meeting notes".

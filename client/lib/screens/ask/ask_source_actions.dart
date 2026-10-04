@@ -31,8 +31,10 @@ import '../../services/ask_client.dart';
 import '../../services/transcription_client.dart' show ServerDumpDeletion;
 import '../../services/notebook_persistence.dart'
     show notebookPersistenceProvider;
+import '../../services/notebook_password.dart';
 import '../../widgets/folder_picker.dart';
 import '../../widgets/item_action_sheet.dart';
+import '../../widgets/notebook_password_dialog.dart';
 import '../home/home_screen.dart' show localDbProvider;
 import '../../services/deletion_eligibility_text.dart';
 import '../server/server_connection_screen.dart'
@@ -238,6 +240,8 @@ Future<void> showAskSourceActions(
       source.entityType == 'summary' ? 'dump' : source.entityType;
   String title;
   bool pinned;
+  bool passwordProtected = false;
+  String? passwordHash;
   String? folderId;
   switch (kind) {
     case 'dump':
@@ -249,6 +253,8 @@ Future<void> showAskSourceActions(
           await NotebookRepository(db: db).getNotebook(source.entityId);
       if (nb == null) return say('Source no longer exists: ${source.snippet}');
       (title, pinned, folderId) = (nb.title, nb.pinned, nb.folderId);
+      passwordProtected = nb.passwordProtected;
+      passwordHash = nb.passwordHash;
     case 'todo':
       final TodoRow? row = await db.getTodoRow(source.entityId);
       if (row == null || row.deletedAt != null) {
@@ -308,6 +314,25 @@ Future<void> showAskSourceActions(
   );
   if (action == null || !context.mounted) return;
 
+  if (kind == 'notebook' &&
+      passwordProtected &&
+      <ItemAction>{ItemAction.rename, ItemAction.pin, ItemAction.unpin}
+          .contains(action)) {
+    final NotebookUnlockRegistry unlocks =
+        ref.read(notebookUnlockRegistryProvider);
+    if (!unlocks.isUnlocked(source.entityId, passwordHash)) {
+      final bool accepted = await showNotebookUnlockDialog(
+        context,
+        notebookTitle: title,
+        verify: (String password) => ref
+            .read(notebookRepositoryProvider)
+            .verifyPassword(source.entityId, password),
+      );
+      if (!accepted || !context.mounted) return;
+      unlocks.unlock(source.entityId, passwordHash!);
+    }
+  }
+
   try {
     switch (action) {
       case ItemAction.rename:
@@ -343,6 +368,8 @@ Future<void> showAskSourceActions(
       case ItemAction.share:
       case ItemAction.exportPdf:
       case ItemAction.exportMarkdown:
+      case ItemAction.passwordProtection:
+      case ItemAction.lockNow:
       case ItemAction.sendToNotebook:
       case ItemAction.download:
       case ItemAction.regenerateSummary:

@@ -37,6 +37,7 @@ import '../../services/image_file_picker.dart';
 import '../../services/ink_search.dart';
 import '../../services/notebook_import.dart';
 import '../../services/notebook_persistence.dart';
+import '../../services/notebook_password.dart';
 import '../../services/ocr_settings_client.dart';
 import '../../services/recording_playback.dart';
 import '../../services/stamp_reconcile.dart';
@@ -48,12 +49,14 @@ import '../../widgets/instrument_scaffold.dart';
 import '../../widgets/notebook_dump_card.dart';
 import '../../widgets/notebook_image_block.dart';
 import '../../widgets/notebook_ink_canvas.dart';
+import '../../widgets/notebook_password_dialog.dart';
 import '../../widgets/notebook_table_block.dart';
 import '../../widgets/page_background_sheet.dart';
 import '../../widgets/top_nav_rail.dart';
 import '../dump/dump_detail_screen.dart';
 import '../dump/dumps_providers.dart';
-import '../home/home_providers.dart' show recordingPlaybackEngineFactoryProvider;
+import '../home/home_providers.dart'
+    show recordingPlaybackEngineFactoryProvider;
 import '../home/home_screen.dart' show localDbProvider;
 import '../settings/ai_summaries_section.dart' show summariesEnabledProvider;
 import '../settings/handwriting_search_section.dart'
@@ -68,70 +71,71 @@ import 'notebook_find_bar.dart';
 /// How the editor opens a recording's detail screen (a card tap, or a
 /// stamp tap with no card on the page). Tests override it to record the
 /// request instead of mounting the real detail and its provider graph.
-typedef NotebookDumpOpener = void Function(
-  BuildContext context,
-  DumpRow row, {
-  double? seekSeconds,
-});
+typedef NotebookDumpOpener =
+    void Function(BuildContext context, DumpRow row, {double? seekSeconds});
 
 final Provider<NotebookDumpOpener> notebookDumpOpenerProvider =
     Provider<NotebookDumpOpener>((Ref ref) {
-  return (BuildContext context, DumpRow row, {double? seekSeconds}) {
-    unawaited(
-      Navigator.of(context).push<void>(
-        MaterialPageRoute<void>(
-          settings: RouteSettings(
-            name: '/dump',
-            arguments: (dumpId: row.id, seekSeconds: seekSeconds),
+      return (BuildContext context, DumpRow row, {double? seekSeconds}) {
+        unawaited(
+          Navigator.of(context).push<void>(
+            MaterialPageRoute<void>(
+              settings: RouteSettings(
+                name: '/dump',
+                arguments: (dumpId: row.id, seekSeconds: seekSeconds),
+              ),
+              builder: (_) => DumpDetailScreen(
+                dumpId: row.id,
+                audioPath: row.audioPath,
+                durationSeconds: row.durationSeconds,
+                initialSeekSeconds: seekSeconds,
+              ),
+            ),
           ),
-          builder: (_) => DumpDetailScreen(
-            dumpId: row.id,
-            audioPath: row.audioPath,
-            durationSeconds: row.durationSeconds,
-            initialSeekSeconds: seekSeconds,
-          ),
-        ),
-      ),
-    );
-  };
-});
+        );
+      };
+    });
 
 final Provider<NotebookCardPlaybackOpener> notebookCardPlaybackProvider =
     Provider<NotebookCardPlaybackOpener>((Ref ref) {
-  return (String dumpId) async {
-    final RecordingPlaybackEngine raw =
-        ref.read(recordingPlaybackEngineFactoryProvider)();
-    final RecordingAccess access = ref.read(recordingAccessProvider);
-    try {
-      final BoundRecording? binding =
-          await ref.read(localDbProvider).boundRecording(dumpId);
-      if (binding == null) {
-        await raw.dispose();
-        return null;
-      }
-      final Outcome<PlaybackLease> opened =
-          await access.openPlayback(binding.key, raw);
-      final PlaybackLease lease = switch (opened) {
-        Ok<PlaybackLease>(:final PlaybackLease value) => value,
-        Fail<PlaybackLease>(:final StorageProblem problem) =>
-          throw StorageFault(problem),
+      return (String dumpId) async {
+        final RecordingPlaybackEngine raw = ref.read(
+          recordingPlaybackEngineFactoryProvider,
+        )();
+        final RecordingAccess access = ref.read(recordingAccessProvider);
+        try {
+          final BoundRecording? binding = await ref
+              .read(localDbProvider)
+              .boundRecording(dumpId);
+          if (binding == null) {
+            await raw.dispose();
+            return null;
+          }
+          final Outcome<PlaybackLease> opened = await access.openPlayback(
+            binding.key,
+            raw,
+          );
+          final PlaybackLease lease = switch (opened) {
+            Ok<PlaybackLease>(:final PlaybackLease value) => value,
+            Fail<PlaybackLease>(:final StorageProblem problem) =>
+              throw StorageFault(problem),
+          };
+          final RecordingPlaybackController controller =
+              RecordingPlaybackController(engine: lease.engine);
+          await controller.initialize(lease.source);
+          return (
+            controller: controller,
+            close: () async {
+              controller.dispose();
+              await lease.close();
+            },
+          );
+        } catch (_) {
+          await raw.dispose();
+          return null;
+        }
       };
-      final RecordingPlaybackController controller =
-          RecordingPlaybackController(engine: lease.engine);
-      await controller.initialize(lease.source);
-      return (
-        controller: controller,
-        close: () async {
-          controller.dispose();
-          await lease.close();
-        },
-      );
-    } catch (_) {
-      await raw.dispose();
-      return null;
-    }
-  };
-});
+    });
 
 /// The footprint the lasso tests [block] against, in canonical page px.
 ///
@@ -212,7 +216,7 @@ enum _InsertAction {
   meeting,
   textNote,
   image,
-  recentre
+  recentre,
 }
 
 /// Actions in the top-right notebook menu. One item for now — the call was
@@ -389,6 +393,28 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
           .read(notebookRepositoryProvider)
           .getNotebook(widget.notebookId);
       if (!mounted) return;
+      if (notebook != null && notebook.passwordProtected) {
+        final NotebookUnlockRegistry unlocks = ref.read(
+          notebookUnlockRegistryProvider,
+        );
+        if (!unlocks.isUnlocked(notebook.id, notebook.passwordHash)) {
+          await WidgetsBinding.instance.endOfFrame;
+          if (!mounted) return;
+          final bool accepted = await showNotebookUnlockDialog(
+            context,
+            notebookTitle: notebook.title,
+            verify: (String password) => ref
+                .read(notebookRepositoryProvider)
+                .verifyPassword(notebook.id, password),
+          );
+          if (!mounted) return;
+          if (!accepted) {
+            Navigator.of(context).pop();
+            return;
+          }
+          unlocks.unlock(notebook.id, notebook.passwordHash!);
+        }
+      }
       setState(() {
         _loading = false;
         _notebook = notebook;
@@ -443,8 +469,9 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
   /// listener is attached, so hydration never looks like an edit.
   TextEditingController _controllerFor(String id, String initial) =>
       _controllers.putIfAbsent(id, () {
-        final TextEditingController controller =
-            TextEditingController(text: initial);
+        final TextEditingController controller = TextEditingController(
+          text: initial,
+        );
         controller.addListener(_markDirty);
         return controller;
       });
@@ -483,22 +510,22 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
   }
 
   FocusNode _focusFor(String id) => _focusNodes.putIfAbsent(id, () {
-        final FocusNode node = FocusNode();
-        // Remember the last block that held the caret. Read at insert time,
-        // by which point the menu has taken focus away from the field.
-        node.addListener(() {
-          if (node.hasFocus) _lastFocusedBlockId = id;
-          // A stamped text block swaps between tappable spans (blurred) and
-          // a plain field (focused): rebuild on every focus change, and fold
-          // the edit back into the block on the way out (spec §C).
-          if (!node.hasFocus) {
-            _editingStamped.remove(id);
-            _commitTextEdit(id);
-          }
-          if (mounted) setState(() {});
-        });
-        return node;
-      });
+    final FocusNode node = FocusNode();
+    // Remember the last block that held the caret. Read at insert time,
+    // by which point the menu has taken focus away from the field.
+    node.addListener(() {
+      if (node.hasFocus) _lastFocusedBlockId = id;
+      // A stamped text block swaps between tappable spans (blurred) and
+      // a plain field (focused): rebuild on every focus change, and fold
+      // the edit back into the block on the way out (spec §C).
+      if (!node.hasFocus) {
+        _editingStamped.remove(id);
+        _commitTextEdit(id);
+      }
+      if (mounted) setState(() {});
+    });
+    return node;
+  });
 
   void _markDirty() {
     if (_hydrating || _dirty) return;
@@ -511,8 +538,8 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
 
   /// Every stroke any match covers — the canvas bands them all.
   Set<String> get _findHighlightIds => <String>{
-        for (final InkMatch match in _findMatches) ...match.strokeIds,
-      };
+    for (final InkMatch match in _findMatches) ...match.strokeIds,
+  };
 
   /// The CURRENT match's strokes. Empty for a typed-block match (its
   /// [InkMatch.strokeIds] is empty): scroll-to only, no ink highlight.
@@ -544,8 +571,8 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
     final List<InkMatch> matches = query.trim().isEmpty
         ? const <InkMatch>[]
         : await ref
-            .read(inkSearchProvider)
-            .searchInNotebook(widget.notebookId, query);
+              .read(inkSearchProvider)
+              .searchInNotebook(widget.notebookId, query, allowProtected: true);
     // Only the NEWEST query's results may land; fast typing must not paint
     // a stale result set over a fresher one.
     if (!mounted || generation != _findGeneration || !_findOpen) return;
@@ -578,8 +605,10 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
       // The bbox lives in canonical page space; the viewport shows the page
       // scaled by [_pageScale] (see the LayoutBuilder in _buildBody).
       final double target =
-          (match.bbox.top * _pageScale - position.viewportDimension / 3)
-              .clamp(0.0, position.maxScrollExtent);
+          (match.bbox.top * _pageScale - position.viewportDimension / 3).clamp(
+            0.0,
+            position.maxScrollExtent,
+          );
       unawaited(
         _pageScroll.animateTo(
           target,
@@ -615,8 +644,9 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
   int get _insertionIndex {
     final String? focused = _lastFocusedBlockId;
     if (focused == null) return _blocks.length;
-    final int index =
-        _blocks.indexWhere((NotebookBlock block) => block.id == focused);
+    final int index = _blocks.indexWhere(
+      (NotebookBlock block) => block.id == focused,
+    );
     return index < 0 ? _blocks.length : index + 1;
   }
 
@@ -626,8 +656,10 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
   /// rule as the ink palette. A real pick marks the notebook dirty so the
   /// choice is saved and reaches the user's other devices.
   Future<void> _pickPageBackground() async {
-    final NotebookRuling? picked =
-        await showPageBackgroundSheet(context, current: _ruling);
+    final NotebookRuling? picked = await showPageBackgroundSheet(
+      context,
+      current: _ruling,
+    );
     if (!mounted || picked == null || picked == _ruling) return;
     setState(() {
       _ruling = picked;
@@ -668,9 +700,9 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
   Future<void> _pickTableSize() async {
     final ({int rows, int columns})? size =
         await showDialog<({int rows, int columns})>(
-      context: context,
-      builder: (BuildContext context) => const _NotebookTableSizeDialog(),
-    );
+          context: context,
+          builder: (BuildContext context) => const _NotebookTableSizeDialog(),
+        );
     if (!mounted || size == null) return;
     _addTableBlock(rows: size.rows, columns: size.columns);
   }
@@ -690,14 +722,10 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
     });
   }
 
-  void _onTableCellChanged(
-    String blockId,
-    int row,
-    int column,
-    String value,
-  ) {
-    final int index =
-        _blocks.indexWhere((NotebookBlock block) => block.id == blockId);
+  void _onTableCellChanged(String blockId, int row, int column, String value) {
+    final int index = _blocks.indexWhere(
+      (NotebookBlock block) => block.id == blockId,
+    );
     if (index < 0 || _blocks[index] is! NotebookTableBlock) return;
     final NotebookTableBlock table = _blocks[index] as NotebookTableBlock;
     setState(() {
@@ -718,8 +746,9 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
   /// Enter on an ALREADY EMPTY item ends the list instead — the universal
   /// escape hatch, and without it there is no way to stop adding items.
   void _splitCheckboxBlock(NotebookCheckboxBlock source) {
-    final int index =
-        _blocks.indexWhere((NotebookBlock block) => block.id == source.id);
+    final int index = _blocks.indexWhere(
+      (NotebookBlock block) => block.id == source.id,
+    );
     if (index < 0) return;
 
     if (_controllerFor(source.id, source.text).text.isEmpty) {
@@ -779,8 +808,9 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
   /// would snap the card back to where it started. Nothing is persisted here —
   /// the settled coordinates only reach storage on an explicit save.
   void _onCardMoved(String blockId, Offset position) {
-    final int index =
-        _blocks.indexWhere((NotebookBlock block) => block.id == blockId);
+    final int index = _blocks.indexWhere(
+      (NotebookBlock block) => block.id == blockId,
+    );
     if (index < 0) return;
     final NotebookBlock block = _blocks[index];
     if (block is! NotebookDumpCardBlock) return;
@@ -803,13 +833,13 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
   /// on the device, an unfiltered list buries the three text notes Jeff was
   /// actually looking for.
   Future<void> _importDumps(List<Dump> dumps, DumpMode mode) => _addRecordings(
-        dumps.where((Dump d) => d.mode == mode).toList(growable: false),
-        noun: switch (mode) {
-          DumpMode.brainDump => 'dumps',
-          DumpMode.meeting => 'meetings',
-          DumpMode.textNote => 'text notes',
-        },
-      );
+    dumps.where((Dump d) => d.mode == mode).toList(growable: false),
+    noun: switch (mode) {
+      DumpMode.brainDump => 'dumps',
+      DumpMode.meeting => 'meetings',
+      DumpMode.textNote => 'text notes',
+    },
+  );
 
   Future<void> _addRecordings(
     List<Dump> dumps, {
@@ -895,9 +925,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
   /// appears".
   bool _summaryShapesApply(List<Dump> picked) =>
       ref.read(summariesEnabledProvider) ||
-      picked.any(
-        (Dump dump) => (dump.summary ?? '').trim().isNotEmpty,
-      );
+      picked.any((Dump dump) => (dump.summary ?? '').trim().isNotEmpty);
 
   /// Imports one picture from the system picker onto the page.
   ///
@@ -917,8 +945,10 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
     }
     if (picked == null || !mounted) return;
     final double aspect = picked.width / picked.height;
-    final double width =
-        math.min(picked.width.toDouble(), _pageColumnWidth / 2);
+    final double width = math.min(
+      picked.width.toDouble(),
+      _pageColumnWidth / 2,
+    );
     final double height = width / aspect;
     final NotebookImageBlock block = NotebookImageBlock(
       id: _uuid.v4(),
@@ -983,14 +1013,15 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
   // -------------------------------------------------------------------
 
   List<NotebookBlock> _composeBlocks() => <NotebookBlock>[
-        for (final NotebookBlock block in _blocks)
-          switch (block) {
-            NotebookTextBlock t => _withEditedText(t),
-            NotebookCheckboxBlock c =>
-              c.copyWith(text: _controllers[c.id]?.text ?? c.text),
-            NotebookBlock() => block,
-          },
-      ];
+    for (final NotebookBlock block in _blocks)
+      switch (block) {
+        NotebookTextBlock t => _withEditedText(t),
+        NotebookCheckboxBlock c => c.copyWith(
+          text: _controllers[c.id]?.text ?? c.text,
+        ),
+        NotebookBlock() => block,
+      },
+  ];
 
   /// [t] with the controller's current text and its stamps reconciled
   /// against that edit — a stamp whose `[mm:ss]` the edit broke is dropped
@@ -1038,15 +1069,15 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
         _notebook = updated;
         _dirty = false;
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Notebook saved')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Notebook saved')));
     } catch (error) {
       if (!mounted) return;
       // The edits stay on screen; only the failure is reported.
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Notebook save failed: $error')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Notebook save failed: $error')));
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -1109,12 +1140,9 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
             width: switch (block) {
               NotebookTableBlock t => t.viewportWidth + 56,
               NotebookBlock() => math.max(
-                  _minBlockWidth,
-                  math.min(
-                    _pageColumnWidth,
-                    viewportWidth - left - _pagePadding,
-                  ),
-                ),
+                _minBlockWidth,
+                math.min(_pageColumnWidth, viewportWidth - left - _pagePadding),
+              ),
             },
             child: _MovableBlock(
               id: block.id,
@@ -1129,81 +1157,80 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
               },
               child: switch (block) {
                 NotebookTextBlock t => _BackspaceDeletes(
-                    controller: _controllerFor(t.id, t.text),
-                    onDeleteLine: () => _removeBlock(t.id),
-                    child: _stampedBlockAtRest(t) ??
-                        TextField(
-                          key: ValueKey<String>('notebook-text-block-${t.id}'),
-                          controller: _controllerFor(t.id, t.text),
-                          focusNode: _focusFor(t.id),
+                  controller: _controllerFor(t.id, t.text),
+                  onDeleteLine: () => _removeBlock(t.id),
+                  child:
+                      _stampedBlockAtRest(t) ??
+                      TextField(
+                        key: ValueKey<String>('notebook-text-block-${t.id}'),
+                        controller: _controllerFor(t.id, t.text),
+                        focusNode: _focusFor(t.id),
+                        maxLines: null,
+                        style: _pageTextStyle,
+                        cursorColor: NotebookInkCanvas.inkColor,
+                        decoration: _pageInput('Write something…'),
+                      ),
+                ),
+                NotebookCheckboxBlock c => Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Checkbox(
+                      key: ValueKey<String>('notebook-checkbox-${c.id}'),
+                      value: c.checked,
+                      side: const BorderSide(color: NotebookInkCanvas.inkColor),
+                      checkColor: NotebookInkCanvas.backgroundColor,
+                      fillColor: WidgetStateProperty.resolveWith<Color?>(
+                        (Set<WidgetState> states) =>
+                            states.contains(WidgetState.selected)
+                            ? NotebookInkCanvas.inkColor
+                            : null,
+                      ),
+                      onChanged: (bool? checked) =>
+                          _toggleChecked(c, checked ?? false),
+                    ),
+                    Expanded(
+                      child: _BackspaceDeletes(
+                        controller: _controllerFor(c.id, c.text),
+                        onDeleteLine: () => _removeBlock(c.id),
+                        onSplitLine: () => _splitCheckboxBlock(c),
+                        child: TextField(
+                          key: ValueKey<String>(
+                            'notebook-checkbox-block-${c.id}',
+                          ),
+                          controller: _controllerFor(c.id, c.text),
+                          focusNode: _focusFor(c.id),
                           maxLines: null,
+                          // Android IGNORES the IME action whenever the
+                          // input type carries the multi-line flag: it shows
+                          // a newline key, commits the newline straight into
+                          // the value, and never calls performAction. That
+                          // is why intercepting KeyDownEvent alone fixed
+                          // only a physical keyboard while the on-screen one
+                          // still grew the box. The single-line type still
+                          // WRAPS — that is maxLines' job — but its enter
+                          // key now delivers an action we can act on.
+                          keyboardType: TextInputType.text,
+                          textInputAction: TextInputAction.next,
+                          // Suppresses the default 'next' focus traversal.
+                          // This list owns where the caret goes; letting the
+                          // framework jump to an arbitrary neighbour first
+                          // scrolls the page before the new item exists.
+                          onEditingComplete: () =>
+                              _controllerFor(c.id, c.text).clearComposing(),
+                          onSubmitted: (_) => _splitCheckboxBlock(c),
                           style: _pageTextStyle,
                           cursorColor: NotebookInkCanvas.inkColor,
-                          decoration: _pageInput('Write something…'),
-                        ),
-                  ),
-                NotebookCheckboxBlock c => Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      Checkbox(
-                        key: ValueKey<String>('notebook-checkbox-${c.id}'),
-                        value: c.checked,
-                        side: const BorderSide(
-                          color: NotebookInkCanvas.inkColor,
-                        ),
-                        checkColor: NotebookInkCanvas.backgroundColor,
-                        fillColor: WidgetStateProperty.resolveWith<Color?>(
-                          (Set<WidgetState> states) =>
-                              states.contains(WidgetState.selected)
-                                  ? NotebookInkCanvas.inkColor
-                                  : null,
-                        ),
-                        onChanged: (bool? checked) =>
-                            _toggleChecked(c, checked ?? false),
-                      ),
-                      Expanded(
-                        child: _BackspaceDeletes(
-                          controller: _controllerFor(c.id, c.text),
-                          onDeleteLine: () => _removeBlock(c.id),
-                          onSplitLine: () => _splitCheckboxBlock(c),
-                          child: TextField(
-                            key: ValueKey<String>(
-                              'notebook-checkbox-block-${c.id}',
-                            ),
-                            controller: _controllerFor(c.id, c.text),
-                            focusNode: _focusFor(c.id),
-                            maxLines: null,
-                            // Android IGNORES the IME action whenever the
-                            // input type carries the multi-line flag: it shows
-                            // a newline key, commits the newline straight into
-                            // the value, and never calls performAction. That
-                            // is why intercepting KeyDownEvent alone fixed
-                            // only a physical keyboard while the on-screen one
-                            // still grew the box. The single-line type still
-                            // WRAPS — that is maxLines' job — but its enter
-                            // key now delivers an action we can act on.
-                            keyboardType: TextInputType.text,
-                            textInputAction: TextInputAction.next,
-                            // Suppresses the default 'next' focus traversal.
-                            // This list owns where the caret goes; letting the
-                            // framework jump to an arbitrary neighbour first
-                            // scrolls the page before the new item exists.
-                            onEditingComplete: () =>
-                                _controllerFor(c.id, c.text).clearComposing(),
-                            onSubmitted: (_) => _splitCheckboxBlock(c),
-                            style: _pageTextStyle,
-                            cursorColor: NotebookInkCanvas.inkColor,
-                            decoration: _pageInput('List item…'),
-                          ),
+                          decoration: _pageInput('List item…'),
                         ),
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
+                ),
                 NotebookTableBlock t => NotebookTableBlockWidget(
-                    block: t,
-                    onCellChanged: (int row, int column, String value) =>
-                        _onTableCellChanged(t.id, row, column, value),
-                  ),
+                  block: t,
+                  onCellChanged: (int row, int column, String value) =>
+                      _onTableCellChanged(t.id, row, column, value),
+                ),
                 NotebookBlock() => const SizedBox.shrink(),
               },
             ),
@@ -1221,15 +1248,15 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
   /// Where each block anchors in canonical page space, or null for a block
   /// that has no position of its own yet (flow-laid text).
   Offset? _blockAnchor(NotebookBlock block) => switch (block) {
-        NotebookTextBlock t =>
-          t.x == null && t.y == null ? null : Offset(t.x ?? 0, t.y ?? 0),
-        NotebookCheckboxBlock c =>
-          c.x == null && c.y == null ? null : Offset(c.x ?? 0, c.y ?? 0),
-        NotebookDumpCardBlock d => Offset(d.x, d.y),
-        NotebookImageBlock i => Offset(i.x, i.y),
-        NotebookTableBlock t => Offset(t.x, t.y),
-        NotebookUnknownBlock() => null,
-      };
+    NotebookTextBlock t =>
+      t.x == null && t.y == null ? null : Offset(t.x ?? 0, t.y ?? 0),
+    NotebookCheckboxBlock c =>
+      c.x == null && c.y == null ? null : Offset(c.x ?? 0, c.y ?? 0),
+    NotebookDumpCardBlock d => Offset(d.x, d.y),
+    NotebookImageBlock i => Offset(i.x, i.y),
+    NotebookTableBlock t => Offset(t.x, t.y),
+    NotebookUnknownBlock() => null,
+  };
 
   /// The lasso footprint of [block]: measured for text/checkbox rows, model
   /// size for images, nominal 300x90 otherwise. See [lassoBlockFootprint].
@@ -1251,7 +1278,8 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
       const int cols = 6, rows = 4;
       for (int cx = 0; cx < cols; cx++) {
         for (int cy = 0; cy < rows; cy++) {
-          final Offset sample = anchor +
+          final Offset sample =
+              anchor +
               Offset(
                 footprint.width * (cx + 0.5) / cols,
                 footprint.height * (cy + 0.5) / rows,
@@ -1288,19 +1316,25 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
           else
             switch (block) {
               NotebookTextBlock t => t.copyWith(
-                  x: (t.x ?? _pagePadding) + step.dx,
-                  y: (t.y ?? _flowTopOf(t.id)) + step.dy,
-                ),
+                x: (t.x ?? _pagePadding) + step.dx,
+                y: (t.y ?? _flowTopOf(t.id)) + step.dy,
+              ),
               NotebookCheckboxBlock c => c.copyWith(
-                  x: (c.x ?? _pagePadding) + step.dx,
-                  y: (c.y ?? _flowTopOf(c.id)) + step.dy,
-                ),
-              NotebookDumpCardBlock d =>
-                d.copyWith(x: d.x + step.dx, y: d.y + step.dy),
-              NotebookImageBlock i =>
-                i.copyWith(x: i.x + step.dx, y: i.y + step.dy),
-              NotebookTableBlock t =>
-                t.copyWith(x: t.x + step.dx, y: t.y + step.dy),
+                x: (c.x ?? _pagePadding) + step.dx,
+                y: (c.y ?? _flowTopOf(c.id)) + step.dy,
+              ),
+              NotebookDumpCardBlock d => d.copyWith(
+                x: d.x + step.dx,
+                y: d.y + step.dy,
+              ),
+              NotebookImageBlock i => i.copyWith(
+                x: i.x + step.dx,
+                y: i.y + step.dy,
+              ),
+              NotebookTableBlock t => t.copyWith(
+                x: t.x + step.dx,
+                y: t.y + step.dy,
+              ),
               NotebookUnknownBlock() => block,
             },
       ];
@@ -1326,8 +1360,9 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
   /// Opens a tool's palette and applies the choice. A dismissed sheet
   /// returns null and must leave the current colour alone.
   Future<void> _pickInk(InkTool tool, Offset globalPosition) async {
-    final InkColor current =
-        tool == InkTool.highlighter ? _highlighterColour : _penColour;
+    final InkColor current = tool == InkTool.highlighter
+        ? _highlighterColour
+        : _penColour;
     final InkColor? picked = await showInkPalette(
       context: context,
       tool: tool,
@@ -1391,8 +1426,9 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
     setState(() => _convertingInk = true);
     final List<OcrRecognizedLine> lines;
     try {
-      final OcrSettingsClient client =
-          await ref.read(ocrSettingsClientProvider.future);
+      final OcrSettingsClient client = await ref.read(
+        ocrSettingsClientProvider.future,
+      );
       lines = await client.recognize(<Map<String, dynamic>>[
         for (final InkStroke s in selected) s.toJson(),
       ]);
@@ -1427,8 +1463,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
       return;
     }
     // Success: one block, one undoable step.
-    final String text =
-        lines.map((OcrRecognizedLine l) => l.text).join('\n');
+    final String text = lines.map((OcrRecognizedLine l) => l.text).join('\n');
     Rect union = lines.first.bbox;
     for (final OcrRecognizedLine l in lines.skip(1)) {
       union = union.expandToInclude(l.bbox);
@@ -1469,17 +1504,17 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
           else
             switch (block) {
               NotebookTextBlock t => t.copyWith(
-                  x: (t.x ?? _pagePadding) + delta.dx,
-                  y: (t.y ?? _flowTopOf(id)) + delta.dy,
-                ),
+                x: (t.x ?? _pagePadding) + delta.dx,
+                y: (t.y ?? _flowTopOf(id)) + delta.dy,
+              ),
               NotebookCheckboxBlock c => c.copyWith(
-                  x: (c.x ?? _pagePadding) + delta.dx,
-                  y: (c.y ?? _flowTopOf(id)) + delta.dy,
-                ),
+                x: (c.x ?? _pagePadding) + delta.dx,
+                y: (c.y ?? _flowTopOf(id)) + delta.dy,
+              ),
               NotebookTableBlock t => t.copyWith(
-                  x: t.x + delta.dx,
-                  y: t.y + delta.dy,
-                ),
+                x: t.x + delta.dx,
+                y: t.y + delta.dy,
+              ),
               NotebookBlock() => block,
             },
       ];
@@ -1594,17 +1629,18 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
     return math.max(viewportHeight, lowest + viewportHeight);
   }
 
-  static const TextStyle _pageTextStyle =
-      TextStyle(color: NotebookInkCanvas.inkColor);
+  static const TextStyle _pageTextStyle = TextStyle(
+    color: NotebookInkCanvas.inkColor,
+  );
 
   InputDecoration _pageInput(String hint) => InputDecoration(
-        hintText: hint,
-        hintStyle: TextStyle(
-          color: NotebookInkCanvas.inkColor.withValues(alpha: 0.45),
-        ),
-        border: InputBorder.none,
-        isDense: true,
-      );
+    hintText: hint,
+    hintStyle: TextStyle(
+      color: NotebookInkCanvas.inkColor.withValues(alpha: 0.45),
+    ),
+    border: InputBorder.none,
+    isDense: true,
+  );
 
   /// The at-rest rendering of a stamped text block (spec §C): its `[mm:ss]`
   /// stamps are tappable spans. Null while the block is being edited, or
@@ -1641,10 +1677,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
             key: ValueKey<String>('stamp-${t.id}-$i'),
             behavior: HitTestBehavior.opaque,
             onTap: () => unawaited(_onStampTap(stamp)),
-            child: Text(
-              t.text.substring(stamp.offset, end),
-              style: stampStyle,
-            ),
+            child: Text(t.text.substring(stamp.offset, end), style: stampStyle),
           ),
         ),
       );
@@ -1661,9 +1694,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
       onTap: () => _beginEditingStamped(t.id),
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 4),
-        child: Text.rich(
-          TextSpan(style: _pageTextStyle, children: spans),
-        ),
+        child: Text.rich(TextSpan(style: _pageTextStyle, children: spans)),
       ),
     );
   }
@@ -1696,8 +1727,9 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
     return null;
   }
 
-  void _openDump(DumpRow row, {double? seekSeconds}) =>
-      ref.read(notebookDumpOpenerProvider)(context, row, seekSeconds: seekSeconds);
+  void _openDump(DumpRow row, {double? seekSeconds}) => ref.read(
+    notebookDumpOpenerProvider,
+  )(context, row, seekSeconds: seekSeconds);
 
   @override
   Widget build(BuildContext context) {
@@ -1769,17 +1801,17 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
               },
               itemBuilder: (BuildContext context) =>
                   <PopupMenuEntry<_NotebookMenuAction>>[
-                PopupMenuItem<_NotebookMenuAction>(
-                  key: const ValueKey('notebook-page-background-item'),
-                  value: _NotebookMenuAction.pageBackground,
-                  child: ListTile(
-                    leading: const Icon(Icons.grid_4x4),
-                    title: const Text('Page background'),
-                    trailing: Text(_ruling.label),
-                    contentPadding: EdgeInsets.zero,
-                  ),
-                ),
-              ],
+                    PopupMenuItem<_NotebookMenuAction>(
+                      key: const ValueKey('notebook-page-background-item'),
+                      value: _NotebookMenuAction.pageBackground,
+                      child: ListTile(
+                        leading: const Icon(Icons.grid_4x4),
+                        title: const Text('Page background'),
+                        trailing: Text(_ruling.label),
+                        contentPadding: EdgeInsets.zero,
+                      ),
+                    ),
+                  ],
             ),
           ],
           // ONE unified toolbar, always present: draw toggle, eraser,
@@ -1802,23 +1834,21 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                     tool: 'pen',
                     active: _drawing && _tool == InkTool.pen,
                     child: Tooltip(
-                    message: _drawing ? 'Stop drawing' : 'Draw',
-                    triggerMode: TooltipTriggerMode.manual,
-                    child: GestureDetector(
-                      onLongPressStart: _notebook == null
-                          ? null
-                          : (LongPressStartDetails d) => _pickInk(
-                                InkTool.pen,
-                                d.globalPosition,
-                              ),
-                      child: IconButton(
-                        icon: const Icon(Icons.draw),
-                        visualDensity: VisualDensity.compact,
-                        isSelected: _drawing && _tool == InkTool.pen,
-                        color: Color(_penColour.argb),
-                        onPressed: _notebook == null
+                      message: _drawing ? 'Stop drawing' : 'Draw',
+                      triggerMode: TooltipTriggerMode.manual,
+                      child: GestureDetector(
+                        onLongPressStart: _notebook == null
                             ? null
-                            : () => setState(() {
+                            : (LongPressStartDetails d) =>
+                                  _pickInk(InkTool.pen, d.globalPosition),
+                        child: IconButton(
+                          icon: const Icon(Icons.draw),
+                          visualDensity: VisualDensity.compact,
+                          isSelected: _drawing && _tool == InkTool.pen,
+                          color: Color(_penColour.argb),
+                          onPressed: _notebook == null
+                              ? null
+                              : () => setState(() {
                                   if (_drawing && _tool == InkTool.pen) {
                                     // Leaving draw mode: the pen is the safe
                                     // default whenever drawing resumes — a
@@ -1835,32 +1865,32 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                                   _enterDrawMode();
                                   _tool = InkTool.pen;
                                 }),
+                        ),
                       ),
                     ),
-                  ),
                   ),
                   _toolPill(
                     tool: 'highlighter',
                     active: _drawing && _tool == InkTool.highlighter,
                     child: Tooltip(
-                    message: 'Highlighter. Long-press for colours',
-                    triggerMode: TooltipTriggerMode.manual,
-                    child: GestureDetector(
-                      onLongPressStart: _notebook == null
-                          ? null
-                          : (LongPressStartDetails d) => _pickInk(
+                      message: 'Highlighter. Long-press for colours',
+                      triggerMode: TooltipTriggerMode.manual,
+                      child: GestureDetector(
+                        onLongPressStart: _notebook == null
+                            ? null
+                            : (LongPressStartDetails d) => _pickInk(
                                 InkTool.highlighter,
                                 d.globalPosition,
                               ),
-                      child: IconButton(
-                        key: const ValueKey('notebook-highlighter'),
-                        icon: const Icon(Icons.border_color),
-                        visualDensity: VisualDensity.compact,
-                        isSelected: _drawing && _tool == InkTool.highlighter,
-                        color: Color(_highlighterColour.argb),
-                        onPressed: _notebook == null
-                            ? null
-                            : () => setState(() {
+                        child: IconButton(
+                          key: const ValueKey('notebook-highlighter'),
+                          icon: const Icon(Icons.border_color),
+                          visualDensity: VisualDensity.compact,
+                          isSelected: _drawing && _tool == InkTool.highlighter,
+                          color: Color(_highlighterColour.argb),
+                          onPressed: _notebook == null
+                              ? null
+                              : () => setState(() {
                                   _enterDrawMode();
                                   _tool = InkTool.highlighter;
                                   // Mutually exclusive gestures, same rule the
@@ -1869,56 +1899,54 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                                   _lassoing = false;
                                   _lassoSelection = false;
                                 }),
+                        ),
                       ),
                     ),
-                  ),
                   ),
                   _toolPill(
                     tool: 'eraser',
                     active: _erasing,
                     child: IconButton(
-                    // An unlabelled mode is how you end up erasing when you
-                    // meant to draw, so the active tool is always shown as
-                    // selected.
-                    icon: Icon(
-                      _erasing ? Icons.edit : Icons.auto_fix_normal,
-                    ),
-                    tooltip: _erasing ? 'Switch to pen' : 'Erase lines',
-                    visualDensity: VisualDensity.compact,
-                    isSelected: _erasing,
-                    // Every tool is live at any time (Jeff's contract): a
-                    // tap outside draw mode ENTERS draw mode with this tool
-                    // instead of being dead until Draw is pressed first.
-                    onPressed: _notebook == null
-                        ? null
-                        : () => setState(() {
+                      // An unlabelled mode is how you end up erasing when you
+                      // meant to draw, so the active tool is always shown as
+                      // selected.
+                      icon: Icon(_erasing ? Icons.edit : Icons.auto_fix_normal),
+                      tooltip: _erasing ? 'Switch to pen' : 'Erase lines',
+                      visualDensity: VisualDensity.compact,
+                      isSelected: _erasing,
+                      // Every tool is live at any time (Jeff's contract): a
+                      // tap outside draw mode ENTERS draw mode with this tool
+                      // instead of being dead until Draw is pressed first.
+                      onPressed: _notebook == null
+                          ? null
+                          : () => setState(() {
                               _enterDrawMode();
                               _erasing = !_erasing;
                               if (_erasing) _lassoing = false;
                             }),
-                  ),
+                    ),
                   ),
                   _toolPill(
                     tool: 'nib',
                     active: _penStyle == PenStyle.fountain,
                     child: IconButton(
-                    key: const ValueKey('notebook-pen-style'),
-                    // The nib: fountain tapers with pen pressure like
-                    // Samsung Notes; ballpoint is the original uniform
-                    // stroke.
-                    icon: Icon(
-                      _penStyle == PenStyle.fountain
-                          ? Icons.brush
-                          : Icons.mode_edit_outline,
-                    ),
-                    tooltip: _penStyle == PenStyle.fountain
-                        ? 'Fountain pen (pressure). Tap for ballpoint'
-                        : 'Ballpoint. Tap for fountain pen (pressure)',
-                    visualDensity: VisualDensity.compact,
-                    isSelected: _penStyle == PenStyle.fountain,
-                    onPressed: _notebook == null
-                        ? null
-                        : () => setState(() {
+                      key: const ValueKey('notebook-pen-style'),
+                      // The nib: fountain tapers with pen pressure like
+                      // Samsung Notes; ballpoint is the original uniform
+                      // stroke.
+                      icon: Icon(
+                        _penStyle == PenStyle.fountain
+                            ? Icons.brush
+                            : Icons.mode_edit_outline,
+                      ),
+                      tooltip: _penStyle == PenStyle.fountain
+                          ? 'Fountain pen (pressure). Tap for ballpoint'
+                          : 'Ballpoint. Tap for fountain pen (pressure)',
+                      visualDensity: VisualDensity.compact,
+                      isSelected: _penStyle == PenStyle.fountain,
+                      onPressed: _notebook == null
+                          ? null
+                          : () => setState(() {
                               _enterDrawMode();
                               _penStyle = _penStyle == PenStyle.fountain
                                   ? PenStyle.ballpoint
@@ -1927,22 +1955,22 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                               // reopen, so the next save persists it.
                               _dirty = true;
                             }),
-                  ),
+                    ),
                   ),
                   _toolPill(
                     tool: 'lasso',
                     active: _lassoing,
                     child: IconButton(
-                    key: const ValueKey('notebook-lasso'),
-                    // The smart lasso: circle ink to select it, drag the
-                    // selection anywhere, delete it from this row.
-                    icon: const Icon(Icons.gesture),
-                    tooltip: _lassoing ? 'Exit lasso' : 'Lasso select',
-                    visualDensity: VisualDensity.compact,
-                    isSelected: _lassoing,
-                    onPressed: _notebook == null
-                        ? null
-                        : () => setState(() {
+                      key: const ValueKey('notebook-lasso'),
+                      // The smart lasso: circle ink to select it, drag the
+                      // selection anywhere, delete it from this row.
+                      icon: const Icon(Icons.gesture),
+                      tooltip: _lassoing ? 'Exit lasso' : 'Lasso select',
+                      visualDensity: VisualDensity.compact,
+                      isSelected: _lassoing,
+                      onPressed: _notebook == null
+                          ? null
+                          : () => setState(() {
                               _enterDrawMode();
                               _lassoing = !_lassoing;
                               // Lasso and eraser are exclusive: a gesture
@@ -1950,7 +1978,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                               if (_lassoing) _erasing = false;
                               if (!_lassoing) _lassoSelection = false;
                             }),
-                  ),
+                    ),
                   ),
                   if (_lassoing)
                     IconButton(
@@ -1981,7 +2009,8 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                       // Ink only: a blocks-only catch is already typed
                       // content, so the action greys out (visible but dead —
                       // hidden controls read as missing features).
-                      onPressed: !_convertingInk &&
+                      onPressed:
+                          !_convertingInk &&
                               _lassoSelection &&
                               (_canvasKey.currentState?.selectedCount ?? 0) > 0
                           ? _convertLassoSelectionToText
@@ -2025,139 +2054,143 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
         // must not change it.
         body: Scaffold(
           bottomNavigationBar: _notebook == null
-            ? null
-            : BottomAppBar(
-                // One menu in the bottom-left holds every insert action, so
-                // adding an import does not keep widening a row of buttons.
-                child: Row(
-                  children: <Widget>[
-                    PopupMenuButton<_InsertAction>(
-                      key: const ValueKey('notebook-insert-menu'),
-                      icon: const Icon(Icons.menu),
-                      tooltip: 'Insert',
-                      // Opens upward from the corner it lives in.
-                      position: PopupMenuPosition.over,
-                      onSelected: (_InsertAction action) {
-                        switch (action) {
-                          case _InsertAction.text:
-                            _addTextBlock();
-                          case _InsertAction.checkbox:
-                            _addCheckboxBlock();
-                          case _InsertAction.table:
-                            unawaited(_pickTableSize());
-                          case _InsertAction.dump:
-                            unawaited(
-                              _importDumps(dumps, DumpMode.brainDump),
-                            );
-                          case _InsertAction.meeting:
-                            unawaited(_importDumps(dumps, DumpMode.meeting));
-                          case _InsertAction.textNote:
-                            unawaited(_importDumps(dumps, DumpMode.textNote));
-                          case _InsertAction.image:
-                            unawaited(_importImage());
-                          case _InsertAction.recentre:
-                            _pageScroll.jumpTo(0);
-                        }
-                      },
-                      itemBuilder: (BuildContext context) =>
-                          <PopupMenuEntry<_InsertAction>>[
-                        const PopupMenuItem<_InsertAction>(
-                          value: _InsertAction.text,
-                          child: ListTile(
-                            leading: Icon(Icons.notes),
-                            title: Text('Text block'),
-                            contentPadding: EdgeInsets.zero,
-                          ),
-                        ),
-                        const PopupMenuItem<_InsertAction>(
-                          value: _InsertAction.checkbox,
-                          child: ListTile(
-                            leading: Icon(Icons.check_box_outlined),
-                            title: Text('Checkbox'),
-                            contentPadding: EdgeInsets.zero,
-                          ),
-                        ),
-                        const PopupMenuItem<_InsertAction>(
-                          key: ValueKey('notebook-insert-table'),
-                          value: _InsertAction.table,
-                          child: ListTile(
-                            leading: Icon(Icons.table_chart_outlined),
-                            title: Text('Table'),
-                            contentPadding: EdgeInsets.zero,
-                          ),
-                        ),
-                        const PopupMenuDivider(),
-                        PopupMenuItem<_InsertAction>(
-                          value: _InsertAction.dump,
-                          child: ListTile(
-                            leading: Icon(dumpModeIcon(DumpMode.brainDump)),
-                            title: const Text('Recording'),
-                            contentPadding: EdgeInsets.zero,
-                          ),
-                        ),
-                        PopupMenuItem<_InsertAction>(
-                          value: _InsertAction.meeting,
-                          child: ListTile(
-                            leading: Icon(dumpModeIcon(DumpMode.meeting)),
-                            title: const Text('Meeting notes'),
-                            contentPadding: EdgeInsets.zero,
-                          ),
-                        ),
-                        PopupMenuItem<_InsertAction>(
-                          value: _InsertAction.textNote,
-                          child: ListTile(
-                            leading: Icon(dumpModeIcon(DumpMode.textNote)),
-                            title: const Text('Text note'),
-                            contentPadding: EdgeInsets.zero,
-                          ),
-                        ),
-                        const PopupMenuItem<_InsertAction>(
-                          key: ValueKey('notebook-insert-image'),
-                          value: _InsertAction.image,
-                          child: ListTile(
-                            leading: Icon(Icons.image_outlined),
-                            title: Text('Image'),
-                            contentPadding: EdgeInsets.zero,
-                          ),
-                        ),
-                        const PopupMenuDivider(),
-                        // The page can be panned until the work is off-screen
-                        // on identical black canvas; this is the way home.
-                        const PopupMenuItem<_InsertAction>(
-                          value: _InsertAction.recentre,
-                          child: ListTile(
-                            leading: Icon(Icons.filter_center_focus),
-                            title: Text('Back to start'),
-                            contentPadding: EdgeInsets.zero,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      'Insert',
-                      style: Theme.of(context).textTheme.bodyMedium,
-                    ),
-                  ],
+              ? null
+              : BottomAppBar(
+                  // One menu in the bottom-left holds every insert action, so
+                  // adding an import does not keep widening a row of buttons.
+                  child: Row(
+                    children: <Widget>[
+                      PopupMenuButton<_InsertAction>(
+                        key: const ValueKey('notebook-insert-menu'),
+                        icon: const Icon(Icons.menu),
+                        tooltip: 'Insert',
+                        // Opens upward from the corner it lives in.
+                        position: PopupMenuPosition.over,
+                        onSelected: (_InsertAction action) {
+                          switch (action) {
+                            case _InsertAction.text:
+                              _addTextBlock();
+                            case _InsertAction.checkbox:
+                              _addCheckboxBlock();
+                            case _InsertAction.table:
+                              unawaited(_pickTableSize());
+                            case _InsertAction.dump:
+                              unawaited(
+                                _importDumps(dumps, DumpMode.brainDump),
+                              );
+                            case _InsertAction.meeting:
+                              unawaited(_importDumps(dumps, DumpMode.meeting));
+                            case _InsertAction.textNote:
+                              unawaited(_importDumps(dumps, DumpMode.textNote));
+                            case _InsertAction.image:
+                              unawaited(_importImage());
+                            case _InsertAction.recentre:
+                              _pageScroll.jumpTo(0);
+                          }
+                        },
+                        itemBuilder: (BuildContext context) =>
+                            <PopupMenuEntry<_InsertAction>>[
+                              const PopupMenuItem<_InsertAction>(
+                                value: _InsertAction.text,
+                                child: ListTile(
+                                  leading: Icon(Icons.notes),
+                                  title: Text('Text block'),
+                                  contentPadding: EdgeInsets.zero,
+                                ),
+                              ),
+                              const PopupMenuItem<_InsertAction>(
+                                value: _InsertAction.checkbox,
+                                child: ListTile(
+                                  leading: Icon(Icons.check_box_outlined),
+                                  title: Text('Checkbox'),
+                                  contentPadding: EdgeInsets.zero,
+                                ),
+                              ),
+                              const PopupMenuItem<_InsertAction>(
+                                key: ValueKey('notebook-insert-table'),
+                                value: _InsertAction.table,
+                                child: ListTile(
+                                  leading: Icon(Icons.table_chart_outlined),
+                                  title: Text('Table'),
+                                  contentPadding: EdgeInsets.zero,
+                                ),
+                              ),
+                              const PopupMenuDivider(),
+                              PopupMenuItem<_InsertAction>(
+                                value: _InsertAction.dump,
+                                child: ListTile(
+                                  leading: Icon(
+                                    dumpModeIcon(DumpMode.brainDump),
+                                  ),
+                                  title: const Text('Recording'),
+                                  contentPadding: EdgeInsets.zero,
+                                ),
+                              ),
+                              PopupMenuItem<_InsertAction>(
+                                value: _InsertAction.meeting,
+                                child: ListTile(
+                                  leading: Icon(dumpModeIcon(DumpMode.meeting)),
+                                  title: const Text('Meeting notes'),
+                                  contentPadding: EdgeInsets.zero,
+                                ),
+                              ),
+                              PopupMenuItem<_InsertAction>(
+                                value: _InsertAction.textNote,
+                                child: ListTile(
+                                  leading: Icon(
+                                    dumpModeIcon(DumpMode.textNote),
+                                  ),
+                                  title: const Text('Text note'),
+                                  contentPadding: EdgeInsets.zero,
+                                ),
+                              ),
+                              const PopupMenuItem<_InsertAction>(
+                                key: ValueKey('notebook-insert-image'),
+                                value: _InsertAction.image,
+                                child: ListTile(
+                                  leading: Icon(Icons.image_outlined),
+                                  title: Text('Image'),
+                                  contentPadding: EdgeInsets.zero,
+                                ),
+                              ),
+                              const PopupMenuDivider(),
+                              // The page can be panned until the work is off-screen
+                              // on identical black canvas; this is the way home.
+                              const PopupMenuItem<_InsertAction>(
+                                value: _InsertAction.recentre,
+                                child: ListTile(
+                                  leading: Icon(Icons.filter_center_focus),
+                                  title: Text('Back to start'),
+                                  contentPadding: EdgeInsets.zero,
+                                ),
+                              ),
+                            ],
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Insert',
+                        style: Theme.of(context).textTheme.bodyMedium,
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-        body: Column(
-          children: <Widget>[
-            // The find bar rides above the page, Ctrl+F style. Mounted only
-            // while open, so the ordinary editor pays nothing for it.
-            if (_findOpen)
-              NotebookFindBar(
-                controller: _findQuery,
-                matchCount: _findMatches.length,
-                currentIndex: _findIndex,
-                onQueryChanged: (String query) => unawaited(_runFind(query)),
-                onPrev: () => _findStep(-1),
-                onNext: () => _findStep(1),
-                onClose: _closeFind,
-              ),
-            Expanded(child: _buildBody(rowsById)),
-          ],
-        ),
+          body: Column(
+            children: <Widget>[
+              // The find bar rides above the page, Ctrl+F style. Mounted only
+              // while open, so the ordinary editor pays nothing for it.
+              if (_findOpen)
+                NotebookFindBar(
+                  controller: _findQuery,
+                  matchCount: _findMatches.length,
+                  currentIndex: _findIndex,
+                  onQueryChanged: (String query) => unawaited(_runFind(query)),
+                  onPrev: () => _findStep(-1),
+                  onNext: () => _findStep(1),
+                  onClose: _closeFind,
+                ),
+              Expanded(child: _buildBody(rowsById)),
+            ],
+          ),
         ),
       ),
     );
@@ -2313,9 +2346,8 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                             block: block,
                             selected: _selectedImageId == block.id,
                             interactive: !_drawing,
-                            onSelect: () => setState(
-                              () => _selectedImageId = block.id,
-                            ),
+                            onSelect: () =>
+                                setState(() => _selectedImageId = block.id),
                             onMoved: (Offset delta) =>
                                 _moveImage(block.id, delta),
                             onResized: (Rect geometry) =>
@@ -2452,8 +2484,7 @@ class _NotebookTableSizeDialogState extends State<_NotebookTableSizeDialog> {
 
   void _step(TextEditingController controller, int delta) {
     final int current = int.tryParse(controller.text) ?? 1;
-    final int next =
-        (current + delta).clamp(1, kNotebookTableMaxDimension);
+    final int next = (current + delta).clamp(1, kNotebookTableMaxDimension);
     controller.value = TextEditingValue(
       text: '$next',
       selection: TextSelection.collapsed(offset: '$next'.length),
@@ -2463,56 +2494,55 @@ class _NotebookTableSizeDialogState extends State<_NotebookTableSizeDialog> {
 
   void _submit() {
     if (!(_formKey.currentState?.validate() ?? false)) return;
-    Navigator.of(context).pop((
-      rows: int.parse(_rows.text),
-      columns: int.parse(_columns.text),
-    ));
+    Navigator.of(
+      context,
+    ).pop((rows: int.parse(_rows.text), columns: int.parse(_columns.text)));
   }
 
   @override
   Widget build(BuildContext context) => AlertDialog(
-        title: const Text('Insert table'),
-        content: Form(
-          key: _formKey,
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              Expanded(
-                child: _TableDimensionField(
-                  label: 'Rows',
-                  fieldKey: const ValueKey('notebook-table-rows'),
-                  controller: _rows,
-                  validator: _validateDimension,
-                  onDecrement: () => _step(_rows, -1),
-                  onIncrement: () => _step(_rows, 1),
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: _TableDimensionField(
-                  label: 'Columns',
-                  fieldKey: const ValueKey('notebook-table-columns'),
-                  controller: _columns,
-                  validator: _validateDimension,
-                  onDecrement: () => _step(_columns, -1),
-                  onIncrement: () => _step(_columns, 1),
-                ),
-              ),
-            ],
+    title: const Text('Insert table'),
+    content: Form(
+      key: _formKey,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Expanded(
+            child: _TableDimensionField(
+              label: 'Rows',
+              fieldKey: const ValueKey('notebook-table-rows'),
+              controller: _rows,
+              validator: _validateDimension,
+              onDecrement: () => _step(_rows, -1),
+              onIncrement: () => _step(_rows, 1),
+            ),
           ),
-        ),
-        actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            key: const ValueKey('notebook-table-create'),
-            onPressed: _submit,
-            child: const Text('Create'),
+          const SizedBox(width: 16),
+          Expanded(
+            child: _TableDimensionField(
+              label: 'Columns',
+              fieldKey: const ValueKey('notebook-table-columns'),
+              controller: _columns,
+              validator: _validateDimension,
+              onDecrement: () => _step(_columns, -1),
+              onIncrement: () => _step(_columns, 1),
+            ),
           ),
         ],
-      );
+      ),
+    ),
+    actions: <Widget>[
+      TextButton(
+        onPressed: () => Navigator.of(context).pop(),
+        child: const Text('Cancel'),
+      ),
+      FilledButton(
+        key: const ValueKey('notebook-table-create'),
+        onPressed: _submit,
+        child: const Text('Create'),
+      ),
+    ],
+  );
 }
 
 class _TableDimensionField extends StatelessWidget {
@@ -2534,39 +2564,39 @@ class _TableDimensionField extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Column(
-        mainAxisSize: MainAxisSize.min,
+    mainAxisSize: MainAxisSize.min,
+    children: <Widget>[
+      TextFormField(
+        key: fieldKey,
+        controller: controller,
+        keyboardType: TextInputType.number,
+        inputFormatters: <TextInputFormatter>[
+          FilteringTextInputFormatter.digitsOnly,
+          LengthLimitingTextInputFormatter(3),
+        ],
+        textAlign: TextAlign.center,
+        decoration: InputDecoration(labelText: label),
+        validator: validator,
+      ),
+      Row(
+        mainAxisAlignment: MainAxisAlignment.center,
         children: <Widget>[
-          TextFormField(
-            key: fieldKey,
-            controller: controller,
-            keyboardType: TextInputType.number,
-            inputFormatters: <TextInputFormatter>[
-              FilteringTextInputFormatter.digitsOnly,
-              LengthLimitingTextInputFormatter(3),
-            ],
-            textAlign: TextAlign.center,
-            decoration: InputDecoration(labelText: label),
-            validator: validator,
+          IconButton(
+            key: ValueKey<String>('notebook-table-${label.toLowerCase()}-'),
+            tooltip: 'Decrease $label',
+            onPressed: onDecrement,
+            icon: const Icon(Icons.remove),
           ),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: <Widget>[
-              IconButton(
-                key: ValueKey<String>('notebook-table-${label.toLowerCase()}-'),
-                tooltip: 'Decrease $label',
-                onPressed: onDecrement,
-                icon: const Icon(Icons.remove),
-              ),
-              IconButton(
-                key: ValueKey<String>('notebook-table-${label.toLowerCase()}+'),
-                tooltip: 'Increase $label',
-                onPressed: onIncrement,
-                icon: const Icon(Icons.add),
-              ),
-            ],
+          IconButton(
+            key: ValueKey<String>('notebook-table-${label.toLowerCase()}+'),
+            tooltip: 'Increase $label',
+            onPressed: onIncrement,
+            icon: const Icon(Icons.add),
           ),
         ],
-      );
+      ),
+    ],
+  );
 }
 
 /// A typed block that can be dragged around the page by a grip handle.
@@ -2602,29 +2632,29 @@ class _BackspaceDeletes extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Focus(
-        onKeyEvent: (FocusNode node, KeyEvent event) {
-          if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    onKeyEvent: (FocusNode node, KeyEvent event) {
+      if (event is! KeyDownEvent) return KeyEventResult.ignored;
 
-          if (event.logicalKey == LogicalKeyboardKey.enter) {
-            final VoidCallback? split = onSplitLine;
-            if (split == null) return KeyEventResult.ignored;
-            // Handled BEFORE the field sees it, so no newline is inserted and
-            // the box never grows.
-            split();
-            return KeyEventResult.handled;
-          }
+      if (event.logicalKey == LogicalKeyboardKey.enter) {
+        final VoidCallback? split = onSplitLine;
+        if (split == null) return KeyEventResult.ignored;
+        // Handled BEFORE the field sees it, so no newline is inserted and
+        // the box never grows.
+        split();
+        return KeyEventResult.handled;
+      }
 
-          if (event.logicalKey != LogicalKeyboardKey.backspace) {
-            return KeyEventResult.ignored;
-          }
-          // Only when the line is genuinely empty: otherwise backspace must
-          // keep deleting characters normally.
-          if (controller.text.isNotEmpty) return KeyEventResult.ignored;
-          onDeleteLine();
-          return KeyEventResult.handled;
-        },
-        child: child,
-      );
+      if (event.logicalKey != LogicalKeyboardKey.backspace) {
+        return KeyEventResult.ignored;
+      }
+      // Only when the line is genuinely empty: otherwise backspace must
+      // keep deleting characters normally.
+      if (controller.text.isNotEmpty) return KeyEventResult.ignored;
+      onDeleteLine();
+      return KeyEventResult.handled;
+    },
+    child: child,
+  );
 }
 
 /// Pan recognizer for a block's grip handle.
@@ -2733,21 +2763,21 @@ class _MovableBlockState extends State<_MovableBlock> {
 
   @override
   Widget build(BuildContext context) => Transform.translate(
-        offset: _dragged,
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            if (widget.draggable)
-              RawGestureDetector(
-                key: ValueKey<String>('notebook-block-grip-${widget.id}'),
-                behavior: HitTestBehavior.opaque,
-                // The page scroll competes for vertical drags and wins them
-                // in a normal arena, so a grip drag did nothing at all. This
-                // recognizer claims the gesture as soon as the finger moves;
-                // a drag starting on the grip is never meant to scroll.
-                gestures: <Type, GestureRecognizerFactory>{
-                  _GripPanRecognizer:
-                      GestureRecognizerFactoryWithHandlers<_GripPanRecognizer>(
+    offset: _dragged,
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        if (widget.draggable)
+          RawGestureDetector(
+            key: ValueKey<String>('notebook-block-grip-${widget.id}'),
+            behavior: HitTestBehavior.opaque,
+            // The page scroll competes for vertical drags and wins them
+            // in a normal arena, so a grip drag did nothing at all. This
+            // recognizer claims the gesture as soon as the finger moves;
+            // a drag starting on the grip is never meant to scroll.
+            gestures: <Type, GestureRecognizerFactory>{
+              _GripPanRecognizer:
+                  GestureRecognizerFactoryWithHandlers<_GripPanRecognizer>(
                     () => _GripPanRecognizer(
                       debugOwner: this,
                       onSlopCrossed: () => widget.onDragActive?.call(true),
@@ -2770,24 +2800,24 @@ class _MovableBlockState extends State<_MovableBlock> {
                       };
                     },
                   ),
-                },
-                child: const Padding(
-                  padding: EdgeInsets.only(top: 12, right: 4),
-                  child: Icon(
-                    Icons.drag_indicator,
-                    size: 20,
-                    color: NotebookInkCanvas.inkColor,
-                  ),
-                ),
+            },
+            child: const Padding(
+              padding: EdgeInsets.only(top: 12, right: 4),
+              child: Icon(
+                Icons.drag_indicator,
+                size: 20,
+                color: NotebookInkCanvas.inkColor,
               ),
-            Expanded(child: widget.child),
-            _RemoveBlockButton(
-              key: ValueKey<String>('notebook-block-remove-${widget.id}'),
-              onPressed: widget.onRemove,
             ),
-          ],
+          ),
+        Expanded(child: widget.child),
+        _RemoveBlockButton(
+          key: ValueKey<String>('notebook-block-remove-${widget.id}'),
+          onPressed: widget.onRemove,
         ),
-      );
+      ],
+    ),
+  );
 }
 
 class _RemoveBlockButton extends StatelessWidget {
@@ -2797,45 +2827,45 @@ class _RemoveBlockButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => IconButton(
-        icon: const Icon(Icons.close, size: 16),
-        color: NotebookInkCanvas.inkColor.withValues(alpha: 0.6),
-        tooltip: 'Remove block',
-        visualDensity: VisualDensity.compact,
-        constraints: const BoxConstraints.tightFor(width: 32, height: 32),
-        padding: EdgeInsets.zero,
-        onPressed: onPressed,
-      );
+    icon: const Icon(Icons.close, size: 16),
+    color: NotebookInkCanvas.inkColor.withValues(alpha: 0.6),
+    tooltip: 'Remove block',
+    visualDensity: VisualDensity.compact,
+    constraints: const BoxConstraints.tightFor(width: 32, height: 32),
+    padding: EdgeInsets.zero,
+    onPressed: onPressed,
+  );
 }
 
 /// Adapts a stored dump row to the presentation model the notebook widgets
 /// take. Unknown wire values degrade instead of throwing: a row the notebook
 /// cannot classify still deserves to render.
 Dump dumpFromRow(DumpRow row) => Dump(
-      id: row.id,
-      createdAt: row.createdAt,
-      updatedAt: row.updatedAt,
-      mode: DumpMode.values.firstWhere(
-        (DumpMode mode) => mode.wireValue == row.mode,
-        orElse: () => DumpMode.brainDump,
-      ),
-      durationSeconds: row.durationSeconds,
-      title: row.title,
-      transcript: row.transcript,
-      audioPath: row.audioPath,
-      audioSizeBytes: row.audioSizeBytes,
-      syncStatus: SyncStatus.values.firstWhere(
-        (SyncStatus status) => status.wireValue == row.syncStatus,
-        orElse: () => SyncStatus.localOnly,
-      ),
-      syncAttempts: row.syncAttempts,
-      lastSyncError: row.lastSyncError,
-      summary: row.summary,
-      summaryModel: row.summaryModel,
-      summarizedAt: row.summarizedAt == null
-          ? null
-          : DateTime.fromMillisecondsSinceEpoch(
-              row.summarizedAt! * 1000,
-              isUtc: true,
-            ),
-      speakerNames: row.speakerNames,
-    );
+  id: row.id,
+  createdAt: row.createdAt,
+  updatedAt: row.updatedAt,
+  mode: DumpMode.values.firstWhere(
+    (DumpMode mode) => mode.wireValue == row.mode,
+    orElse: () => DumpMode.brainDump,
+  ),
+  durationSeconds: row.durationSeconds,
+  title: row.title,
+  transcript: row.transcript,
+  audioPath: row.audioPath,
+  audioSizeBytes: row.audioSizeBytes,
+  syncStatus: SyncStatus.values.firstWhere(
+    (SyncStatus status) => status.wireValue == row.syncStatus,
+    orElse: () => SyncStatus.localOnly,
+  ),
+  syncAttempts: row.syncAttempts,
+  lastSyncError: row.lastSyncError,
+  summary: row.summary,
+  summaryModel: row.summaryModel,
+  summarizedAt: row.summarizedAt == null
+      ? null
+      : DateTime.fromMillisecondsSinceEpoch(
+          row.summarizedAt! * 1000,
+          isUtc: true,
+        ),
+  speakerNames: row.speakerNames,
+);

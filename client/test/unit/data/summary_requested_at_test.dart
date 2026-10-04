@@ -105,8 +105,7 @@ void main() {
   final DateTime requestedAt =
       DateTime.fromMillisecondsSinceEpoch(t0 * 1000, isUtc: true);
 
-  test('v20 -> v21 adds summary_requested_at, null on existing rows',
-      () async {
+  test('v20 -> v21 adds summary_requested_at, null on existing rows', () async {
     final sqlite3.Database raw = sqlite3.sqlite3.openInMemory();
     raw.execute(_dumpsV20);
     raw.execute('PRAGMA user_version = 20;');
@@ -120,7 +119,7 @@ void main() {
     addTearDown(db.close);
     await db.listDumps();
 
-    expect(raw.userVersion, 30);
+    expect(raw.userVersion, 32);
     expect(_columns(raw, 'dumps'), contains('summary_requested_at'));
     final DumpRow row = (await db.getDump('old'))!;
     expect(row.summaryRequestedAt, isNull);
@@ -136,10 +135,11 @@ void main() {
     final LocalDb db = LocalDb.forTesting(NativeDatabase.opened(raw));
     addTearDown(db.close);
     await expectLater(db.listDumps(), completes);
-    expect(raw.userVersion, 30);
+    expect(raw.userVersion, 32);
   });
 
-  test('recordRequestedSummaryTemplate stamps template AND requested_at, '
+  test(
+      'recordRequestedSummaryTemplate stamps template AND requested_at, '
       'not dirty, updated_at untouched', () async {
     final LocalDb db = LocalDb.forTesting(NativeDatabase.memory());
     addTearDown(db.close);

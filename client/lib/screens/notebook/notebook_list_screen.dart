@@ -23,6 +23,7 @@ import '../../services/export_file_name.dart';
 import '../../services/ink_search.dart';
 import '../../services/notebook_pdf_exporter.dart';
 import '../../services/notebook_persistence.dart';
+import '../../services/notebook_password.dart';
 import '../../widgets/folder_picker.dart';
 import '../../widgets/press_actions.dart';
 import '../../widgets/sync_button.dart';
@@ -32,6 +33,7 @@ import '../home/home_providers.dart' show documentSyncEngineProvider;
 import '../settings/handwriting_search_section.dart'
     show handwritingSearchEnabledProvider;
 import '../../widgets/item_action_sheet.dart';
+import '../../widgets/notebook_password_dialog.dart';
 import '../../widgets/folder_header_actions.dart';
 import '../../widgets/instrument_scaffold.dart';
 import '../../widgets/top_nav_rail.dart';
@@ -269,11 +271,16 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
     await prefs.setBool(_viewPreferenceKey, next);
   }
 
-  Future<void> _openNotebook(String id, {String? findQuery}) {
+  Future<void> _openNotebook(
+    NotebookHeader notebook, {
+    String? findQuery,
+  }) async {
+    if (!await _requireUnlocked(notebook)) return;
+    if (!mounted) return;
     return Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
         builder: (_) => NotebookEditorScreen(
-          notebookId: id,
+          notebookId: notebook.id,
           // Search-result taps carry the query so the editor opens at the
           // top ctrl+f result with the find bar already populated.
           initialFindQuery: findQuery,
@@ -284,6 +291,10 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
 
   /// Long-press opens the shared menu instead of deleting outright.
   Future<void> _showActions(NotebookHeader notebook) async {
+    final NotebookUnlockRegistry unlocks =
+        ref.read(notebookUnlockRegistryProvider);
+    final bool canLockNow = notebook.passwordProtected &&
+        unlocks.isUnlocked(notebook.id, notebook.passwordHash);
     final ItemAction? action = await showItemActionSheet(
       context,
       title: notebook.title.isEmpty ? '(untitled)' : notebook.title,
@@ -294,25 +305,38 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
         ItemAction.move,
         notebook.pinned ? ItemAction.unpin : ItemAction.pin,
         ItemAction.exportPdf,
+        ItemAction.passwordProtection,
+        if (canLockNow) ItemAction.lockNow,
         ItemAction.delete,
       ],
+      labelOverrides: <ItemAction, String>{
+        ItemAction.passwordProtection: notebook.passwordProtected
+            ? 'Turn Off Password Protection'
+            : 'Turn On Password Protection',
+      },
     );
     if (action == null || !mounted) return;
     switch (action) {
       case ItemAction.open:
-        await _openNotebook(notebook.id);
+        await _openNotebook(notebook);
       case ItemAction.rename:
         await _rename(notebook);
       case ItemAction.move:
         await _move(notebook);
       case ItemAction.pin:
+        if (!await _requireUnlocked(notebook)) return;
         await ref.read(notebookRepositoryProvider).setPinned(notebook.id, true);
       case ItemAction.unpin:
+        if (!await _requireUnlocked(notebook)) return;
         await ref
             .read(notebookRepositoryProvider)
             .setPinned(notebook.id, false);
       case ItemAction.exportPdf:
         await _exportPdf(notebook);
+      case ItemAction.passwordProtection:
+        await _togglePasswordProtection(notebook);
+      case ItemAction.lockNow:
+        unlocks.lock(notebook.id);
       case ItemAction.delete:
         await _confirmDelete(notebook);
       case ItemAction.duplicate:
@@ -339,6 +363,7 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
   /// copy exporting silently would be worse than a failure.
   Future<void> _exportPdf(NotebookHeader notebook) async {
     try {
+      if (!await _requireUnlocked(notebook)) return;
       final Notebook? full =
           await ref.read(notebookRepositoryProvider).getNotebook(notebook.id);
       if (full == null) {
@@ -402,6 +427,68 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
     await _systemSharePdf(bytes: bytes, filename: filename, subject: subject);
   }
 
+  Future<bool> _requireUnlocked(NotebookHeader notebook) async {
+    if (!notebook.passwordProtected) return true;
+    final NotebookUnlockRegistry unlocks =
+        ref.read(notebookUnlockRegistryProvider);
+    if (unlocks.isUnlocked(notebook.id, notebook.passwordHash)) return true;
+    final NotebookRepository repository =
+        ref.read(notebookRepositoryProvider);
+    final bool accepted = await showNotebookUnlockDialog(
+      context,
+      notebookTitle: notebook.title,
+      verify: (String password) =>
+          repository.verifyPassword(notebook.id, password),
+    );
+    if (accepted) unlocks.unlock(notebook.id, notebook.passwordHash!);
+    return accepted;
+  }
+
+  Future<void> _togglePasswordProtection(NotebookHeader notebook) async {
+    final NotebookPersistence persistence =
+        ref.read(notebookPersistenceProvider);
+    final NotebookUnlockRegistry unlocks =
+        ref.read(notebookUnlockRegistryProvider);
+    if (!notebook.passwordProtected) {
+      final String? password = await showSetNotebookPasswordDialog(
+        context,
+        notebookTitle: notebook.title,
+      );
+      if (password == null || !mounted) return;
+      try {
+        await persistence.setPassword(notebook.id, password);
+        final Notebook? protected = await ref
+            .read(notebookRepositoryProvider)
+            .getNotebook(notebook.id);
+        final String? hash = protected?.passwordHash;
+        if (hash == null) {
+          throw StateError('Notebook protection was not persisted');
+        }
+        // The user just entered and confirmed this password. Keep that notebook
+        // unlocked for this process; relaunch or a verifier change locks it.
+        unlocks.unlock(notebook.id, hash);
+      } catch (error) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Could not turn on password protection: $error'),
+          ),
+        );
+      }
+      return;
+    }
+
+    final bool removed = await showNotebookUnlockDialog(
+      context,
+      notebookTitle: notebook.title,
+      title: 'Turn off password protection',
+      confirmLabel: 'Turn off',
+      verify: (String password) =>
+          persistence.removePassword(notebook.id, password),
+    );
+    if (removed) unlocks.lock(notebook.id);
+  }
+
   Future<void> _move(NotebookHeader notebook) async {
     final LocalDb db = ref.read(localDbProvider);
     final List<Folder> folders =
@@ -436,6 +523,8 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
   }
 
   Future<void> _rename(NotebookHeader notebook) async {
+    if (!await _requireUnlocked(notebook)) return;
+    if (!mounted) return;
     final TextEditingController controller =
         TextEditingController(text: notebook.title);
     final String? name = await showDialog<String>(
@@ -819,7 +908,7 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
       onTap: _selecting
           ? () => _toggleSelected(notebook.id)
           : () => _openNotebook(
-                notebook.id,
+                notebook,
                 findQuery: _searchQueryForOpen(),
               ),
       onLongPress: _selecting ? null : () => _enterSelection(notebook.id),
@@ -843,7 +932,11 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
               ),
               child: Center(
                 child: Icon(
-                  selected ? Icons.check_circle : Icons.menu_book,
+                  selected
+                      ? Icons.check_circle
+                      : notebook.passwordProtected
+                          ? Icons.lock_outline
+                          : Icons.menu_book,
                   size: 40,
                   color: colors.primary,
                 ),
@@ -945,7 +1038,14 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
                         _bulkBusy ? null : (_) => _toggleSelected(notebook.id),
                   ),
                 )
-              : const Icon(Icons.menu_book),
+              : Icon(
+                  notebook.passwordProtected
+                      ? Icons.lock_outline
+                      : Icons.menu_book,
+                  key: notebook.passwordProtected
+                      ? ValueKey<String>('notebook-lock-${notebook.id}')
+                      : null,
+                ),
           title: Row(
             children: <Widget>[
               if (notebook.pinned) ...<Widget>[
@@ -977,7 +1077,7 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
           onTap: _selecting
               ? (_bulkBusy ? null : () => _toggleSelected(notebook.id))
               : () => _openNotebook(
-                    notebook.id,
+                    notebook,
                     findQuery: _searchQueryForOpen(),
                   ),
           onLongPress: _selecting ? null : () => _enterSelection(notebook.id),

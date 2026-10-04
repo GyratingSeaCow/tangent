@@ -19,6 +19,7 @@ import 'package:tangent/screens/notebook/notebook_editor_screen.dart';
 import 'package:tangent/screens/settings/ai_summaries_section.dart'
     show summariesEnabledProvider;
 import 'package:tangent/services/notebook_import.dart';
+import 'package:tangent/services/notebook_password.dart';
 import 'package:tangent/services/notebook_persistence.dart';
 import 'package:tangent/services/recording_playback.dart';
 import 'package:tangent/widgets/dump_picker_sheet.dart';
@@ -37,23 +38,22 @@ DumpRow _dumpRow(
   String mode = 'brain_dump',
   String? transcript,
   String? summary,
-}) =>
-    DumpRow(
-      id: id,
-      createdAt: DateTime.utc(2026, 9, 17, 8),
-      updatedAt: DateTime.utc(2026, 9, 17, 8),
-      mode: mode,
-      durationSeconds: mode == 'text_note' ? 0 : 95,
-      title: title,
-      transcript: transcript,
-      audioPath: '/audio/$id.m4a',
-      audioSizeBytes: 2048,
-      syncStatus: 'local_only',
-      syncAttempts: 0,
-      transcriptionStatus: 'not_transcribed',
-      transcriptionAttempt: 0,
-      summary: summary,
-    );
+}) => DumpRow(
+  id: id,
+  createdAt: DateTime.utc(2026, 9, 17, 8),
+  updatedAt: DateTime.utc(2026, 9, 17, 8),
+  mode: mode,
+  durationSeconds: mode == 'text_note' ? 0 : 95,
+  title: title,
+  transcript: transcript,
+  audioPath: '/audio/$id.m4a',
+  audioSizeBytes: 2048,
+  syncStatus: 'local_only',
+  syncAttempts: 0,
+  transcriptionStatus: 'not_transcribed',
+  transcriptionAttempt: 0,
+  summary: summary,
+);
 
 /// Records notebooks handed to the durable-publication path so a test can
 /// prove Save went through NotebookPersistence and not just the repository.
@@ -169,37 +169,78 @@ void main() {
   }
 
   Finder textBlocks() => find.byWidgetPredicate(
-        (Widget widget) =>
-            widget.key is ValueKey<String> &&
-            (widget.key! as ValueKey<String>)
-                .value
-                .startsWith('notebook-text-block-'),
-      );
+    (Widget widget) =>
+        widget.key is ValueKey<String> &&
+        (widget.key! as ValueKey<String>).value.startsWith(
+          'notebook-text-block-',
+        ),
+  );
 
   Finder checkboxBlocks() => find.byWidgetPredicate(
-        (Widget widget) =>
-            widget.key is ValueKey<String> &&
-            (widget.key! as ValueKey<String>)
-                .value
-                .startsWith('notebook-checkbox-block-'),
-      );
+    (Widget widget) =>
+        widget.key is ValueKey<String> &&
+        (widget.key! as ValueKey<String>).value.startsWith(
+          'notebook-checkbox-block-',
+        ),
+  );
 
   bool anyFieldFocused(WidgetTester tester) => tester
       .widgetList<EditableText>(find.byType(EditableText))
       .any((EditableText field) => field.focusNode.hasFocus);
 
-  Notebook seeded() => testNotebook(
-        id: 'nb-1',
-        title: 'Sprint ideas',
-        blocks: <NotebookBlock>[
-          const NotebookTextBlock(id: 'b1', text: 'hello notebook'),
-          const NotebookCheckboxBlock(id: 'b2', text: 'milk', checked: true),
-          const NotebookDumpCardBlock(id: 'b3', dumpId: 'd1', x: 24, y: 120),
-        ],
-      );
+  Notebook seeded({NotebookPasswordMetadata? password}) => testNotebook(
+    id: 'nb-1',
+    title: 'Sprint ideas',
+    blocks: <NotebookBlock>[
+      const NotebookTextBlock(id: 'b1', text: 'hello notebook'),
+      const NotebookCheckboxBlock(id: 'b2', text: 'milk', checked: true),
+      const NotebookDumpCardBlock(id: 'b3', dumpId: 'd1', x: 24, y: 120),
+    ],
+    passwordHash: password?.hash,
+    passwordSalt: password?.salt,
+    passwordIterations: password?.iterations,
+  );
 
-  testWidgets('renders text, checkbox and dump-card blocks from storage',
-      (tester) async {
+  testWidgets(
+    'direct editor route stays blank until the password is verified',
+    (tester) async {
+      final NotebookPasswordMetadata metadata = fakeNotebookPasswordMetadata(
+        'right password',
+      );
+      final Notebook protected = seeded(password: metadata);
+
+      await mountEditor(tester, notebook: protected);
+
+      expect(find.text('Unlock notebook'), findsOneWidget);
+      expect(find.text('hello notebook'), findsNothing);
+
+      await tester.enterText(
+        find.byKey(const ValueKey<String>('notebook-current-password')),
+        'wrong password',
+      );
+      await tester.tap(find.widgetWithText(FilledButton, 'Unlock'));
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('Wrong password'), findsOneWidget);
+      expect(find.text('hello notebook'), findsNothing);
+
+      await tester.enterText(
+        find.byKey(const ValueKey<String>('notebook-current-password')),
+        'right password',
+      );
+      await tester.tap(find.widgetWithText(FilledButton, 'Unlock'));
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.text('Unlock notebook'), findsNothing);
+      expect(find.text('hello notebook'), findsOneWidget);
+      await unmount(tester);
+    },
+  );
+
+  testWidgets('renders text, checkbox and dump-card blocks from storage', (
+    tester,
+  ) async {
     await mountEditor(
       tester,
       notebook: seeded(),
@@ -222,8 +263,9 @@ void main() {
     await unmount(tester);
   });
 
-  testWidgets('a dump-card block whose dump is gone renders unavailable',
-      (tester) async {
+  testWidgets('a dump-card block whose dump is gone renders unavailable', (
+    tester,
+  ) async {
     await mountEditor(
       tester,
       notebook: testNotebook(
@@ -247,87 +289,93 @@ void main() {
   });
 
   testWidgets(
-      'one unified toolbar: every tool is visible AND live before draw mode; '
-      'tapping a tool activates draw mode with that tool', (tester) async {
-    await mountEditor(tester, notebook: seeded());
+    'one unified toolbar: every tool is visible AND live before draw mode; '
+    'tapping a tool activates draw mode with that tool',
+    (tester) async {
+      await mountEditor(tester, notebook: seeded());
 
-    // The whole kit is on screen from the start — no second row drops down.
-    expect(find.byType(PenSizeControl), findsOneWidget);
-    expect(find.byIcon(Icons.undo), findsOneWidget);
-    expect(find.byKey(const ValueKey<String>('notebook-redo')), findsOneWidget);
-    expect(find.byKey(const ValueKey('notebook-lasso')), findsOneWidget);
-    expect(find.byKey(const ValueKey('notebook-pen-style')), findsOneWidget);
+      // The whole kit is on screen from the start — no second row drops down.
+      expect(find.byType(PenSizeControl), findsOneWidget);
+      expect(find.byIcon(Icons.undo), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey<String>('notebook-redo')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('notebook-lasso')), findsOneWidget);
+      expect(find.byKey(const ValueKey('notebook-pen-style')), findsOneWidget);
 
-    // Contract change (Jeff): every tool is tappable at ANY time — tapping
-    // one activates draw mode with that tool, instead of being dead until
-    // the Draw toggle is pressed first.
-    IconButton toolButton(Key key) =>
-        tester.widget<IconButton>(find.byKey(key));
-    expect(
-      toolButton(const ValueKey<String>('notebook-lasso')).onPressed,
-      isNotNull,
-      reason: 'lasso must be tappable outside draw mode',
-    );
-    expect(
-      toolButton(const ValueKey<String>('notebook-pen-style')).onPressed,
-      isNotNull,
-      reason: 'the nib must be tappable outside draw mode',
-    );
-    expect(
-      tester
-          .widget<NotebookInkCanvas>(find.byType(NotebookInkCanvas))
-          .drawingEnabled,
-      isFalse,
-    );
+      // Contract change (Jeff): every tool is tappable at ANY time — tapping
+      // one activates draw mode with that tool, instead of being dead until
+      // the Draw toggle is pressed first.
+      IconButton toolButton(Key key) =>
+          tester.widget<IconButton>(find.byKey(key));
+      expect(
+        toolButton(const ValueKey<String>('notebook-lasso')).onPressed,
+        isNotNull,
+        reason: 'lasso must be tappable outside draw mode',
+      );
+      expect(
+        toolButton(const ValueKey<String>('notebook-pen-style')).onPressed,
+        isNotNull,
+        reason: 'the nib must be tappable outside draw mode',
+      );
+      expect(
+        tester
+            .widget<NotebookInkCanvas>(find.byType(NotebookInkCanvas))
+            .drawingEnabled,
+        isFalse,
+      );
 
-    // Tapping the lasso from cold enters draw mode, lassoing.
-    await tester.tap(find.byKey(const ValueKey('notebook-lasso')));
-    await tester.pump();
-    NotebookInkCanvas canvas() =>
-        tester.widget<NotebookInkCanvas>(find.byType(NotebookInkCanvas));
-    expect(
-      canvas().drawingEnabled,
-      isTrue,
-      reason: 'a tool tap activates draw mode itself',
-    );
-    expect(canvas().lassoing, isTrue);
+      // Tapping the lasso from cold enters draw mode, lassoing.
+      await tester.tap(find.byKey(const ValueKey('notebook-lasso')));
+      await tester.pump();
+      NotebookInkCanvas canvas() =>
+          tester.widget<NotebookInkCanvas>(find.byType(NotebookInkCanvas));
+      expect(
+        canvas().drawingEnabled,
+        isTrue,
+        reason: 'a tool tap activates draw mode itself',
+      );
+      expect(canvas().lassoing, isTrue);
 
-    // Draw toggle still exits, and the toolbar stays put (disabled tools
-    // never disappear — same row, same places).
-    await tester.tap(find.byIcon(Icons.draw));
-    await tester.pump();
-    expect(canvas().drawingEnabled, isFalse);
-    expect(find.byType(PenSizeControl), findsOneWidget);
-    expect(find.byIcon(Icons.undo), findsOneWidget);
+      // Draw toggle still exits, and the toolbar stays put (disabled tools
+      // never disappear — same row, same places).
+      await tester.tap(find.byIcon(Icons.draw));
+      await tester.pump();
+      expect(canvas().drawingEnabled, isFalse);
+      expect(find.byType(PenSizeControl), findsOneWidget);
+      expect(find.byIcon(Icons.undo), findsOneWidget);
 
-    // Tapping the eraser from cold enters draw mode, erasing.
-    await tester.tap(find.byIcon(Icons.auto_fix_normal));
-    await tester.pump();
-    expect(canvas().drawingEnabled, isTrue);
-    expect(canvas().erasing, isTrue);
-    expect(
-      canvas().lassoing,
-      isFalse,
-      reason: 'eraser and lasso stay exclusive',
-    );
+      // Tapping the eraser from cold enters draw mode, erasing.
+      await tester.tap(find.byIcon(Icons.auto_fix_normal));
+      await tester.pump();
+      expect(canvas().drawingEnabled, isTrue);
+      expect(canvas().erasing, isTrue);
+      expect(
+        canvas().lassoing,
+        isFalse,
+        reason: 'eraser and lasso stay exclusive',
+      );
 
-    await tester.tap(find.byIcon(Icons.draw));
-    await tester.pump();
+      await tester.tap(find.byIcon(Icons.draw));
+      await tester.pump();
 
-    await tester.tap(textBlocks().first);
-    await tester.pump();
-    expect(
-      anyFieldFocused(tester),
-      isTrue,
-      reason: 'leaving draw mode restores normal text editing',
-    );
-    expect(tester.takeException(), isNull);
+      await tester.tap(textBlocks().first);
+      await tester.pump();
+      expect(
+        anyFieldFocused(tester),
+        isTrue,
+        reason: 'leaving draw mode restores normal text editing',
+      );
+      expect(tester.takeException(), isNull);
 
-    await unmount(tester);
-  });
+      await unmount(tester);
+    },
+  );
 
-  testWidgets('Save publishes the durable file, not just the database row',
-      (tester) async {
+  testWidgets('Save publishes the durable file, not just the database row', (
+    tester,
+  ) async {
     // Regression: the editor called notebookRepositoryProvider (database only)
     // instead of notebookPersistenceProvider, so notebooks never reached
     // 'Tangent Notebooks' on disk and an uninstall would lose them. Caught on
@@ -344,7 +392,8 @@ void main() {
     expect(
       publishedNotebooks,
       hasLength(1),
-      reason: 'Save must route through NotebookPersistence so the '
+      reason:
+          'Save must route through NotebookPersistence so the '
           '<id>.notebook.json file is published.',
     );
     expect(publishedNotebooks.single.id, 'nb-1');
@@ -357,8 +406,9 @@ void main() {
     );
   });
 
-  testWidgets('Save writes the edited title, text and checkbox state',
-      (tester) async {
+  testWidgets('Save writes the edited title, text and checkbox state', (
+    tester,
+  ) async {
     await mountEditor(tester, notebook: seeded());
 
     await tester.enterText(
@@ -397,8 +447,9 @@ void main() {
     await unmount(tester);
   });
 
-  testWidgets('the insert menu appends new text and checkbox blocks',
-      (tester) async {
+  testWidgets('the insert menu appends new text and checkbox blocks', (
+    tester,
+  ) async {
     // Drives the bottom-left insert menu that replaced the button row; the
     // assertions below are unchanged from when those buttons existed.
     await mountEditor(tester, notebook: testNotebook(id: 'nb-1'));
@@ -522,10 +573,13 @@ void main() {
           .controller!;
       NotebookTablePainter tablePainter() =>
           tester
-              .widget<CustomPaint>(
-                find.descendant(of: grid, matching: find.byType(CustomPaint)),
-              )
-              .painter!
+                  .widget<CustomPaint>(
+                    find.descendant(
+                      of: grid,
+                      matching: find.byType(CustomPaint),
+                    ),
+                  )
+                  .painter!
               as NotebookTablePainter;
       final Finder renderedViewport = find.descendant(
         of: table,
@@ -545,11 +599,12 @@ void main() {
       }
 
       expect(tablePainter().debugLastVisitedCellCount, 40);
-      expect(
-        tablePainter().debugLastVisibleRange,
-        (firstRow: 0, lastRow: 7, firstColumn: 0, lastColumn: 4),
-        reason: 'the real editor tree must paint only its rendered viewport',
-      );
+      expect(tablePainter().debugLastVisibleRange, (
+        firstRow: 0,
+        lastRow: 7,
+        firstColumn: 0,
+        lastColumn: 4,
+      ), reason: 'the real editor tree must paint only its rendered viewport');
       expectPainterMatchesRenderedViewport();
       final Size normalViewport = tester.getSize(renderedViewport);
 
@@ -578,11 +633,12 @@ void main() {
       await tester.pump();
 
       expect(tablePainter().debugLastVisitedCellCount, 40);
-      expect(
-        tablePainter().debugLastVisibleRange,
-        (firstRow: 92, lastRow: 99, firstColumn: 95, lastColumn: 99),
-        reason: 'scroll offsets must move the bounded paint window',
-      );
+      expect(tablePainter().debugLastVisibleRange, (
+        firstRow: 92,
+        lastRow: 99,
+        firstColumn: 95,
+        lastColumn: 99,
+      ), reason: 'scroll offsets must move the bounded paint window');
 
       horizontal.jumpTo(0);
       vertical.jumpTo(0);
@@ -619,8 +675,9 @@ void main() {
     },
   );
 
-  testWidgets('Add recordings embeds the picked dumps as cards',
-      (tester) async {
+  testWidgets('Add recordings embeds the picked dumps as cards', (
+    tester,
+  ) async {
     await mountEditor(
       tester,
       notebook: testNotebook(
@@ -664,7 +721,10 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
 
     final List<NotebookDumpCardBlock> cards = repository
-        .saved.single.document.blocks
+        .saved
+        .single
+        .document
+        .blocks
         .whereType<NotebookDumpCardBlock>()
         .toList();
     expect(cards.map((NotebookDumpCardBlock c) => c.dumpId), <String>[
@@ -741,13 +801,12 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(DumpPickerSheet), findsOneWidget);
-    final DumpPickerSheet sheet =
-        tester.widget<DumpPickerSheet>(find.byType(DumpPickerSheet));
-    expect(
-      sheet.dumps.map((Dump d) => d.id).toList(),
-      <String>['t1'],
-      reason: 'the text-note import must offer text notes only',
+    final DumpPickerSheet sheet = tester.widget<DumpPickerSheet>(
+      find.byType(DumpPickerSheet),
     );
+    expect(sheet.dumps.map((Dump d) => d.id).toList(), <String>[
+      't1',
+    ], reason: 'the text-note import must offer text notes only');
     // A sheet full of text notes headed "Add recordings" reads as the wrong
     // list having opened.
     expect(
@@ -774,13 +833,12 @@ void main() {
     await tester.tap(find.text('Meeting notes'));
     await tester.pumpAndSettle();
 
-    final DumpPickerSheet sheet =
-        tester.widget<DumpPickerSheet>(find.byType(DumpPickerSheet));
-    expect(
-      sheet.dumps.map((Dump d) => d.id).toList(),
-      <String>['m1'],
-      reason: 'the meeting import must offer meetings only',
+    final DumpPickerSheet sheet = tester.widget<DumpPickerSheet>(
+      find.byType(DumpPickerSheet),
     );
+    expect(sheet.dumps.map((Dump d) => d.id).toList(), <String>[
+      'm1',
+    ], reason: 'the meeting import must offer meetings only');
 
     await tester.tap(find.byKey(const ValueKey('dump-pick-m1')));
     await tester.pump();
@@ -798,8 +856,9 @@ void main() {
     await unmount(tester);
   });
 
-  testWidgets('the insert menu still adds text and checkbox blocks',
-      (tester) async {
+  testWidgets('the insert menu still adds text and checkbox blocks', (
+    tester,
+  ) async {
     await mountEditor(tester, notebook: testNotebook(id: 'nb-1'));
 
     await tester.tap(find.byKey(const ValueKey('notebook-insert-menu')));
@@ -853,8 +912,9 @@ void main() {
     await unmount(tester);
   });
 
-  testWidgets('a block\'s remove button is on screen, not off the page edge',
-      (tester) async {
+  testWidgets('a block\'s remove button is on screen, not off the page edge', (
+    tester,
+  ) async {
     // Jeff: "there is no way to delete the imported list items etc".
     // The X existed but sat at the far edge of a 720px-wide row on a ~400px
     // screen, so it was rendered off the visible page entirely.
@@ -868,8 +928,9 @@ void main() {
       ),
     );
 
-    final Finder remove =
-        find.byKey(const ValueKey('notebook-block-remove-b1'));
+    final Finder remove = find.byKey(
+      const ValueKey('notebook-block-remove-b1'),
+    );
     expect(remove, findsOneWidget, reason: 'every block needs a remove button');
 
     final Rect rect = tester.getRect(remove);
@@ -883,8 +944,9 @@ void main() {
     await unmount(tester);
   });
 
-  testWidgets('tapping a block\'s remove button deletes that block',
-      (tester) async {
+  testWidgets('tapping a block\'s remove button deletes that block', (
+    tester,
+  ) async {
     await mountEditor(
       tester,
       notebook: testNotebook(
@@ -940,8 +1002,9 @@ void main() {
     await unmount(tester);
   });
 
-  testWidgets('enter on a checkbox line starts the next checkbox item',
-      (tester) async {
+  testWidgets('enter on a checkbox line starts the next checkbox item', (
+    tester,
+  ) async {
     // Jeff: "when you are in the text area of a checkbox item, you can hit
     // enter and it will go into another checkbox list item, not expand the
     // box."
@@ -980,8 +1043,9 @@ void main() {
     );
   });
 
-  testWidgets('the new checkbox item is inserted directly after its source',
-      (tester) async {
+  testWidgets('the new checkbox item is inserted directly after its source', (
+    tester,
+  ) async {
     // Appending to the end of the document would scatter a list being typed
     // top-to-bottom, so the new item must land next to the one it came from.
     await mountEditor(
@@ -1026,11 +1090,7 @@ void main() {
       'notebook-block-b2',
       reason: 'the following text block stays last, so the new item is between',
     );
-    expect(
-      keysInOrder.length,
-      3,
-      reason: 'exactly one new block was inserted',
-    );
+    expect(keysInOrder.length, 3, reason: 'exactly one new block was inserted');
   });
 
   /// Reads the block keys in the order they are laid out on the page.
@@ -1055,8 +1115,9 @@ void main() {
         .toList();
   }
 
-  testWidgets('a new text block lands below the item being edited',
-      (tester) async {
+  testWidgets('a new text block lands below the item being edited', (
+    tester,
+  ) async {
     // Appending to the very end scatters a page being written top-to-bottom:
     // the user is working in the middle of the document and the new block
     // appears far below, off screen. Enter already inserts in place
@@ -1093,13 +1154,15 @@ void main() {
     expect(
       order.last,
       'notebook-block-b2',
-      reason: 'the new block sits BETWEEN the focused block and what followed '
+      reason:
+          'the new block sits BETWEEN the focused block and what followed '
           'it, not appended after everything',
     );
   });
 
-  testWidgets('a new checkbox lands below the item being edited',
-      (tester) async {
+  testWidgets('a new checkbox lands below the item being edited', (
+    tester,
+  ) async {
     await mountEditor(
       tester,
       notebook: testNotebook(
@@ -1129,8 +1192,9 @@ void main() {
     );
   });
 
-  testWidgets('with nothing focused a new block still appends to the end',
-      (tester) async {
+  testWidgets('with nothing focused a new block still appends to the end', (
+    tester,
+  ) async {
     // No caret means no "here" to insert at, and the end of the page is the
     // only answer that does not move the user somewhere they did not ask for.
     await mountEditor(
@@ -1151,11 +1215,10 @@ void main() {
 
     final List<String> order = renderedBlockOrder(tester);
     expect(order.length, 3);
-    expect(
-      order.sublist(0, 2),
-      <String>['notebook-block-b1', 'notebook-block-b2'],
-      reason: 'the existing blocks keep their order and the new one is last',
-    );
+    expect(order.sublist(0, 2), <String>[
+      'notebook-block-b1',
+      'notebook-block-b2',
+    ], reason: 'the existing blocks keep their order and the new one is last');
   });
 
   /// The ruling layer's painter, or null when it is not in the tree.
@@ -1187,8 +1250,9 @@ void main() {
     expect(rulingPainter(tester)?.ruling, NotebookRuling.blank);
   });
 
-  testWidgets('the ruling covers the whole page, not just the viewport',
-      (tester) async {
+  testWidgets('the ruling covers the whole page, not just the viewport', (
+    tester,
+  ) async {
     // The page is a vertical roll taller than the screen. Painting only the
     // visible part would leave the lines behind as soon as the user scrolls,
     // and the page would run out of ruling at the bottom.
@@ -1205,10 +1269,12 @@ void main() {
         ],
       ),
     );
-    final Size rulingSize =
-        tester.getSize(find.byKey(const ValueKey('notebook-ruling')));
-    final Size surfaceSize =
-        tester.getSize(find.byKey(const ValueKey('notebook-canvas-surface')));
+    final Size rulingSize = tester.getSize(
+      find.byKey(const ValueKey('notebook-ruling')),
+    );
+    final Size surfaceSize = tester.getSize(
+      find.byKey(const ValueKey('notebook-canvas-surface')),
+    );
 
     expect(
       rulingSize.height,
@@ -1218,9 +1284,7 @@ void main() {
     // The visible canvas is the viewport minus the app bar. The page must be
     // taller than that, or "covers the whole page" proves nothing.
     final double visibleCanvasHeight = tester
-        .getSize(
-          find.byKey(const ValueKey('notebook-canvas-scroll')),
-        )
+        .getSize(find.byKey(const ValueKey('notebook-canvas-scroll')))
         .height;
     expect(
       surfaceSize.height,
@@ -1229,8 +1293,9 @@ void main() {
     );
   });
 
-  testWidgets('the ruling does not swallow taps meant for the page',
-      (tester) async {
+  testWidgets('the ruling does not swallow taps meant for the page', (
+    tester,
+  ) async {
     // A full-page layer above the background is exactly the shape of thing
     // that silently breaks drawing and card dragging.
     await mountEditor(
@@ -1251,7 +1316,8 @@ void main() {
     expect(
       guard.ignoring,
       isTrue,
-      reason: 'the ruling must be invisible to hit testing, or it would eat '
+      reason:
+          'the ruling must be invisible to hit testing, or it would eat '
           'pen strokes and card drags',
     );
   });
@@ -1260,13 +1326,15 @@ void main() {
   Future<void> openPageBackgroundSheet(WidgetTester tester) async {
     await tester.tap(find.byKey(const ValueKey('notebook-menu')));
     await tester.pumpAndSettle();
-    await tester
-        .tap(find.byKey(const ValueKey('notebook-page-background-item')));
+    await tester.tap(
+      find.byKey(const ValueKey('notebook-page-background-item')),
+    );
     await tester.pumpAndSettle();
   }
 
-  testWidgets('the notebook menu sits in the app bar and names the style',
-      (tester) async {
+  testWidgets('the notebook menu sits in the app bar and names the style', (
+    tester,
+  ) async {
     await mountEditor(
       tester,
       notebook: testNotebook(id: 'nb-1', ruling: NotebookRuling.medium),
@@ -1293,8 +1361,9 @@ void main() {
     );
   });
 
-  testWidgets('picking Graph from the sheet applies it and saves it',
-      (tester) async {
+  testWidgets('picking Graph from the sheet applies it and saves it', (
+    tester,
+  ) async {
     await mountEditor(
       tester,
       notebook: testNotebook(id: 'nb-1', ruling: NotebookRuling.blank),
@@ -1308,8 +1377,9 @@ void main() {
       findsOneWidget,
       reason: 'the sheet offers every style',
     );
-    await tester
-        .tap(find.byKey(const ValueKey('page-background-option-graph')));
+    await tester.tap(
+      find.byKey(const ValueKey('page-background-option-graph')),
+    );
     await tester.pumpAndSettle();
 
     expect(
@@ -1329,8 +1399,9 @@ void main() {
     );
   });
 
-  testWidgets('dismissing the page-background sheet changes nothing',
-      (tester) async {
+  testWidgets('dismissing the page-background sheet changes nothing', (
+    tester,
+  ) async {
     await mountEditor(
       tester,
       notebook: testNotebook(id: 'nb-1', ruling: NotebookRuling.medium),
@@ -1365,13 +1436,15 @@ void main() {
     expect(
       find.byKey(const ValueKey('notebook-ruling-item')),
       findsNothing,
-      reason: 'the page-background control moved to the top-right menu; a '
+      reason:
+          'the page-background control moved to the top-right menu; a '
           'second copy here would drift from it',
     );
   });
 
-  testWidgets('the notebook menu shows the sheet with the current selection',
-      (tester) async {
+  testWidgets('the notebook menu shows the sheet with the current selection', (
+    tester,
+  ) async {
     await mountEditor(
       tester,
       notebook: testNotebook(id: 'nb-1', ruling: NotebookRuling.small),
@@ -1395,8 +1468,9 @@ void main() {
     expect(selected.trailing, isA<Icon>());
   });
 
-  testWidgets('the soft keyboard enter key starts the next checkbox item',
-      (tester) async {
+  testWidgets('the soft keyboard enter key starts the next checkbox item', (
+    tester,
+  ) async {
     // The hardware-key test above passed while the DEVICE still grew the box:
     // an on-screen keyboard does not send key events at all. It commits text
     // and sends an EDITING ACTION through the text-input channel, so a fix
@@ -1435,50 +1509,52 @@ void main() {
   });
 
   testWidgets(
-      'the checkbox field asks Android for an action key, not a newline',
-      (tester) async {
-    // Android IGNORES the IME action whenever the input type carries the
-    // multi-line flag: it shows a newline key instead, the newline is
-    // committed directly into the value, and performAction never fires. So
-    // the field must declare a single-line INPUT TYPE (it still wraps, which
-    // is maxLines' job) together with an explicit action.
-    //
-    // A widget test cannot host a real IME, so this pins the configuration
-    // that makes the device behave. It is the half the harness can prove;
-    // the other half is verified on hardware.
-    await mountEditor(
-      tester,
-      notebook: testNotebook(
-        id: 'nb-1',
-        blocks: const <NotebookBlock>[
-          NotebookCheckboxBlock(id: 'b1', text: 'milk', x: 20, y: 40),
-        ],
-      ),
-    );
+    'the checkbox field asks Android for an action key, not a newline',
+    (tester) async {
+      // Android IGNORES the IME action whenever the input type carries the
+      // multi-line flag: it shows a newline key instead, the newline is
+      // committed directly into the value, and performAction never fires. So
+      // the field must declare a single-line INPUT TYPE (it still wraps, which
+      // is maxLines' job) together with an explicit action.
+      //
+      // A widget test cannot host a real IME, so this pins the configuration
+      // that makes the device behave. It is the half the harness can prove;
+      // the other half is verified on hardware.
+      await mountEditor(
+        tester,
+        notebook: testNotebook(
+          id: 'nb-1',
+          blocks: const <NotebookBlock>[
+            NotebookCheckboxBlock(id: 'b1', text: 'milk', x: 20, y: 40),
+          ],
+        ),
+      );
 
-    final TextField field = tester.widget<TextField>(
-      find.byKey(const ValueKey('notebook-checkbox-block-b1')),
-    );
+      final TextField field = tester.widget<TextField>(
+        find.byKey(const ValueKey('notebook-checkbox-block-b1')),
+      );
 
-    expect(
-      field.keyboardType,
-      TextInputType.text,
-      reason: 'a multiline input type makes Android ignore the action key',
-    );
-    expect(
-      field.textInputAction,
-      TextInputAction.next,
-      reason: 'the enter key must deliver an action, not insert a newline',
-    );
-    expect(
-      field.maxLines,
-      isNull,
-      reason: 'a long item must still wrap rather than scroll sideways',
-    );
-  });
+      expect(
+        field.keyboardType,
+        TextInputType.text,
+        reason: 'a multiline input type makes Android ignore the action key',
+      );
+      expect(
+        field.textInputAction,
+        TextInputAction.next,
+        reason: 'the enter key must deliver an action, not insert a newline',
+      );
+      expect(
+        field.maxLines,
+        isNull,
+        reason: 'a long item must still wrap rather than scroll sideways',
+      );
+    },
+  );
 
-  testWidgets('a prose block keeps the multiline keyboard and its newlines',
-      (tester) async {
+  testWidgets('a prose block keeps the multiline keyboard and its newlines', (
+    tester,
+  ) async {
     // The counterpart to the rule above: prose is meant to take newlines, so
     // it must keep the multi-line input type and must NOT declare an action.
     await mountEditor(
@@ -1507,39 +1583,42 @@ void main() {
     );
   });
 
-  testWidgets('a soft-keyboard action on a prose line never spawns a checkbox',
-      (tester) async {
-    // Some IMEs send an action even to a multiline field. Prose must ignore
-    // it rather than converting the paragraph into a list.
-    await mountEditor(
-      tester,
-      notebook: testNotebook(
-        id: 'nb-1',
-        blocks: const <NotebookBlock>[
-          NotebookTextBlock(id: 'b1', text: 'para', x: 20, y: 40),
-        ],
-      ),
-    );
+  testWidgets(
+    'a soft-keyboard action on a prose line never spawns a checkbox',
+    (tester) async {
+      // Some IMEs send an action even to a multiline field. Prose must ignore
+      // it rather than converting the paragraph into a list.
+      await mountEditor(
+        tester,
+        notebook: testNotebook(
+          id: 'nb-1',
+          blocks: const <NotebookBlock>[
+            NotebookTextBlock(id: 'b1', text: 'para', x: 20, y: 40),
+          ],
+        ),
+      );
 
-    await tester.tap(find.byKey(const ValueKey('notebook-text-block-b1')));
-    await tester.pumpAndSettle();
-    await tester.testTextInput.receiveAction(TextInputAction.next);
-    await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('notebook-text-block-b1')));
+      await tester.pumpAndSettle();
+      await tester.testTextInput.receiveAction(TextInputAction.next);
+      await tester.pumpAndSettle();
 
-    expect(
-      checkboxBlocks(),
-      findsNothing,
-      reason: 'a text block must never spawn a checkbox',
-    );
-    expect(
-      find.byKey(const ValueKey('notebook-block-b1')),
-      findsOneWidget,
-      reason: 'the text block must survive',
-    );
-  });
+      expect(
+        checkboxBlocks(),
+        findsNothing,
+        reason: 'a text block must never spawn a checkbox',
+      );
+      expect(
+        find.byKey(const ValueKey('notebook-block-b1')),
+        findsOneWidget,
+        reason: 'the text block must survive',
+      );
+    },
+  );
 
-  testWidgets('a soft-keyboard action on an empty checkbox ends the list',
-      (tester) async {
+  testWidgets('a soft-keyboard action on an empty checkbox ends the list', (
+    tester,
+  ) async {
     // The escape hatch must work from the on-screen keyboard too, or there is
     // no way to stop adding items without a physical keyboard.
     await mountEditor(
@@ -1570,8 +1649,9 @@ void main() {
     );
   });
 
-  testWidgets('enter on a plain text line still inserts a newline',
-      (tester) async {
+  testWidgets('enter on a plain text line still inserts a newline', (
+    tester,
+  ) async {
     // The checkbox behaviour must not leak into ordinary prose blocks, where
     // a multi-line paragraph is the whole point.
     await mountEditor(
@@ -1601,8 +1681,9 @@ void main() {
     );
   });
 
-  testWidgets('enter on an empty checkbox item ends the list instead',
-      (tester) async {
+  testWidgets('enter on an empty checkbox item ends the list instead', (
+    tester,
+  ) async {
     // Standard list behaviour everywhere else: enter on a blank item exits
     // the list rather than producing an endless run of empty checkboxes.
     await mountEditor(
@@ -1633,8 +1714,9 @@ void main() {
     );
   });
 
-  testWidgets('backspace with text on the line only deletes a character',
-      (tester) async {
+  testWidgets('backspace with text on the line only deletes a character', (
+    tester,
+  ) async {
     await mountEditor(
       tester,
       notebook: testNotebook(
@@ -1659,8 +1741,9 @@ void main() {
     await unmount(tester);
   });
 
-  testWidgets('the page scrolls vertically and never pinch-zooms',
-      (tester) async {
+  testWidgets('the page scrolls vertically and never pinch-zooms', (
+    tester,
+  ) async {
     // Jeff, after using the pinch/drag canvas: "Make it more like the
     // infinite scrollable screen on samsung notes rather than the pinch and
     // drag since the pinch and drag seems to be interfering with the pen
@@ -1682,8 +1765,9 @@ void main() {
     await unmount(tester);
   });
 
-  testWidgets('drawing locks the page scroll so the pen never pans it',
-      (tester) async {
+  testWidgets('drawing locks the page scroll so the pen never pans it', (
+    tester,
+  ) async {
     // A scrollable still steals a vertical drag from the ink layer, which is
     // exactly the interference Jeff reported. While drawing, the page holds.
     await mountEditor(tester, notebook: testNotebook(id: 'nb-1'));
@@ -1712,8 +1796,9 @@ void main() {
     await unmount(tester);
   });
 
-  testWidgets('the page grows downward as content is placed lower',
-      (tester) async {
+  testWidgets('the page grows downward as content is placed lower', (
+    tester,
+  ) async {
     // "Infinite" in the Samsung Notes sense: the roll extends past whatever
     // you have written so there is always fresh page below.
     await mountEditor(
@@ -1772,8 +1857,9 @@ void main() {
     await unmount(tester);
   });
 
-  testWidgets('a block written before blocks were movable still opens',
-      (tester) async {
+  testWidgets('a block written before blocks were movable still opens', (
+    tester,
+  ) async {
     // Older notebooks have no x/y. They must lay out in order, not collapse
     // onto the same spot or vanish.
     await mountEditor(
@@ -1787,10 +1873,12 @@ void main() {
       ),
     );
 
-    final Rect first =
-        tester.getRect(find.byKey(const ValueKey('notebook-block-b1')));
-    final Rect second =
-        tester.getRect(find.byKey(const ValueKey('notebook-block-b2')));
+    final Rect first = tester.getRect(
+      find.byKey(const ValueKey('notebook-block-b1')),
+    );
+    final Rect second = tester.getRect(
+      find.byKey(const ValueKey('notebook-block-b2')),
+    );
 
     expect(
       second.top,
@@ -1835,8 +1923,9 @@ void main() {
     await unmount(tester);
   });
 
-  testWidgets('page content is actually on screen, not just in the tree',
-      (tester) async {
+  testWidgets('page content is actually on screen, not just in the tree', (
+    tester,
+  ) async {
     // find.byKey succeeds for a widget laid out far outside the viewport, so
     // the canvas tests above cannot tell "rendered where you can see it" from
     // "rendered 3000px off the side". On device that difference showed as a
@@ -1853,21 +1942,24 @@ void main() {
 
     final Rect screen =
         Offset.zero & tester.view.physicalSize / tester.view.devicePixelRatio;
-    final Rect row =
-        tester.getRect(find.byKey(const ValueKey('notebook-block-b1')));
+    final Rect row = tester.getRect(
+      find.byKey(const ValueKey('notebook-block-b1')),
+    );
 
     expect(
       row.overlaps(screen),
       isTrue,
-      reason: 'the first block must be within the viewport on open, not '
+      reason:
+          'the first block must be within the viewport on open, not '
           'parked off-canvas: got \$row against screen \$screen',
     );
 
     await unmount(tester);
   });
 
-  testWidgets('the insert menu scrolls back to the top of the page',
-      (tester) async {
+  testWidgets('the insert menu scrolls back to the top of the page', (
+    tester,
+  ) async {
     // With a long vertical roll it is still easy to end up far down it.
     // (2D panning is gone, so this is now just "go to the top".)
     await mountEditor(
@@ -1940,8 +2032,9 @@ void main() {
     await unmount(tester);
   });
 
-  testWidgets('the ink layer does not hide the page beneath it',
-      (tester) async {
+  testWidgets('the ink layer does not hide the page beneath it', (
+    tester,
+  ) async {
     await mountEditor(
       tester,
       notebook: testNotebook(
@@ -1956,13 +2049,15 @@ void main() {
     // paints an opaque black background of its own. Rasterise the page and
     // prove real light pixels survive: a regression that drops the cutout
     // filter would leave a uniformly black page with invisible text.
-    final ui.Image image = await tester.runAsync(() async {
-      final RenderRepaintBoundary boundary =
-          tester.renderObject<RenderRepaintBoundary>(
-        find.byType(RepaintBoundary).first,
-      );
-      return boundary.toImage();
-    }) as ui.Image;
+    final ui.Image image =
+        await tester.runAsync(() async {
+              final RenderRepaintBoundary boundary = tester
+                  .renderObject<RenderRepaintBoundary>(
+                    find.byType(RepaintBoundary).first,
+                  );
+              return boundary.toImage();
+            })
+            as ui.Image;
     addTearDown(image.dispose);
 
     final ByteData bytes = (await tester.runAsync<ByteData?>(
@@ -2012,8 +2107,9 @@ void main() {
     expect(card, findsOneWidget, reason: 'the dump must be on the page');
     final Rect before = tester.getRect(card);
 
-    final TestGesture gesture =
-        await tester.startGesture(tester.getCenter(find.text('Morning ideas')));
+    final TestGesture gesture = await tester.startGesture(
+      tester.getCenter(find.text('Morning ideas')),
+    );
     for (int i = 0; i < 20; i++) {
       await gesture.moveBy(const Offset(2, 3));
       await tester.pump(const Duration(milliseconds: 16));
@@ -2030,8 +2126,9 @@ void main() {
     await unmount(tester);
   });
 
-  testWidgets('a card drags when the finger moves in small steps',
-      (tester) async {
+  testWidgets('a card drags when the finger moves in small steps', (
+    tester,
+  ) async {
     // Jeff: "when you add in a dump or text note etc. into the notebooks, it
     // can no longer be dragged and put somewhere else on the screen".
     //
@@ -2046,11 +2143,13 @@ void main() {
       dumps: <DumpRow>[_dumpRow('d1', 'Morning ideas')],
     );
 
-    final Rect before =
-        tester.getRect(find.byKey(const ValueKey('notebook-card-b3')));
+    final Rect before = tester.getRect(
+      find.byKey(const ValueKey('notebook-card-b3')),
+    );
 
-    final TestGesture gesture =
-        await tester.startGesture(tester.getCenter(find.text('Morning ideas')));
+    final TestGesture gesture = await tester.startGesture(
+      tester.getCenter(find.text('Morning ideas')),
+    );
     // 1.5px steps: below the scroll view's own slop per event, which is how a
     // slow finger moves. On device this speed failed while a fast swipe
     // worked.
@@ -2063,8 +2162,9 @@ void main() {
     await gesture.up();
     await tester.pumpAndSettle();
 
-    final Rect after =
-        tester.getRect(find.byKey(const ValueKey('notebook-card-b3')));
+    final Rect after = tester.getRect(
+      find.byKey(const ValueKey('notebook-card-b3')),
+    );
 
     expect(
       after.topLeft,
@@ -2075,8 +2175,9 @@ void main() {
     await unmount(tester);
   });
 
-  testWidgets('a second drag still settles where the finger left the card',
-      (tester) async {
+  testWidgets('a second drag still settles where the finger left the card', (
+    tester,
+  ) async {
     await mountEditor(
       tester,
       notebook: testNotebook(
@@ -2115,8 +2216,9 @@ void main() {
     await unmount(tester);
   });
 
-  testWidgets('backing out with unsaved edits saves them on the way out',
-      (tester) async {
+  testWidgets('backing out with unsaved edits saves them on the way out', (
+    tester,
+  ) async {
     await mountEditor(tester, notebook: seeded());
 
     await tester.enterText(textBlocks().first, 'unsaved words');
@@ -2153,8 +2255,9 @@ void main() {
 
     await unmount(tester);
   });
-  testWidgets('the eraser toggle actually reaches the ink canvas',
-      (tester) async {
+  testWidgets('the eraser toggle actually reaches the ink canvas', (
+    tester,
+  ) async {
     // Guards the failure mode that recurred through this project: a control
     // that flips a field nothing reads, so the feature does nothing on device
     // while looking complete in the toolbar. Asserts the canvas property, not
@@ -2188,8 +2291,9 @@ void main() {
     await unmount(tester);
   });
 
-  testWidgets('leaving draw mode does not strand the eraser on',
-      (tester) async {
+  testWidgets('leaving draw mode does not strand the eraser on', (
+    tester,
+  ) async {
     // Otherwise reopening the pen later silently starts in erase mode and the
     // next stroke deletes work instead of drawing it.
     await mountEditor(tester, notebook: seeded());
@@ -2213,8 +2317,9 @@ void main() {
     await unmount(tester);
   });
 
-  testWidgets('long-pressing the pen opens its palette and picks a colour',
-      (tester) async {
+  testWidgets('long-pressing the pen opens its palette and picks a colour', (
+    tester,
+  ) async {
     await mountEditor(tester, notebook: seeded());
 
     await tester.longPress(find.byIcon(Icons.draw));
@@ -2225,13 +2330,17 @@ void main() {
       find.byKey(const ValueKey('notebook-ink-swatch-red')),
       findsOneWidget,
     );
-    expect(find.byKey(const ValueKey('notebook-ink-swatch-pink')), findsNothing);
+    expect(
+      find.byKey(const ValueKey('notebook-ink-swatch-pink')),
+      findsNothing,
+    );
 
     await tester.tap(find.byKey(const ValueKey('notebook-ink-swatch-red')));
     await tester.pumpAndSettle();
 
-    final NotebookInkCanvas canvas =
-        tester.widget<NotebookInkCanvas>(find.byType(NotebookInkCanvas));
+    final NotebookInkCanvas canvas = tester.widget<NotebookInkCanvas>(
+      find.byType(NotebookInkCanvas),
+    );
     expect(canvas.colour, InkColor.red);
     // Picking a colour IS choosing to draw: from cold, the pick must land
     // in draw mode or the very next stroke silently does nothing.
@@ -2270,8 +2379,9 @@ void main() {
     await unmount(tester);
   });
 
-  testWidgets('the highlighter activates draw mode and clears other tools',
-      (tester) async {
+  testWidgets('the highlighter activates draw mode and clears other tools', (
+    tester,
+  ) async {
     await mountEditor(tester, notebook: seeded());
 
     // From cold, per the toolbar contract: a tool tap enters draw mode.
@@ -2348,8 +2458,9 @@ void main() {
     Offset total, {
     int steps = 30,
   }) async {
-    final TestGesture gesture =
-        await tester.startGesture(tester.getCenter(target));
+    final TestGesture gesture = await tester.startGesture(
+      tester.getCenter(target),
+    );
     final Offset step = total / steps.toDouble();
     for (int i = 0; i < steps; i++) {
       await gesture.moveBy(step);
@@ -2427,8 +2538,9 @@ void main() {
     await unmount(tester);
   });
 
-  testWidgets('the page does not scroll while a block is dragged',
-      (tester) async {
+  testWidgets('the page does not scroll while a block is dragged', (
+    tester,
+  ) async {
     await mountEditor(
       tester,
       notebook: testNotebook(
@@ -2459,8 +2571,9 @@ void main() {
     await unmount(tester);
   });
 
-  testWidgets('a wobbly tap on the grip does not move the block',
-      (tester) async {
+  testWidgets('a wobbly tap on the grip does not move the block', (
+    tester,
+  ) async {
     // A real finger never lands perfectly still. Under the slop the block must
     // stay put, or every tap near the grip nudges the layout.
     await mountEditor(
@@ -2494,8 +2607,9 @@ void main() {
     await unmount(tester);
   });
 
-  testWidgets('the page is held still only once a drag really starts',
-      (tester) async {
+  testWidgets('the page is held still only once a drag really starts', (
+    tester,
+  ) async {
     // The mechanism, asserted directly: a competing page scroll is what stole
     // slow block drags on device, and the fix is to hand the scrollable
     // NeverScrollableScrollPhysics for the life of the gesture. Asserting the
@@ -2532,7 +2646,8 @@ void main() {
     expect(
       physics(),
       isA<ClampingScrollPhysics>(),
-      reason: 'a wobble under the slop is a tap; the page must stay scrollable '
+      reason:
+          'a wobble under the slop is a tap; the page must stay scrollable '
           'or an uncontested recognizer replays the wobble onto the block',
     );
 
@@ -2543,7 +2658,8 @@ void main() {
     expect(
       physics(),
       isA<NeverScrollableScrollPhysics>(),
-      reason: 'past the slop the page must hold still so the grip keeps the '
+      reason:
+          'past the slop the page must hold still so the grip keeps the '
           'gesture instead of losing the arena to the scroll',
     );
 
@@ -2600,7 +2716,8 @@ void main() {
     expect(
       moved.y,
       closeTo(132, 2),
-      reason: 'a 12px drag must move the block: the grip has to claim the '
+      reason:
+          'a 12px drag must move the block: the grip has to claim the '
           'gesture before the page scroll does',
     );
 
@@ -2612,8 +2729,9 @@ void main() {
     // narrower viewport renders the same layout scaled by viewport/720 —
     // content authored on a tablet must not sit off a phone's right edge:
     // block x=400 on a 360-wide phone renders at 200, fully on screen.
-    testWidgets('blocks render scaled down on a narrow viewport',
-        (tester) async {
+    testWidgets('blocks render scaled down on a narrow viewport', (
+      tester,
+    ) async {
       // A block at x=400 spans 400..560 at the minimum block width, so it
       // sits fully inside the 720 column and the basis stays 720. (x=600
       // would NOT: 600..760 overflows the page by 40px and clips the remove
@@ -2640,9 +2758,8 @@ void main() {
       final Offset surface = tester.getTopLeft(
         find.byKey(const ValueKey('notebook-canvas-surface')),
       );
-      final Offset topLeft = tester.getTopLeft(
-            find.byKey(const ValueKey('notebook-block-b1')),
-          ) -
+      final Offset topLeft =
+          tester.getTopLeft(find.byKey(const ValueKey('notebook-block-b1'))) -
           surface;
       // 400 * (360/720) = 200; the whole block must start on-screen.
       expect(topLeft.dx, moreOrLessEquals(200, epsilon: 1));
@@ -2650,65 +2767,70 @@ void main() {
       await unmount(tester);
     });
 
-    testWidgets('ink beyond the typed column is not clipped on a narrow screen',
-        (tester) async {
-      // Jeff's Fold, exactly: the 475dp COVER screen clipped the right-hand
-      // end of every line ("entry int…", "of softw…") while the 932dp inner
-      // screen was fine. Cause: the scale denominator was the TYPED COLUMN
-      // width (720), but handwriting uses the full page area — this Journal
-      // page's ink reaches x=808, so everything past 720 fell off the edge.
-      //
-      // The page must scale against its real content, so the rightmost ink
-      // lands inside the viewport.
-      const double inkRight = 808;
-      tester.view.physicalSize = const Size(475, 751);
-      tester.view.devicePixelRatio = 1.0;
-      await mountEditor(
-        tester,
-        notebook: testNotebook(
-          id: 'nb-1',
-          title: 'Journal',
-          strokes: <InkStroke>[
-            const InkStroke(
-              id: 's1',
-              width: 3,
-              points: <InkPoint>[
-                InkPoint(x: 48, y: 100),
-                InkPoint(x: inkRight, y: 100),
-              ],
-            ),
-          ],
-        ),
-        setViewSize: false,
-      );
+    testWidgets(
+      'ink beyond the typed column is not clipped on a narrow screen',
+      (tester) async {
+        // Jeff's Fold, exactly: the 475dp COVER screen clipped the right-hand
+        // end of every line ("entry int…", "of softw…") while the 932dp inner
+        // screen was fine. Cause: the scale denominator was the TYPED COLUMN
+        // width (720), but handwriting uses the full page area — this Journal
+        // page's ink reaches x=808, so everything past 720 fell off the edge.
+        //
+        // The page must scale against its real content, so the rightmost ink
+        // lands inside the viewport.
+        const double inkRight = 808;
+        tester.view.physicalSize = const Size(475, 751);
+        tester.view.devicePixelRatio = 1.0;
+        await mountEditor(
+          tester,
+          notebook: testNotebook(
+            id: 'nb-1',
+            title: 'Journal',
+            strokes: <InkStroke>[
+              const InkStroke(
+                id: 's1',
+                width: 3,
+                points: <InkPoint>[
+                  InkPoint(x: 48, y: 100),
+                  InkPoint(x: inkRight, y: 100),
+                ],
+              ),
+            ],
+          ),
+          setViewSize: false,
+        );
 
-      // Measure what the widget ACTUALLY laid out, never a scale recomputed
-      // here: the canvas sits inside the FittedBox, so its own size IS the
-      // canonical page width the editor chose. Asserting on a locally
-      // derived scale proves nothing (an earlier version of this test stayed
-      // green against the unfixed code).
-      final double canonicalWidth =
-          tester.getSize(find.byType(NotebookInkCanvas)).width;
-      expect(
-        canonicalWidth,
-        greaterThanOrEqualTo(inkRight),
-        reason: 'the canonical page must be wide enough to hold ink at '
-            'x=$inkRight; a 720-wide page clips it off the right edge',
-      );
+        // Measure what the widget ACTUALLY laid out, never a scale recomputed
+        // here: the canvas sits inside the FittedBox, so its own size IS the
+        // canonical page width the editor chose. Asserting on a locally
+        // derived scale proves nothing (an earlier version of this test stayed
+        // green against the unfixed code).
+        final double canonicalWidth = tester
+            .getSize(find.byType(NotebookInkCanvas))
+            .width;
+        expect(
+          canonicalWidth,
+          greaterThanOrEqualTo(inkRight),
+          reason:
+              'the canonical page must be wide enough to hold ink at '
+              'x=$inkRight; a 720-wide page clips it off the right edge',
+        );
 
-      final Rect surface = tester.getRect(
-        find.byKey(const ValueKey('notebook-canvas-surface')),
-      );
-      expect(
-        surface.width,
-        moreOrLessEquals(475, epsilon: 1),
-        reason: 'the surface still fills the viewport width',
-      );
-      await unmount(tester);
-    });
+        final Rect surface = tester.getRect(
+          find.byKey(const ValueKey('notebook-canvas-surface')),
+        );
+        expect(
+          surface.width,
+          moreOrLessEquals(475, epsilon: 1),
+          reason: 'the surface still fills the viewport width',
+        );
+        await unmount(tester);
+      },
+    );
 
-    testWidgets('a page inside the typed column keeps the column scale',
-        (tester) async {
+    testWidgets('a page inside the typed column keeps the column scale', (
+      tester,
+    ) async {
       // The guard: widening the denominator must not shrink ordinary pages.
       // Ink well inside the column leaves the 720 basis untouched, so a
       // block at x=400 (spanning 400..560, fully in-column) still renders at
@@ -2721,7 +2843,12 @@ void main() {
           id: 'nb-1',
           title: 'Narrow ink',
           blocks: <NotebookBlock>[
-            const NotebookTextBlock(id: 'b1', text: 'far right', x: 400, y: 100),
+            const NotebookTextBlock(
+              id: 'b1',
+              text: 'far right',
+              x: 400,
+              y: 100,
+            ),
           ],
           strokes: <InkStroke>[
             const InkStroke(
@@ -2740,16 +2867,16 @@ void main() {
       final Offset surface = tester.getTopLeft(
         find.byKey(const ValueKey('notebook-canvas-surface')),
       );
-      final Offset topLeft = tester.getTopLeft(
-            find.byKey(const ValueKey('notebook-block-b1')),
-          ) -
+      final Offset topLeft =
+          tester.getTopLeft(find.byKey(const ValueKey('notebook-block-b1'))) -
           surface;
       expect(topLeft.dx, moreOrLessEquals(200, epsilon: 1));
       await unmount(tester);
     });
 
-    testWidgets('a text block near the right edge is not clipped',
-        (tester) async {
+    testWidgets('a text block near the right edge is not clipped', (
+      tester,
+    ) async {
       // _buildPositionedBlocks clamps a row to what is left of the page, but
       // floors it at _minBlockWidth (160) so the grip and remove X stay
       // reachable. That floor BEATS the clamp: a block at x=700 is laid out
@@ -2774,19 +2901,22 @@ void main() {
         setViewSize: false,
       );
 
-      final double canonicalWidth =
-          tester.getSize(find.byType(NotebookInkCanvas)).width;
+      final double canonicalWidth = tester
+          .getSize(find.byType(NotebookInkCanvas))
+          .width;
       expect(
         canonicalWidth,
         greaterThanOrEqualTo(860),
-        reason: 'a block at x=700 is floored to 160 wide, so it reaches 860; '
+        reason:
+            'a block at x=700 is floored to 160 wide, so it reaches 860; '
             'a 720-wide page cuts off its right-hand end including the X',
       );
       await unmount(tester);
     });
 
-    testWidgets('a dump card near the right edge is not clipped',
-        (tester) async {
+    testWidgets('a dump card near the right edge is not clipped', (
+      tester,
+    ) async {
       // A dump card has an x but no width, so it is laid out at the same
       // _minBlockWidth floor: x=800 reaches 960.
       tester.view.physicalSize = const Size(475, 751);
@@ -2808,8 +2938,9 @@ void main() {
         setViewSize: false,
       );
 
-      final double canonicalWidth =
-          tester.getSize(find.byType(NotebookInkCanvas)).width;
+      final double canonicalWidth = tester
+          .getSize(find.byType(NotebookInkCanvas))
+          .width;
       expect(
         canonicalWidth,
         greaterThanOrEqualTo(960),
@@ -2850,8 +2981,9 @@ void main() {
       await unmount(tester);
     });
 
-    testWidgets('a wide image block is not clipped on a narrow screen',
-        (tester) async {
+    testWidgets('a wide image block is not clipped on a narrow screen', (
+      tester,
+    ) async {
       // Ink is not the only thing that escapes the typed column. An image
       // carries its OWN width and sits at its own x (text/checkbox rows are
       // width-clamped to the page, so they self-limit and need no term).
@@ -2879,19 +3011,22 @@ void main() {
         setViewSize: false,
       );
 
-      final double canonicalWidth =
-          tester.getSize(find.byType(NotebookInkCanvas)).width;
+      final double canonicalWidth = tester
+          .getSize(find.byType(NotebookInkCanvas))
+          .width;
       expect(
         canonicalWidth,
         greaterThanOrEqualTo(1000),
-        reason: 'the page must be wide enough to hold an image whose right '
+        reason:
+            'the page must be wide enough to hold an image whose right '
             'edge is at x=1000; a 720-wide page cuts it off',
       );
       await unmount(tester);
     });
 
-    testWidgets('dragging a block on a narrow viewport stores canonical x/y',
-        (tester) async {
+    testWidgets('dragging a block on a narrow viewport stores canonical x/y', (
+      tester,
+    ) async {
       tester.view.physicalSize = const Size(360, 780);
       tester.view.devicePixelRatio = 1.0;
       await mountEditor(
@@ -2908,8 +3043,9 @@ void main() {
 
       // Drag the block 60 screen px right, 40 down: at scale 0.5 that is
       // 120/80 in canonical space.
-      final Finder handle =
-          find.byKey(const ValueKey('notebook-block-grip-b1'));
+      final Finder handle = find.byKey(
+        const ValueKey('notebook-block-grip-b1'),
+      );
       final TestGesture drag = await tester.startGesture(
         tester.getCenter(handle),
       );
@@ -2929,8 +3065,9 @@ void main() {
       await unmount(tester);
     });
 
-    testWidgets('ink drawn on a narrow viewport stores canonical points',
-        (tester) async {
+    testWidgets('ink drawn on a narrow viewport stores canonical points', (
+      tester,
+    ) async {
       tester.view.physicalSize = const Size(360, 780);
       tester.view.devicePixelRatio = 1.0;
       await mountEditor(
@@ -2982,9 +3119,8 @@ void main() {
       await tester.pump();
     }
 
-    Offset canvasOrigin(WidgetTester tester) => tester.getTopLeft(
-          find.byKey(NotebookInkCanvas.backgroundKey),
-        );
+    Offset canvasOrigin(WidgetTester tester) =>
+        tester.getTopLeft(find.byKey(NotebookInkCanvas.backgroundKey));
 
     /// Draws a loop around the dump card's anchor region.
     Future<void> lassoAroundCard(WidgetTester tester) async {
@@ -3005,16 +3141,18 @@ void main() {
       await tester.pump();
     }
 
-    testWidgets('a loop over ~half the card selects; a corner clip does not',
-        (WidgetTester tester) async {
+    testWidgets('a loop over ~half the card selects; a corner clip does not', (
+      WidgetTester tester,
+    ) async {
       await mountEditor(
         tester,
         notebook: seeded(),
         dumps: <DumpRow>[_dumpRow('d1', 'Standup notes')],
       );
       await enterLasso(tester);
-      final Finder deleteButton =
-          find.byKey(const ValueKey<String>('notebook-lasso-delete'));
+      final Finder deleteButton = find.byKey(
+        const ValueKey<String>('notebook-lasso-delete'),
+      );
       final Offset origin = canvasOrigin(tester);
 
       // Card b3 spans canonical x 24-324. A loop out to x=130 covers only
@@ -3054,8 +3192,9 @@ void main() {
       await unmount(tester);
     });
 
-    testWidgets('circling a recording card arms delete and removes it',
-        (WidgetTester tester) async {
+    testWidgets('circling a recording card arms delete and removes it', (
+      WidgetTester tester,
+    ) async {
       await mountEditor(
         tester,
         notebook: seeded(),
@@ -3063,8 +3202,9 @@ void main() {
       );
       await enterLasso(tester);
 
-      final Finder deleteButton =
-          find.byKey(const ValueKey<String>('notebook-lasso-delete'));
+      final Finder deleteButton = find.byKey(
+        const ValueKey<String>('notebook-lasso-delete'),
+      );
       expect(
         tester.widget<IconButton>(deleteButton).onPressed,
         isNull,
@@ -3090,8 +3230,9 @@ void main() {
       await unmount(tester);
     });
 
-    testWidgets('dragging the selection moves the circled card',
-        (WidgetTester tester) async {
+    testWidgets('dragging the selection moves the circled card', (
+      WidgetTester tester,
+    ) async {
       await mountEditor(
         tester,
         notebook: seeded(),
@@ -3100,8 +3241,9 @@ void main() {
       await enterLasso(tester);
       await lassoAroundCard(tester);
 
-      final Finder card =
-          find.byKey(const ValueKey<String>('notebook-card-b3'));
+      final Finder card = find.byKey(
+        const ValueKey<String>('notebook-card-b3'),
+      );
       final Offset before = tester.getTopLeft(card);
 
       final Offset origin = canvasOrigin(tester);
@@ -3126,16 +3268,16 @@ void main() {
     // canonical px here) — far wider than the old nominal 300x90 guess.
     // The lasso must catch the row the user actually sees.
     Notebook wideRowNotebook() => testNotebook(
-          id: 'nb-1',
-          blocks: const <NotebookBlock>[
-            NotebookTextBlock(
-              id: 'wt',
-              text: 'a wide row of words that spans the whole page column',
-              x: 24,
-              y: 400,
-            ),
-          ],
-        );
+      id: 'nb-1',
+      blocks: const <NotebookBlock>[
+        NotebookTextBlock(
+          id: 'wt',
+          text: 'a wide row of words that spans the whole page column',
+          x: 24,
+          y: 400,
+        ),
+      ],
+    );
 
     Future<void> enterLasso(WidgetTester tester) async {
       await tester.tap(find.byIcon(Icons.draw));
@@ -3144,8 +3286,7 @@ void main() {
       await tester.pump();
     }
 
-    Finder wideRow() =>
-        find.byKey(const ValueKey<String>('notebook-block-wt'));
+    Finder wideRow() => find.byKey(const ValueKey<String>('notebook-block-wt'));
 
     Finder deleteButton() =>
         find.byKey(const ValueKey<String>('notebook-lasso-delete'));
@@ -3169,8 +3310,9 @@ void main() {
       await tester.pump();
     }
 
-    testWidgets("a loop around a wide row's real right half catches it",
-        (WidgetTester tester) async {
+    testWidgets("a loop around a wide row's real right half catches it", (
+      WidgetTester tester,
+    ) async {
       await mountEditor(tester, notebook: wideRowNotebook());
       await enterLasso(tester);
 
@@ -3181,7 +3323,8 @@ void main() {
       expect(
         row.width,
         greaterThan(600),
-        reason: 'harness must lay the row out wider than twice the nominal '
+        reason:
+            'harness must lay the row out wider than twice the nominal '
             '300 so the loop below can discriminate real from guessed',
       );
 
@@ -3201,14 +3344,16 @@ void main() {
       expect(
         tester.widget<IconButton>(deleteButton()).onPressed,
         isNotNull,
-        reason: 'half the row the user sees is inside the loop; the lasso '
+        reason:
+            'half the row the user sees is inside the loop; the lasso '
             'must test the measured footprint, not the 300x90 guess',
       );
       await unmount(tester);
     });
 
-    testWidgets('clipping only a corner of the wide row does not catch it',
-        (WidgetTester tester) async {
+    testWidgets('clipping only a corner of the wide row does not catch it', (
+      WidgetTester tester,
+    ) async {
       await mountEditor(tester, notebook: wideRowNotebook());
       await enterLasso(tester);
       final Rect row = tester.getRect(wideRow());
@@ -3228,14 +3373,16 @@ void main() {
       expect(
         tester.widget<IconButton>(deleteButton()).onPressed,
         isNull,
-        reason: 'a loop clipping one corner of the row is not a grab: the '
+        reason:
+            'a loop clipping one corner of the row is not a grab: the '
             '40% threshold holds for measured footprints too',
       );
       await unmount(tester);
     });
 
-    testWidgets('a caught wide row drags from anywhere on its real footprint',
-        (WidgetTester tester) async {
+    testWidgets('a caught wide row drags from anywhere on its real footprint', (
+      WidgetTester tester,
+    ) async {
       await mountEditor(tester, notebook: wideRowNotebook());
       await enterLasso(tester);
       final Rect row = tester.getRect(wideRow());
@@ -3266,15 +3413,17 @@ void main() {
       expect(
         after.left - row.left,
         moreOrLessEquals(60, epsilon: 1),
-        reason: 'the drag began on the row the user sees; the hit test '
+        reason:
+            'the drag began on the row the user sees; the hit test '
             'must use the measured footprint',
       );
       expect(after.top - row.top, moreOrLessEquals(40, epsilon: 1));
       await unmount(tester);
     });
 
-    testWidgets('measurement stays canonical when the page renders scaled',
-        (WidgetTester tester) async {
+    testWidgets('measurement stays canonical when the page renders scaled', (
+      WidgetTester tester,
+    ) async {
       // A 540-wide viewport renders the 720-wide canonical page at 0.75
       // scale. Block RenderBoxes lay out in canonical space (the FittedBox
       // scales paint and hit-testing only), so the measured size must be
@@ -3303,7 +3452,8 @@ void main() {
       expect(
         tester.widget<IconButton>(deleteButton()).onPressed,
         isNotNull,
-        reason: 'the same right-half loop must catch at any page scale: '
+        reason:
+            'the same right-half loop must catch at any page scale: '
             'RenderBox sizes are already canonical',
       );
       await unmount(tester);
@@ -3322,8 +3472,9 @@ void main() {
       await tester.pumpAndSettle();
     }
 
-    testWidgets('confirming the picker asks Audio bubble or Text',
-        (tester) async {
+    testWidgets('confirming the picker asks Audio bubble or Text', (
+      tester,
+    ) async {
       await mountEditor(
         tester,
         notebook: testNotebook(id: 'nb-1'),
@@ -3343,8 +3494,9 @@ void main() {
       await unmount(tester);
     });
 
-    testWidgets('choosing Text inserts the transcript as a text box',
-        (tester) async {
+    testWidgets('choosing Text inserts the transcript as a text box', (
+      tester,
+    ) async {
       await mountEditor(
         tester,
         notebook: testNotebook(id: 'nb-1'),
@@ -3378,7 +3530,10 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
 
       final List<NotebookTextBlock> texts = repository
-          .saved.single.document.blocks
+          .saved
+          .single
+          .document
+          .blocks
           .whereType<NotebookTextBlock>()
           .toList();
       expect(texts, hasLength(1));
@@ -3389,38 +3544,40 @@ void main() {
     });
 
     testWidgets(
-        'Text with "Include audio bubble" left on lands the text AND a card',
-        (tester) async {
-      await mountEditor(
-        tester,
-        notebook: testNotebook(id: 'nb-1'),
-        dumps: <DumpRow>[
-          _dumpRow('d1', 'Morning ideas', transcript: 'solder and flux'),
-        ],
-      );
+      'Text with "Include audio bubble" left on lands the text AND a card',
+      (tester) async {
+        await mountEditor(
+          tester,
+          notebook: testNotebook(id: 'nb-1'),
+          dumps: <DumpRow>[
+            _dumpRow('d1', 'Morning ideas', transcript: 'solder and flux'),
+          ],
+        );
 
-      await importDump(tester, 'dump-pick-d1');
-      expect(
-        tester
-            .widget<SwitchListTile>(
-              find.byKey(const ValueKey('import-include-audio')),
-            )
-            .value,
-        isTrue,
-        reason: 'the switch defaults on (SettingsStore default)',
-      );
-      await tester.tap(find.byKey(const ValueKey('import-as-text')));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 400));
+        await importDump(tester, 'dump-pick-d1');
+        expect(
+          tester
+              .widget<SwitchListTile>(
+                find.byKey(const ValueKey('import-include-audio')),
+              )
+              .value,
+          isTrue,
+          reason: 'the switch defaults on (SettingsStore default)',
+        );
+        await tester.tap(find.byKey(const ValueKey('import-as-text')));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
 
-      expect(find.byType(NotebookDumpCard), findsOneWidget);
-      expect(find.text('solder and flux'), findsOneWidget);
+        expect(find.byType(NotebookDumpCard), findsOneWidget);
+        expect(find.text('solder and flux'), findsOneWidget);
 
-      await unmount(tester);
-    });
+        await unmount(tester);
+      },
+    );
 
-    testWidgets('a dump with no transcript still imports as text, honestly',
-        (tester) async {
+    testWidgets('a dump with no transcript still imports as text, honestly', (
+      tester,
+    ) async {
       await mountEditor(
         tester,
         notebook: testNotebook(id: 'nb-1'),
@@ -3441,8 +3598,9 @@ void main() {
       await unmount(tester);
     });
 
-    testWidgets('imported cards land below existing content, not on top',
-        (tester) async {
+    testWidgets('imported cards land below existing content, not on top', (
+      tester,
+    ) async {
       await mountEditor(
         tester,
         notebook: testNotebook(
@@ -3479,7 +3637,8 @@ void main() {
       expect(
         card.y,
         greaterThan(740),
-        reason: 'the new card must land below the lowest existing content '
+        reason:
+            'the new card must land below the lowest existing content '
             '(text at 600, ink to 740), never on top of it',
       );
       expect(tester.takeException(), isNull);
@@ -3511,11 +3670,15 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
 
       final List<NotebookTextBlock> texts = repository
-          .saved.single.document.blocks
+          .saved
+          .single
+          .document
+          .blocks
           .whereType<NotebookTextBlock>()
           .toList();
-      final NotebookTextBlock imported = texts
-          .singleWhere((NotebookTextBlock t) => t.text == 'the transcript');
+      final NotebookTextBlock imported = texts.singleWhere(
+        (NotebookTextBlock t) => t.text == 'the transcript',
+      );
       expect(
         imported.y,
         isNotNull,
@@ -3552,8 +3715,9 @@ void main() {
           .toList();
     }
 
-    testWidgets('choosing Summary inserts the summary as one text box',
-        (tester) async {
+    testWidgets('choosing Summary inserts the summary as one text box', (
+      tester,
+    ) async {
       await mountEditor(
         tester,
         notebook: testNotebook(id: 'nb-1'),
@@ -3578,7 +3742,8 @@ void main() {
       expect(
         find.text('Summary\n- ship on Friday'),
         findsOneWidget,
-        reason: 'the summary lands in an editable text box, page-normalised '
+        reason:
+            'the summary lands in an editable text box, page-normalised '
             '(heading pounds dropped, heading text kept)',
       );
       expect(
@@ -3596,66 +3761,64 @@ void main() {
     });
 
     testWidgets(
-        'choosing Transcript + summary inserts two boxes, summary above',
-        (tester) async {
+      'choosing Transcript + summary inserts two boxes, summary above',
+      (tester) async {
+        await mountEditor(
+          tester,
+          notebook: testNotebook(id: 'nb-1'),
+          dumps: <DumpRow>[
+            _dumpRow(
+              'm1',
+              'Standup',
+              mode: 'meeting',
+              transcript: 'we talked about shipping on friday',
+              summary: '## Summary\n- ship on Friday',
+            ),
+          ],
+          summariesEnabled: true,
+        );
+
+        await importMeeting(tester, 'dump-pick-m1');
+        await tester.tap(find.byKey(const ValueKey('import-as-both')));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+
+        expect(find.text('Summary\n- ship on Friday'), findsOneWidget);
+        expect(find.text('we talked about shipping on friday'), findsOneWidget);
+
+        final List<NotebookTextBlock> texts = await saveAndReadTexts(tester);
+        expect(texts, hasLength(2));
+        final NotebookTextBlock summary = texts.singleWhere(
+          (NotebookTextBlock t) => t.text == 'Summary\n- ship on Friday',
+        );
+        final NotebookTextBlock transcript = texts.singleWhere(
+          (NotebookTextBlock t) =>
+              t.text == 'we talked about shipping on friday',
+        );
+        expect(
+          summary.y!,
+          lessThan(transcript.y!),
+          reason: 'summary first, transcript below it',
+        );
+        expect(
+          summary.x,
+          transcript.x,
+          reason: 'both land in the same typed column',
+        );
+        expect(tester.takeException(), isNull);
+
+        await unmount(tester);
+      },
+    );
+
+    testWidgets('a dump with no summary yet imports as Summary, honestly', (
+      tester,
+    ) async {
       await mountEditor(
         tester,
         notebook: testNotebook(id: 'nb-1'),
         dumps: <DumpRow>[
-          _dumpRow(
-            'm1',
-            'Standup',
-            mode: 'meeting',
-            transcript: 'we talked about shipping on friday',
-            summary: '## Summary\n- ship on Friday',
-          ),
-        ],
-        summariesEnabled: true,
-      );
-
-      await importMeeting(tester, 'dump-pick-m1');
-      await tester.tap(find.byKey(const ValueKey('import-as-both')));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 400));
-
-      expect(find.text('Summary\n- ship on Friday'), findsOneWidget);
-      expect(find.text('we talked about shipping on friday'), findsOneWidget);
-
-      final List<NotebookTextBlock> texts = await saveAndReadTexts(tester);
-      expect(texts, hasLength(2));
-      final NotebookTextBlock summary = texts.singleWhere(
-        (NotebookTextBlock t) => t.text == 'Summary\n- ship on Friday',
-      );
-      final NotebookTextBlock transcript = texts.singleWhere(
-        (NotebookTextBlock t) => t.text == 'we talked about shipping on friday',
-      );
-      expect(
-        summary.y!,
-        lessThan(transcript.y!),
-        reason: 'summary first, transcript below it',
-      );
-      expect(
-        summary.x,
-        transcript.x,
-        reason: 'both land in the same typed column',
-      );
-      expect(tester.takeException(), isNull);
-
-      await unmount(tester);
-    });
-
-    testWidgets('a dump with no summary yet imports as Summary, honestly',
-        (tester) async {
-      await mountEditor(
-        tester,
-        notebook: testNotebook(id: 'nb-1'),
-        dumps: <DumpRow>[
-          _dumpRow(
-            'm1',
-            'Standup',
-            mode: 'meeting',
-            transcript: 'we talked',
-          ),
+          _dumpRow('m1', 'Standup', mode: 'meeting', transcript: 'we talked'),
         ],
         summariesEnabled: true,
       );
@@ -3674,9 +3837,9 @@ void main() {
       await unmount(tester);
     });
 
-    testWidgets(
-        'Transcript + summary falls back independently for each half',
-        (tester) async {
+    testWidgets('Transcript + summary falls back independently for each half', (
+      tester,
+    ) async {
       // Summary present, transcript missing: the summary box carries the
       // real summary and ONLY the transcript box is the honest placeholder.
       await mountEditor(
@@ -3706,81 +3869,87 @@ void main() {
     });
 
     testWidgets(
-        'summary shapes are hidden while summaries are off and no picked '
-        'dump has one', (tester) async {
-      await mountEditor(
-        tester,
-        notebook: testNotebook(id: 'nb-1'),
-        dumps: <DumpRow>[
-          _dumpRow('m1', 'Standup', mode: 'meeting', transcript: 'we talked'),
-        ],
-        summariesEnabled: false,
-      );
+      'summary shapes are hidden while summaries are off and no picked '
+      'dump has one',
+      (tester) async {
+        await mountEditor(
+          tester,
+          notebook: testNotebook(id: 'nb-1'),
+          dumps: <DumpRow>[
+            _dumpRow('m1', 'Standup', mode: 'meeting', transcript: 'we talked'),
+          ],
+          summariesEnabled: false,
+        );
 
-      await importMeeting(tester, 'dump-pick-m1');
+        await importMeeting(tester, 'dump-pick-m1');
 
-      expect(find.byKey(const ValueKey('import-as-card')), findsOneWidget);
-      expect(find.byKey(const ValueKey('import-as-text')), findsOneWidget);
-      expect(
-        find.byKey(const ValueKey('import-as-summary')),
-        findsNothing,
-        reason: 'while summaries are off, none of the feature\'s UI appears',
-      );
-      expect(find.byKey(const ValueKey('import-as-both')), findsNothing);
+        expect(find.byKey(const ValueKey('import-as-card')), findsOneWidget);
+        expect(find.byKey(const ValueKey('import-as-text')), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('import-as-summary')),
+          findsNothing,
+          reason: 'while summaries are off, none of the feature\'s UI appears',
+        );
+        expect(find.byKey(const ValueKey('import-as-both')), findsNothing);
 
-      await unmount(tester);
-    });
-
-    testWidgets(
-        'summary shapes appear when summaries are off but a picked dump '
-        'already carries one', (tester) async {
-      // A summary synced from another device is real content; hiding the
-      // option because THIS device has the toggle off would strand it.
-      await mountEditor(
-        tester,
-        notebook: testNotebook(id: 'nb-1'),
-        dumps: <DumpRow>[
-          _dumpRow(
-            'm1',
-            'Standup',
-            mode: 'meeting',
-            summary: '## Summary\n- ship on Friday',
-          ),
-        ],
-        summariesEnabled: false,
-      );
-
-      await importMeeting(tester, 'dump-pick-m1');
-
-      expect(find.byKey(const ValueKey('import-as-summary')), findsOneWidget);
-      expect(find.byKey(const ValueKey('import-as-both')), findsOneWidget);
-
-      await unmount(tester);
-    });
+        await unmount(tester);
+      },
+    );
 
     testWidgets(
-        'summary shapes appear when summaries are on even with no summary yet',
-        (tester) async {
-      await mountEditor(
-        tester,
-        notebook: testNotebook(id: 'nb-1'),
-        dumps: <DumpRow>[
-          _dumpRow('m1', 'Standup', mode: 'meeting', transcript: 'we talked'),
-        ],
-        summariesEnabled: true,
-      );
+      'summary shapes appear when summaries are off but a picked dump '
+      'already carries one',
+      (tester) async {
+        // A summary synced from another device is real content; hiding the
+        // option because THIS device has the toggle off would strand it.
+        await mountEditor(
+          tester,
+          notebook: testNotebook(id: 'nb-1'),
+          dumps: <DumpRow>[
+            _dumpRow(
+              'm1',
+              'Standup',
+              mode: 'meeting',
+              summary: '## Summary\n- ship on Friday',
+            ),
+          ],
+          summariesEnabled: false,
+        );
 
-      await importMeeting(tester, 'dump-pick-m1');
+        await importMeeting(tester, 'dump-pick-m1');
 
-      expect(find.byKey(const ValueKey('import-as-summary')), findsOneWidget);
-      expect(find.byKey(const ValueKey('import-as-both')), findsOneWidget);
+        expect(find.byKey(const ValueKey('import-as-summary')), findsOneWidget);
+        expect(find.byKey(const ValueKey('import-as-both')), findsOneWidget);
 
-      await unmount(tester);
-    });
+        await unmount(tester);
+      },
+    );
+
+    testWidgets(
+      'summary shapes appear when summaries are on even with no summary yet',
+      (tester) async {
+        await mountEditor(
+          tester,
+          notebook: testNotebook(id: 'nb-1'),
+          dumps: <DumpRow>[
+            _dumpRow('m1', 'Standup', mode: 'meeting', transcript: 'we talked'),
+          ],
+          summariesEnabled: true,
+        );
+
+        await importMeeting(tester, 'dump-pick-m1');
+
+        expect(find.byKey(const ValueKey('import-as-summary')), findsOneWidget);
+        expect(find.byKey(const ValueKey('import-as-both')), findsOneWidget);
+
+        await unmount(tester);
+      },
+    );
   });
 
   group('tappable stamps (spec §C)', () {
-    const String stamped = '[00:42] Jeff: solder the header pins\n'
+    const String stamped =
+        '[00:42] Jeff: solder the header pins\n'
         '[01:05] Ann: then flux';
     const List<TextStamp> stamps = <TextStamp>[
       TextStamp(offset: 0, length: 7, seconds: 42, dumpId: 'd1'),
@@ -3788,24 +3957,19 @@ void main() {
     ];
 
     Notebook stampedNotebook({bool withCard = true}) => testNotebook(
-          id: 'nb-1',
-          blocks: <NotebookBlock>[
-            const NotebookTextBlock(
-              id: 't1',
-              text: stamped,
-              stamps: stamps,
-              x: 24,
-              y: 40,
-            ),
-            if (withCard)
-              const NotebookDumpCardBlock(
-                id: 'c1',
-                dumpId: 'd1',
-                x: 24,
-                y: 300,
-              ),
-          ],
-        );
+      id: 'nb-1',
+      blocks: <NotebookBlock>[
+        const NotebookTextBlock(
+          id: 't1',
+          text: stamped,
+          stamps: stamps,
+          x: 24,
+          y: 40,
+        ),
+        if (withCard)
+          const NotebookDumpCardBlock(id: 'c1', dumpId: 'd1', x: 24, y: 300),
+      ],
+    );
 
     Override fakePlayback(_RecordingEngine engine) =>
         notebookCardPlaybackProvider.overrideWithValue((String dumpId) async {
@@ -3815,8 +3979,9 @@ void main() {
           return (controller: controller, close: () async {});
         });
 
-    testWidgets('at rest the stamps are keyed spans; focused it is a field',
-        (tester) async {
+    testWidgets('at rest the stamps are keyed spans; focused it is a field', (
+      tester,
+    ) async {
       await mountEditor(
         tester,
         notebook: stampedNotebook(),
@@ -3850,8 +4015,9 @@ void main() {
       await unmount(tester);
     });
 
-    testWidgets('tap with a same-recording card on the page seeks that card',
-        (tester) async {
+    testWidgets('tap with a same-recording card on the page seeks that card', (
+      tester,
+    ) async {
       final _RecordingEngine engine = _RecordingEngine();
       await mountEditor(
         tester,
@@ -3874,8 +4040,9 @@ void main() {
       await unmount(tester);
     });
 
-    testWidgets('tap with no card pushes the detail at that moment',
-        (tester) async {
+    testWidgets('tap with no card pushes the detail at that moment', (
+      tester,
+    ) async {
       final _RecordingEngine engine = _RecordingEngine();
       final List<({String dumpId, double? seekSeconds})> opened =
           <({String dumpId, double? seekSeconds})>[];
@@ -3904,8 +4071,9 @@ void main() {
       await unmount(tester);
     });
 
-    testWidgets('editing drops the stamp the edit broke and keeps the rest',
-        (tester) async {
+    testWidgets('editing drops the stamp the edit broke and keeps the rest', (
+      tester,
+    ) async {
       await mountEditor(
         tester,
         notebook: stampedNotebook(),

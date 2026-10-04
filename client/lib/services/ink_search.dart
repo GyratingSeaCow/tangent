@@ -102,9 +102,22 @@ class InkSearch {
 
     final List<InkIndexEntry> rows =
         await _db.select(_db.inkIndexEntries).get();
+    final Set<String> protectedNotebookIds = <String>{
+      for (final row in await (_db.selectOnly(_db.notebooks)
+            ..addColumns([
+              _db.notebooks.id,
+              _db.notebooks.passwordHash,
+            ])
+            ..where(_db.notebooks.passwordHash.isNotNull()))
+          .get())
+        row.read(_db.notebooks.id)!,
+    };
     final Map<String, List<InkIndexEntry>> byNotebook =
         <String, List<InkIndexEntry>>{};
     for (final InkIndexEntry row in rows) {
+      // Search is a preview surface. Protected content must not reveal even
+      // that it matched, let alone return its recognised words.
+      if (protectedNotebookIds.contains(row.notebookId)) continue;
       byNotebook.putIfAbsent(row.notebookId, () => <InkIndexEntry>[]).add(row);
     }
 
@@ -140,11 +153,16 @@ class InkSearch {
   /// and the block's position as their bbox.
   Future<List<InkMatch>> searchInNotebook(
     String notebookId,
-    String query,
-  ) async {
+    String query, {
+    bool allowProtected = false,
+  }) async {
     final List<String> tokens = _tokens(query);
     if (tokens.isEmpty) return const <InkMatch>[];
 
+    final NotebookRow? notebook = await _db.getNotebookRow(notebookId);
+    if (notebook?.passwordHash != null && !allowProtected) {
+      return const <InkMatch>[];
+    }
     final List<InkIndexEntry> rows = await (_db.select(_db.inkIndexEntries)
           ..where((t) => t.notebookId.equals(notebookId)))
         .get();
@@ -153,7 +171,6 @@ class InkSearch {
     // Typed content: the query as one phrase against each block's text. The
     // block text is real text (unlike ink, which is word boxes), so a plain
     // case-insensitive substring is the whole job.
-    final NotebookRow? notebook = await _db.getNotebookRow(notebookId);
     if (notebook != null) {
       final String phrase = tokens.join(' ');
       final NotebookDocument doc = NotebookDocument.decode(notebook.docJson);
