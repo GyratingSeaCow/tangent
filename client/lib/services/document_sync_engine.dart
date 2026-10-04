@@ -272,6 +272,14 @@ class DocumentSyncEngine extends ChangeNotifier {
       }
       return false;
     }
+    if (change.entityType == 'tag') {
+      await _applyRemoteTag(change);
+      return false;
+    }
+    if (change.entityType == 'tag_assignment') {
+      await _applyRemoteTagAssignment(change);
+      return false;
+    }
     if (change.entityType != 'notebook') return false;
 
     if (change.op == SyncOp.delete) {
@@ -312,6 +320,52 @@ class DocumentSyncEngine extends ChangeNotifier {
         );
         return true;
     }
+  }
+
+  /// Shared tags (v33). A tag deletion cascades to every local assignment of
+  /// that tag — the single tombstone stands for all of them.
+  Future<void> _applyRemoteTag(RemoteChange change) async {
+    if (change.op == SyncOp.delete) {
+      await _db.applyRemoteTagDeletion(change.entityId);
+      return;
+    }
+    final Map<String, dynamic> p = change.payload ?? const {};
+    final Object? name = p['name'];
+    // The server validates names; a payload without one is not a tag this
+    // build can show, and inventing a placeholder would rename it fleet-wide
+    // on the next local edit.
+    if (name is! String || name.trim().isEmpty) return;
+    final int now = DateTime.now().millisecondsSinceEpoch;
+    await _db.applyRemoteTag(
+      id: change.entityId,
+      name: name,
+      createdAt: (p['created_at'] as num?)?.toInt() ?? now,
+      updatedAt: (p['updated_at'] as num?)?.toInt() ?? now,
+      seq: change.seq,
+    );
+  }
+
+  Future<void> _applyRemoteTagAssignment(RemoteChange change) async {
+    if (change.op == SyncOp.delete) {
+      await _db.applyRemoteTagAssignmentDeletion(change.entityId);
+      return;
+    }
+    final Map<String, dynamic> p = change.payload ?? const {};
+    final Object? tagId = p['tag_id'];
+    final Object? targetType = p['target_type'];
+    final Object? targetId = p['target_id'];
+    if (tagId is! String || targetType is! String || targetId is! String) {
+      return;
+    }
+    await _db.applyRemoteTagAssignment(
+      id: change.entityId,
+      tagId: tagId,
+      targetType: targetType,
+      targetId: targetId,
+      createdAt: (p['created_at'] as num?)?.toInt() ??
+          DateTime.now().millisecondsSinceEpoch,
+      seq: change.seq,
+    );
   }
 
   /// Applies one incoming recording change.
@@ -911,6 +965,9 @@ class DocumentSyncEngine extends ChangeNotifier {
     final List<NotebookRow> dirty = await _db.notebooksNeedingPush();
     final List<DumpRow> dirtyDumps = await _db.dumpsNeedingMetadataPush();
     final List<Folder> dirtyFolders = await _db.foldersNeedingPush();
+    final List<TagRow> dirtyTags = await _db.tagsNeedingPush();
+    final List<TagAssignmentRow> dirtyAssignments =
+        await _db.tagAssignmentsNeedingPush();
     final List<TodoRow> dirtyTodos = await _db.todosNeedingPush();
     final List<CalendarEventRow> dirtyEvents =
         await _db.calendarEventsNeedingPush();
@@ -918,6 +975,8 @@ class DocumentSyncEngine extends ChangeNotifier {
     if (dirty.isEmpty &&
         dirtyDumps.isEmpty &&
         dirtyFolders.isEmpty &&
+        dirtyTags.isEmpty &&
+        dirtyAssignments.isEmpty &&
         dirtyTodos.isEmpty &&
         dirtyEvents.isEmpty &&
         tombstones.isEmpty) {
@@ -936,6 +995,20 @@ class DocumentSyncEngine extends ChangeNotifier {
           'payload': <String, dynamic>{
             'name': row.name,
             'created_at': row.createdAt,
+          },
+        },
+      // Tags next, for the same reason: an assignment later in this batch
+      // names its tag, and the server refuses an assignment to a tag it has
+      // never heard of.
+      for (final TagRow row in dirtyTags)
+        <String, dynamic>{
+          'entity_type': 'tag',
+          'entity_id': row.id,
+          'op': 'upsert',
+          'payload': <String, dynamic>{
+            'name': row.name,
+            'created_at': row.createdAt,
+            'updated_at': row.updatedAt,
           },
         },
       for (final NotebookRow row in dirty)
@@ -1040,6 +1113,20 @@ class DocumentSyncEngine extends ChangeNotifier {
             'deleted_at': row.deletedAt,
           },
         },
+      // Assignments after every tag and target; removals (and tag deletes)
+      // ride the tombstones below.
+      for (final TagAssignmentRow row in dirtyAssignments)
+        <String, dynamic>{
+          'entity_type': 'tag_assignment',
+          'entity_id': row.id,
+          'op': 'upsert',
+          'payload': <String, dynamic>{
+            'tag_id': row.tagId,
+            'target_type': row.targetType,
+            'target_id': row.targetId,
+            'created_at': row.createdAt,
+          },
+        },
       for (final SyncTombstoneRow stone in tombstones)
         if (stone.entityType != 'ask_message')
           <String, dynamic>{
@@ -1062,6 +1149,12 @@ class DocumentSyncEngine extends ChangeNotifier {
     };
     final Set<String> pushedFolderIds = <String>{
       for (final Folder row in dirtyFolders) row.id,
+    };
+    final Map<String, int> pushedTagUpdatedAt = <String, int>{
+      for (final TagRow row in dirtyTags) row.id: row.updatedAt,
+    };
+    final Set<String> pushedAssignmentIds = <String>{
+      for (final TagAssignmentRow row in dirtyAssignments) row.id,
     };
     final Map<String, String> pushedTodoUpdatedAt = <String, String>{
       for (final TodoRow row in dirtyTodos) row.id: row.updatedAt,
@@ -1111,6 +1204,33 @@ class DocumentSyncEngine extends ChangeNotifier {
       if (result.entityType == 'folder') {
         if (pushedFolderIds.contains(result.entityId)) {
           await _db.markFolderSynced(result.entityId, seq: result.seq);
+        } else {
+          await _db.clearTombstone(
+            entityType: result.entityType,
+            entityId: result.entityId,
+          );
+        }
+        continue;
+      }
+      if (result.entityType == 'tag') {
+        final int? was = pushedTagUpdatedAt[result.entityId];
+        if (was != null) {
+          await _db.markTagSynced(
+            result.entityId,
+            seq: result.seq,
+            pushedUpdatedAt: was,
+          );
+        } else {
+          await _db.clearTombstone(
+            entityType: result.entityType,
+            entityId: result.entityId,
+          );
+        }
+        continue;
+      }
+      if (result.entityType == 'tag_assignment') {
+        if (pushedAssignmentIds.contains(result.entityId)) {
+          await _db.markTagAssignmentSynced(result.entityId, seq: result.seq);
         } else {
           await _db.clearTombstone(
             entityType: result.entityType,

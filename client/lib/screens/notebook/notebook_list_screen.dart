@@ -17,6 +17,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:io' show File, Platform;
 
 import '../../data/notebook_repository.dart';
+import '../../data/tag_repository.dart';
 import '../../models/notebook.dart';
 import '../../services/desktop_pdf_share.dart';
 import '../../services/export_file_name.dart';
@@ -24,9 +25,11 @@ import '../../services/ink_search.dart';
 import '../../services/notebook_pdf_exporter.dart';
 import '../../services/notebook_persistence.dart';
 import '../../services/notebook_password.dart';
+import '../../widgets/edit_tags_sheet.dart';
 import '../../widgets/folder_picker.dart';
 import '../../widgets/press_actions.dart';
 import '../../widgets/sync_button.dart';
+import '../../widgets/tag_widgets.dart';
 import '../../data/local_db.dart';
 import '../home/home_screen.dart' show localDbProvider;
 import '../home/home_providers.dart' show documentSyncEngineProvider;
@@ -111,6 +114,10 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
 
   /// Guards against out-of-order search responses landing over fresher ones.
   int _searchGeneration = 0;
+
+  /// notebook id → its tag names, rebuilt from the tag projections on every
+  /// build of the rows; read by both the row and the cover.
+  Map<String, List<String>> _tagNames = const <String, List<String>>{};
 
   @override
   void dispose() {
@@ -303,6 +310,7 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
         ItemAction.open,
         ItemAction.rename,
         ItemAction.move,
+        ItemAction.editTags,
         notebook.pinned ? ItemAction.unpin : ItemAction.pin,
         ItemAction.exportPdf,
         ItemAction.passwordProtection,
@@ -323,6 +331,17 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
         await _rename(notebook);
       case ItemAction.move:
         await _move(notebook);
+      case ItemAction.editTags:
+        // Same gate as pin: a locked notebook's metadata stays put until
+        // the password is entered.
+        if (!await _requireUnlocked(notebook)) return;
+        if (!mounted) return;
+        await showEditTagsSheet(
+          context,
+          targetType: TagTarget.notebook,
+          targetId: notebook.id,
+          itemTitle: notebook.title.isEmpty ? '(untitled)' : notebook.title,
+        );
       case ItemAction.pin:
         if (!await _requireUnlocked(notebook)) return;
         await ref.read(notebookRepositoryProvider).setPinned(notebook.id, true);
@@ -617,6 +636,11 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
   @override
   Widget build(BuildContext context) {
     final ColorScheme colors = Theme.of(context).colorScheme;
+    // A tag filter change cancels selection, as on the recordings list: a
+    // bulk action must never reach a row the new filter hides.
+    ref.listen(tagFilterProvider(TagTarget.notebook), (_, _) {
+      if (_selecting) _cancelSelection();
+    });
 
     // Back means "leave selection", not "leave the page", while a
     // multi-select is active — the app-bar arrow, gesture back, and the
@@ -675,6 +699,9 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
                   ),
                 ),
               ),
+            // Shared with the recordings list: the identical control, keyed
+            // by target kind so each list keeps its own selection.
+            const TagFilterBar(targetType: TagTarget.notebook),
             Expanded(child: _buildRows(colors)),
           ],
         ),
@@ -700,13 +727,45 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
         // A live search filters the library to notebooks the index says
         // match. Null means "not searching" (or a blank query): no filter.
         final Map<String, NotebookMatchSummary>? searchResults = _searchResults;
-        final List<NotebookListEntry> rows = searchResults == null
+        // Tags arrive as projections (ids and names), never notebook rows.
+        final List<TagSummary> tags =
+            ref.watch(tagsProvider).valueOrNull ?? const <TagSummary>[];
+        final Map<String, Set<String>> tagLinks =
+            ref.watch(tagLinksProvider(TagTarget.notebook)).valueOrNull ??
+                const <String, Set<String>>{};
+        _tagNames = <String, List<String>>{
+          for (final MapEntry<String, Set<String>> e in tagLinks.entries)
+            e.key: tagNamesFor(e.value, tags),
+        };
+        final String? tagFilter = effectiveTagFilter(
+          ref.watch(tagFilterProvider(TagTarget.notebook)),
+          tags,
+        );
+        final List<NotebookListEntry> tagRows = tagFilter == null
             ? allRows
             : allRows
+                .where(
+                  (NotebookListEntry n) =>
+                      tagLinks[n.id]?.contains(tagFilter) ?? false,
+                )
+                .toList(growable: false);
+        final List<NotebookListEntry> rows = searchResults == null
+            ? tagRows
+            : tagRows
                 .where(
                   (NotebookListEntry n) => searchResults.containsKey(n.id),
                 )
                 .toList(growable: false);
+        // Rows can vanish mid-selection (sync pull, another screen's
+        // delete, a tag removed while filtered); a selection covering
+        // ghosts would mislead the count and the bulk actions. Prune
+        // against the TAG-filtered library, so a row the tag filter hides
+        // is never acted on — but not against the search: a live search
+        // hides rows, it does not deselect them, and closing the search
+        // must find the selection exactly as the user left it.
+        _selectedIds.retainAll(
+          tagRows.map((NotebookListEntry n) => n.id).toSet(),
+        );
         if (rows.isEmpty) {
           return Center(
             child: Padding(
@@ -715,21 +774,16 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
                 // A search that matched nothing is a real answer and must
                 // say so; 'No notebooks yet' would be a lie about the
                 // library.
-                searchResults == null ? 'No notebooks yet' : 'No matches',
+                searchResults != null
+                    ? 'No matches'
+                    : tagFilter != null
+                        ? 'No notebooks with this tag'
+                        : 'No notebooks yet',
                 textAlign: TextAlign.center,
               ),
             ),
           );
         }
-        // Rows can vanish mid-selection (sync pull, another screen's
-        // delete); a selection covering ghosts would mislead the count
-        // and the bulk actions. Prune against the WHOLE library, not the
-        // search-filtered rows: a live search hides rows, it does not
-        // deselect them, and closing the search must find the selection
-        // exactly as the user left it.
-        _selectedIds.retainAll(
-          allRows.map((NotebookListEntry n) => n.id).toSet(),
-        );
         final Widget selectionBar = !_selecting
             ? const SizedBox.shrink()
             : Row(
@@ -930,16 +984,34 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
                   width: selected ? 2 : 1,
                 ),
               ),
-              child: Center(
-                child: Icon(
-                  selected
-                      ? Icons.check_circle
-                      : notebook.passwordProtected
-                          ? Icons.lock_outline
-                          : Icons.menu_book,
-                  size: 40,
-                  color: colors.primary,
-                ),
+              child: Stack(
+                children: <Widget>[
+                  Center(
+                    child: Icon(
+                      selected
+                          ? Icons.check_circle
+                          : notebook.passwordProtected
+                              ? Icons.lock_outline
+                              : Icons.menu_book,
+                      size: 40,
+                      color: colors.primary,
+                    ),
+                  ),
+                  // Tags ride the cover face, one line, so the caption
+                  // below keeps its two lines and the grid cell its size.
+                  if (_tagNames[notebook.id]?.isNotEmpty ?? false)
+                    Positioned(
+                      left: 8,
+                      right: 8,
+                      bottom: 6,
+                      child: TagLabel(
+                        key: ValueKey<String>(
+                          'notebook-cover-tags-${notebook.id}',
+                        ),
+                        names: _tagNames[notebook.id]!,
+                      ),
+                    ),
+                ],
               ),
             ),
           ),
@@ -1046,8 +1118,8 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
                       ? ValueKey<String>('notebook-lock-${notebook.id}')
                       : null,
                 ),
-          title: Row(
-            children: <Widget>[
+          title: TaggedTitleRow(
+            leading: <Widget>[
               if (notebook.pinned) ...<Widget>[
                 Icon(
                   Icons.push_pin,
@@ -1056,14 +1128,14 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
                 ),
                 const SizedBox(width: 6),
               ],
-              Expanded(
-                child: Text(
-                  notebook.title.isEmpty ? '(untitled)' : notebook.title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
             ],
+            title: Text(
+              notebook.title.isEmpty ? '(untitled)' : notebook.title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            tagNames: _tagNames[notebook.id] ?? const <String>[],
+            tagKey: ValueKey<String>('notebook-tags-${notebook.id}'),
           ),
           // While a search is live the subtitle answers the searcher's
           // question — how many hits, and of what — instead of the resting

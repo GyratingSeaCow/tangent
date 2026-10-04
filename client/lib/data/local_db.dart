@@ -2,6 +2,7 @@
 import 'dart:io';
 import 'dart:convert';
 
+import 'package:crypto/crypto.dart' show Digest, sha256;
 import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
 import 'package:sqlite3/sqlite3.dart' show Database;
@@ -487,6 +488,73 @@ class AskSourceVisits extends Table {
   Set<Column> get primaryKey => {messageId, sourceIndex};
 }
 
+/// v33 shared custom tags: ONE vocabulary for notebooks and recordings.
+///
+/// A tag is a synced entity of its own (like a folder), so a rename lands on
+/// every notebook and recording that carries it in a single change rather
+/// than rewriting each target's payload. Names are unique per device,
+/// case-insensitively; two devices that independently create "Work" while
+/// offline still get two tags (sync is by id, the folder precedent).
+@DataClassName('TagRow')
+class Tags extends Table {
+  @override
+  String get tableName => 'tags';
+  TextColumn get id => text()();
+  TextColumn get name => text()();
+
+  /// Epoch milliseconds, integers like notebooks.
+  IntColumn get createdAt => integer()();
+  IntColumn get updatedAt => integer()();
+
+  /// Folder contract: nullable, and null reads as dirty.
+  BoolColumn get syncDirty => boolean().nullable()();
+  IntColumn get syncedSeq => integer().nullable()();
+  @override
+  Set<Column> get primaryKey => {id};
+}
+
+/// v33: which tag is on which notebook or recording.
+///
+/// Polymorphic on purpose: `target_type` is 'notebook' or 'dump', so one
+/// table (and one sync entity) serves both libraries. Deliberately NOT a
+/// foreign key to either target: a trashed notebook keeps its tags for a
+/// restore, and a recording deleted on this device may still live on a peer.
+///
+/// The id is DERIVED from (tag, target type, target) — see
+/// [LocalDb.tagAssignmentId] — so two devices that tag the same item with the
+/// same tag converge on one row instead of trading duplicates.
+@DataClassName('TagAssignmentRow')
+class TagAssignments extends Table {
+  @override
+  String get tableName => 'tag_assignments';
+  TextColumn get id => text()();
+  TextColumn get tagId => text()();
+  TextColumn get targetType => text()();
+  TextColumn get targetId => text()();
+  IntColumn get createdAt => integer()();
+  BoolColumn get syncDirty => boolean().nullable()();
+  IntColumn get syncedSeq => integer().nullable()();
+  @override
+  Set<Column> get primaryKey => {id};
+  @override
+  List<Set<Column>> get uniqueKeys => <Set<Column>>[
+        {tagId, targetType, targetId},
+      ];
+}
+
+/// One row of the lightweight assignment projection: which tag sits on which
+/// target. The list screens watch THIS, never a full notebook or dump row, so
+/// tagging an item does not re-stream document bodies.
+typedef TagLink = ({String targetId, String tagId});
+
+/// A tag name the user typed is unusable (blank, too long, or taken).
+class TagNameException implements Exception {
+  const TagNameException(this.message);
+  final String message;
+  @override
+  String toString() => message;
+}
+
 @DriftDatabase(
   tables: [
     Dumps,
@@ -507,6 +575,8 @@ class AskSourceVisits extends Table {
     CalendarEvents,
     AskMessages,
     AskSourceVisits,
+    Tags,
+    TagAssignments,
   ],
 )
 class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
@@ -515,13 +585,14 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   LocalDb.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 32;
+  int get schemaVersion => 33;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
         onCreate: (m) async {
           await m.createAll();
           await _createFtsInfrastructure();
+          await _createTagIndexes();
           await initializeStorageCatalogRows();
         },
         onUpgrade: (m, from, to) async {
@@ -1151,8 +1222,37 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
               await m.addColumn(notebooks, notebooks.passwordHashPrev);
             }
           }
+          if (from < 33) {
+            // v33 shared tags: two brand-new tables, no existing row is
+            // touched. Ask sqlite_master first (the v27/v28 rule) so a
+            // sideways build that already created them cannot fail the
+            // upgrade on a duplicate table.
+            Future<bool> tableExists(String name) async => (await customSelect(
+                  "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+                  variables: <Variable<Object>>[Variable<String>(name)],
+                ).get())
+                    .isNotEmpty;
+            if (!await tableExists('tags')) await m.createTable(tags);
+            if (!await tableExists('tag_assignments')) {
+              await m.createTable(tagAssignments);
+            }
+            await _createTagIndexes();
+          }
         },
       );
+
+  /// Lookup indexes for the assignment projection: by target (the list
+  /// screens) and by tag (the delete cascade and the filter). Idempotent.
+  Future<void> _createTagIndexes() async {
+    await customStatement(
+      'CREATE INDEX IF NOT EXISTS tag_assignments_target_idx '
+      'ON tag_assignments(target_type, target_id)',
+    );
+    await customStatement(
+      'CREATE INDEX IF NOT EXISTS tag_assignments_tag_idx '
+      'ON tag_assignments(tag_id)',
+    );
+  }
 
   /// Key of the settings row recording what [_backfillSpeakerNames] did.
   static const String speakerNamesBackfillKey = 'speaker_names_backfill';
@@ -2447,6 +2547,370 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
       );
       await (delete(folders)..where((t) => t.id.equals(id))).go();
     });
+  }
+
+  // ---- tags (v33) --------------------------------------------------------
+
+  /// The two kinds of thing a tag can sit on. Wire values, shared with the
+  /// server's CHECK constraint.
+  static const String tagTargetNotebook = 'notebook';
+  static const String tagTargetDump = 'dump';
+  static const Set<String> tagTargetTypes = <String>{
+    tagTargetNotebook,
+    tagTargetDump,
+  };
+
+  /// Longest tag name accepted locally. The row shows tags on ONE line, so a
+  /// paragraph-length tag would only ever render as an ellipsis.
+  static const int maxTagNameLength = 48;
+
+  /// Deterministic assignment id: `ta-` + 40 hex of
+  /// sha256(tagId NUL targetType NUL targetId). The server recomputes and
+  /// enforces it, so the same tag on the same item is one row fleet-wide.
+  static String tagAssignmentId(
+    String tagId,
+    String targetType,
+    String targetId,
+  ) {
+    final Digest digest = sha256.convert(
+      utf8.encode('$tagId\u0000$targetType\u0000$targetId'),
+    );
+    return 'ta-${digest.toString().substring(0, 40)}';
+  }
+
+  /// Trims and collapses inner whitespace; throws [TagNameException] for a
+  /// blank or over-long name.
+  static String normalizeTagName(String raw) {
+    final String name = raw.trim().replaceAll(RegExp(r'\s+'), ' ');
+    if (name.isEmpty) throw const TagNameException('Tag name is empty');
+    if (name.length > maxTagNameLength) {
+      throw const TagNameException(
+        'Tag name is longer than $maxTagNameLength characters',
+      );
+    }
+    return name;
+  }
+
+  static void _checkTagTarget(String targetType) {
+    if (!tagTargetTypes.contains(targetType)) {
+      throw ArgumentError.value(targetType, 'targetType');
+    }
+  }
+
+  /// Every tag, alphabetical (case-insensitive). The tag table is a short
+  /// vocabulary, so streaming it whole is the lightweight projection.
+  Stream<List<TagRow>> watchTags() => (select(tags)
+        ..orderBy(<OrderClauseGenerator<$TagsTable>>[
+          (t) => OrderingTerm.asc(t.name.collate(Collate.noCase)),
+        ]))
+      .watch();
+
+  Future<List<TagRow>> allTags() => select(tags).get();
+
+  /// The (target, tag) pairs for one target kind — two short text columns
+  /// per row, joined to LIVE tags so an assignment whose tag is gone never
+  /// renders. This is what the list screens watch instead of full rows.
+  Stream<List<TagLink>> watchTagLinks(String targetType) {
+    _checkTagTarget(targetType);
+    return customSelect(
+      'SELECT a.target_id AS target_id, a.tag_id AS tag_id '
+      'FROM tag_assignments a JOIN tags t ON t.id = a.tag_id '
+      'WHERE a.target_type = ?',
+      variables: <Variable<Object>>[Variable<String>(targetType)],
+      readsFrom: <ResultSetImplementation<dynamic, dynamic>>{
+        tagAssignments,
+        tags,
+      },
+    ).watch().map(
+          (List<QueryRow> rows) => <TagLink>[
+            for (final QueryRow row in rows)
+              (
+                targetId: row.read<String>('target_id'),
+                tagId: row.read<String>('tag_id'),
+              ),
+          ],
+        );
+  }
+
+  /// How many items (notebooks and recordings together) carry [tagId]. The
+  /// delete confirmation states it, so only targets the user can SEE here
+  /// count: a trashed notebook (its assignment is kept for a restore), a
+  /// permanently deleted recording (assignments are left in place) and a
+  /// target not pulled yet all keep their rows but are not counted.
+  Future<int> tagAssignmentCount(String tagId) async {
+    final QueryRow row = await customSelect(
+      'SELECT COUNT(*) AS c FROM tag_assignments a WHERE a.tag_id = ? AND ('
+      "(a.target_type = 'notebook' AND EXISTS (SELECT 1 FROM notebooks n "
+      'WHERE n.id = a.target_id AND n.deleted_at IS NULL)) OR '
+      "(a.target_type = 'dump' AND EXISTS (SELECT 1 FROM dumps d "
+      'WHERE d.id = a.target_id)))',
+      variables: <Variable<Object>>[Variable<String>(tagId)],
+      readsFrom: <ResultSetImplementation<dynamic, dynamic>>{
+        tagAssignments,
+        notebooks,
+        dumps,
+      },
+    ).getSingle();
+    return row.read<int>('c');
+  }
+
+  Future<TagRow?> _tagByName(String name, {String? exceptId}) async {
+    final String folded = name.toLowerCase();
+    for (final TagRow row in await allTags()) {
+      if (row.id != exceptId && row.name.toLowerCase() == folded) return row;
+    }
+    return null;
+  }
+
+  /// Creates a tag and returns its id — or returns the EXISTING tag's id when
+  /// the name is already taken (case-insensitively), so "create inline" can
+  /// never mint a duplicate on this device.
+  Future<String> createTag(String rawName, {String? id, DateTime? now}) async {
+    final String name = normalizeTagName(rawName);
+    return transaction(() async {
+      final TagRow? existing = await _tagByName(name);
+      if (existing != null) return existing.id;
+      final String tagId = id ?? 'tag-${const Uuid().v4()}';
+      final int at = (now ?? DateTime.now()).toUtc().millisecondsSinceEpoch;
+      await into(tags).insert(
+        TagsCompanion.insert(
+          id: tagId,
+          name: name,
+          createdAt: at,
+          updatedAt: at,
+          syncDirty: const Value<bool?>(true),
+        ),
+      );
+      return tagId;
+    });
+  }
+
+  /// Renames a tag everywhere it is used. Refuses a name another tag holds.
+  Future<void> renameTag(String id, String rawName, {DateTime? now}) async {
+    final String name = normalizeTagName(rawName);
+    await transaction(() async {
+      if (await _tagByName(name, exceptId: id) != null) {
+        throw TagNameException('A tag named “$name” already exists');
+      }
+      final int count =
+          await (update(tags)..where((t) => t.id.equals(id))).write(
+        TagsCompanion(
+          name: Value<String>(name),
+          updatedAt:
+              Value((now ?? DateTime.now()).toUtc().millisecondsSinceEpoch),
+          syncDirty: const Value<bool?>(true),
+        ),
+      );
+      if (count != 1) throw StateError('Tag not found: $id');
+    });
+  }
+
+  /// Deletes a tag and removes it from EVERY notebook and recording.
+  ///
+  /// One tombstone carries the whole cascade: the server tombstones the
+  /// tag's assignments and every peer applying the tag deletion drops its
+  /// own (see [applyRemoteTagDeletion]), so no per-assignment delete needs
+  /// to travel. The targets themselves are never touched.
+  Future<void> deleteTag(String id) async {
+    await transaction(() async {
+      await (delete(tagAssignments)..where((t) => t.tagId.equals(id))).go();
+      final int count = await (delete(tags)..where((t) => t.id.equals(id))).go();
+      if (count == 0) return;
+      await recordTombstone(entityType: 'tag', entityId: id);
+    });
+  }
+
+  /// Puts [tagId] on one notebook or recording. Idempotent.
+  Future<void> assignTag({
+    required String tagId,
+    required String targetType,
+    required String targetId,
+    DateTime? now,
+  }) async {
+    _checkTagTarget(targetType);
+    final String id = tagAssignmentId(tagId, targetType, targetId);
+    await transaction(() async {
+      final TagRow? tag = await (select(tags)..where((t) => t.id.equals(tagId)))
+          .getSingleOrNull();
+      if (tag == null) throw StateError('Tag not found: $tagId');
+      await into(tagAssignments).insert(
+        TagAssignmentsCompanion.insert(
+          id: id,
+          tagId: tagId,
+          targetType: targetType,
+          targetId: targetId,
+          createdAt: (now ?? DateTime.now()).toUtc().millisecondsSinceEpoch,
+          syncDirty: const Value<bool?>(true),
+        ),
+        mode: InsertMode.insertOrIgnore,
+      );
+      // Re-adding a tag removed earlier in the same offline stretch: the
+      // undelivered removal must not push after (and undo) the re-add.
+      await clearTombstone(entityType: 'tag_assignment', entityId: id);
+    });
+  }
+
+  /// Takes [tagId] off one notebook or recording. A no-op when absent.
+  Future<void> unassignTag({
+    required String tagId,
+    required String targetType,
+    required String targetId,
+  }) async {
+    _checkTagTarget(targetType);
+    final String id = tagAssignmentId(tagId, targetType, targetId);
+    await transaction(() async {
+      final int count =
+          await (delete(tagAssignments)..where((t) => t.id.equals(id))).go();
+      if (count > 0) {
+        await recordTombstone(entityType: 'tag_assignment', entityId: id);
+      }
+    });
+  }
+
+  // ---- tag sync ----------------------------------------------------------
+
+  /// Tags with local changes the server has not confirmed (null = dirty).
+  Future<List<TagRow>> tagsNeedingPush() => (select(
+        tags,
+      )..where((t) => t.syncDirty.equals(true) | t.syncDirty.isNull()))
+          .get();
+
+  /// Marks a pushed tag clean — only if it was not renamed again while the
+  /// push was in flight (same guard as notebooks).
+  Future<void> markTagSynced(
+    String id, {
+    required int seq,
+    required int pushedUpdatedAt,
+  }) async {
+    await (update(tags)
+          ..where(
+            (t) => t.id.equals(id) & t.updatedAt.equals(pushedUpdatedAt),
+          ))
+        .write(
+      TagsCompanion(
+        syncDirty: const Value<bool?>(false),
+        syncedSeq: Value<int?>(seq),
+      ),
+    );
+  }
+
+  /// Dirty assignments whose tag still exists here. An assignment orphaned
+  /// by a tag deletion is never pushed; the tag tombstone covers it.
+  Future<List<TagAssignmentRow>> tagAssignmentsNeedingPush() {
+    final query = select(tagAssignments).join(<Join<HasResultSet, dynamic>>[
+      innerJoin(tags, tags.id.equalsExp(tagAssignments.tagId)),
+    ])
+      ..where(
+        tagAssignments.syncDirty.equals(true) |
+            tagAssignments.syncDirty.isNull(),
+      );
+    return query
+        .map((TypedResult row) => row.readTable(tagAssignments))
+        .get();
+  }
+
+  Future<void> markTagAssignmentSynced(String id, {required int seq}) async {
+    await (update(tagAssignments)..where((t) => t.id.equals(id))).write(
+      TagAssignmentsCompanion(
+        syncDirty: const Value<bool?>(false),
+        syncedSeq: Value<int?>(seq),
+      ),
+    );
+  }
+
+  Future<bool> _hasPendingTombstone(String entityType, String entityId) async =>
+      (await (select(syncTombstones)
+                ..where(
+                  (t) =>
+                      t.entityType.equals(entityType) &
+                      t.entityId.equals(entityId),
+                ))
+              .getSingleOrNull()) !=
+      null;
+
+  /// Applies a tag the server sent. Clean, never dirty (no echo). A local
+  /// unpushed rename wins and pushes next; a local unpushed DELETE wins too —
+  /// resurrecting the tag here would undo what the user just did.
+  Future<void> applyRemoteTag({
+    required String id,
+    required String name,
+    required int createdAt,
+    required int updatedAt,
+    required int seq,
+  }) async {
+    await transaction(() async {
+      if (await _hasPendingTombstone('tag', id)) return;
+      final TagRow? local =
+          await (select(tags)..where((t) => t.id.equals(id))).getSingleOrNull();
+      if (local != null && local.syncDirty != false) return;
+      await into(tags).insert(
+        TagsCompanion.insert(
+          id: id,
+          name: name,
+          createdAt: createdAt,
+          updatedAt: updatedAt,
+          syncDirty: const Value<bool?>(false),
+          syncedSeq: Value<int?>(seq),
+        ),
+        mode: InsertMode.insertOrReplace,
+      );
+    });
+  }
+
+  /// A peer deleted a tag: drop it and every assignment of it, dirty or not.
+  /// No tombstone — the deletion is already in the server's log.
+  Future<void> applyRemoteTagDeletion(String id) async {
+    await transaction(() async {
+      await (delete(tagAssignments)..where((t) => t.tagId.equals(id))).go();
+      await (delete(tags)..where((t) => t.id.equals(id))).go();
+    });
+  }
+
+  /// Applies an assignment the server sent. A pending local removal of the
+  /// same assignment wins (it pushes next). A tag ABSENT here means the
+  /// assignment is already dead: the feed is seq-ordered, so its tag upsert
+  /// always lands first unless this device deleted the tag — and once that
+  /// deletion has pushed, no tombstone is left to say so, and the server's
+  /// delete is this device's own (never echoed) to clean up after an orphan.
+  Future<void> applyRemoteTagAssignment({
+    required String id,
+    required String tagId,
+    required String targetType,
+    required String targetId,
+    required int createdAt,
+    required int seq,
+  }) async {
+    if (!tagTargetTypes.contains(targetType)) return;
+    await transaction(() async {
+      if (await _hasPendingTombstone('tag_assignment', id)) return;
+      final TagRow? tag = await (select(tags)
+            ..where((t) => t.id.equals(tagId)))
+          .getSingleOrNull();
+      if (tag == null) return;
+      await into(tagAssignments).insert(
+        TagAssignmentsCompanion.insert(
+          id: id,
+          tagId: tagId,
+          targetType: targetType,
+          targetId: targetId,
+          createdAt: createdAt,
+          syncDirty: const Value<bool?>(false),
+          syncedSeq: Value<int?>(seq),
+        ),
+        mode: InsertMode.insertOrReplace,
+      );
+    });
+  }
+
+  /// A peer removed an assignment. A local unpushed re-add wins.
+  Future<void> applyRemoteTagAssignmentDeletion(String id) async {
+    await (delete(tagAssignments)
+          ..where(
+            (t) =>
+                t.id.equals(id) &
+                (t.syncDirty.equals(false)),
+          ))
+        .go();
   }
 
   // ---- notebook trash ----------------------------------------------------

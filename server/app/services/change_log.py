@@ -21,7 +21,7 @@ from typing import Any, Literal
 
 EntityType = Literal[
     "dump", "notebook", "note", "folder", "ink_index", "todo", "calendar_event",
-    "ask_message"
+    "ask_message", "tag", "tag_assignment"
 ]
 Op = Literal["upsert", "delete"]
 
@@ -29,7 +29,7 @@ Op = Literal["upsert", "delete"]
 #: kind fails loudly here rather than as an opaque IntegrityError.
 ENTITY_TYPES: frozenset[str] = frozenset(
     {"dump", "notebook", "note", "folder", "ink_index", "todo", "calendar_event",
-     "ask_message"}
+     "ask_message", "tag", "tag_assignment"}
 )
 
 

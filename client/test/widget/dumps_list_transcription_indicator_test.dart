@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import '../support/legacy_audio_storage_fixture.dart';
+import 'package:tangent/data/tag_repository.dart' show tagStoreProvider;
 import 'package:tangent/data/local_db.dart';
 import 'package:tangent/screens/dump/dumps_list_screen.dart';
 import 'package:tangent/screens/dump/dumps_providers.dart';
@@ -14,6 +15,7 @@ import 'package:tangent/screens/home/home_providers.dart';
 import 'package:tangent/screens/home/home_screen.dart';
 import 'package:tangent/data/notebook_repository.dart' show foldersProvider;
 import '../support/resolved_temp.dart';
+import '../support/fake_tag_store.dart';
 
 void main() {
   testWidgets('list renders every durable status and two independent filters',
@@ -54,6 +56,9 @@ void main() {
       ProviderScope(
         overrides: [
           localDbProvider.overrideWithValue(db),
+          // A real drift db here: the tag projections must not open drift
+          // streams too, or teardown trips !timersPending.
+          tagStoreProvider.overrideWithValue(FakeTagStore()),
           // The screen watches folders for section headers; a real
           // drift stream here trips !timersPending in widget tests.
           foldersProvider.overrideWith((_) => Stream.value(const <Folder>[])),
@@ -128,6 +133,9 @@ void main() {
       ProviderScope(
         overrides: [
           localDbProvider.overrideWithValue(db),
+          // A real drift db here: the tag projections must not open drift
+          // streams too, or teardown trips !timersPending.
+          tagStoreProvider.overrideWithValue(FakeTagStore()),
           // The screen watches folders for section headers; a real
           // drift stream here trips !timersPending in widget tests.
           foldersProvider.overrideWith((_) => Stream.value(const <Folder>[])),

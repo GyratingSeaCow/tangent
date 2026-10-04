@@ -9,6 +9,7 @@ import 'local_deletion_presentation.dart';
 import 'sync_status_presentation.dart';
 
 import '../../data/local_db.dart';
+import '../../data/tag_repository.dart';
 import '../../data/storage/storage_contract.dart';
 import 'dump_grouping.dart';
 import 'dump_selection_controller.dart';
@@ -35,12 +36,14 @@ import '../../services/transcript_search.dart'
 import '../home/home_providers.dart' show serverTranscriptionServiceProvider;
 import '../settings/ai_summaries_section.dart'
     show summariesClientProvider, summariesEnabledProvider;
+import '../../widgets/edit_tags_sheet.dart';
 import '../../widgets/item_action_sheet.dart';
 import '../../widgets/language_tag.dart';
 import '../../widgets/folder_header_actions.dart';
 import '../../widgets/folder_picker.dart';
 import '../../widgets/instrument_scaffold.dart';
 import '../../widgets/press_actions.dart';
+import '../../widgets/tag_widgets.dart';
 import '../../widgets/top_nav_rail.dart';
 import '../notebook/notebook_grouping.dart' show FolderSummary;
 import '../notebook/send_to_notebook.dart';
@@ -96,7 +99,8 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
       r?.generation,
       ref.read(searchQueryProvider),
       ref.read(dumpModeFilterProvider),
-      ref.read(transcriptFilterProvider)
+      ref.read(transcriptFilterProvider),
+      ref.read(tagFilterProvider(TagTarget.dump))
     );
   }
 
@@ -235,6 +239,29 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
     super.dispose();
   }
 
+  /// The tag filter applied to the presented rows; identity when no tag is
+  /// selected. Like [_restrictToFilterIds] it only narrows what is shown, and
+  /// the selection controller intersects with the result, so a bulk action
+  /// can never touch a row the filter hides.
+  PresentedDumpResults? _restrictToTag(
+    PresentedDumpResults? results,
+    String? tagId,
+    Map<String, Set<String>> links,
+  ) {
+    if (results == null || tagId == null) return results;
+    return (
+      scopeKey: results.scopeKey,
+      generation: results.generation,
+      settled: results.settled,
+      rows: List<DumpRow>.unmodifiable(
+        results.rows.where(
+          (DumpRow row) => links[row.id]?.contains(tagId) ?? false,
+        ),
+      ),
+      limit: results.limit
+    );
+  }
+
   /// [widget.filterIds] applied to the presented rows; identity when unset.
   PresentedDumpResults? _restrictToFilterIds(PresentedDumpResults? results) {
     final Set<String>? ids = widget.filterIds;
@@ -265,8 +292,25 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
     ref.listen(searchQueryProvider, (_, _) => _selection.cancel());
     ref.listen(dumpModeFilterProvider, (_, _) => _selection.cancel());
     ref.listen(transcriptFilterProvider, (_, _) => _selection.cancel());
-    final PresentedDumpResults? results =
-        _restrictToFilterIds(presented.valueOrNull);
+    ref.listen(
+      tagFilterProvider(TagTarget.dump),
+      (_, _) => _selection.cancel(),
+    );
+    // Tags arrive as projections (ids, names, id pairs), never dump rows.
+    final List<TagSummary> tags =
+        ref.watch(tagsProvider).valueOrNull ?? const <TagSummary>[];
+    final Map<String, Set<String>> tagLinks =
+        ref.watch(tagLinksProvider(TagTarget.dump)).valueOrNull ??
+            const <String, Set<String>>{};
+    final String? tagFilter = effectiveTagFilter(
+      ref.watch(tagFilterProvider(TagTarget.dump)),
+      tags,
+    );
+    final PresentedDumpResults? results = _restrictToTag(
+      _restrictToFilterIds(presented.valueOrNull),
+      tagFilter,
+      tagLinks,
+    );
     if (results != null) {
       _selection.apply(
         (
@@ -492,6 +536,8 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
                 ],
               ),
             ),
+            // Shared with the notebooks list: the identical control.
+            const TagFilterBar(targetType: TagTarget.dump),
             if (_deleteError != null)
               Text(_deleteError!, textAlign: TextAlign.center),
             if (_deleteResult != null)
@@ -519,7 +565,14 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
                                   ? 'No matches'
                                   : widget.filterIds != null
                                       ? 'Those recordings are no longer here'
-                                      : 'No recordings yet — record one!',
+                                      : tagFilter != null
+                                          ? 'No recordings with this tag'
+                                          : 'No recordings yet — record one!',
+                              tagNames: <String, List<String>>{
+                                for (final MapEntry<String, Set<String>> e
+                                    in tagLinks.entries)
+                                  e.key: tagNamesFor(e.value, tags),
+                              },
                               searchQuery: showingSearch ? query.trim() : '',
                               searchMatches: showingSearch
                                   ? ref
@@ -704,6 +757,7 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
         ItemAction.rename,
         if (nameable) ItemAction.nameSpeakers,
         ItemAction.move,
+        ItemAction.editTags,
         dump.pinned == true ? ItemAction.unpin : ItemAction.pin,
         if (exportable) ItemAction.exportMarkdown,
         if (sendable) ItemAction.sendToNotebook,
@@ -746,6 +800,14 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
         await showNameSpeakersSheet(context, ref, dump);
       case ItemAction.move:
         await _moveDump(dump);
+      case ItemAction.editTags:
+        if (!context.mounted) return;
+        await showEditTagsSheet(
+          context,
+          targetType: TagTarget.dump,
+          targetId: dump.id,
+          itemTitle: dump.title.isEmpty ? '(untitled)' : dump.title,
+        );
       case ItemAction.pin:
         await ref.read(localDbProvider).setDumpPinned(dump.id, true);
       case ItemAction.unpin:
@@ -1146,7 +1208,11 @@ class _DumpList extends StatefulWidget {
     this.onUndoAutoFile,
     this.searchQuery = '',
     this.searchMatches = const <String, DumpSearchMatch>{},
+    this.tagNames = const <String, List<String>>{},
   });
+
+  /// dump id → its tag names (vocabulary order), shown on the title line.
+  final Map<String, List<String>> tagNames;
 
   /// The active search, or '' when browsing. Non-empty means rows carry a
   /// snippet line and opening one hands the query to the detail screen so
@@ -1483,8 +1549,8 @@ class _DumpListState extends State<_DumpList> {
                         ),
                       )
                     : null,
-                title: Row(
-                  children: <Widget>[
+                title: TaggedTitleRow(
+                  leading: <Widget>[
                     if (dump.pinned == true) ...<Widget>[
                       Icon(
                         Icons.push_pin,
@@ -1493,14 +1559,14 @@ class _DumpListState extends State<_DumpList> {
                       ),
                       const SizedBox(width: 6),
                     ],
-                    Expanded(
-                      child: Text(
-                        dump.title.isEmpty ? '(untitled)' : dump.title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
                   ],
+                  title: Text(
+                    dump.title.isEmpty ? '(untitled)' : dump.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  tagNames: widget.tagNames[dump.id] ?? const <String>[],
+                  tagKey: ValueKey<String>('dump-tags-${dump.id}'),
                 ),
                 subtitle: compact
                     ? Column(

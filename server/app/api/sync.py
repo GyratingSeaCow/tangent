@@ -12,6 +12,7 @@ client cannot: a single monotonic sequence that every replica can agree on.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import time
@@ -417,6 +418,160 @@ def _apply_folder(conn: sqlite3.Connection, change: SyncChange, now: int) -> Non
             change.device_id,
         ),
     )
+
+
+#: Longest tag name the server stores. The client caps lower (48); this is
+#: the abuse bound, not the UX limit.
+MAX_TAG_NAME_LENGTH = 64
+
+#: What a tag can sit on. Mirrors the tag_assignments CHECK constraint.
+TAG_TARGET_TYPES = frozenset({"notebook", "dump"})
+
+
+def tag_assignment_id(tag_id: str, target_type: str, target_id: str) -> str:
+    """The canonical assignment id: ``ta-`` + 40 hex of
+    sha256(tag_id NUL target_type NUL target_id). Every client derives the
+    same id, so two devices tagging the same item converge on one row."""
+    digest = hashlib.sha256(
+        f"{tag_id}\0{target_type}\0{target_id}".encode()
+    ).hexdigest()
+    return f"ta-{digest[:40]}"
+
+
+def _apply_tag(
+    conn: sqlite3.Connection, change: SyncChange, now: int
+) -> tuple[str, dict[str, Any] | None]:
+    """Upsert or tombstone one tag; returns (op, payload) to publish.
+
+    A delete cascades HERE as well as on every client: the tag's live
+    assignments are tombstoned in the same transaction, so this server's own
+    view (and anything that reads it) never shows a deleted tag on an item.
+    The single tag tombstone on the feed stands for all of them — clients
+    drop the tag's assignments when they apply it.
+
+    Deletion is final. Tag ids are minted fresh per create, so an upsert for
+    a tag this server holds tombstoned is a device that renamed (or re-pushed)
+    it before pulling the deletion. It is accepted — the pushing device is
+    not left retrying forever — but changes nothing and is published as a
+    delete, so every device converges on the deletion."""
+    if change.op == "delete":
+        conn.execute(
+            "UPDATE tags SET deleted_at = ?, updated_at = ? WHERE id = ?",
+            (now, now, change.entity_id),
+        )
+        conn.execute(
+            "UPDATE tag_assignments SET deleted_at = ?, updated_at = ? "
+            "WHERE tag_id = ? AND deleted_at IS NULL",
+            (now, now, change.entity_id),
+        )
+        return "delete", None
+    existing = conn.execute(
+        "SELECT deleted_at FROM tags WHERE id = ?", (change.entity_id,)
+    ).fetchone()
+    if existing is not None and existing["deleted_at"] is not None:
+        return "delete", None
+    p: dict[str, Any] = change.payload or {}
+    raw = p.get("name")
+    if not isinstance(raw, str) or not raw.strip():
+        raise ValueError("tag name must be a non-empty string")
+    name = " ".join(raw.split())
+    if len(name) > MAX_TAG_NAME_LENGTH:
+        raise ValueError(f"tag name longer than {MAX_TAG_NAME_LENGTH}")
+    created_at = int(p.get("created_at") or now)
+    updated_at = int(p.get("updated_at") or created_at)
+    conn.execute(
+        """
+        INSERT INTO tags
+            (id, name, created_at, updated_at, deleted_at, origin_device_id)
+        VALUES (?, ?, ?, ?, NULL, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            name = excluded.name,
+            updated_at = excluded.updated_at
+        """,
+        (change.entity_id, name, created_at, updated_at, change.device_id),
+    )
+    stored = conn.execute(
+        "SELECT name, created_at, updated_at FROM tags WHERE id = ?",
+        (change.entity_id,),
+    ).fetchone()
+    return "upsert", {
+        "name": stored["name"],
+        "created_at": stored["created_at"],
+        "updated_at": stored["updated_at"],
+    }
+
+
+def _apply_tag_assignment(
+    conn: sqlite3.Connection, change: SyncChange, now: int
+) -> tuple[str, dict[str, Any] | None]:
+    """Upsert or tombstone one assignment; returns (op, payload) to publish.
+
+    An upsert naming a tag this server has never seen is REJECTED (the client
+    keeps it dirty; the tag rides earlier in the same push, so this only
+    happens if the tag itself was refused). An upsert for a tag that has been
+    DELETED is accepted but stored tombstoned and published as a delete: the
+    device raced a deletion it had not pulled yet, the deletion wins, and the
+    pushing device is not left retrying forever."""
+    if change.op == "delete":
+        conn.execute(
+            "UPDATE tag_assignments SET deleted_at = ?, updated_at = ? "
+            "WHERE id = ?",
+            (now, now, change.entity_id),
+        )
+        return "delete", None
+    p: dict[str, Any] = change.payload or {}
+    tag_id = p.get("tag_id")
+    target_type = p.get("target_type")
+    target_id = p.get("target_id")
+    if not isinstance(tag_id, str) or not tag_id:
+        raise ValueError("tag_assignment needs tag_id")
+    if target_type not in TAG_TARGET_TYPES:
+        raise ValueError(f"tag_assignment target_type must be one of {sorted(TAG_TARGET_TYPES)}")
+    if not isinstance(target_id, str) or not target_id:
+        raise ValueError("tag_assignment needs target_id")
+    if change.entity_id != tag_assignment_id(tag_id, target_type, target_id):
+        raise ValueError("tag_assignment id does not match its tag and target")
+    tag = conn.execute(
+        "SELECT deleted_at FROM tags WHERE id = ?", (tag_id,)
+    ).fetchone()
+    if tag is None:
+        raise ValueError(f"unknown tag {tag_id!r}")
+    deleted_at = now if tag["deleted_at"] is not None else None
+    created_at = int(p.get("created_at") or now)
+    conn.execute(
+        """
+        INSERT INTO tag_assignments
+            (id, tag_id, target_type, target_id, created_at, updated_at,
+             deleted_at, origin_device_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            updated_at = excluded.updated_at,
+            deleted_at = excluded.deleted_at
+        """,
+        (
+            change.entity_id,
+            tag_id,
+            target_type,
+            target_id,
+            created_at,
+            now,
+            deleted_at,
+            change.device_id,
+        ),
+    )
+    if deleted_at is not None:
+        return "delete", None
+    stored = conn.execute(
+        "SELECT tag_id, target_type, target_id, created_at "
+        "FROM tag_assignments WHERE id = ?",
+        (change.entity_id,),
+    ).fetchone()
+    return "upsert", {
+        "tag_id": stored["tag_id"],
+        "target_type": stored["target_type"],
+        "target_id": stored["target_id"],
+        "created_at": stored["created_at"],
+    }
 
 
 def _iso_instant(value: Any, field: str) -> str:
@@ -869,6 +1024,7 @@ def sync_push(
     for change in body.changes:
         try:
             publish_payload = change.payload
+            publish_op = change.op
             if change.entity_type == "ink_index":
                 # The index is server-generated. Accepting a client's rows
                 # would let a stale device overwrite fresher OCR output.
@@ -956,6 +1112,14 @@ def sync_push(
                         k: v for k, v in change.payload.items()
                         if k not in FOLDER_SERVER_ONLY_FIELDS
                     }
+            elif change.entity_type == "tag":
+                # Republish what the server now HOLDS (normalised name), or
+                # a delete when a stale upsert raced the tag's deletion.
+                publish_op, publish_payload = _apply_tag(db, change, now)
+            elif change.entity_type == "tag_assignment":
+                publish_op, publish_payload = _apply_tag_assignment(
+                    db, change, now
+                )
             elif change.entity_type == "todo":
                 changed, publish_payload = _apply_todo(db, change, now)
                 if not changed:
@@ -987,7 +1151,7 @@ def sync_push(
                 db,
                 entity_type=change.entity_type,
                 entity_id=change.entity_id,
-                op=change.op,
+                op=publish_op,
                 device_id=body.device_id,
                 payload=publish_payload,
                 now=now,

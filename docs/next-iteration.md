@@ -14,6 +14,7 @@ matching) has shipped — confirmed by grep against `client/lib` / `server/app`.
 | 3 | **permission_handler 13** — needs compileSdk 37, above AGP 9.1.0's max-recommended 36. Take with the next Android toolchain bump. | XS | Upstream (AGP) |
 | 5 | **tray_manager 0.7** — nativeapi-based API rewrite; `lib/services/win_tray.dart` needs a real migration (global `trayManager` gone, TrayListener no longer a mixin, Menu/MenuItem constructors changed). | S | None — small arc |
 | 4 | **plus-family dependency knot** — connectivity_plus 7 / device_info_plus 13 / share_plus 13 / flutter_secure_storage 11 / flutter_timezone 5 / dbus 0.8 only resolve together with a flutter_local_notifications DEV PRERELEASE (23.0.0-dev.x needs dbus ^0.8; 22.x stable needs ^0.7). Deferred until fln 23 stable; discontinued `js` stays in the graph until then. | S | Upstream (fln stable release) |
+| 6 | **Shared tags follow-ups** (feature branch `feature/shared-tags`, spec docs/design/shared-tags.md): bulk tagging from the multi-select toolbars; merging same-named tags created offline on two devices; sweeping assignments of permanently deleted recordings; tags in search/Ask/MCP/exports. Hardware acceptance of tag sync between the two devices is still owed. | S–M | None |
 
 ## Done 2026-10-03 (F-Droid review loop + v1.48.1/v1.48.2)
 

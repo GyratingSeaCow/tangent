@@ -374,6 +374,9 @@ Future<void> showAskSourceActions(
       case ItemAction.download:
       case ItemAction.regenerateSummary:
       case ItemAction.nameSpeakers:
+      // Tags are edited from the notebook and recording lists, not from a
+      // citation chip.
+      case ItemAction.editTags:
       case ItemAction.select:
         break;
     }
