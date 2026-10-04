@@ -127,26 +127,46 @@ jobs:
         working-directory: client
         run: flutter test
 
-      - name: Build release APK
+      - name: Build release APKs (universal + per-ABI)
         working-directory: client
-        run: flutter build apk --release
+        run: |
+          flutter build apk --release
+          # F-Droid ships per-ABI APKs (smaller downloads; reviewer-required).
+          # build.gradle gives each split versionCode = base*10 + abi digit.
+          flutter build apk --release --split-per-abi
 
-      - name: Verify release signature
+      - name: Verify release signatures
         run: |
           BT="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)"
-          "$BT/apksigner" verify --print-certs \
-            client/build/app/outputs/flutter-apk/app-release.apk | head -3
-          "$BT/apksigner" verify --print-certs \
-            client/build/app/outputs/flutter-apk/app-release.apk \
-            | grep -q "CN=Tangent" \
-            || { echo "APK is not signed with the Tangent upload key"; exit 1; }
+          for apk in app-release app-armeabi-v7a-release app-arm64-v8a-release app-x86_64-release; do
+            "$BT/apksigner" verify --print-certs \
+              "client/build/app/outputs/flutter-apk/${apk}.apk" \
+              | grep -q "CN=Tangent" \
+              || { echo "${apk}.apk is not signed with the Tangent upload key"; exit 1; }
+          done
 
-      - name: Rename APK to carry the version
+      - name: Rename APKs to carry version and ABI version code
         run: |
           # On a manual run without a tag BUILD_REF is the branch, which still makes
           # a usable, self-describing filename.
-          cp client/build/app/outputs/flutter-apk/app-release.apk \
-             "tangent-${BUILD_REF//\//-}.apk"
+          out=client/build/app/outputs/flutter-apk
+          BT="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)"
+          cp "$out/app-release.apk" "tangent-${BUILD_REF//\//-}.apk"
+          # Per-ABI names must match the fdroiddata recipe's Binaries template:
+          # tangent-v%v-%c.apk — i.e. tangent-v<versionName>-<versionCode>.apk.
+          # Assert each split really carries base*10+digit before naming it;
+          # reproducible-build verification on F-Droid's side depends on it.
+          base=$(grep -E '^version:' client/pubspec.yaml | sed -E 's/.*\+([0-9]+).*/\1/')
+          for pair in "armeabi-v7a:1" "arm64-v8a:2" "x86_64:3"; do
+            abi="${pair%%:*}"; digit="${pair##*:}"
+            want=$((base*10+digit))
+            got=$("$BT/aapt" dump badging "$out/app-${abi}-release.apk" \
+              | sed -n -E "s/.*versionCode='([0-9]+)'.*/\1/p" | head -1)
+            [ "$got" = "$want" ] \
+              || { echo "::error::$abi versionCode is $got, expected $want"; exit 1; }
+            cp "$out/app-${abi}-release.apk" "tangent-${BUILD_REF//\//-}-${want}.apk"
+          done
+          ls -la tangent-*.apk
 
       - name: Create release and attach APK
         if: env.IS_RELEASE == 'true'

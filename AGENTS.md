@@ -50,7 +50,7 @@ ADH2/
 
 ## Status
 
-Shipping — **v1.48.2** (see CHANGELOG.md). Client and server are both
+Shipping — **v1.48.3** (see CHANGELOG.md). Client and server are both
 implemented and tested (2885
 Flutter tests, 777 server tests, 129 Kotlin tests). Toolchain:
 Flutter 3.47.6 / Dart 3.13, AGP 9.1 / Kotlin 2.4 / Gradle 9.3.1 /
@@ -60,6 +60,13 @@ natively on Linux AND Windows (tray icon, global record hotkey,
 close-to-tray, single instance, right-click = long-press; AppImage and
 Inno Setup installer under `packaging/`) — verified on CachyOS/KDE
 Plasma Wayland and Windows 11; see the README's Desktop sections.
+
+v1.48.3 **F-Droid ABI split + reproducible builds** (packaging-only):
+per-ABI release APKs with split version codes (base×10 + {v7a:1,
+arm64:2, x86_64:3}; universal keeps the base code), attached to releases
+as `tangent-vX.Y.Z-<code>.apk` for F-Droid's `Binaries` +
+`AllowedAPKSigningKeys` reproducible-build verification. Requested in
+fdroiddata MR !50943 review.
 
 v1.48.0 **F-Droid packaging** (metadata-only, no app or server code):
 fastlane/metadata/android/en-US/ at the repo root (description, 512x512

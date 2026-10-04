@@ -1,0 +1,1 @@
+F-Droid packaging: per-ABI APKs with split version codes, and reproducible-build support so F-Droid verifies and ships the developer-signed APK. No app changes; no server update required.
