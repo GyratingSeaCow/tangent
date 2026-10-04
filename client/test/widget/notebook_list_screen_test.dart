@@ -247,7 +247,8 @@ void main() {
     await unmount(tester);
   });
 
-  testWidgets('turning protection on requires the password twice',
+  testWidgets(
+      'turning protection on requires the password twice and keeps the session unlocked',
       (tester) async {
     await mountList(
       tester,
@@ -317,10 +318,10 @@ void main() {
     await tester.pumpAndSettle();
     expect(
       find.byKey(const ValueKey<String>('notebook-current-password')),
-      findsOneWidget,
-      reason: 'new protection must lock immediately, not unlock this process',
+      findsNothing,
+      reason: 'entering and confirming the new password unlocks this process',
     );
-    expect(find.byType(NotebookEditorScreen), findsNothing);
+    expect(find.byType(NotebookEditorScreen), findsOneWidget);
     await unmount(tester);
   });
 

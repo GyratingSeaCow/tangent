@@ -1441,6 +1441,37 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     );
   }
 
+  /// Replaces only a rejected notebook's malformed verifier tuple with the
+  /// server's canonical tuple. The body stays dirty so its local edit is
+  /// retried on the next sync instead of wedging forever.
+  ///
+  /// Guarded on [pushedUpdatedAt] for the same reason as
+  /// [markNotebookSynced]: a password change made while the request was in
+  /// flight must not be overwritten by that request's response.
+  Future<void> rebaseNotebookPasswordState(
+    String id, {
+    required int pushedUpdatedAt,
+    required String? passwordHash,
+    required String? passwordSalt,
+    required int? passwordIterations,
+    required String? passwordHashPrev,
+  }) async {
+    await (update(notebooks)..where(
+          (t) =>
+              t.id.equals(id) &
+              t.updatedAt.equals(pushedUpdatedAt) &
+              t.syncDirty.equals(true),
+        ))
+        .write(
+          NotebooksCompanion(
+            passwordHash: Value<String?>(passwordHash),
+            passwordSalt: Value<String?>(passwordSalt),
+            passwordIterations: Value<int?>(passwordIterations),
+            passwordHashPrev: Value<String?>(passwordHashPrev),
+          ),
+        );
+  }
+
   /// Marks a notebook dirty. Every local save funnels through here.
   Future<void> markNotebookDirty(String id) async {
     await (update(notebooks)..where((t) => t.id.equals(id))).write(

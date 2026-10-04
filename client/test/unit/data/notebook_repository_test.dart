@@ -128,6 +128,31 @@ void main() {
     expect(protectedOne.passwordHash, isNot(protectedTwo.passwordHash));
   });
 
+  test('setPassword cannot rotate a protected row without old password', () async {
+    final NotebookRepository repository = build();
+    final Notebook created = await repository.createNotebook(title: 'Private');
+    await repository.setPassword(created.id, 'first password');
+    final Notebook before = (await repository.getNotebook(created.id))!;
+
+    now = now.add(const Duration(minutes: 1));
+    await expectLater(
+      repository.setPassword(created.id, 'replacement password'),
+      throwsA(isA<StateError>()),
+    );
+
+    final Notebook after = (await repository.getNotebook(created.id))!;
+    expect(after.passwordHash, before.passwordHash);
+    expect(after.passwordSalt, before.passwordSalt);
+    expect(after.passwordIterations, before.passwordIterations);
+    expect(after.passwordHashPrev, before.passwordHashPrev);
+    expect(after.updatedAt, before.updatedAt);
+    expect(await repository.verifyPassword(created.id, 'first password'), isTrue);
+    expect(
+      await repository.verifyPassword(created.id, 'replacement password'),
+      isFalse,
+    );
+  });
+
   test(
     'durable clear requires prev and tombstone rejects stale verifier',
     () async {

@@ -375,6 +375,213 @@ void main() {
   );
 
   test(
+    'first-seen notebook keeps a predecessor-bearing verifier tuple',
+    () async {
+      client.pullPages = <SyncPullPage>[
+        const SyncPullPage(
+          changes: <RemoteChange>[
+            RemoteChange(
+              entityType: 'notebook',
+              entityId: 'rotated-first-seen',
+              op: SyncOp.upsert,
+              payload: <String, dynamic>{
+                'title': 'Rotated elsewhere',
+                'created_at': 1,
+                'updated_at': 2,
+                'doc': '{"blocks":[]}',
+                'ink': '{"strokes":[]}',
+                'password_hash': 'hash-current',
+                'password_salt': 'salt-current',
+                'password_iterations': 210000,
+                'password_hash_prev': 'hash-previous',
+              },
+              seq: 1,
+              deviceId: 'peer-device',
+            ),
+            RemoteChange(
+              entityType: 'notebook',
+              entityId: 'cleared-first-seen',
+              op: SyncOp.upsert,
+              payload: <String, dynamic>{
+                'title': 'Cleared elsewhere',
+                'created_at': 1,
+                'updated_at': 2,
+                'doc': '{"blocks":[]}',
+                'ink': '{"strokes":[]}',
+                'password_hash': null,
+                'password_salt': null,
+                'password_iterations': null,
+                'password_hash_prev': 'hash-cleared',
+              },
+              seq: 2,
+              deviceId: 'peer-device',
+            ),
+          ],
+          headSeq: 2,
+          hasMore: false,
+        ),
+      ];
+
+      await build(label: () async => 'test').syncNow();
+
+      final NotebookRow rotated =
+          await db.getNotebookRow('rotated-first-seen') as NotebookRow;
+      expect(
+        <Object?>[
+          rotated.passwordHash,
+          rotated.passwordSalt,
+          rotated.passwordIterations,
+          rotated.passwordHashPrev,
+        ],
+        <Object?>['hash-current', 'salt-current', 210000, 'hash-previous'],
+      );
+      final NotebookRow cleared =
+          await db.getNotebookRow('cleared-first-seen') as NotebookRow;
+      expect(
+        <Object?>[
+          cleared.passwordHash,
+          cleared.passwordSalt,
+          cleared.passwordIterations,
+          cleared.passwordHashPrev,
+        ],
+        <Object?>[null, null, null, 'hash-cleared'],
+      );
+    },
+  );
+
+  test('protected conflict fork stays protected and clean', () async {
+    await db.into(db.notebooks).insert(
+          NotebooksCompanion.insert(
+            id: 'fork-source',
+            title: 'Private',
+            createdAt: 1,
+            updatedAt: 5,
+            docJson: '{"blocks":[]}',
+            inkJson: '{"strokes":[]}',
+            passwordHash: const Value<String?>('hash-old'),
+            passwordSalt: const Value<String?>('salt-old'),
+            passwordIterations: const Value<int?>(210000),
+            syncDirty: const Value<bool>(true),
+          ),
+        );
+    client.pullPages = <SyncPullPage>[
+      const SyncPullPage(
+        changes: <RemoteChange>[
+          RemoteChange(
+            entityType: 'notebook',
+            entityId: 'fork-source',
+            op: SyncOp.upsert,
+            payload: <String, dynamic>{
+              'title': 'Private',
+              'created_at': 1,
+              'updated_at': 9,
+              'doc': '{"blocks":[{"kind":"text","text":"SECRET CONTENT"}]}',
+              'ink': '{"strokes":[]}',
+              'password_hash': 'hash-rotated',
+              'password_salt': 'salt-rotated',
+              'password_iterations': 210000,
+              'password_hash_prev': 'hash-old',
+            },
+            seq: 7,
+            deviceId: 'peer-device',
+          ),
+        ],
+        headSeq: 7,
+        hasMore: false,
+      ),
+    ];
+
+    final SyncReport report =
+        await build(label: () async => 'test').syncNow();
+
+    final NotebookRow fork =
+        await db.getNotebookRow('fork-source-conflict-7') as NotebookRow;
+    expect(fork.docJson, contains('SECRET CONTENT'));
+    expect(fork.passwordHash, 'hash-rotated');
+    expect(fork.passwordSalt, 'salt-rotated');
+    expect(fork.passwordIterations, 210000);
+    expect(fork.passwordHashPrev, 'hash-old');
+    expect(
+      fork.syncDirty,
+      isFalse,
+      reason:
+          'a protected conflict copy must not be pushed into server indexes',
+    );
+    expect(
+      (await db.notebooksNeedingPush()).map((NotebookRow row) => row.id),
+      isNot(contains('fork-source-conflict-7')),
+    );
+    expect(report.conflicts, 1);
+  });
+
+  test(
+    'malformed verifier rejection surfaces error, rebases, and retries once',
+    () async {
+      await db.into(db.notebooks).insert(
+            NotebooksCompanion.insert(
+              id: 'stale-after-clear',
+              title: 'Dirty local edit',
+              createdAt: 1,
+              updatedAt: 5,
+              docJson: '{"blocks":[{"text":"keep this edit"}]}',
+              inkJson: '{"strokes":[]}',
+              passwordHash: const Value<String?>('hash-old'),
+              passwordSalt: const Value<String?>('salt-old'),
+              passwordIterations: const Value<int?>(210000),
+              syncDirty: const Value<bool>(true),
+            ),
+          );
+      client.pushResults = const <PushResult>[
+        PushResult(
+          entityId: 'stale-after-clear',
+          entityType: 'notebook',
+          seq: 0,
+          applied: false,
+          reason: 'protected notebook requires sane password_iterations',
+          canonicalPayload: <String, dynamic>{
+            'password_hash': null,
+            'password_salt': null,
+            'password_iterations': null,
+            'password_hash_prev': 'hash-old',
+          },
+        ),
+      ];
+      final DocumentSyncEngine engine = build(label: () async => 'test');
+
+      final SyncReport rejected = await engine.syncNow();
+
+      expect(rejected.outcome, SyncOutcome.failed);
+      expect(rejected.pushed, 0);
+      expect(rejected.error, contains('sane password_iterations'));
+      expect(engine.lastError, contains('sane password_iterations'));
+      NotebookRow row =
+          await db.getNotebookRow('stale-after-clear') as NotebookRow;
+      expect(row.docJson, contains('keep this edit'));
+      expect(row.passwordHash, isNull);
+      expect(row.passwordHashPrev, 'hash-old');
+      expect(row.syncDirty, isTrue);
+
+      client.pushResults = const <PushResult>[
+        PushResult(
+          entityId: 'stale-after-clear',
+          entityType: 'notebook',
+          seq: 9,
+          applied: true,
+        ),
+      ];
+      final SyncReport retried = await engine.syncNow();
+
+      final Map<String, dynamic> retriedPayload =
+          client.pushedChanges!.single['payload'] as Map<String, dynamic>;
+      expect(retriedPayload['password_hash'], isNull);
+      expect(retriedPayload['password_hash_prev'], 'hash-old');
+      expect(retried.pushed, 1);
+      row = await db.getNotebookRow('stale-after-clear') as NotebookRow;
+      expect(row.syncDirty, isFalse);
+    },
+  );
+
+  test(
     'malformed verifier is skipped and pull checkpoint still advances',
     () async {
       await db.into(db.notebooks).insert(

@@ -796,15 +796,17 @@ class DocumentSyncEngine extends ChangeNotifier {
           incomingPrev is String && incomingPrev.isNotEmpty;
 
       if (incomingHash == null) {
-        // A clear is authenticated by the verifier currently held locally.
-        // Missing/wrong proof and mixed null/non-null tuples preserve it.
+        // A clear is bounded by the verifier currently held locally.
+        // Missing/wrong predecessors and mixed null/non-null tuples preserve it.
         if (incomingSalt == null &&
             incomingIterations == null &&
-            incomingPrev is String &&
-            incomingPrev.isNotEmpty &&
-            existing?.passwordHash == incomingPrev) {
+            validPrev &&
+            (existing == null ||
+                incomingPrev is String &&
+                    incomingPrev.isNotEmpty &&
+                    existing.passwordHash == incomingPrev)) {
           passwordHash = null;
-          passwordHashPrev = incomingPrev;
+          passwordHashPrev = incomingPrev as String?;
         }
       } else if (incomingHash is String &&
           incomingHash.isNotEmpty &&
@@ -816,7 +818,8 @@ class DocumentSyncEngine extends ChangeNotifier {
           validPrev) {
         final String? heldHash = existing?.passwordHash;
         final String? heldPrev = existing?.passwordHashPrev;
-        final bool authorized = incomingHash == heldHash ||
+        final bool authorized = existing == null ||
+            incomingHash == heldHash ||
             (heldHash != null
                 ? incomingPrev == heldHash
                 : heldPrev == null
@@ -866,6 +869,41 @@ class DocumentSyncEngine extends ChangeNotifier {
       passwordIterations: passwordIterations,
       passwordHashPrev: passwordHashPrev,
       seq: seq,
+    );
+  }
+
+  Future<void> _rebaseRejectedNotebookPassword(
+    PushResult result,
+    int pushedUpdatedAt,
+  ) async {
+    final Map<String, dynamic>? canonical = result.canonicalPayload;
+    if (canonical == null || !canonical.containsKey('password_hash')) return;
+
+    final Object? hash = canonical['password_hash'];
+    final Object? salt = canonical['password_salt'];
+    final Object? iterations = canonical['password_iterations'];
+    final Object? previous = canonical['password_hash_prev'];
+    final bool validPrevious = previous == null ||
+        previous is String && previous.isNotEmpty;
+    final bool valid = validPrevious &&
+        (hash == null
+            ? salt == null && iterations == null
+            : hash is String &&
+                hash.isNotEmpty &&
+                salt is String &&
+                salt.isNotEmpty &&
+                iterations is int &&
+                iterations >= notebookPasswordMinIterations &&
+                iterations <= notebookPasswordMaxIterations);
+    if (!valid) return;
+
+    await _db.rebaseNotebookPasswordState(
+      result.entityId,
+      pushedUpdatedAt: pushedUpdatedAt,
+      passwordHash: hash as String?,
+      passwordSalt: salt as String?,
+      passwordIterations: iterations as int?,
+      passwordHashPrev: previous as String?,
     );
   }
 
@@ -1033,10 +1071,23 @@ class DocumentSyncEngine extends ChangeNotifier {
     };
 
     int accepted = 0;
+    final List<String> rejections = <String>[];
     for (final PushResult result in results) {
-      // A rejected entity stays dirty and retries next cycle. Clearing the
-      // flag on a rejection would lose the edit silently.
-      if (!result.applied) continue;
+      // A rejected notebook stays dirty, but rebases a stale or malformed
+      // verifier tuple from the canonical server response. Its body retries
+      // next cycle with that tuple rather than sending the same bad state
+      // forever. The rejection is still surfaced as a failed sync below.
+      if (!result.applied) {
+        final int? was = pushedUpdatedAt[result.entityId];
+        if (result.entityType == 'notebook' && was != null) {
+          await _rebaseRejectedNotebookPassword(result, was);
+        }
+        rejections.add(
+          '${result.entityType}/${result.entityId}: '
+          '${result.reason ?? 'server rejected change'}',
+        );
+        continue;
+      }
       accepted++;
       // Dispatch on the entity TYPE, not on "was it in the notebook map":
       // an accepted dump would otherwise fall through to clearTombstone and
@@ -1107,6 +1158,9 @@ class DocumentSyncEngine extends ChangeNotifier {
           entityId: result.entityId,
         );
       }
+    }
+    if (rejections.isNotEmpty) {
+      throw StateError('Sync push rejected: ${rejections.join('; ')}');
     }
     return accepted;
   }

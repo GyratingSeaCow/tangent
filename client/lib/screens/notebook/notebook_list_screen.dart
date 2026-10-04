@@ -449,9 +449,16 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
       );
       if (password == null || !mounted) return;
       await persistence.setPassword(notebook.id, password);
-      // Enabling protection closes the current session immediately. The next
-      // open or protected action must prove knowledge of the new password.
-      unlocks.lock(notebook.id);
+      final Notebook? protected = await ref
+          .read(notebookRepositoryProvider)
+          .getNotebook(notebook.id);
+      final String? hash = protected?.passwordHash;
+      if (hash == null) {
+        throw StateError('Notebook protection was not persisted');
+      }
+      // The user just entered and confirmed this password. Keep that notebook
+      // unlocked for this process; relaunch or a verifier change locks it.
+      unlocks.unlock(notebook.id, hash);
       return;
     }
 

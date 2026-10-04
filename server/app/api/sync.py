@@ -698,27 +698,43 @@ def _apply_document(
             if p.get("password_salt") is not None or p.get("password_iterations") is not None:
                 raise ValueError("unprotected notebook requires null password metadata")
             incoming_prev = p.get("password_hash_prev")
+            if incoming_prev is not None and (
+                not isinstance(incoming_prev, str) or not incoming_prev
+            ):
+                raise ValueError("password_hash_prev must be a non-empty string or null")
             held_hash = existing["password_hash"] if existing is not None else None
             held_prev = existing["password_hash_prev"] if existing is not None else None
             if existing is None:
-                if incoming_prev is not None:
-                    raise ValueError("new unprotected notebook cannot claim a predecessor")
-                password_hash_prev = None
+                # A fresh/reset server has no generation to defend. Preserve
+                # the durable tuple verbatim, including its clear tombstone.
+                password_hash = None
+                password_salt = None
+                password_iterations = None
+                password_hash_prev = incoming_prev
             elif held_hash is not None:
-                if incoming_prev != held_hash:
-                    raise ValueError("password clear requires the current verifier as proof")
-                password_hash_prev = held_hash
+                if incoming_prev == held_hash:
+                    password_hash = None
+                    password_salt = None
+                    password_iterations = None
+                    password_hash_prev = held_hash
+                else:
+                    # A causally stale peer may still have a legitimate body
+                    # edit. Land that edit without letting its verifier tuple
+                    # weaken or replace the canonical server generation.
+                    password_hash = held_hash
+                    password_salt = existing["password_salt"]
+                    password_iterations = existing["password_iterations"]
+                    password_hash_prev = held_prev
             elif held_prev is not None:
-                if incoming_prev != held_prev:
-                    raise ValueError("unprotected notebook requires its cleared generation")
+                password_hash = None
+                password_salt = None
+                password_iterations = None
                 password_hash_prev = held_prev
             else:
-                if incoming_prev is not None:
-                    raise ValueError("unprotected notebook predecessor is not recognized")
+                password_hash = None
+                password_salt = None
+                password_iterations = None
                 password_hash_prev = None
-            password_hash = None
-            password_salt = None
-            password_iterations = None
         else:
             password_hash = p["password_hash"]
             if not isinstance(password_hash, str) or not password_hash:
@@ -741,21 +757,41 @@ def _apply_document(
                 raise ValueError("password_hash_prev must be a non-empty string or null")
             held_hash = existing["password_hash"] if existing is not None else None
             held_prev = existing["password_hash_prev"] if existing is not None else None
-            if password_hash == held_hash:
-                # Ordinary edits re-push the current tuple; retain canonical proof.
+            if existing is None:
+                # A fresh/reset server has no generation to compare against.
+                # The incoming durable tuple is the only canonical state.
+                password_hash_prev = incoming_prev
+            elif password_hash == held_hash:
+                # An ordinary body edit re-pushes the current hash. Keep the
+                # entire canonical tuple: changing its salt/iterations while
+                # retaining the hash would make the password unverifiable.
+                password_salt = existing["password_salt"]
+                password_iterations = existing["password_iterations"]
                 password_hash_prev = held_prev
             elif held_hash is not None:
-                if incoming_prev != held_hash:
-                    raise ValueError("password rotation requires the current verifier as proof")
-                password_hash_prev = held_hash
+                if incoming_prev == held_hash:
+                    password_hash_prev = held_hash
+                else:
+                    password_hash = held_hash
+                    password_salt = existing["password_salt"]
+                    password_iterations = existing["password_iterations"]
+                    password_hash_prev = held_prev
             elif held_prev is not None:
-                if incoming_prev != held_prev or password_hash == held_prev:
-                    raise ValueError("password enable must follow the cleared generation")
-                password_hash_prev = held_prev
+                if incoming_prev == held_prev and password_hash != held_prev:
+                    password_hash_prev = held_prev
+                else:
+                    password_hash = None
+                    password_salt = None
+                    password_iterations = None
+                    password_hash_prev = held_prev
             else:
-                if incoming_prev is not None:
-                    raise ValueError("initial password enable cannot claim a predecessor")
-                password_hash_prev = None
+                if incoming_prev is None:
+                    password_hash_prev = None
+                else:
+                    password_hash = None
+                    password_salt = None
+                    password_iterations = None
+                    password_hash_prev = None
         conn.execute(
             """
             INSERT INTO notebooks
@@ -972,6 +1008,25 @@ def sync_push(
                 entity_type=change.entity_type,
                 error=str(exc),
             )
+            canonical_payload = None
+            if change.entity_type == "notebook":
+                try:
+                    canonical = db.execute(
+                        "SELECT password_hash, password_salt, password_iterations, "
+                        "password_hash_prev FROM notebooks WHERE id = ?",
+                        (change.entity_id,),
+                    ).fetchone()
+                    if canonical is not None:
+                        canonical_payload = {
+                            "password_hash": canonical["password_hash"],
+                            "password_salt": canonical["password_salt"],
+                            "password_iterations": canonical["password_iterations"],
+                            "password_hash_prev": canonical["password_hash_prev"],
+                        }
+                except sqlite3.Error:
+                    # Preserve the original per-entity rejection if even the
+                    # readback failed; the client will keep the row dirty.
+                    pass
             results.append(
                 SyncPushResult(
                     entity_id=change.entity_id,
@@ -979,6 +1034,7 @@ def sync_push(
                     seq=0,
                     status="rejected",
                     reason=str(exc),
+                    canonical_payload=canonical_payload,
                 )
             )
 

@@ -90,6 +90,7 @@ class PushResult {
     required this.seq,
     required this.applied,
     this.reason,
+    this.canonicalPayload,
   });
 
   factory PushResult.fromJson(Map<String, dynamic> json) => PushResult(
@@ -98,6 +99,7 @@ class PushResult {
         seq: (json['seq'] as num?)?.toInt() ?? 0,
         applied: json['status'] == 'applied',
         reason: json['reason'] as String?,
+        canonicalPayload: json['canonical_payload'] as Map<String, dynamic>?,
       );
 
   final String entityId;
@@ -105,6 +107,10 @@ class PushResult {
   final int seq;
   final bool applied;
   final String? reason;
+
+  /// Server-held fields that let a rejected dirty row repair malformed local
+  /// verifier metadata before retrying its still-dirty body.
+  final Map<String, dynamic>? canonicalPayload;
 }
 
 /// What to do with an incoming change, given the local copy.

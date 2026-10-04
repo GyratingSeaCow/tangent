@@ -193,31 +193,43 @@ class NotebookRepository {
       _db.setNotebookPinned(id, pinned);
 
   /// Enables password protection without ever storing the plaintext.
+  ///
+  /// This is deliberately enable-only: a protected row cannot be rotated by
+  /// supplying only a new password. Rotation needs a separate flow that first
+  /// verifies the old password. The SQL predicate also closes the race where a
+  /// sync pull protects the row after this method reads it.
   Future<void> setPassword(String id, String password) async {
     final NotebookRow? existing = await (_db.select(
       _db.notebooks,
     )..where((n) => n.id.equals(id) & n.deletedAt.isNull()))
         .getSingleOrNull();
     if (existing == null) throw StateError('Notebook is no longer available');
+    if (existing.passwordHash != null) {
+      throw StateError('Current password is required to change protection');
+    }
     final NotebookPasswordMetadata metadata = await hashNotebookPassword(
       password,
     );
-    final int changed = await (_db.update(
-      _db.notebooks,
-    )..where((n) => n.id.equals(id) & n.deletedAt.isNull()))
+    final int changed = await (_db.update(_db.notebooks)
+          ..where(
+            (n) =>
+                n.id.equals(id) &
+                n.deletedAt.isNull() &
+                n.passwordHash.isNull(),
+          ))
         .write(
       NotebooksCompanion(
         passwordHash: Value<String?>(metadata.hash),
         passwordSalt: Value<String?>(metadata.salt),
         passwordIterations: Value<int?>(metadata.iterations),
-        passwordHashPrev: Value<String?>(
-          existing.passwordHash ?? existing.passwordHashPrev,
-        ),
+        passwordHashPrev: Value<String?>(existing.passwordHashPrev),
         updatedAt: Value(_now().millisecondsSinceEpoch),
         syncDirty: const Value(true),
       ),
     );
-    if (changed != 1) throw StateError('Notebook is no longer available');
+    if (changed != 1) {
+      throw StateError('Notebook is no longer available or is protected');
+    }
   }
 
   Future<bool> verifyPassword(String id, String password) async {
