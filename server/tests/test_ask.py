@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from app.api.ask import GROUNDING_PROMPT, HONEST_MISS, retrieve
+from app.api.ask import GROUNDING_PROMPT, HONEST_MISS, _strings, retrieve
 from app.api.dumps import _publish_dump_change
 from app.main import create_app
 from app.services import summarizer_env, summarizer_worker
@@ -89,6 +89,43 @@ def test_all_four_corpora_are_retrievable(client, monkeypatch):
         response = cli.post("/v1/ask", json={"question": question}, headers=auth)
         assert response.status_code == 200
         assert kind in {source["entity_type"] for source in response.json()["sources"]}
+
+
+def test_pdf_and_image_blobs_never_reach_fts_or_the_llm_prompt(client, monkeypatch):
+    cli, auth, path = client
+    _seed(path)
+    blob = "BLOB_SENTINEL_pdf_base64_payload"
+    image_blob = "IMAGE_SENTINEL_base64_payload"
+    doc = {
+        "blocks": [
+            {"kind": "text", "id": "t", "text": "Visible marigold note"},
+            {"kind": "pdfPage", "id": "p", "documentId": "DOC_SENTINEL", "sha": "SHA_SENTINEL", "data": blob},
+            {"kind": "image", "id": "i", "mime": "image/png", "data": image_blob},
+        ]
+    }
+    conn = _db(path)
+    conn.execute("UPDATE notebooks SET doc = ? WHERE id = 'nb-1'", (json.dumps(doc),))
+    conn.commit()
+    extracted = _strings(doc)
+    assert "Visible marigold note" in extracted
+    assert blob not in extracted and image_blob not in extracted
+    assert retrieve(conn, "BLOB_SENTINEL") == []
+    conn.close()
+
+    seen: dict[str, str] = {}
+
+    def infer(_request_id: str, prompt: str, _system_prompt: str) -> str:
+        seen["prompt"] = prompt
+        return "Visible marigold note"
+
+    monkeypatch.setattr(summarizer_worker, "run_inference", infer)
+    response = cli.post(
+        "/v1/ask", json={"question": "What does the marigold note say?"}, headers=auth
+    )
+    assert response.status_code == 200
+    assert "Visible marigold note" in seen["prompt"]
+    for secret in (blob, image_blob, "DOC_SENTINEL", "SHA_SENTINEL"):
+        assert secret not in seen["prompt"]
 
 
 def test_password_protected_notebooks_are_not_retrievable(client, monkeypatch):

@@ -13,6 +13,9 @@ dependencies = [
     "pydantic-settings>=2.6.0,<3",
     "python-multipart>=0.0.20",
     "faster-whisper>=1.1.0,<2",
+    # faster-whisper 1.2.1 still passes metadata_errors to av.open; PyAV 19
+    # removed that keyword and breaks the real-waveform diarization path.
+    "av>=14,<19",
     # Imported directly by app.services.ocr_env.default_runner (snapshot_download);
     # do not rely on it arriving transitively via faster-whisper.
     "huggingface_hub>=0.25",

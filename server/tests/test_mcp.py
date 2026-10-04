@@ -259,6 +259,38 @@ def test_get_notebook_includes_typed_text_and_ink_words(client):
     assert payload["handwriting_words"] == ["Zeppelin"]
 
 
+def test_get_notebook_excludes_pdf_and_image_blob_fields(client):
+    cli, token, path = client
+    _seed(path)
+    doc = {
+        "blocks": [
+            {"kind": "text", "id": "t", "text": "Visible marigold note"},
+            {
+                "kind": "pdfPage",
+                "id": "p",
+                "documentId": "DOC_SENTINEL",
+                "sha": "SHA_SENTINEL",
+                "data": "BLOB_SENTINEL_pdf_base64_payload",
+            },
+            {
+                "kind": "image",
+                "id": "i",
+                "mime": "image/png",
+                "data": "IMAGE_SENTINEL_base64_payload",
+            },
+        ]
+    }
+    conn = _db(path)
+    conn.execute("UPDATE notebooks SET doc = ? WHERE id = 'nb-1'", (json.dumps(doc),))
+    conn.commit()
+    conn.close()
+
+    payload = _call_tool(cli, token, "get_notebook", {"notebook_id": "nb-1"})
+    assert "Visible marigold note" in payload["text"]
+    for secret in ("BLOB_SENTINEL", "IMAGE_SENTINEL", "DOC_SENTINEL", "SHA_SENTINEL"):
+        assert secret not in payload["text"]
+
+
 def test_get_notebook_denies_protected_then_allows_authenticated_clear(client):
     cli, token, path = client
     _seed(path)
