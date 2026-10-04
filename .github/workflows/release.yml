@@ -75,10 +75,26 @@ jobs:
     needs: fdroid-changelog
     permissions:
       contents: write # attach the APK to the GitHub Release
+    env:
+      # Reproducible builds: F-Droid's buildserver rebuilds at this exact
+      # path and byte-compares against our attached APKs. The Dart AOT
+      # snapshot (libapp.so) embeds the absolute build path, and native
+      # libs compiled out of the pub cache (libdartjni.so) embed the pub
+      # cache path — so both must match F-Droid's environment exactly.
+      FDROID_BUILD_DIR: /home/vagrant/build/dev.tangent.tangent
+      PUB_CACHE: /home/vagrant/build/dev.tangent.tangent/client/.pub-cache
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ env.BUILD_REF }}
+
+      - name: Move checkout to F-Droid's build path
+        run: |
+          sudo mkdir -p /home/vagrant/build
+          sudo chown -R "$USER" /home/vagrant
+          shopt -s dotglob
+          mkdir -p "$FDROID_BUILD_DIR"
+          mv "$GITHUB_WORKSPACE"/* "$FDROID_BUILD_DIR"/
 
       # The Linux desktop playback test dlopens libmpv through media_kit;
       # without it MediaKit.ensureInitialized throws and `flutter test`
@@ -103,7 +119,7 @@ jobs:
           KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
         run: |
           echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/upload-keystore.jks"
-          cat > client/android/key.properties <<EOF
+          cat > "$FDROID_BUILD_DIR/client/android/key.properties" <<EOF
           storePassword=$KEYSTORE_PASSWORD
           keyPassword=$KEYSTORE_PASSWORD
           keyAlias=upload
@@ -111,11 +127,11 @@ jobs:
           EOF
 
       - name: Pub get
-        working-directory: client
-        run: flutter pub get
+        working-directory: /home/vagrant/build/dev.tangent.tangent/client
+        run: flutter pub get --enforce-lockfile
 
       - name: Analyze
-        working-directory: client
+        working-directory: /home/vagrant/build/dev.tangent.tangent/client
         run: flutter analyze
 
       # A back-fill (manual run naming an existing tag) rebuilds code that
@@ -124,11 +140,11 @@ jobs:
       # test), so the suite is skipped there and only there.
       - name: Test
         if: inputs.tag == ''
-        working-directory: client
+        working-directory: /home/vagrant/build/dev.tangent.tangent/client
         run: flutter test
 
       - name: Build release APKs (universal + per-ABI)
-        working-directory: client
+        working-directory: /home/vagrant/build/dev.tangent.tangent/client
         run: |
           flutter build apk --release
           # F-Droid ships per-ABI APKs (smaller downloads; reviewer-required).
@@ -140,7 +156,7 @@ jobs:
           BT="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)"
           for apk in app-release app-armeabi-v7a-release app-arm64-v8a-release app-x86_64-release; do
             "$BT/apksigner" verify --print-certs \
-              "client/build/app/outputs/flutter-apk/${apk}.apk" \
+              "$FDROID_BUILD_DIR/client/build/app/outputs/flutter-apk/${apk}.apk" \
               | grep -q "CN=Tangent" \
               || { echo "${apk}.apk is not signed with the Tangent upload key"; exit 1; }
           done
@@ -149,14 +165,14 @@ jobs:
         run: |
           # On a manual run without a tag BUILD_REF is the branch, which still makes
           # a usable, self-describing filename.
-          out=client/build/app/outputs/flutter-apk
+          out="$FDROID_BUILD_DIR/client/build/app/outputs/flutter-apk"
           BT="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)"
           cp "$out/app-release.apk" "tangent-${BUILD_REF//\//-}.apk"
           # Per-ABI names must match the fdroiddata recipe's Binaries template:
           # tangent-v%v-%c.apk — i.e. tangent-v<versionName>-<versionCode>.apk.
           # Assert each split really carries base*10+digit before naming it;
           # reproducible-build verification on F-Droid's side depends on it.
-          base=$(grep -E '^version:' client/pubspec.yaml | sed -E 's/.*\+([0-9]+).*/\1/')
+          base=$(grep -E '^version:' "$FDROID_BUILD_DIR/client/pubspec.yaml" | sed -E 's/.*\+([0-9]+).*/\1/')
           for pair in "armeabi-v7a:1" "arm64-v8a:2" "x86_64:3"; do
             abi="${pair%%:*}"; digit="${pair##*:}"
             want=$((base*10+digit))

@@ -1,0 +1,1 @@
+F-Droid reproducible-build fixes: deterministic build path and stripped linker build-id so F-Droid's rebuild byte-matches the developer-signed APK. No app changes; no server update required.

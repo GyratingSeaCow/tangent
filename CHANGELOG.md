@@ -5,6 +5,18 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.48.4 — 2026-10-03
+
+### Changed
+- Release CI now builds the Android APKs at F-Droid's exact buildserver
+  path with an in-tree pub cache — the Dart AOT snapshot (`libapp.so`)
+  embeds the absolute build path, so reproducible-build verification
+  requires both environments to match byte-for-byte.
+- Android: the non-deterministic `.note.gnu.build-id` ELF note is
+  stripped from packaged native libraries (`libdartjni.so` differed by
+  exactly that 20-byte note between two builds of identical source).
+- No app code changes; no server update required.
+
 ## 1.48.3 — 2026-10-03
 
 ### Changed

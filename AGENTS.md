@@ -50,7 +50,7 @@ ADH2/
 
 ## Status
 
-Shipping — **v1.48.3** (see CHANGELOG.md). Client and server are both
+Shipping — **v1.48.4** (see CHANGELOG.md). Client and server are both
 implemented and tested (2885
 Flutter tests, 777 server tests, 129 Kotlin tests). Toolchain:
 Flutter 3.47.6 / Dart 3.13, AGP 9.1 / Kotlin 2.4 / Gradle 9.3.1 /
@@ -60,6 +60,14 @@ natively on Linux AND Windows (tray icon, global record hotkey,
 close-to-tray, single instance, right-click = long-press; AppImage and
 Inno Setup installer under `packaging/`) — verified on CachyOS/KDE
 Plasma Wayland and Windows 11; see the README's Desktop sections.
+
+v1.48.4 **F-Droid reproducible-build determinism** (packaging-only):
+release CI builds at F-Droid's exact buildserver path
+(`/home/vagrant/build/dev.tangent.tangent`, with in-tree `PUB_CACHE`) —
+the Dart AOT snapshot embeds the absolute build path — and gradle strips
+the non-deterministic `.note.gnu.build-id` from packaged native libs.
+Fixes the byte-diff (`libapp.so`/`libdartjni.so`) F-Droid's repro
+verifier found in v1.48.3's APKs.
 
 v1.48.3 **F-Droid ABI split + reproducible builds** (packaging-only):
 per-ABI release APKs with split version codes (base×10 + {v7a:1,
