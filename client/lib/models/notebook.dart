@@ -20,6 +20,8 @@ abstract interface class NotebookHeader {
   DateTime get updatedAt;
   String? get folderId;
   bool get pinned;
+  String? get passwordHash;
+  bool get passwordProtected;
 }
 
 class Notebook implements NotebookHeader {
@@ -34,6 +36,9 @@ class Notebook implements NotebookHeader {
     this.pinned = false,
     this.ruling = NotebookRuling.medium,
     this.lastPenStyle,
+    this.passwordHash,
+    this.passwordSalt,
+    this.passwordIterations,
   });
 
   @override
@@ -73,6 +78,14 @@ class Notebook implements NotebookHeader {
   /// rather than a global default. Null reads as the fountain default.
   final PenStyle? lastPenStyle;
 
+  /// PBKDF2 password verifier metadata. The plaintext password is never kept.
+  @override
+  final String? passwordHash;
+  final String? passwordSalt;
+  final int? passwordIterations;
+  @override
+  bool get passwordProtected => passwordHash != null;
+
   Notebook copyWith({
     String? title,
     DateTime? updatedAt,
@@ -92,6 +105,9 @@ class Notebook implements NotebookHeader {
         pinned: pinned,
         ruling: ruling ?? this.ruling,
         lastPenStyle: lastPenStyle ?? this.lastPenStyle,
+        passwordHash: passwordHash,
+        passwordSalt: passwordSalt,
+        passwordIterations: passwordIterations,
       );
 }
 

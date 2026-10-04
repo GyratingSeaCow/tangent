@@ -145,7 +145,7 @@ void main() {
     addTearDown(db.close);
     await db.listDumps();
 
-    expect(raw.userVersion, 30);
+    expect(raw.userVersion, 31);
     final Set<String> columns = _columns(raw, 'dumps');
     for (final String column in _v22Columns) {
       expect(columns, contains(column), reason: '$column is the v22 add');
@@ -177,7 +177,7 @@ void main() {
     final LocalDb db = LocalDb.forTesting(NativeDatabase.opened(raw));
     addTearDown(db.close);
     await expectLater(db.listDumps(), completes);
-    expect(raw.userVersion, 30);
+    expect(raw.userVersion, 31);
     expect(_columns(raw, 'dumps'), containsAll(_v22Columns));
   });
 

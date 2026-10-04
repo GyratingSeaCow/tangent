@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import 'dart:convert';
 
-import 'package:drift/drift.dart' show Value;
+import 'package:drift/drift.dart' show QueryRow, Value, Variable;
 import 'package:drift/native.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -59,6 +59,63 @@ void main() {
 
   test('getNotebook returns null for an unknown id', () async {
     expect(await build().getNotebook('missing'), isNull);
+  });
+
+  test('password protection stores only verifier metadata and verifies removal',
+      () async {
+    final NotebookRepository repository = build();
+    final Notebook created =
+        await repository.createNotebook(title: 'Private notes');
+
+    await repository.setPassword(created.id, 'correct horse battery staple');
+
+    final Notebook protected = (await repository.getNotebook(created.id))!;
+    expect(protected.passwordProtected, isTrue);
+    expect(protected.passwordHash, isNot(contains('correct horse')));
+    expect(protected.passwordSalt, isNotEmpty);
+    expect(protected.passwordIterations, greaterThanOrEqualTo(100000));
+    final QueryRow raw = await db
+        .customSelect('SELECT * FROM notebooks WHERE id = ?', variables: [
+      Variable<String>(created.id),
+    ]).getSingle();
+    expect(raw.data.values, isNot(contains('correct horse battery staple')));
+    expect(
+      await repository.verifyPassword(created.id, 'wrong password'),
+      isFalse,
+    );
+    expect(
+      await repository.verifyPassword(
+        created.id,
+        'correct horse battery staple',
+      ),
+      isTrue,
+    );
+    expect(await repository.removePassword(created.id, 'wrong password'), isFalse);
+    expect(
+      await repository.removePassword(
+        created.id,
+        'correct horse battery staple',
+      ),
+      isTrue,
+    );
+    final Notebook open = (await repository.getNotebook(created.id))!;
+    expect(open.passwordHash, isNull);
+    expect(open.passwordSalt, isNull);
+    expect(open.passwordIterations, isNull);
+  });
+
+  test('each protected notebook receives a different random salt', () async {
+    final NotebookRepository repository = build();
+    final Notebook one = await repository.createNotebook(title: 'One');
+    final Notebook two = await repository.createNotebook(title: 'Two');
+
+    await repository.setPassword(one.id, 'same password');
+    await repository.setPassword(two.id, 'same password');
+
+    final Notebook protectedOne = (await repository.getNotebook(one.id))!;
+    final Notebook protectedTwo = (await repository.getNotebook(two.id))!;
+    expect(protectedOne.passwordSalt, isNot(protectedTwo.passwordSalt));
+    expect(protectedOne.passwordHash, isNot(protectedTwo.passwordHash));
   });
 
   test('saveNotebook persists blocks and ink and bumps updated_at', () async {

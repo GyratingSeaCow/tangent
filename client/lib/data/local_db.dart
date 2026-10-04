@@ -250,6 +250,12 @@ class Notebooks extends Table {
   /// notebooks in different pens and each must reopen with its own.
   TextColumn get lastPenStyle => text().nullable()();
 
+  /// PBKDF2-HMAC-SHA256 verifier metadata. Password text is never stored.
+  /// All three are nullable together: null hash means protection is off.
+  TextColumn get passwordHash => text().nullable()();
+  TextColumn get passwordSalt => text().nullable()();
+  IntColumn get passwordIterations => integer().nullable()();
+
   /// True when this notebook has local edits the server has not accepted.
   ///
   /// Set on every local save and cleared only by a push the server confirmed.
@@ -505,7 +511,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   LocalDb.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 30;
+  int get schemaVersion => 31;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -1085,6 +1091,28 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
             await addPinnedIfMissing('dumps', dumps, dumps.pinned);
             await addPinnedIfMissing('notebooks', notebooks, notebooks.pinned);
             await addPinnedIfMissing('todos', todos, todos.pinned);
+          }
+          if (from < 31) {
+            // Three nullable verifier columns. Existing rows remain unlocked.
+            // The v6 createTable step may already have used today's shape, so
+            // introspect before every add to avoid duplicate-column failures.
+            final List<QueryRow> notebookColumns =
+                await customSelect('PRAGMA table_info(notebooks)').get();
+            final Set<String> names = <String>{
+              for (final QueryRow row in notebookColumns)
+                row.read<String>('name'),
+            };
+            if (notebookColumns.isNotEmpty) {
+              if (!names.contains('password_hash')) {
+                await m.addColumn(notebooks, notebooks.passwordHash);
+              }
+              if (!names.contains('password_salt')) {
+                await m.addColumn(notebooks, notebooks.passwordSalt);
+              }
+              if (!names.contains('password_iterations')) {
+                await m.addColumn(notebooks, notebooks.passwordIterations);
+              }
+            }
           }
         },
       );
@@ -1865,6 +1893,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     String? lastPenStyle,
     Object? folderId = absentFolderId,
     Object? pinned = absentPinnedField,
+    Object? passwordHash = absentPasswordMetadata,
+    String? passwordSalt,
+    int? passwordIterations,
   }) async {
     // insertOrReplace rewrites the whole row, so a null ruling here would
     // erase a value this device already holds whenever the peer is an older
@@ -1885,6 +1916,22 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     final bool? effectivePinned = identical(pinned, absentPinnedField)
         ? existing?.pinned
         : _wireBool(pinned);
+    final String? effectivePasswordHash =
+        identical(passwordHash, absentPasswordMetadata)
+            ? existing?.passwordHash
+            : passwordHash as String?;
+    final String? effectivePasswordSalt =
+        identical(passwordHash, absentPasswordMetadata)
+            ? existing?.passwordSalt
+            : effectivePasswordHash == null
+                ? null
+                : passwordSalt;
+    final int? effectivePasswordIterations =
+        identical(passwordHash, absentPasswordMetadata)
+            ? existing?.passwordIterations
+            : effectivePasswordHash == null
+                ? null
+                : passwordIterations;
 
     await into(notebooks).insert(
       NotebooksCompanion.insert(
@@ -1898,6 +1945,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
         lastPenStyle: Value<String?>(effectivePenStyle),
         folderId: Value<String?>(effectiveFolderId),
         pinned: Value<bool?>(effectivePinned),
+        passwordHash: Value<String?>(effectivePasswordHash),
+        passwordSalt: Value<String?>(effectivePasswordSalt),
+        passwordIterations: Value<int?>(effectivePasswordIterations),
         syncDirty: const Value(false),
         syncedSeq: Value(seq),
         // An arriving upsert means the notebook lives; a copy sitting in
@@ -1912,6 +1962,10 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   /// Sentinel distinguishing "caller sent nothing" from "caller sent null"
   /// for [applyRemoteNotebook]'s folderId: null MEANS unfiled there.
   static const Object absentFolderId = Object();
+
+  /// A peer predating password metadata sent no verifier fields. Explicit
+  /// null disables protection; absence preserves what this device already has.
+  static const Object absentPasswordMetadata = Object();
 
   /// Removes a notebook the server says was deleted elsewhere.
   ///

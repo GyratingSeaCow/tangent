@@ -811,6 +811,12 @@ class DocumentSyncEngine extends ChangeNotifier {
       pinned: payload.containsKey('pinned')
           ? payload['pinned']
           : LocalDb.absentPinnedField,
+      passwordHash: payload.containsKey('password_hash')
+          ? payload['password_hash'] as String?
+          : LocalDb.absentPasswordMetadata,
+      passwordSalt: payload['password_salt'] as String?,
+      passwordIterations:
+          (payload['password_iterations'] as num?)?.toInt(),
       seq: seq,
     );
   }
@@ -863,6 +869,11 @@ class DocumentSyncEngine extends ChangeNotifier {
             // it says "unfiled", and the server stores it verbatim.
             'folder_id': row.folderId,
             'pinned': row.pinned == true,
+            // The plaintext password never leaves the password dialog. Peers
+            // receive only the salted PBKDF2 verifier metadata.
+            'password_hash': row.passwordHash,
+            'password_salt': row.passwordSalt,
+            'password_iterations': row.passwordIterations,
           },
         },
       for (final DumpRow row in dirtyDumps)

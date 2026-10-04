@@ -27,6 +27,10 @@ const _notebookColumns = [
   // with. Nullable; null reads as the fountain default. Declared right
   // after ruling, so it also precedes the sync pair.
   'last_pen_style',
+  // v31: salted PBKDF2 verifier metadata. Existing notebooks remain unlocked.
+  'password_hash',
+  'password_salt',
+  'password_iterations',
   'sync_dirty',
   'synced_seq',
   // v13: notebook trash. Deletion parks the row here for 7 days before
@@ -34,6 +38,27 @@ const _notebookColumns = [
   'deleted_at',
   // v29: user pin; nullable means old rows remain visually unpinned.
   'pinned',
+];
+
+// ALTER TABLE appends v31 columns to an existing v30 table. Fresh databases
+// use declaration order above; both shapes are intentionally valid.
+const _v30MigratedNotebookColumns = <String>[
+  'id',
+  'title',
+  'created_at',
+  'updated_at',
+  'doc_json',
+  'ink_json',
+  'folder_id',
+  'ruling',
+  'last_pen_style',
+  'sync_dirty',
+  'synced_seq',
+  'deleted_at',
+  'pinned',
+  'password_hash',
+  'password_salt',
+  'password_iterations',
 ];
 
 const _insertNotebook =
@@ -44,6 +69,40 @@ List<Object?> _columnNames(Database db, String table) =>
     db.select('PRAGMA table_info($table)').map((r) => r['name']).toList();
 
 void main() {
+  test('v30 adds nullable password metadata without locking existing rows',
+      () async {
+    final Directory dir = createResolvedTempSync('notebook-password-migration-');
+    addTearDown(() => dir.deleteSync(recursive: true));
+    final File file = File('${dir.path}/fixture.sqlite');
+    var db = LocalDb.forTesting(NativeDatabase(file));
+    await db.listDumps();
+    await db.customStatement(_insertNotebook);
+    await db.close();
+
+    final Database sql = sqlite3.open(file.path);
+    sql.execute('ALTER TABLE notebooks DROP COLUMN password_hash');
+    sql.execute('ALTER TABLE notebooks DROP COLUMN password_salt');
+    sql.execute('ALTER TABLE notebooks DROP COLUMN password_iterations');
+    sql.userVersion = 30;
+    sql.close();
+
+    db = LocalDb.forTesting(NativeDatabase(file));
+    addTearDown(db.close);
+    await db.listDumps();
+
+    final Database migrated = sqlite3.open(file.path);
+    addTearDown(migrated.close);
+    expect(migrated.userVersion, 31);
+    expect(_columnNames(migrated, 'notebooks'), _v30MigratedNotebookColumns);
+    final Row row = migrated.select(
+      'SELECT password_hash, password_salt, password_iterations '
+      "FROM notebooks WHERE id='n1'",
+    ).single;
+    expect(row['password_hash'], isNull);
+    expect(row['password_salt'], isNull);
+    expect(row['password_iterations'], isNull);
+  });
+
   test('a fresh database is created at the current schema with notebooks',
       () async {
     final sql = sqlite3.openInMemory();
@@ -52,8 +111,8 @@ void main() {
 
     await db.listDumps();
 
-    expect(db.schemaVersion, 30);
-    expect(sql.userVersion, 30);
+    expect(db.schemaVersion, 31);
+    expect(sql.userVersion, 31);
     expect(_columnNames(sql, 'notebooks'), _notebookColumns);
     expect(
       sql.select('PRAGMA foreign_key_list(notebooks)'),
@@ -79,7 +138,7 @@ void main() {
 
     await db.listDumps();
 
-    expect(sql.userVersion, 30);
+    expect(sql.userVersion, 31);
     expect(_columnNames(sql, 'notebooks'), _notebookColumns);
     // v8 adds folder_id to dumps, so compare the columns the fixture had:
     // this test is about existing rows surviving, not about the column list.
@@ -133,7 +192,7 @@ void main() {
 
     sql = sqlite3.open(file.path);
     addTearDown(sql.close);
-    expect(sql.userVersion, 30);
+    expect(sql.userVersion, 31);
     expect(_columnNames(sql, 'notebooks'), _notebookColumns);
     // v8 adds folder_id to dumps, so compare the columns the fixture had:
     // this test is about existing rows surviving, not about the column list.
@@ -191,7 +250,7 @@ void main() {
     addTearDown(db.close);
     await db.listDumps();
 
-    expect(sql.userVersion, 30);
+    expect(sql.userVersion, 31);
     final rows = <String, int>{
       for (final r in sql.select('SELECT id, sync_dirty FROM notebooks'))
         r['id'] as String: r['sync_dirty'] as int,
@@ -226,7 +285,7 @@ void main() {
     addTearDown(db.close);
     await db.listDumps();
 
-    expect(sql.userVersion, 30);
+    expect(sql.userVersion, 31);
     expect(
       sql.select(
         "SELECT name FROM sqlite_master WHERE type='table' "

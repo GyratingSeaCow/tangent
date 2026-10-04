@@ -6109,6 +6109,38 @@ class $NotebooksTable extends Notebooks
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _passwordHashMeta = const VerificationMeta(
+    'passwordHash',
+  );
+  @override
+  late final GeneratedColumn<String> passwordHash = GeneratedColumn<String>(
+    'password_hash',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _passwordSaltMeta = const VerificationMeta(
+    'passwordSalt',
+  );
+  @override
+  late final GeneratedColumn<String> passwordSalt = GeneratedColumn<String>(
+    'password_salt',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _passwordIterationsMeta =
+      const VerificationMeta('passwordIterations');
+  @override
+  late final GeneratedColumn<int> passwordIterations = GeneratedColumn<int>(
+    'password_iterations',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _syncDirtyMeta = const VerificationMeta(
     'syncDirty',
   );
@@ -6169,6 +6201,9 @@ class $NotebooksTable extends Notebooks
     folderId,
     ruling,
     lastPenStyle,
+    passwordHash,
+    passwordSalt,
+    passwordIterations,
     syncDirty,
     syncedSeq,
     deletedAt,
@@ -6252,6 +6287,33 @@ class $NotebooksTable extends Notebooks
         ),
       );
     }
+    if (data.containsKey('password_hash')) {
+      context.handle(
+        _passwordHashMeta,
+        passwordHash.isAcceptableOrUnknown(
+          data['password_hash']!,
+          _passwordHashMeta,
+        ),
+      );
+    }
+    if (data.containsKey('password_salt')) {
+      context.handle(
+        _passwordSaltMeta,
+        passwordSalt.isAcceptableOrUnknown(
+          data['password_salt']!,
+          _passwordSaltMeta,
+        ),
+      );
+    }
+    if (data.containsKey('password_iterations')) {
+      context.handle(
+        _passwordIterationsMeta,
+        passwordIterations.isAcceptableOrUnknown(
+          data['password_iterations']!,
+          _passwordIterationsMeta,
+        ),
+      );
+    }
     if (data.containsKey('sync_dirty')) {
       context.handle(
         _syncDirtyMeta,
@@ -6321,6 +6383,18 @@ class $NotebooksTable extends Notebooks
         DriftSqlType.string,
         data['${effectivePrefix}last_pen_style'],
       ),
+      passwordHash: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}password_hash'],
+      ),
+      passwordSalt: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}password_salt'],
+      ),
+      passwordIterations: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}password_iterations'],
+      ),
       syncDirty: attachedDatabase.typeMapping.read(
         DriftSqlType.bool,
         data['${effectivePrefix}sync_dirty'],
@@ -6377,6 +6451,12 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
   /// notebooks in different pens and each must reopen with its own.
   final String? lastPenStyle;
 
+  /// PBKDF2-HMAC-SHA256 verifier metadata. Password text is never stored.
+  /// All three are nullable together: null hash means protection is off.
+  final String? passwordHash;
+  final String? passwordSalt;
+  final int? passwordIterations;
+
   /// True when this notebook has local edits the server has not accepted.
   ///
   /// Set on every local save and cleared only by a push the server confirmed.
@@ -6409,6 +6489,9 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
     this.folderId,
     this.ruling,
     this.lastPenStyle,
+    this.passwordHash,
+    this.passwordSalt,
+    this.passwordIterations,
     required this.syncDirty,
     this.syncedSeq,
     this.deletedAt,
@@ -6431,6 +6514,15 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
     }
     if (!nullToAbsent || lastPenStyle != null) {
       map['last_pen_style'] = Variable<String>(lastPenStyle);
+    }
+    if (!nullToAbsent || passwordHash != null) {
+      map['password_hash'] = Variable<String>(passwordHash);
+    }
+    if (!nullToAbsent || passwordSalt != null) {
+      map['password_salt'] = Variable<String>(passwordSalt);
+    }
+    if (!nullToAbsent || passwordIterations != null) {
+      map['password_iterations'] = Variable<int>(passwordIterations);
     }
     map['sync_dirty'] = Variable<bool>(syncDirty);
     if (!nullToAbsent || syncedSeq != null) {
@@ -6462,6 +6554,15 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
       lastPenStyle: lastPenStyle == null && nullToAbsent
           ? const Value.absent()
           : Value(lastPenStyle),
+      passwordHash: passwordHash == null && nullToAbsent
+          ? const Value.absent()
+          : Value(passwordHash),
+      passwordSalt: passwordSalt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(passwordSalt),
+      passwordIterations: passwordIterations == null && nullToAbsent
+          ? const Value.absent()
+          : Value(passwordIterations),
       syncDirty: Value(syncDirty),
       syncedSeq: syncedSeq == null && nullToAbsent
           ? const Value.absent()
@@ -6490,6 +6591,9 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
       folderId: serializer.fromJson<String?>(json['folderId']),
       ruling: serializer.fromJson<String?>(json['ruling']),
       lastPenStyle: serializer.fromJson<String?>(json['lastPenStyle']),
+      passwordHash: serializer.fromJson<String?>(json['passwordHash']),
+      passwordSalt: serializer.fromJson<String?>(json['passwordSalt']),
+      passwordIterations: serializer.fromJson<int?>(json['passwordIterations']),
       syncDirty: serializer.fromJson<bool>(json['syncDirty']),
       syncedSeq: serializer.fromJson<int?>(json['syncedSeq']),
       deletedAt: serializer.fromJson<int?>(json['deletedAt']),
@@ -6509,6 +6613,9 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
       'folderId': serializer.toJson<String?>(folderId),
       'ruling': serializer.toJson<String?>(ruling),
       'lastPenStyle': serializer.toJson<String?>(lastPenStyle),
+      'passwordHash': serializer.toJson<String?>(passwordHash),
+      'passwordSalt': serializer.toJson<String?>(passwordSalt),
+      'passwordIterations': serializer.toJson<int?>(passwordIterations),
       'syncDirty': serializer.toJson<bool>(syncDirty),
       'syncedSeq': serializer.toJson<int?>(syncedSeq),
       'deletedAt': serializer.toJson<int?>(deletedAt),
@@ -6526,6 +6633,9 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
     Value<String?> folderId = const Value.absent(),
     Value<String?> ruling = const Value.absent(),
     Value<String?> lastPenStyle = const Value.absent(),
+    Value<String?> passwordHash = const Value.absent(),
+    Value<String?> passwordSalt = const Value.absent(),
+    Value<int?> passwordIterations = const Value.absent(),
     bool? syncDirty,
     Value<int?> syncedSeq = const Value.absent(),
     Value<int?> deletedAt = const Value.absent(),
@@ -6540,6 +6650,11 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
     folderId: folderId.present ? folderId.value : this.folderId,
     ruling: ruling.present ? ruling.value : this.ruling,
     lastPenStyle: lastPenStyle.present ? lastPenStyle.value : this.lastPenStyle,
+    passwordHash: passwordHash.present ? passwordHash.value : this.passwordHash,
+    passwordSalt: passwordSalt.present ? passwordSalt.value : this.passwordSalt,
+    passwordIterations: passwordIterations.present
+        ? passwordIterations.value
+        : this.passwordIterations,
     syncDirty: syncDirty ?? this.syncDirty,
     syncedSeq: syncedSeq.present ? syncedSeq.value : this.syncedSeq,
     deletedAt: deletedAt.present ? deletedAt.value : this.deletedAt,
@@ -6558,6 +6673,15 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
       lastPenStyle: data.lastPenStyle.present
           ? data.lastPenStyle.value
           : this.lastPenStyle,
+      passwordHash: data.passwordHash.present
+          ? data.passwordHash.value
+          : this.passwordHash,
+      passwordSalt: data.passwordSalt.present
+          ? data.passwordSalt.value
+          : this.passwordSalt,
+      passwordIterations: data.passwordIterations.present
+          ? data.passwordIterations.value
+          : this.passwordIterations,
       syncDirty: data.syncDirty.present ? data.syncDirty.value : this.syncDirty,
       syncedSeq: data.syncedSeq.present ? data.syncedSeq.value : this.syncedSeq,
       deletedAt: data.deletedAt.present ? data.deletedAt.value : this.deletedAt,
@@ -6577,6 +6701,9 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
           ..write('folderId: $folderId, ')
           ..write('ruling: $ruling, ')
           ..write('lastPenStyle: $lastPenStyle, ')
+          ..write('passwordHash: $passwordHash, ')
+          ..write('passwordSalt: $passwordSalt, ')
+          ..write('passwordIterations: $passwordIterations, ')
           ..write('syncDirty: $syncDirty, ')
           ..write('syncedSeq: $syncedSeq, ')
           ..write('deletedAt: $deletedAt, ')
@@ -6596,6 +6723,9 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
     folderId,
     ruling,
     lastPenStyle,
+    passwordHash,
+    passwordSalt,
+    passwordIterations,
     syncDirty,
     syncedSeq,
     deletedAt,
@@ -6614,6 +6744,9 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
           other.folderId == this.folderId &&
           other.ruling == this.ruling &&
           other.lastPenStyle == this.lastPenStyle &&
+          other.passwordHash == this.passwordHash &&
+          other.passwordSalt == this.passwordSalt &&
+          other.passwordIterations == this.passwordIterations &&
           other.syncDirty == this.syncDirty &&
           other.syncedSeq == this.syncedSeq &&
           other.deletedAt == this.deletedAt &&
@@ -6630,6 +6763,9 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
   final Value<String?> folderId;
   final Value<String?> ruling;
   final Value<String?> lastPenStyle;
+  final Value<String?> passwordHash;
+  final Value<String?> passwordSalt;
+  final Value<int?> passwordIterations;
   final Value<bool> syncDirty;
   final Value<int?> syncedSeq;
   final Value<int?> deletedAt;
@@ -6645,6 +6781,9 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
     this.folderId = const Value.absent(),
     this.ruling = const Value.absent(),
     this.lastPenStyle = const Value.absent(),
+    this.passwordHash = const Value.absent(),
+    this.passwordSalt = const Value.absent(),
+    this.passwordIterations = const Value.absent(),
     this.syncDirty = const Value.absent(),
     this.syncedSeq = const Value.absent(),
     this.deletedAt = const Value.absent(),
@@ -6661,6 +6800,9 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
     this.folderId = const Value.absent(),
     this.ruling = const Value.absent(),
     this.lastPenStyle = const Value.absent(),
+    this.passwordHash = const Value.absent(),
+    this.passwordSalt = const Value.absent(),
+    this.passwordIterations = const Value.absent(),
     this.syncDirty = const Value.absent(),
     this.syncedSeq = const Value.absent(),
     this.deletedAt = const Value.absent(),
@@ -6682,6 +6824,9 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
     Expression<String>? folderId,
     Expression<String>? ruling,
     Expression<String>? lastPenStyle,
+    Expression<String>? passwordHash,
+    Expression<String>? passwordSalt,
+    Expression<int>? passwordIterations,
     Expression<bool>? syncDirty,
     Expression<int>? syncedSeq,
     Expression<int>? deletedAt,
@@ -6698,6 +6843,9 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
       if (folderId != null) 'folder_id': folderId,
       if (ruling != null) 'ruling': ruling,
       if (lastPenStyle != null) 'last_pen_style': lastPenStyle,
+      if (passwordHash != null) 'password_hash': passwordHash,
+      if (passwordSalt != null) 'password_salt': passwordSalt,
+      if (passwordIterations != null) 'password_iterations': passwordIterations,
       if (syncDirty != null) 'sync_dirty': syncDirty,
       if (syncedSeq != null) 'synced_seq': syncedSeq,
       if (deletedAt != null) 'deleted_at': deletedAt,
@@ -6716,6 +6864,9 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
     Value<String?>? folderId,
     Value<String?>? ruling,
     Value<String?>? lastPenStyle,
+    Value<String?>? passwordHash,
+    Value<String?>? passwordSalt,
+    Value<int?>? passwordIterations,
     Value<bool>? syncDirty,
     Value<int?>? syncedSeq,
     Value<int?>? deletedAt,
@@ -6732,6 +6883,9 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
       folderId: folderId ?? this.folderId,
       ruling: ruling ?? this.ruling,
       lastPenStyle: lastPenStyle ?? this.lastPenStyle,
+      passwordHash: passwordHash ?? this.passwordHash,
+      passwordSalt: passwordSalt ?? this.passwordSalt,
+      passwordIterations: passwordIterations ?? this.passwordIterations,
       syncDirty: syncDirty ?? this.syncDirty,
       syncedSeq: syncedSeq ?? this.syncedSeq,
       deletedAt: deletedAt ?? this.deletedAt,
@@ -6770,6 +6924,15 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
     if (lastPenStyle.present) {
       map['last_pen_style'] = Variable<String>(lastPenStyle.value);
     }
+    if (passwordHash.present) {
+      map['password_hash'] = Variable<String>(passwordHash.value);
+    }
+    if (passwordSalt.present) {
+      map['password_salt'] = Variable<String>(passwordSalt.value);
+    }
+    if (passwordIterations.present) {
+      map['password_iterations'] = Variable<int>(passwordIterations.value);
+    }
     if (syncDirty.present) {
       map['sync_dirty'] = Variable<bool>(syncDirty.value);
     }
@@ -6800,6 +6963,9 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
           ..write('folderId: $folderId, ')
           ..write('ruling: $ruling, ')
           ..write('lastPenStyle: $lastPenStyle, ')
+          ..write('passwordHash: $passwordHash, ')
+          ..write('passwordSalt: $passwordSalt, ')
+          ..write('passwordIterations: $passwordIterations, ')
           ..write('syncDirty: $syncDirty, ')
           ..write('syncedSeq: $syncedSeq, ')
           ..write('deletedAt: $deletedAt, ')
@@ -13951,6 +14117,9 @@ typedef $$NotebooksTableCreateCompanionBuilder =
       Value<String?> folderId,
       Value<String?> ruling,
       Value<String?> lastPenStyle,
+      Value<String?> passwordHash,
+      Value<String?> passwordSalt,
+      Value<int?> passwordIterations,
       Value<bool> syncDirty,
       Value<int?> syncedSeq,
       Value<int?> deletedAt,
@@ -13968,6 +14137,9 @@ typedef $$NotebooksTableUpdateCompanionBuilder =
       Value<String?> folderId,
       Value<String?> ruling,
       Value<String?> lastPenStyle,
+      Value<String?> passwordHash,
+      Value<String?> passwordSalt,
+      Value<int?> passwordIterations,
       Value<bool> syncDirty,
       Value<int?> syncedSeq,
       Value<int?> deletedAt,
@@ -14026,6 +14198,21 @@ class $$NotebooksTableFilterComposer
 
   ColumnFilters<String> get lastPenStyle => $composableBuilder(
     column: $table.lastPenStyle,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get passwordHash => $composableBuilder(
+    column: $table.passwordHash,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get passwordSalt => $composableBuilder(
+    column: $table.passwordSalt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get passwordIterations => $composableBuilder(
+    column: $table.passwordIterations,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -14104,6 +14291,21 @@ class $$NotebooksTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get passwordHash => $composableBuilder(
+    column: $table.passwordHash,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get passwordSalt => $composableBuilder(
+    column: $table.passwordSalt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get passwordIterations => $composableBuilder(
+    column: $table.passwordIterations,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<bool> get syncDirty => $composableBuilder(
     column: $table.syncDirty,
     builder: (column) => ColumnOrderings(column),
@@ -14163,6 +14365,21 @@ class $$NotebooksTableAnnotationComposer
     builder: (column) => column,
   );
 
+  GeneratedColumn<String> get passwordHash => $composableBuilder(
+    column: $table.passwordHash,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get passwordSalt => $composableBuilder(
+    column: $table.passwordSalt,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get passwordIterations => $composableBuilder(
+    column: $table.passwordIterations,
+    builder: (column) => column,
+  );
+
   GeneratedColumn<bool> get syncDirty =>
       $composableBuilder(column: $table.syncDirty, builder: (column) => column);
 
@@ -14216,6 +14433,9 @@ class $$NotebooksTableTableManager
                 Value<String?> folderId = const Value.absent(),
                 Value<String?> ruling = const Value.absent(),
                 Value<String?> lastPenStyle = const Value.absent(),
+                Value<String?> passwordHash = const Value.absent(),
+                Value<String?> passwordSalt = const Value.absent(),
+                Value<int?> passwordIterations = const Value.absent(),
                 Value<bool> syncDirty = const Value.absent(),
                 Value<int?> syncedSeq = const Value.absent(),
                 Value<int?> deletedAt = const Value.absent(),
@@ -14231,6 +14451,9 @@ class $$NotebooksTableTableManager
                 folderId: folderId,
                 ruling: ruling,
                 lastPenStyle: lastPenStyle,
+                passwordHash: passwordHash,
+                passwordSalt: passwordSalt,
+                passwordIterations: passwordIterations,
                 syncDirty: syncDirty,
                 syncedSeq: syncedSeq,
                 deletedAt: deletedAt,
@@ -14248,6 +14471,9 @@ class $$NotebooksTableTableManager
                 Value<String?> folderId = const Value.absent(),
                 Value<String?> ruling = const Value.absent(),
                 Value<String?> lastPenStyle = const Value.absent(),
+                Value<String?> passwordHash = const Value.absent(),
+                Value<String?> passwordSalt = const Value.absent(),
+                Value<int?> passwordIterations = const Value.absent(),
                 Value<bool> syncDirty = const Value.absent(),
                 Value<int?> syncedSeq = const Value.absent(),
                 Value<int?> deletedAt = const Value.absent(),
@@ -14263,6 +14489,9 @@ class $$NotebooksTableTableManager
                 folderId: folderId,
                 ruling: ruling,
                 lastPenStyle: lastPenStyle,
+                passwordHash: passwordHash,
+                passwordSalt: passwordSalt,
+                passwordIterations: passwordIterations,
                 syncDirty: syncDirty,
                 syncedSeq: syncedSeq,
                 deletedAt: deletedAt,

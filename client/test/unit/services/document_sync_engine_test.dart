@@ -144,6 +144,130 @@ void main() {
     expect(state.deviceId, first);
   });
 
+  test('notebook password verifier metadata pushes, pulls, preserves and clears',
+      () async {
+    await db.into(db.notebooks).insert(
+          NotebooksCompanion.insert(
+            id: 'protected-local',
+            title: 'Private',
+            createdAt: 1,
+            updatedAt: 2,
+            docJson: '{"blocks":[]}',
+            inkJson: '{"strokes":[]}',
+            passwordHash: const Value<String?>('hash-local'),
+            passwordSalt: const Value<String?>('salt-local'),
+            passwordIterations: const Value<int?>(210000),
+          ),
+        );
+    client.pushResults = const <PushResult>[
+      PushResult(
+        entityId: 'protected-local',
+        entityType: 'notebook',
+        seq: 1,
+        applied: true,
+      ),
+    ];
+    final DocumentSyncEngine engine = build(label: () async => 'test');
+
+    await engine.syncNow();
+
+    final Map<String, dynamic> pushed = client.pushedChanges!.singleWhere(
+      (Map<String, dynamic> row) => row['entity_id'] == 'protected-local',
+    );
+    expect(pushed['payload']['password_hash'], 'hash-local');
+    expect(pushed['payload']['password_salt'], 'salt-local');
+    expect(pushed['payload']['password_iterations'], 210000);
+
+    client
+      ..pushResults = const <PushResult>[]
+      ..pullPages = <SyncPullPage>[
+        const SyncPullPage(
+          changes: <RemoteChange>[
+            RemoteChange(
+              entityType: 'notebook',
+              entityId: 'protected-local',
+              op: SyncOp.upsert,
+              payload: <String, dynamic>{
+                'title': 'Edited by older peer',
+                'created_at': 1,
+                'updated_at': 3,
+                'doc': '{"blocks":[]}',
+                'ink': '{"strokes":[]}',
+              },
+              seq: 2,
+              deviceId: 'old-peer',
+            ),
+            RemoteChange(
+              entityType: 'notebook',
+              entityId: 'protected-remote',
+              op: SyncOp.upsert,
+              payload: <String, dynamic>{
+                'title': 'Remote private',
+                'created_at': 1,
+                'updated_at': 3,
+                'doc': '{"blocks":[]}',
+                'ink': '{"strokes":[]}',
+                'password_hash': 'hash-remote',
+                'password_salt': 'salt-remote',
+                'password_iterations': 220000,
+              },
+              seq: 3,
+              deviceId: 'new-peer',
+            ),
+          ],
+          headSeq: 3,
+          hasMore: false,
+        ),
+      ];
+    await engine.syncNow();
+
+    NotebookRow local = await (db.select(db.notebooks)
+          ..where((row) => row.id.equals('protected-local')))
+        .getSingle();
+    expect(local.passwordHash, 'hash-local');
+    expect(local.passwordSalt, 'salt-local');
+    expect(local.passwordIterations, 210000);
+    final NotebookRow remote = await (db.select(db.notebooks)
+          ..where((row) => row.id.equals('protected-remote')))
+        .getSingle();
+    expect(remote.passwordHash, 'hash-remote');
+    expect(remote.passwordSalt, 'salt-remote');
+    expect(remote.passwordIterations, 220000);
+
+    client.pullPages = <SyncPullPage>[
+      const SyncPullPage(
+        changes: <RemoteChange>[
+          RemoteChange(
+            entityType: 'notebook',
+            entityId: 'protected-local',
+            op: SyncOp.upsert,
+            payload: <String, dynamic>{
+              'title': 'Unprotected remotely',
+              'created_at': 1,
+              'updated_at': 4,
+              'doc': '{"blocks":[]}',
+              'ink': '{"strokes":[]}',
+              'password_hash': null,
+              'password_salt': null,
+              'password_iterations': null,
+            },
+            seq: 4,
+            deviceId: 'new-peer',
+          ),
+        ],
+        headSeq: 4,
+        hasMore: false,
+      ),
+    ];
+    await engine.syncNow();
+    local = await (db.select(db.notebooks)
+          ..where((row) => row.id.equals('protected-local')))
+        .getSingle();
+    expect(local.passwordHash, isNull);
+    expect(local.passwordSalt, isNull);
+    expect(local.passwordIterations, isNull);
+  });
+
   group('folder sync', () {
     test('a local folder pushes (before its notebooks) and marks synced',
         () async {

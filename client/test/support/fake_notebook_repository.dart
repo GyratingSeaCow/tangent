@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import 'dart:async';
+import 'dart:convert';
 
+import 'package:crypto/crypto.dart';
 import 'package:drift/native.dart';
 import 'package:tangent/data/local_db.dart';
 import 'package:tangent/data/notebook_repository.dart';
 import 'package:tangent/models/notebook.dart';
 import 'package:tangent/models/notebook_ruling.dart';
+import 'package:tangent/services/notebook_password.dart';
 
 /// In-memory [NotebookRepository] for widget tests.
 ///
@@ -65,6 +68,7 @@ class FakeNotebookRepository extends NotebookRepository {
             updatedAt: n.updatedAt,
             folderId: n.folderId,
             pinned: n.pinned,
+            passwordHash: n.passwordHash,
           ),
         )
         .toList(growable: false);
@@ -119,8 +123,74 @@ class FakeNotebookRepository extends NotebookRepository {
       pinned: pinned,
       ruling: notebook.ruling,
       lastPenStyle: notebook.lastPenStyle,
+      passwordHash: notebook.passwordHash,
+      passwordSalt: notebook.passwordSalt,
+      passwordIterations: notebook.passwordIterations,
     );
     _emit();
+  }
+
+  @override
+  Future<void> setPassword(String id, String password) async {
+    final Notebook? notebook = _notebooks[id];
+    if (notebook == null) throw StateError('Notebook is no longer available');
+    final NotebookPasswordMetadata metadata =
+        fakeNotebookPasswordMetadata(password);
+    _notebooks[id] = Notebook(
+      id: notebook.id,
+      title: notebook.title,
+      createdAt: notebook.createdAt,
+      updatedAt: notebook.updatedAt,
+      document: notebook.document,
+      ink: notebook.ink,
+      folderId: notebook.folderId,
+      pinned: notebook.pinned,
+      ruling: notebook.ruling,
+      lastPenStyle: notebook.lastPenStyle,
+      passwordHash: metadata.hash,
+      passwordSalt: metadata.salt,
+      passwordIterations: metadata.iterations,
+    );
+    _emit();
+  }
+
+  @override
+  Future<bool> verifyPassword(String id, String password) async {
+    final Notebook? notebook = _notebooks[id];
+    if (notebook?.passwordHash == null ||
+        notebook?.passwordSalt == null ||
+        notebook?.passwordIterations == null) {
+      return false;
+    }
+    if (notebook!.passwordSalt == _fakePasswordSalt) {
+      return notebook.passwordHash == fakeNotebookPasswordMetadata(password).hash;
+    }
+    return verifyNotebookPassword(
+      password: password,
+      hash: notebook.passwordHash!,
+      salt: notebook.passwordSalt!,
+      iterations: notebook.passwordIterations!,
+    );
+  }
+
+  @override
+  Future<bool> removePassword(String id, String password) async {
+    if (!await verifyPassword(id, password)) return false;
+    final Notebook notebook = _notebooks[id]!;
+    _notebooks[id] = Notebook(
+      id: notebook.id,
+      title: notebook.title,
+      createdAt: notebook.createdAt,
+      updatedAt: notebook.updatedAt,
+      document: notebook.document,
+      ink: notebook.ink,
+      folderId: notebook.folderId,
+      pinned: notebook.pinned,
+      ruling: notebook.ruling,
+      lastPenStyle: notebook.lastPenStyle,
+    );
+    _emit();
+    return true;
   }
 
   void _emit() {
@@ -128,6 +198,20 @@ class FakeNotebookRepository extends NotebookRepository {
     _changes.add(snapshot);
   }
 }
+
+final String _fakePasswordSalt = base64Encode(utf8.encode('widget-test-salt'));
+
+/// Fast deterministic verifier used only by widget fakes. Production tests
+/// exercise PBKDF2 through the real repository; widget tests must not leave a
+/// background isolate behind Flutter's fake-async boundary.
+NotebookPasswordMetadata fakeNotebookPasswordMetadata(String password) =>
+    NotebookPasswordMetadata(
+      hash: base64Encode(
+        sha256.convert(utf8.encode('widget-test-salt:$password')).bytes,
+      ),
+      salt: _fakePasswordSalt,
+      iterations: 100000,
+    );
 
 /// Convenience builder for a fully formed [Notebook] fixture.
 Notebook testNotebook({
@@ -139,6 +223,9 @@ Notebook testNotebook({
   String? folderId,
   bool pinned = false,
   NotebookRuling ruling = NotebookRuling.medium,
+  String? passwordHash,
+  String? passwordSalt,
+  int? passwordIterations,
 }) {
   final DateTime at = updatedAt ?? DateTime.utc(2026, 9, 17, 12);
   return Notebook(
@@ -151,5 +238,8 @@ Notebook testNotebook({
     folderId: folderId,
     pinned: pinned,
     ruling: ruling,
+    passwordHash: passwordHash,
+    passwordSalt: passwordSalt,
+    passwordIterations: passwordIterations,
   );
 }
