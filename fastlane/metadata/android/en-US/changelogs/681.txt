@@ -1,0 +1,1 @@
+Password-protected notebooks (Turn On/Off Password Protection and Lock Now in the notebook menu; protected content is hidden from search, Ask and OCR), notebook tables (up to 100x100 cells), and custom tags shared by notebooks and recordings with an Edit tags sheet and list filters. Server update required for protection and tags to sync across devices.

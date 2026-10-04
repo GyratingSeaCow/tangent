@@ -5,6 +5,35 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.49.0 — 2026-10-04
+
+### Added
+- Password-protected notebooks: the notebook row/cover ⋮ menu offers
+  **Turn On Password Protection** / **Turn Off Password Protection**.
+  Enabling asks for the password twice; turning protection off requires
+  the current password again. A protected notebook opens only after the
+  password is entered, and **Lock Now** re-locks it. Protected notebooks
+  stay listed by name (with a lock icon), but their text and recognized
+  ink are excluded from library search, Ask/MCP retrieval, server OCR
+  indexing and previews. Protection syncs across paired devices as a
+  verifier only — no plaintext password ever leaves the device.
+- Notebook tables: insert table blocks (1–100 rows × 1–100 columns) into
+  the notebook canvas. Cells are stored sparsely; only the visible grid is
+  painted and a single cell editor is mounted at a time. Markdown export
+  declares omitted tables; the single-page PDF export does not render
+  them yet.
+- Shared custom tags: one tag vocabulary for notebooks and
+  recordings/notes. Attach tags from a row's ⋮ menu through the shared
+  **Edit tags** sheet and filter both lists by tag. Tags and assignments
+  sync between devices.
+
+### Changed
+- Server: sync now carries the notebook password verifier fields and the
+  new `tag` / `tag_assignment` entities, and Ask/MCP/OCR skip protected
+  notebook content. Schema migrations run automatically on startup.
+  **Server update required** for password protection and tags to sync
+  across devices.
+
 ## 1.48.4 — 2026-10-03
 
 ### Changed
