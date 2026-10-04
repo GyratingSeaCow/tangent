@@ -46,4 +46,18 @@ void main() {
         NotebookDumpCardBlock(id: 'c1', dumpId: 'd1', x: 24, y: 120);
     expect(lassoBlockFootprint(card, GlobalKey()), const Size(300, 90));
   });
+
+  test('a table uses its bounded viewport footprint', () {
+    const NotebookTableBlock table = NotebookTableBlock(
+      id: 't1',
+      rows: 100,
+      columns: 100,
+      x: 16,
+      y: 120,
+    );
+    expect(
+      lassoBlockFootprint(table, null),
+      const Size(kNotebookTableMaxViewportWidth + 56, 352),
+    );
+  });
 }

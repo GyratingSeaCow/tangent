@@ -48,6 +48,7 @@ import '../../widgets/instrument_scaffold.dart';
 import '../../widgets/notebook_dump_card.dart';
 import '../../widgets/notebook_image_block.dart';
 import '../../widgets/notebook_ink_canvas.dart';
+import '../../widgets/notebook_table_block.dart';
 import '../../widgets/page_background_sheet.dart';
 import '../../widgets/top_nav_rail.dart';
 import '../dump/dump_detail_screen.dart';
@@ -145,6 +146,9 @@ final Provider<NotebookCardPlaybackOpener> notebookCardPlaybackProvider =
 @visibleForTesting
 Size lassoBlockFootprint(NotebookBlock block, GlobalKey? measureKey) {
   if (block is NotebookImageBlock) return Size(block.width, block.height);
+  if (block is NotebookTableBlock) {
+    return Size(block.viewportWidth + 56, block.viewportHeight);
+  }
   if (block is NotebookTextBlock || block is NotebookCheckboxBlock) {
     final RenderObject? box = measureKey?.currentContext?.findRenderObject();
     if (box is RenderBox && box.hasSize) return box.size;
@@ -203,6 +207,7 @@ const Size _nominalBlockFootprint = Size(300, 90);
 enum _InsertAction {
   text,
   checkbox,
+  table,
   dump,
   meeting,
   textNote,
@@ -419,6 +424,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
           _controllerFor(c.id, c.text);
         case NotebookDumpCardBlock():
         case NotebookImageBlock():
+        case NotebookTableBlock():
         case NotebookUnknownBlock():
           break;
       }
@@ -655,6 +661,48 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
         NotebookCheckboxBlock(id: id, text: ''),
         ..._blocks.skip(at),
       ];
+      _dirty = true;
+    });
+  }
+
+  Future<void> _pickTableSize() async {
+    final ({int rows, int columns})? size =
+        await showDialog<({int rows, int columns})>(
+      context: context,
+      builder: (BuildContext context) => const _NotebookTableSizeDialog(),
+    );
+    if (!mounted || size == null) return;
+    _addTableBlock(rows: size.rows, columns: size.columns);
+  }
+
+  /// Tables always land after the page's lowest content, including ink.
+  void _addTableBlock({required int rows, required int columns}) {
+    final NotebookTableBlock block = NotebookTableBlock(
+      id: _uuid.v4(),
+      rows: rows,
+      columns: columns,
+      x: kNotebookImportX,
+      y: _contentBottom() + _importSpacing,
+    );
+    setState(() {
+      _blocks = <NotebookBlock>[..._blocks, block];
+      _dirty = true;
+    });
+  }
+
+  void _onTableCellChanged(
+    String blockId,
+    int row,
+    int column,
+    String value,
+  ) {
+    final int index =
+        _blocks.indexWhere((NotebookBlock block) => block.id == blockId);
+    if (index < 0 || _blocks[index] is! NotebookTableBlock) return;
+    final NotebookTableBlock table = _blocks[index] as NotebookTableBlock;
+    setState(() {
+      _blocks = <NotebookBlock>[..._blocks]
+        ..[index] = table.copyWithCell(row, column, value);
       _dirty = true;
     });
   }
@@ -1028,14 +1076,18 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
       final double? bx = switch (block) {
         NotebookTextBlock t => t.x,
         NotebookCheckboxBlock c => c.x,
+        NotebookTableBlock t => t.x,
         NotebookBlock() => null,
       };
       final double? by = switch (block) {
         NotebookTextBlock t => t.y,
         NotebookCheckboxBlock c => c.y,
+        NotebookTableBlock t => t.y,
         NotebookBlock() => null,
       };
-      if (block is! NotebookTextBlock && block is! NotebookCheckboxBlock) {
+      if (block is! NotebookTextBlock &&
+          block is! NotebookCheckboxBlock &&
+          block is! NotebookTableBlock) {
         continue;
       }
       final double left = bx ?? _pagePadding;
@@ -1054,10 +1106,16 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
             // Never wider than what is left of the page from this block's
             // left edge. A fixed 720 ran the row (and its X) straight off a
             // phone screen, which is why blocks could not be deleted.
-            width: math.max(
-              _minBlockWidth,
-              math.min(_pageColumnWidth, viewportWidth - left - _pagePadding),
-            ),
+            width: switch (block) {
+              NotebookTableBlock t => t.viewportWidth + 56,
+              NotebookBlock() => math.max(
+                  _minBlockWidth,
+                  math.min(
+                    _pageColumnWidth,
+                    viewportWidth - left - _pagePadding,
+                  ),
+                ),
+            },
             child: _MovableBlock(
               id: block.id,
               // Dragging is off while the pen is down: in draw mode the whole
@@ -1141,6 +1199,11 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                       ),
                     ],
                   ),
+                NotebookTableBlock t => NotebookTableBlockWidget(
+                    block: t,
+                    onCellChanged: (int row, int column, String value) =>
+                        _onTableCellChanged(t.id, row, column, value),
+                  ),
                 NotebookBlock() => const SizedBox.shrink(),
               },
             ),
@@ -1164,7 +1227,8 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
           c.x == null && c.y == null ? null : Offset(c.x ?? 0, c.y ?? 0),
         NotebookDumpCardBlock d => Offset(d.x, d.y),
         NotebookImageBlock i => Offset(i.x, i.y),
-        NotebookBlock() => null,
+        NotebookTableBlock t => Offset(t.x, t.y),
+        NotebookUnknownBlock() => null,
       };
 
   /// The lasso footprint of [block]: measured for text/checkbox rows, model
@@ -1235,7 +1299,9 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                 d.copyWith(x: d.x + step.dx, y: d.y + step.dy),
               NotebookImageBlock i =>
                 i.copyWith(x: i.x + step.dx, y: i.y + step.dy),
-              NotebookBlock() => block,
+              NotebookTableBlock t =>
+                t.copyWith(x: t.x + step.dx, y: t.y + step.dy),
+              NotebookUnknownBlock() => block,
             },
       ];
       _dirty = true;
@@ -1410,6 +1476,10 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                   x: (c.x ?? _pagePadding) + delta.dx,
                   y: (c.y ?? _flowTopOf(id)) + delta.dy,
                 ),
+              NotebookTableBlock t => t.copyWith(
+                  x: t.x + delta.dx,
+                  y: t.y + delta.dy,
+                ),
               NotebookBlock() => block,
             },
       ];
@@ -1451,6 +1521,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
   /// - images, which carry their own `width` at their own `x`;
   /// - dump cards, which have an `x` but no width, so they get the same
   ///   [_minBlockWidth] floor their row is laid out with;
+  /// - tables, using their bounded scroll viewport plus the grip/remove strip;
   /// - positioned text and checkbox rows. These look self-limiting —
   ///   `_buildPositionedBlocks` clamps a row to what is LEFT of the page from
   ///   its own left edge — but that clamp is floored at [_minBlockWidth] so
@@ -1459,8 +1530,8 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
   ///   is. Leaving them out cut the X off exactly the rows a user had dragged
   ///   right, which is the bug that made blocks undeletable on a phone.
   ///
-  /// Returns 0 for an empty page so the scale maths falls back to the column
-  /// width unchanged.
+  /// Unknown blocks have no geometry in this build and are excluded. Returns 0
+  /// for an empty page so the scale maths falls back to the column unchanged.
   double _contentRightEdge() {
     double rightmost = 0;
     for (final InkStroke stroke in _strokes) {
@@ -1482,7 +1553,9 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
           if (c.x != null) {
             rightmost = math.max(rightmost, c.x! + _minBlockWidth);
           }
-        case NotebookBlock():
+        case NotebookTableBlock t:
+          rightmost = math.max(rightmost, t.x + t.viewportWidth + 56);
+        case NotebookUnknownBlock():
           break;
       }
     }
@@ -1505,7 +1578,11 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
           if (c.y == null) flowY += _unplacedBlockSpacing;
         case NotebookDumpCardBlock d:
           lowest = math.max(lowest, d.y);
-        case NotebookBlock():
+        case NotebookImageBlock():
+          break;
+        case NotebookTableBlock t:
+          lowest = math.max(lowest, t.y + t.viewportHeight);
+        case NotebookUnknownBlock():
           break;
       }
     }
@@ -1966,6 +2043,8 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                             _addTextBlock();
                           case _InsertAction.checkbox:
                             _addCheckboxBlock();
+                          case _InsertAction.table:
+                            unawaited(_pickTableSize());
                           case _InsertAction.dump:
                             unawaited(
                               _importDumps(dumps, DumpMode.brainDump),
@@ -1995,6 +2074,15 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                           child: ListTile(
                             leading: Icon(Icons.check_box_outlined),
                             title: Text('Checkbox'),
+                            contentPadding: EdgeInsets.zero,
+                          ),
+                        ),
+                        const PopupMenuItem<_InsertAction>(
+                          key: ValueKey('notebook-insert-table'),
+                          value: _InsertAction.table,
+                          child: ListTile(
+                            leading: Icon(Icons.table_chart_outlined),
+                            title: Text('Table'),
                             contentPadding: EdgeInsets.zero,
                           ),
                         ),
@@ -2332,6 +2420,153 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
       },
     );
   }
+}
+
+class _NotebookTableSizeDialog extends StatefulWidget {
+  const _NotebookTableSizeDialog();
+
+  @override
+  State<_NotebookTableSizeDialog> createState() =>
+      _NotebookTableSizeDialogState();
+}
+
+class _NotebookTableSizeDialogState extends State<_NotebookTableSizeDialog> {
+  final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
+  final TextEditingController _rows = TextEditingController(text: '3');
+  final TextEditingController _columns = TextEditingController(text: '3');
+
+  @override
+  void dispose() {
+    _rows.dispose();
+    _columns.dispose();
+    super.dispose();
+  }
+
+  String? _validateDimension(String? raw) {
+    final int? value = int.tryParse(raw ?? '');
+    if (value == null || value < 1 || value > kNotebookTableMaxDimension) {
+      return '1–$kNotebookTableMaxDimension';
+    }
+    return null;
+  }
+
+  void _step(TextEditingController controller, int delta) {
+    final int current = int.tryParse(controller.text) ?? 1;
+    final int next =
+        (current + delta).clamp(1, kNotebookTableMaxDimension);
+    controller.value = TextEditingValue(
+      text: '$next',
+      selection: TextSelection.collapsed(offset: '$next'.length),
+    );
+    setState(() {});
+  }
+
+  void _submit() {
+    if (!(_formKey.currentState?.validate() ?? false)) return;
+    Navigator.of(context).pop((
+      rows: int.parse(_rows.text),
+      columns: int.parse(_columns.text),
+    ));
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+        title: const Text('Insert table'),
+        content: Form(
+          key: _formKey,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Expanded(
+                child: _TableDimensionField(
+                  label: 'Rows',
+                  fieldKey: const ValueKey('notebook-table-rows'),
+                  controller: _rows,
+                  validator: _validateDimension,
+                  onDecrement: () => _step(_rows, -1),
+                  onIncrement: () => _step(_rows, 1),
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: _TableDimensionField(
+                  label: 'Columns',
+                  fieldKey: const ValueKey('notebook-table-columns'),
+                  controller: _columns,
+                  validator: _validateDimension,
+                  onDecrement: () => _step(_columns, -1),
+                  onIncrement: () => _step(_columns, 1),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            key: const ValueKey('notebook-table-create'),
+            onPressed: _submit,
+            child: const Text('Create'),
+          ),
+        ],
+      );
+}
+
+class _TableDimensionField extends StatelessWidget {
+  const _TableDimensionField({
+    required this.label,
+    required this.fieldKey,
+    required this.controller,
+    required this.validator,
+    required this.onDecrement,
+    required this.onIncrement,
+  });
+
+  final String label;
+  final Key fieldKey;
+  final TextEditingController controller;
+  final FormFieldValidator<String> validator;
+  final VoidCallback onDecrement;
+  final VoidCallback onIncrement;
+
+  @override
+  Widget build(BuildContext context) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          TextFormField(
+            key: fieldKey,
+            controller: controller,
+            keyboardType: TextInputType.number,
+            inputFormatters: <TextInputFormatter>[
+              FilteringTextInputFormatter.digitsOnly,
+              LengthLimitingTextInputFormatter(3),
+            ],
+            textAlign: TextAlign.center,
+            decoration: InputDecoration(labelText: label),
+            validator: validator,
+          ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: <Widget>[
+              IconButton(
+                key: ValueKey<String>('notebook-table-${label.toLowerCase()}-'),
+                tooltip: 'Decrease $label',
+                onPressed: onDecrement,
+                icon: const Icon(Icons.remove),
+              ),
+              IconButton(
+                key: ValueKey<String>('notebook-table-${label.toLowerCase()}+'),
+                tooltip: 'Increase $label',
+                onPressed: onIncrement,
+                icon: const Icon(Icons.add),
+              ),
+            ],
+          ),
+        ],
+      );
 }
 
 /// A typed block that can be dragged around the page by a grip handle.
