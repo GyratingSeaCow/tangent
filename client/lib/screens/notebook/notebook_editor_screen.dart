@@ -37,6 +37,7 @@ import '../../services/image_file_picker.dart';
 import '../../services/ink_search.dart';
 import '../../services/notebook_import.dart';
 import '../../services/notebook_persistence.dart';
+import '../../services/notebook_password.dart';
 import '../../services/ocr_settings_client.dart';
 import '../../services/recording_playback.dart';
 import '../../services/stamp_reconcile.dart';
@@ -48,6 +49,7 @@ import '../../widgets/instrument_scaffold.dart';
 import '../../widgets/notebook_dump_card.dart';
 import '../../widgets/notebook_image_block.dart';
 import '../../widgets/notebook_ink_canvas.dart';
+import '../../widgets/notebook_password_dialog.dart';
 import '../../widgets/page_background_sheet.dart';
 import '../../widgets/top_nav_rail.dart';
 import '../dump/dump_detail_screen.dart';
@@ -384,6 +386,27 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
           .read(notebookRepositoryProvider)
           .getNotebook(widget.notebookId);
       if (!mounted) return;
+      if (notebook != null && notebook.passwordProtected) {
+        final NotebookUnlockRegistry unlocks =
+            ref.read(notebookUnlockRegistryProvider);
+        if (!unlocks.isUnlocked(notebook.id, notebook.passwordHash)) {
+          await WidgetsBinding.instance.endOfFrame;
+          if (!mounted) return;
+          final bool accepted = await showNotebookUnlockDialog(
+            context,
+            notebookTitle: notebook.title,
+            verify: (String password) => ref
+                .read(notebookRepositoryProvider)
+                .verifyPassword(notebook.id, password),
+          );
+          if (!mounted) return;
+          if (!accepted) {
+            Navigator.of(context).pop();
+            return;
+          }
+          unlocks.unlock(notebook.id, notebook.passwordHash!);
+        }
+      }
       setState(() {
         _loading = false;
         _notebook = notebook;
@@ -539,7 +562,11 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
         ? const <InkMatch>[]
         : await ref
             .read(inkSearchProvider)
-            .searchInNotebook(widget.notebookId, query);
+            .searchInNotebook(
+              widget.notebookId,
+              query,
+              allowProtected: true,
+            );
     // Only the NEWEST query's results may land; fast typing must not paint
     // a stale result set over a fresher one.
     if (!mounted || generation != _findGeneration || !_findOpen) return;

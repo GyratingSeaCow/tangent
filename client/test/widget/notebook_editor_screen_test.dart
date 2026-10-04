@@ -18,6 +18,7 @@ import 'package:tangent/screens/dump/dumps_providers.dart';
 import 'package:tangent/screens/notebook/notebook_editor_screen.dart';
 import 'package:tangent/screens/settings/ai_summaries_section.dart'
     show summariesEnabledProvider;
+import 'package:tangent/services/notebook_password.dart';
 import 'package:tangent/services/notebook_persistence.dart';
 import 'package:tangent/services/recording_playback.dart';
 import 'package:tangent/widgets/dump_picker_sheet.dart';
@@ -186,7 +187,7 @@ void main() {
       .widgetList<EditableText>(find.byType(EditableText))
       .any((EditableText field) => field.focusNode.hasFocus);
 
-  Notebook seeded() => testNotebook(
+  Notebook seeded({NotebookPasswordMetadata? password}) => testNotebook(
         id: 'nb-1',
         title: 'Sprint ideas',
         blocks: <NotebookBlock>[
@@ -194,7 +195,44 @@ void main() {
           const NotebookCheckboxBlock(id: 'b2', text: 'milk', checked: true),
           const NotebookDumpCardBlock(id: 'b3', dumpId: 'd1', x: 24, y: 120),
         ],
+        passwordHash: password?.hash,
+        passwordSalt: password?.salt,
+        passwordIterations: password?.iterations,
       );
+
+  testWidgets('direct editor route stays blank until the password is verified',
+      (tester) async {
+    final NotebookPasswordMetadata metadata =
+        fakeNotebookPasswordMetadata('right password');
+    final Notebook protected = seeded(password: metadata);
+
+    await mountEditor(tester, notebook: protected);
+
+    expect(find.text('Unlock notebook'), findsOneWidget);
+    expect(find.text('hello notebook'), findsNothing);
+
+    await tester.enterText(
+      find.byKey(const ValueKey<String>('notebook-current-password')),
+      'wrong password',
+    );
+    await tester.tap(find.widgetWithText(FilledButton, 'Unlock'));
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('Wrong password'), findsOneWidget);
+    expect(find.text('hello notebook'), findsNothing);
+
+    await tester.enterText(
+      find.byKey(const ValueKey<String>('notebook-current-password')),
+      'right password',
+    );
+    await tester.tap(find.widgetWithText(FilledButton, 'Unlock'));
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('Unlock notebook'), findsNothing);
+    expect(find.text('hello notebook'), findsOneWidget);
+    await unmount(tester);
+  });
 
   testWidgets('renders text, checkbox and dump-card blocks from storage',
       (tester) async {

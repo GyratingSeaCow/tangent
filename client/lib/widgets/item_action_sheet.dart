@@ -35,6 +35,7 @@ enum ItemAction {
   /// hand it to the share sheet (mobile) or save + open it (desktop).
   /// Offered only when the row has transcript text to export.
   exportMarkdown,
+  passwordProtection,
 
   /// Append a recording (transcript / summary / audio bubble) to a notebook
   /// chosen from a picker, without opening the editor (v1.20.0). Offered
@@ -76,6 +77,7 @@ const List<ItemAction> _canonicalOrder = <ItemAction>[
   ItemAction.share,
   ItemAction.exportPdf,
   ItemAction.exportMarkdown,
+  ItemAction.passwordProtection,
   ItemAction.sendToNotebook,
   ItemAction.select,
   ItemAction.delete,
@@ -131,6 +133,8 @@ class ItemActionSheet extends StatelessWidget {
         return 'Export to PDF';
       case ItemAction.exportMarkdown:
         return 'Export Markdown';
+      case ItemAction.passwordProtection:
+        return 'Password protection';
       case ItemAction.sendToNotebook:
         return 'Send to notebook…';
       case ItemAction.download:
@@ -166,6 +170,8 @@ class ItemActionSheet extends StatelessWidget {
         return Icons.picture_as_pdf_outlined;
       case ItemAction.exportMarkdown:
         return Icons.description;
+      case ItemAction.passwordProtection:
+        return Icons.lock_outline;
       case ItemAction.sendToNotebook:
         return Icons.menu_book_outlined;
       case ItemAction.download:

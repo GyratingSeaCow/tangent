@@ -18,6 +18,7 @@ import '../data/storage/storage_contract.dart';
 import '../data/storage/storage_providers.dart';
 import '../models/dump_mode.dart';
 import '../models/notebook.dart';
+import 'notebook_password.dart';
 import 'transcript_markdown.dart';
 import 'transcript_timings.dart';
 
@@ -170,16 +171,20 @@ class ObsidianExporter {
     required NotebookRepository notebooks,
     required StorageBackend backend,
     required StorageCatalog catalog,
+    bool Function(String notebookId, String? passwordHash)? isNotebookUnlocked,
     this.options = const TranscriptMarkdownOptions(),
   })  : _db = db,
         _notebooks = notebooks,
         _backend = backend,
-        _catalog = catalog;
+        _catalog = catalog,
+        _isNotebookUnlocked = isNotebookUnlocked ?? ((_, _) => false);
 
   final LocalDb _db;
   final NotebookRepository _notebooks;
   final StorageBackend _backend;
   final StorageCatalog _catalog;
+  final bool Function(String notebookId, String? passwordHash)
+      _isNotebookUnlocked;
 
   /// Document shape for every dump (Settings toggles: timestamps off by
   /// default so an existing vault keeps its shape; summary on).
@@ -239,6 +244,16 @@ class ObsidianExporter {
         taken,
       );
       onProgress(++done, total, name);
+      if (notebook.passwordProtected &&
+          !_isNotebookUnlocked(notebook.id, notebook.passwordHash)) {
+        failed.add(
+          FailedExport(
+            name: name,
+            reason: 'Unlock this notebook before exporting it.',
+          ),
+        );
+        continue;
+      }
       final outcome = await _backend
           .publishDocument(
             location,
@@ -294,11 +309,14 @@ final obsidianWordTimingsAvailableProvider = FutureProvider<bool>(
 /// Rebuilt whenever an Obsidian switch flips, so the next run uses what
 /// the user just chose.
 final obsidianExporterProvider = Provider<ObsidianExporter>((ref) {
+  final NotebookUnlockRegistry unlocked =
+      ref.watch(notebookUnlockRegistryProvider);
   return ObsidianExporter(
     db: ref.watch(localDbProvider),
     notebooks: ref.watch(notebookRepositoryProvider),
     backend: ref.watch(storageBackendProvider),
     catalog: ref.watch(storageCatalogProvider),
+    isNotebookUnlocked: unlocked.isUnlocked,
     options: ref.watch(obsidianMarkdownOptionsProvider),
   );
 });

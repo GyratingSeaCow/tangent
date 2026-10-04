@@ -2,9 +2,46 @@
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tangent/data/local_db.dart';
+import 'package:tangent/data/notebook_repository.dart';
+import 'package:tangent/data/storage/storage_contract.dart';
 import 'package:tangent/models/dump_mode.dart';
 import 'package:tangent/models/notebook.dart';
 import 'package:tangent/services/obsidian_export.dart';
+
+class _AvailableCatalog extends Fake implements StorageCatalog {
+  @override
+  Stream<DefaultFolderState> watchDefault() => Stream.value(
+        (
+          location: const (
+            id: 'test-location',
+            directory: (
+              kind: 'path',
+              path: '/test',
+              treeUri: '',
+              authority: '',
+              documentId: '',
+            ),
+            label: 'Test',
+          ),
+          revision: 1,
+          available: true,
+          canChooseDefault: true,
+          problem: null,
+        ),
+      );
+}
+
+class _RejectUnexpectedPublish extends Fake implements StorageBackend {
+  @override
+  IoOperation<Outcome<DurableDocument>> publishDocument(
+    StorageLocation location,
+    String directoryName,
+    String name,
+    String content,
+    String publicationId,
+  ) =>
+      throw StateError('locked notebook content reached the storage backend');
+}
 
 /// Obsidian export (2026-09-23): every dump and notebook becomes a
 /// markdown file a vault can index. The rules pinned here:
@@ -144,6 +181,40 @@ void main() {
       expect(b, '2026-09-23 Note 2.md');
       expect(c, '2026-09-23 Note 3.md');
     });
+  });
+
+  test('bulk export rejects a protected notebook until it is unlocked',
+      () async {
+    final LocalDb db = LocalDb.forTesting(NativeDatabase.memory());
+    addTearDown(db.close);
+    final NotebookRepository notebooks = NotebookRepository(db: db);
+    final int at = DateTime.utc(2026, 9, 23).millisecondsSinceEpoch;
+    await db.applyRemoteNotebook(
+      id: 'private',
+      title: 'Private',
+      docJson: '{"blocks":[{"kind":"text","id":"b1","text":"secret"}]}',
+      inkJson: '{"strokes":[]}',
+      createdAt: at,
+      updatedAt: at,
+      passwordHash: 'hash',
+      passwordSalt: 'salt',
+      passwordIterations: 210000,
+      seq: 1,
+    );
+    final ObsidianExporter exporter = ObsidianExporter(
+      db: db,
+      notebooks: notebooks,
+      backend: _RejectUnexpectedPublish(),
+      catalog: _AvailableCatalog(),
+      isNotebookUnlocked: (_, _) => false,
+    );
+
+    final ExportSummary summary =
+        await exporter.run(onProgress: (_, _, _) {});
+
+    expect(summary.exported, 0);
+    expect(summary.failed, hasLength(1));
+    expect(summary.failed.single.reason, contains('Unlock this notebook'));
   });
 
   group('anyDumpHasWordTimings (L4 switch gate)', () {
