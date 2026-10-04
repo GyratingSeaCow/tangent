@@ -8,7 +8,7 @@
 // PIXELS, because "the shared painter is used" does not by itself prove a
 // coloured mark survives to the exported page.
 import 'dart:convert';
-import 'dart:io' show zlib;
+import 'dart:io' show Directory, File, zlib;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'dart:ui' show Color;
@@ -16,6 +16,7 @@ import 'dart:ui' show Color;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tangent/models/notebook.dart';
 import 'package:tangent/services/notebook_pdf_exporter.dart';
+import 'package:tangent/services/notebook_pdf_import.dart';
 import 'package:tangent/widgets/notebook_ink_canvas.dart';
 
 InkStroke stroke(String id, List<(double, double)> pts) => InkStroke(
@@ -189,6 +190,29 @@ void _expectPixel(
   expect(actual.$3.toDouble(), closeTo(wanted.$3, delta), reason: reason);
 }
 
+
+class _RecordingPdfLoader implements PdfPageRasterLoader {
+  _RecordingPdfLoader(this.directory, this.png);
+
+  final Directory directory;
+  final Uint8List png;
+  final List<int> pages = <int>[];
+  final List<String> sources = <String>[];
+
+  @override
+  Future<File> loadPage({
+    required String sourceData,
+    required int pageNumber,
+    required int width,
+    required int height,
+  }) {
+    pages.add(pageNumber);
+    sources.add(sourceData);
+    final File file = File('${directory.path}/page-$pageNumber.png');
+    file.writeAsBytesSync(png);
+    return Future<File>.value(file);
+  }
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -460,6 +484,79 @@ void main() {
       reason: 'a corrupt image paints no pixels where the image would be',
     );
   });
+
+  test(
+    'imported pages export in order with ink composited over page pixels',
+      () async {
+      final Directory temp = Directory.systemTemp.createTempSync('pdf-export-');
+      addTearDown(() => temp.deleteSync(recursive: true));
+      final String white = await _solidPngBase64(const Color(0xFFFFFFFF), 2, 2);
+      final _RecordingPdfLoader loader = _RecordingPdfLoader(
+        temp,
+        base64Decode(white),
+      );
+      const String sourceData = 'cGRm';
+      final Uint8List bytes = await renderNotebookPdf(
+        const NotebookExportSource(
+          title: 'annotated import',
+          document: NotebookDocument(<NotebookBlock>[
+            NotebookPdfPageBlock(
+              id: 'pdf-1',
+              documentId: 'doc',
+              pageNumber: 1,
+              pageCount: 2,
+              data: sourceData,
+              x: 10,
+              y: 20,
+              width: 100,
+              height: 100,
+            ),
+            NotebookPdfPageBlock(
+              id: 'pdf-2',
+              documentId: 'doc',
+              pageNumber: 2,
+              pageCount: 2,
+              x: 10,
+              y: 140,
+              width: 100,
+              height: 100,
+            ),
+          ]),
+          strokes: <InkStroke>[
+            InkStroke(
+              id: 'red-note',
+              width: 8,
+              colour: InkColor.red,
+              points: <InkPoint>[
+                InkPoint(x: 20, y: 60),
+                InkPoint(x: 80, y: 60),
+              ],
+            ),
+          ],
+        ),
+        pdfPageLoader: loader,
+      );
+
+      expect(loader.pages, <int>[1, 2]);
+      expect(loader.sources, <String>[sourceData, sourceData]);
+      final String pdfText = latin1.decode(bytes, allowInvalid: true);
+      expect(RegExp(r'/Type\s*/Page(?!s)').allMatches(pdfText), hasLength(2));
+      final _PageRaster firstPage = _pageRasterOf(bytes);
+      expect(firstPage.width, 200);
+      expect(firstPage.height, 200);
+      _expectPixel(
+        firstPage.at(100, 80),
+        _opaqueRgb(InkColor.red),
+        reason:
+            'canvas ink must be translated and painted over imported page 1',
+      );
+      _expectPixel(
+        firstPage.at(100, 20),
+        (255, 255, 255),
+        reason: 'the imported page raster must survive outside the annotation',
+      );
+    },
+  );
 
   test('an image block and ink strokes coexist on the exported page',
       () async {

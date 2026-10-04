@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import 'dart:io';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -20,11 +21,13 @@ import 'package:tangent/screens/settings/ai_summaries_section.dart'
     show summariesEnabledProvider;
 import 'package:tangent/services/notebook_import.dart';
 import 'package:tangent/services/notebook_password.dart';
+import 'package:tangent/services/notebook_pdf_import.dart';
 import 'package:tangent/services/notebook_persistence.dart';
 import 'package:tangent/services/recording_playback.dart';
 import 'package:tangent/widgets/dump_picker_sheet.dart';
 import 'package:tangent/widgets/notebook_dump_card.dart';
 import 'package:tangent/widgets/notebook_ink_canvas.dart';
+import 'package:tangent/widgets/notebook_pdf_page_block.dart';
 import 'package:tangent/widgets/notebook_table_block.dart';
 
 import '../support/fake_notebook_repository.dart';
@@ -100,6 +103,29 @@ final class _RecordingEngine implements RecordingPlaybackEngine {
   Future<void> dispose() async {}
 }
 
+final class _FixedPdfPicker implements NotebookPdfPicker {
+  const _FixedPdfPicker(this.pdf);
+
+  final PickedPdf? pdf;
+
+  @override
+  Future<PickedPdf?> pick() async => pdf;
+}
+
+final class _FailingPdfLoader implements PdfPageRasterLoader {
+  const _FailingPdfLoader();
+
+  @override
+  Future<File> loadPage({
+    required String sourceData,
+    required int pageNumber,
+    required int width,
+    required int height,
+  }) => Future<File>.error(
+        StateError('raster intentionally omitted in widget test'),
+      );
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -116,6 +142,8 @@ void main() {
     List<DumpRow> dumps = const <DumpRow>[],
     bool setViewSize = true,
     bool summariesEnabled = false,
+    NotebookPdfPicker? pdfPicker,
+    PdfPageRasterLoader? pdfPageRasterLoader,
     List<Override> extraOverrides = const <Override>[],
   }) async {
     if (setViewSize) {
@@ -145,8 +173,11 @@ void main() {
                 child: ElevatedButton(
                   onPressed: () => Navigator.of(context).push<void>(
                     MaterialPageRoute<void>(
-                      builder: (_) =>
-                          NotebookEditorScreen(notebookId: notebook.id),
+                      builder: (_) => NotebookEditorScreen(
+                        notebookId: notebook.id,
+                        pdfPicker: pdfPicker,
+                        pdfPageRasterLoader: pdfPageRasterLoader,
+                      ),
                     ),
                   ),
                   child: const Text('open notebook'),
@@ -263,9 +294,82 @@ void main() {
     await unmount(tester);
   });
 
-  testWidgets('a dump-card block whose dump is gone renders unavailable', (
-    tester,
-  ) async {
+  testWidgets('PDF import menu adds ordered background below the ink layer',
+      (tester) async {
+    await mountEditor(
+      tester,
+      notebook: testNotebook(id: 'nb-pdf', title: 'PDF notes'),
+      pdfPicker: _FixedPdfPicker(
+        PickedPdf(
+          bytes: Uint8List.fromList(<int>[1, 2, 3, 4]),
+          documentId: 'doc',
+          pageSizes: const <Size>[Size(200, 300), Size(400, 200)],
+          name: 'notes.pdf',
+        ),
+      ),
+      pdfPageRasterLoader: const _FailingPdfLoader(),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('notebook-insert-menu')));
+    await tester.pump(const Duration(milliseconds: 200));
+    final Finder pdfMenuItem = find.byKey(
+      const ValueKey('notebook-insert-pdf'),
+    );
+    expect(pdfMenuItem, findsOneWidget);
+    final dynamic pdfMenuState = tester.state(pdfMenuItem);
+    pdfMenuState.handleTap();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    final List<NotebookPdfPageBlockWidget> pageWidgets = tester
+        .widgetList<NotebookPdfPageBlockWidget>(
+          find.byType(NotebookPdfPageBlockWidget),
+        )
+        .toList(growable: false);
+    expect(pageWidgets, hasLength(2));
+    expect(
+      pageWidgets.map(
+        (NotebookPdfPageBlockWidget widget) => widget.block.pageNumber,
+      ),
+      <int>[1, 2],
+    );
+    expect(pageWidgets.first.block.y, kNotebookImportSpacing);
+    expect(
+      pageWidgets[1].block.y,
+      pageWidgets.first.block.y +
+          pageWidgets.first.block.height +
+          kNotebookPdfPageSpacing,
+    );
+    expect(pageWidgets.first.block.data, isNotNull);
+    expect(pageWidgets.last.block.data, isNull);
+
+    final Stack canvasStack = tester
+        .widgetList<Stack>(find.byType(Stack))
+        .singleWhere(
+          (Stack stack) => stack.children.any(
+            (Widget child) => child.key == const ValueKey('notebook-ink-layer'),
+          ),
+        );
+    final int firstPdfLayer = canvasStack.children.indexWhere(
+      (Widget child) =>
+          child.key is ValueKey<String> &&
+          (child.key! as ValueKey<String>)
+              .value
+              .startsWith('notebook-pdf-layer-'),
+    );
+    final int inkLayer = canvasStack.children.indexWhere(
+      (Widget child) => child.key == const ValueKey('notebook-ink-layer'),
+    );
+    expect(firstPdfLayer, greaterThanOrEqualTo(0));
+    expect(inkLayer, greaterThan(firstPdfLayer));
+    expect(find.byType(NotebookInkCanvas), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await unmount(tester);
+  });
+
+  testWidgets('a dump-card block whose dump is gone renders unavailable',
+      (tester) async {
     await mountEditor(
       tester,
       notebook: testNotebook(

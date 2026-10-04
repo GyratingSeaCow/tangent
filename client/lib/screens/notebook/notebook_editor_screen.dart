@@ -38,6 +38,7 @@ import '../../services/ink_search.dart';
 import '../../services/notebook_import.dart';
 import '../../services/notebook_persistence.dart';
 import '../../services/notebook_password.dart';
+import '../../services/notebook_pdf_import.dart';
 import '../../services/ocr_settings_client.dart';
 import '../../services/recording_playback.dart';
 import '../../services/stamp_reconcile.dart';
@@ -50,6 +51,7 @@ import '../../widgets/notebook_dump_card.dart';
 import '../../widgets/notebook_image_block.dart';
 import '../../widgets/notebook_ink_canvas.dart';
 import '../../widgets/notebook_password_dialog.dart';
+import '../../widgets/notebook_pdf_page_block.dart';
 import '../../widgets/notebook_table_block.dart';
 import '../../widgets/page_background_sheet.dart';
 import '../../widgets/top_nav_rail.dart';
@@ -216,6 +218,7 @@ enum _InsertAction {
   meeting,
   textNote,
   image,
+  pdf,
   recentre,
 }
 
@@ -229,6 +232,8 @@ class NotebookEditorScreen extends ConsumerStatefulWidget {
     required this.notebookId,
     this.initialFindQuery,
     this.scrollToBlockId,
+    this.pdfPicker,
+    this.pdfPageRasterLoader,
   });
 
   final String notebookId;
@@ -243,6 +248,10 @@ class NotebookEditorScreen extends ConsumerStatefulWidget {
   /// on a search result lands "at the top of the ctrl+f results"). Null (the
   /// ordinary open) mounts no find bar.
   final String? initialFindQuery;
+
+  /// Test seams for the system picker and PDFium-backed disk cache.
+  final NotebookPdfPicker? pdfPicker;
+  final PdfPageRasterLoader? pdfPageRasterLoader;
 
   @override
   ConsumerState<NotebookEditorScreen> createState() =>
@@ -289,6 +298,9 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
 
   /// Vertical position of the page, so it can be scrolled back to the top.
   final ScrollController _pageScroll = ScrollController();
+  final ValueNotifier<Rect> _visiblePageRect = ValueNotifier<Rect>(Rect.zero);
+  late final NotebookPdfPicker _pdfPicker;
+  late final PdfPageRasterLoader _pdfPageRasterLoader;
   bool _erasing = false;
 
   /// Lasso mode: pointer input selects instead of drawing.
@@ -363,6 +375,13 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
   @override
   void initState() {
     super.initState();
+    _pdfPicker = widget.pdfPicker ?? SystemNotebookPdfPicker();
+    _pdfPageRasterLoader =
+        widget.pdfPageRasterLoader ?? NotebookPdfPageCache();
+    _pageScroll.addListener(_updateVisiblePageRect);
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _updateVisiblePageRect(),
+    );
     final String? deepLinked = widget.initialFindQuery;
     if (deepLinked != null && deepLinked.trim().isNotEmpty) {
       // Deep link from the home screen's search: the bar opens populated;
@@ -375,7 +394,9 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
 
   @override
   void dispose() {
+    _pageScroll.removeListener(_updateVisiblePageRect);
     _pageScroll.dispose();
+    _visiblePageRect.dispose();
     _title.dispose();
     _findQuery.dispose();
     for (final TextEditingController controller in _controllers.values) {
@@ -450,6 +471,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
           _controllerFor(c.id, c.text);
         case NotebookDumpCardBlock():
         case NotebookImageBlock():
+        case NotebookPdfPageBlock():
         case NotebookTableBlock():
         case NotebookUnknownBlock():
           break;
@@ -966,6 +988,47 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
     });
   }
 
+  /// Imports a local PDF as ordered page blocks, not as a viewer.
+  ///
+  /// Import inspects page geometry only. PDFium rasterises an individual page
+  /// later, when its block approaches the visible canvas, and the result is
+  /// reused from the disk cache.
+  Future<void> _importPdf() async {
+    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+    final PickedPdf? picked;
+    try {
+      picked = await _pdfPicker.pick();
+    } catch (error) {
+      messenger.showSnackBar(
+        SnackBar(content: Text('Could not import the PDF: $error')),
+      );
+      return;
+    }
+    if (picked == null || !mounted) return;
+    final List<NotebookPdfPageBlock> pages;
+    try {
+      pages = buildImportedPdfPageBlocks(
+        picked: picked,
+        existing: _blocks,
+        strokes: _strokes,
+        newId: _uuid.v4,
+      );
+    } catch (error) {
+      messenger.showSnackBar(
+        SnackBar(content: Text('Could not import the PDF: $error')),
+      );
+      return;
+    }
+    if (pages.isEmpty) return;
+    setState(() {
+      _blocks = <NotebookBlock>[..._blocks, ...pages];
+      _dirty = true;
+    });
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _updateVisiblePageRect(),
+    );
+  }
+
   /// Moves the selected image by one drag step, in canonical page space.
   void _moveImage(String id, Offset delta) {
     setState(() {
@@ -1248,15 +1311,16 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
   /// Where each block anchors in canonical page space, or null for a block
   /// that has no position of its own yet (flow-laid text).
   Offset? _blockAnchor(NotebookBlock block) => switch (block) {
-    NotebookTextBlock t =>
-      t.x == null && t.y == null ? null : Offset(t.x ?? 0, t.y ?? 0),
-    NotebookCheckboxBlock c =>
-      c.x == null && c.y == null ? null : Offset(c.x ?? 0, c.y ?? 0),
-    NotebookDumpCardBlock d => Offset(d.x, d.y),
-    NotebookImageBlock i => Offset(i.x, i.y),
-    NotebookTableBlock t => Offset(t.x, t.y),
-    NotebookUnknownBlock() => null,
-  };
+        NotebookTextBlock t =>
+          t.x == null && t.y == null ? null : Offset(t.x ?? 0, t.y ?? 0),
+        NotebookCheckboxBlock c =>
+          c.x == null && c.y == null ? null : Offset(c.x ?? 0, c.y ?? 0),
+        NotebookDumpCardBlock d => Offset(d.x, d.y),
+        NotebookImageBlock i => Offset(i.x, i.y),
+        NotebookPdfPageBlock() => null,
+        NotebookTableBlock t => Offset(t.x, t.y),
+        NotebookUnknownBlock() => null,
+      };
 
   /// The lasso footprint of [block]: measured for text/checkbox rows, model
   /// size for images, nominal 300x90 otherwise. See [lassoBlockFootprint].
@@ -1320,21 +1384,19 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                 y: (t.y ?? _flowTopOf(t.id)) + step.dy,
               ),
               NotebookCheckboxBlock c => c.copyWith(
-                x: (c.x ?? _pagePadding) + step.dx,
-                y: (c.y ?? _flowTopOf(c.id)) + step.dy,
-              ),
-              NotebookDumpCardBlock d => d.copyWith(
-                x: d.x + step.dx,
-                y: d.y + step.dy,
-              ),
-              NotebookImageBlock i => i.copyWith(
-                x: i.x + step.dx,
-                y: i.y + step.dy,
-              ),
-              NotebookTableBlock t => t.copyWith(
-                x: t.x + step.dx,
-                y: t.y + step.dy,
-              ),
+                  x: (c.x ?? _pagePadding) + step.dx,
+                  y: (c.y ?? _flowTopOf(c.id)) + step.dy,
+                ),
+              NotebookDumpCardBlock d =>
+                d.copyWith(x: d.x + step.dx, y: d.y + step.dy),
+              NotebookImageBlock i =>
+                i.copyWith(x: i.x + step.dx, y: i.y + step.dy),
+              // PDF pages are fixed document backgrounds. Ink above them is
+              // selectable; moving one page independently would break source
+              // order and the multi-page export.
+              NotebookPdfPageBlock() => block,
+              NotebookTableBlock t =>
+                t.copyWith(x: t.x + step.dx, y: t.y + step.dy),
               NotebookUnknownBlock() => block,
             },
       ];
@@ -1578,6 +1640,8 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
       switch (block) {
         case NotebookImageBlock i:
           rightmost = math.max(rightmost, i.x + i.width);
+        case NotebookPdfPageBlock p:
+          rightmost = math.max(rightmost, p.x + p.width);
         case NotebookDumpCardBlock d:
           rightmost = math.max(rightmost, d.x + _minBlockWidth);
         case NotebookTextBlock t:
@@ -1598,6 +1662,20 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
     return rightmost + _pagePadding;
   }
 
+  /// Publishes only viewport geometry to PDF page widgets. Scrolling therefore
+  /// wakes nearby pages without rebuilding the full editor or its ink canvas.
+  void _updateVisiblePageRect() {
+    if (!_pageScroll.hasClients || _pageScale <= 0) return;
+    final ScrollPosition position = _pageScroll.position;
+    final Rect next = Rect.fromLTWH(
+      0,
+      position.pixels / _pageScale,
+      _pageColumnWidth,
+      position.viewportDimension / _pageScale,
+    );
+    if (_visiblePageRect.value != next) _visiblePageRect.value = next;
+  }
+
   /// Height of the page: always a screen beyond the lowest thing on it, so
   /// there is fresh page to write on however far down you scroll.
   double _pageHeight(double viewportHeight) {
@@ -1615,6 +1693,8 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
           lowest = math.max(lowest, d.y);
         case NotebookImageBlock():
           break;
+        case NotebookPdfPageBlock p:
+          lowest = math.max(lowest, p.y + p.height);
         case NotebookTableBlock t:
           lowest = math.max(lowest, t.y + t.viewportHeight);
         case NotebookUnknownBlock():
@@ -2054,125 +2134,131 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
         // must not change it.
         body: Scaffold(
           bottomNavigationBar: _notebook == null
-              ? null
-              : BottomAppBar(
-                  // One menu in the bottom-left holds every insert action, so
-                  // adding an import does not keep widening a row of buttons.
-                  child: Row(
-                    children: <Widget>[
-                      PopupMenuButton<_InsertAction>(
-                        key: const ValueKey('notebook-insert-menu'),
-                        icon: const Icon(Icons.menu),
-                        tooltip: 'Insert',
-                        // Opens upward from the corner it lives in.
-                        position: PopupMenuPosition.over,
-                        onSelected: (_InsertAction action) {
-                          switch (action) {
-                            case _InsertAction.text:
-                              _addTextBlock();
-                            case _InsertAction.checkbox:
-                              _addCheckboxBlock();
-                            case _InsertAction.table:
-                              unawaited(_pickTableSize());
-                            case _InsertAction.dump:
-                              unawaited(
-                                _importDumps(dumps, DumpMode.brainDump),
-                              );
-                            case _InsertAction.meeting:
-                              unawaited(_importDumps(dumps, DumpMode.meeting));
-                            case _InsertAction.textNote:
-                              unawaited(_importDumps(dumps, DumpMode.textNote));
-                            case _InsertAction.image:
-                              unawaited(_importImage());
-                            case _InsertAction.recentre:
-                              _pageScroll.jumpTo(0);
-                          }
-                        },
-                        itemBuilder: (BuildContext context) =>
-                            <PopupMenuEntry<_InsertAction>>[
-                              const PopupMenuItem<_InsertAction>(
-                                value: _InsertAction.text,
-                                child: ListTile(
-                                  leading: Icon(Icons.notes),
-                                  title: Text('Text block'),
-                                  contentPadding: EdgeInsets.zero,
-                                ),
-                              ),
-                              const PopupMenuItem<_InsertAction>(
-                                value: _InsertAction.checkbox,
-                                child: ListTile(
-                                  leading: Icon(Icons.check_box_outlined),
-                                  title: Text('Checkbox'),
-                                  contentPadding: EdgeInsets.zero,
-                                ),
-                              ),
-                              const PopupMenuItem<_InsertAction>(
-                                key: ValueKey('notebook-insert-table'),
-                                value: _InsertAction.table,
-                                child: ListTile(
-                                  leading: Icon(Icons.table_chart_outlined),
-                                  title: Text('Table'),
-                                  contentPadding: EdgeInsets.zero,
-                                ),
-                              ),
-                              const PopupMenuDivider(),
-                              PopupMenuItem<_InsertAction>(
-                                value: _InsertAction.dump,
-                                child: ListTile(
-                                  leading: Icon(
-                                    dumpModeIcon(DumpMode.brainDump),
-                                  ),
-                                  title: const Text('Recording'),
-                                  contentPadding: EdgeInsets.zero,
-                                ),
-                              ),
-                              PopupMenuItem<_InsertAction>(
-                                value: _InsertAction.meeting,
-                                child: ListTile(
-                                  leading: Icon(dumpModeIcon(DumpMode.meeting)),
-                                  title: const Text('Meeting notes'),
-                                  contentPadding: EdgeInsets.zero,
-                                ),
-                              ),
-                              PopupMenuItem<_InsertAction>(
-                                value: _InsertAction.textNote,
-                                child: ListTile(
-                                  leading: Icon(
-                                    dumpModeIcon(DumpMode.textNote),
-                                  ),
-                                  title: const Text('Text note'),
-                                  contentPadding: EdgeInsets.zero,
-                                ),
-                              ),
-                              const PopupMenuItem<_InsertAction>(
-                                key: ValueKey('notebook-insert-image'),
-                                value: _InsertAction.image,
-                                child: ListTile(
-                                  leading: Icon(Icons.image_outlined),
-                                  title: Text('Image'),
-                                  contentPadding: EdgeInsets.zero,
-                                ),
-                              ),
-                              const PopupMenuDivider(),
-                              // The page can be panned until the work is off-screen
-                              // on identical black canvas; this is the way home.
-                              const PopupMenuItem<_InsertAction>(
-                                value: _InsertAction.recentre,
-                                child: ListTile(
-                                  leading: Icon(Icons.filter_center_focus),
-                                  title: Text('Back to start'),
-                                  contentPadding: EdgeInsets.zero,
-                                ),
-                              ),
-                            ],
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        'Insert',
-                        style: Theme.of(context).textTheme.bodyMedium,
-                      ),
-                    ],
-                  ),
+            ? null
+            : BottomAppBar(
+                // One menu in the bottom-left holds every insert action, so
+                // adding an import does not keep widening a row of buttons.
+                child: Row(
+                  children: <Widget>[
+                    PopupMenuButton<_InsertAction>(
+                      key: const ValueKey('notebook-insert-menu'),
+                      icon: const Icon(Icons.menu),
+                      tooltip: 'Insert',
+                      // Opens upward from the corner it lives in.
+                      position: PopupMenuPosition.over,
+                      onSelected: (_InsertAction action) {
+                        switch (action) {
+                          case _InsertAction.text:
+                            _addTextBlock();
+                          case _InsertAction.checkbox:
+                            _addCheckboxBlock();
+                          case _InsertAction.table:
+                            unawaited(_pickTableSize());
+                          case _InsertAction.dump:
+                            unawaited(
+                              _importDumps(dumps, DumpMode.brainDump),
+                            );
+                          case _InsertAction.meeting:
+                            unawaited(_importDumps(dumps, DumpMode.meeting));
+                          case _InsertAction.textNote:
+                            unawaited(_importDumps(dumps, DumpMode.textNote));
+                          case _InsertAction.image:
+                            unawaited(_importImage());
+                          case _InsertAction.pdf:
+                            unawaited(_importPdf());
+                          case _InsertAction.recentre:
+                            _pageScroll.jumpTo(0);
+                        }
+                      },
+                      itemBuilder: (BuildContext context) =>
+                          <PopupMenuEntry<_InsertAction>>[
+                        const PopupMenuItem<_InsertAction>(
+                          value: _InsertAction.text,
+                          child: ListTile(
+                            leading: Icon(Icons.notes),
+                            title: Text('Text block'),
+                            contentPadding: EdgeInsets.zero,
+                          ),
+                        ),
+                        const PopupMenuItem<_InsertAction>(
+                          value: _InsertAction.checkbox,
+                          child: ListTile(
+                            leading: Icon(Icons.check_box_outlined),
+                            title: Text('Checkbox'),
+                            contentPadding: EdgeInsets.zero,
+                          ),
+                        ),
+                        const PopupMenuItem<_InsertAction>(
+                          key: ValueKey('notebook-insert-table'),
+                          value: _InsertAction.table,
+                          child: ListTile(
+                            leading: Icon(Icons.table_chart_outlined),
+                            title: Text('Table'),
+                            contentPadding: EdgeInsets.zero,
+                          ),
+                        ),
+                        const PopupMenuDivider(),
+                        PopupMenuItem<_InsertAction>(
+                          value: _InsertAction.dump,
+                          child: ListTile(
+                            leading: Icon(dumpModeIcon(DumpMode.brainDump)),
+                            title: const Text('Recording'),
+                            contentPadding: EdgeInsets.zero,
+                          ),
+                        ),
+                        PopupMenuItem<_InsertAction>(
+                          value: _InsertAction.meeting,
+                          child: ListTile(
+                            leading: Icon(dumpModeIcon(DumpMode.meeting)),
+                            title: const Text('Meeting notes'),
+                            contentPadding: EdgeInsets.zero,
+                          ),
+                        ),
+                        PopupMenuItem<_InsertAction>(
+                          value: _InsertAction.textNote,
+                          child: ListTile(
+                            leading: Icon(dumpModeIcon(DumpMode.textNote)),
+                            title: const Text('Text note'),
+                            contentPadding: EdgeInsets.zero,
+                          ),
+                        ),
+                        const PopupMenuItem<_InsertAction>(
+                          key: ValueKey('notebook-insert-image'),
+                          value: _InsertAction.image,
+                          child: ListTile(
+                            leading: Icon(Icons.image_outlined),
+                            title: Text('Image'),
+                            contentPadding: EdgeInsets.zero,
+                          ),
+                        ),
+                        const PopupMenuItem<_InsertAction>(
+                          key: ValueKey('notebook-insert-pdf'),
+                          value: _InsertAction.pdf,
+                          child: ListTile(
+                            leading: Icon(Icons.picture_as_pdf_outlined),
+                            title: Text('PDF'),
+                            contentPadding: EdgeInsets.zero,
+                          ),
+                        ),
+                        const PopupMenuDivider(),
+                        // The page can be panned until the work is off-screen
+                        // on identical black canvas; this is the way home.
+                        const PopupMenuItem<_InsertAction>(
+                          value: _InsertAction.recentre,
+                          child: ListTile(
+                            leading: Icon(Icons.filter_center_focus),
+                            title: Text('Back to start'),
+                            contentPadding: EdgeInsets.zero,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Insert',
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                  ],
                 ),
           body: Column(
             children: <Widget>[
@@ -2318,6 +2404,26 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                         ),
                       ),
                     ),
+                    // Imported PDF pages are document backgrounds, not a
+                    // viewer. Each page wakes only near the viewport and sits
+                    // beneath every editable block and the topmost ink layer.
+                    for (final NotebookBlock block in _blocks)
+                      if (block is NotebookPdfPageBlock)
+                        Positioned(
+                          key: ValueKey<String>(
+                            'notebook-pdf-layer-${block.id}',
+                          ),
+                          left: block.x,
+                          top: block.y,
+                          child: IgnorePointer(
+                            child: NotebookPdfPageBlockWidget(
+                              block: block,
+                              sourceData: pdfSourceDataFor(block, _blocks),
+                              loader: _pdfPageRasterLoader,
+                              visiblePageRect: _visiblePageRect,
+                            ),
+                          ),
+                        ),
                     // Typed blocks, each positioned where it was left. Laid out
                     // in canonical space; the FittedBox above scales them.
                     ..._buildPositionedBlocks(canonicalWidth),
@@ -2389,6 +2495,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                     // Top: the ink layer. It ignores pointers unless draw mode is
                     // on, so typing and card dragging work normally otherwise.
                     Positioned.fill(
+                      key: const ValueKey('notebook-ink-layer'),
                       child: RepaintBoundary(
                         child: NotebookInkCanvas(
                           key: _canvasKey,

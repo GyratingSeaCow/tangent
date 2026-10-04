@@ -166,6 +166,49 @@ void main() {
       expect(_decode(document.encode()), _decode(source));
     });
 
+    test('round trips ordered PDF page blocks with one shared source', () {
+      const String source =
+          '{"blocks":['
+          '{"kind":"pdfPage","id":"pdf-1-1","documentId":"sha256-a",'
+          '"pageNumber":1,"pageCount":2,"data":"JVBERi0=",'
+          '"x":16.0,"y":200.0,"width":688.0,"height":900.0},'
+          '{"kind":"pdfPage","id":"pdf-1-2","documentId":"sha256-a",'
+          '"pageNumber":2,"pageCount":2,'
+          '"x":16.0,"y":1124.0,"width":688.0,"height":940.0}'
+          ']}';
+
+      final NotebookDocument document = NotebookDocument.decode(source);
+      final List<NotebookPdfPageBlock> pages = document.blocks
+          .cast<NotebookPdfPageBlock>();
+      expect(pages.map((NotebookPdfPageBlock p) => p.pageNumber), <int>[1, 2]);
+      expect(pages.first.data, 'JVBERi0=');
+      expect(pages.last.data, isNull);
+      expect(pages.last.documentId, pages.first.documentId);
+      expect(document.encode(), source);
+    });
+
+    test('a malformed PDF page is preserved verbatim, not rewritten', () {
+      const String source =
+          '{"blocks":[{"kind":"pdfPage","id":"p",'
+          '"documentId":"doc","pageNumber":3,"pageCount":2,'
+          '"x":16,"y":20,"width":688,"height":900,'
+          '"future":{"keep":true}}]}';
+      final NotebookDocument document = NotebookDocument.decode(source);
+      expect(document.blocks.single, isA<NotebookUnknownBlock>());
+      expect(document.encode(), source);
+    });
+
+    test('legacy document bytes do not gain PDF fields on re-encode', () {
+      const String legacy =
+          '{"blocks":['
+          '{"kind":"text","id":"b","text":"unchanged"},'
+          '{"kind":"image","id":"i","data":"aGVsbG8=",'
+          '"mime":"image/png","x":1.0,"y":2.0,'
+          '"width":3.0,"height":4.0}'
+          ']}';
+      expect(NotebookDocument.decode(legacy).encode(), legacy);
+    });
+
     test('checkbox defaults to unchecked when the flag is absent', () {
       final document = NotebookDocument.decode(
         '{"blocks":[{"kind":"checkbox","id":"b","text":"t"}]}',

@@ -8,6 +8,7 @@
 // canvas positions. Vectorising the strokes separately would inevitably
 // drift from the on-screen renderer; fidelity beats file size here.
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -17,6 +18,7 @@ import 'package:pdf/widgets.dart' as pw;
 
 import '../models/notebook.dart';
 import '../widgets/notebook_ink_canvas.dart';
+import 'notebook_pdf_import.dart';
 
 /// Everything the exporter needs to know about one notebook.
 class NotebookExportSource {
@@ -40,7 +42,20 @@ const Size _kBlockFallbackSize = Size(300, 90);
 /// The content bounding box (ink + blocks, plus padding) decides the page
 /// size, so a small sketch exports small and a sprawling canvas exports
 /// whole — nothing is cropped to a viewport the exporter cannot see.
-Future<Uint8List> renderNotebookPdf(NotebookExportSource source) async {
+Future<Uint8List> renderNotebookPdf(
+  NotebookExportSource source, {
+  PdfPageRasterLoader? pdfPageLoader,
+}) async {
+  final List<NotebookPdfPageBlock> pdfPages = source.document.blocks
+      .whereType<NotebookPdfPageBlock>()
+      .toList(growable: false);
+  if (pdfPages.isNotEmpty) {
+    return _renderImportedPdfPages(
+      source,
+      pdfPages,
+      pdfPageLoader ?? NotebookPdfPageCache(),
+    );
+  }
   final ui.Rect bounds = _contentBounds(source);
   // Image bytes are decoded UP FRONT (the block painter is synchronous);
   // a block whose bytes fail to decode simply has no entry here and keeps
@@ -113,6 +128,109 @@ Future<Uint8List> renderNotebookPdf(NotebookExportSource source) async {
   return pdf.save();
 }
 
+/// Re-exports imported pages as real PDF pages in notebook block order.
+///
+/// Each source page is read from the disk-backed raster cache one at a time,
+/// composited with the shared ink painter clipped to that page's canvas rect,
+/// added to the output, then disposed before the next page starts. A 100-page
+/// document therefore never holds 100 decoded page images in RAM.
+Future<Uint8List> _renderImportedPdfPages(
+  NotebookExportSource source,
+  List<NotebookPdfPageBlock> pages,
+  PdfPageRasterLoader loader,
+) async {
+  final pw.Document pdf = pw.Document(title: source.title);
+  final Map<String, ui.Image> images = await _decodeImages(source.document);
+  for (final NotebookPdfPageBlock page in pages) {
+    final String? sourceData = pdfSourceDataFor(page, source.document.blocks);
+    if (sourceData == null) {
+      throw StateError('PDF source is unavailable for page ${page.pageNumber}');
+    }
+    final int pixelWidth = (page.width * 2).ceil().clamp(1, 8000);
+    final int pixelHeight = (page.height * 2).ceil().clamp(1, 8000);
+    final File rasterFile = await loader.loadPage(
+      sourceData: sourceData,
+      pageNumber: page.pageNumber,
+      width: pixelWidth,
+      height: pixelHeight,
+    );
+    final Uint8List rasterBytes = await rasterFile.readAsBytes();
+    final Uint8List annotated = await _annotatePdfPage(
+      source: source,
+      page: page,
+      rasterBytes: rasterBytes,
+      pixelWidth: pixelWidth,
+      pixelHeight: pixelHeight,
+      images: images,
+    );
+    final pw.MemoryImage image = pw.MemoryImage(annotated);
+    pdf.addPage(
+      pw.Page(
+        pageFormat: PdfPageFormat(page.width, page.height, marginAll: 0),
+        build: (_) => pw.Image(
+          image,
+          width: page.width,
+          height: page.height,
+          fit: pw.BoxFit.fill,
+        ),
+      ),
+    );
+  }
+  for (final ui.Image decoded in images.values) {
+    decoded.dispose();
+  }
+  return pdf.save();
+}
+
+Future<Uint8List> _annotatePdfPage({
+  required NotebookExportSource source,
+  required NotebookPdfPageBlock page,
+  required Uint8List rasterBytes,
+  required int pixelWidth,
+  required int pixelHeight,
+  required Map<String, ui.Image> images,
+}) async {
+  final ui.Codec codec = await ui.instantiateImageCodec(rasterBytes);
+  final ui.FrameInfo frame = await codec.getNextFrame();
+  codec.dispose();
+  final ui.Image sourceImage = frame.image;
+  final ui.PictureRecorder recorder = ui.PictureRecorder();
+  final ui.Canvas canvas = ui.Canvas(recorder);
+  canvas.scale(2);
+  canvas.drawImageRect(
+    sourceImage,
+    ui.Rect.fromLTWH(
+      0,
+      0,
+      sourceImage.width.toDouble(),
+      sourceImage.height.toDouble(),
+    ),
+    ui.Rect.fromLTWH(0, 0, page.width, page.height),
+    ui.Paint()..filterQuality = ui.FilterQuality.medium,
+  );
+  sourceImage.dispose();
+  canvas.save();
+  canvas.clipRect(ui.Rect.fromLTWH(0, 0, page.width, page.height));
+  canvas.translate(-page.x, -page.y);
+  _paintBlocks(canvas, source.document, images);
+  NotebookInkPainter(
+    strokes: source.strokes,
+    activeStroke: null,
+    revision: 0,
+  ).paint(canvas, ui.Size(page.width, page.height));
+  canvas.restore();
+  final ui.Image composed = await recorder.endRecording().toImage(
+    pixelWidth,
+    pixelHeight,
+  );
+  final ByteData? png = await composed.toByteData(
+    format: ui.ImageByteFormat.png,
+  );
+  composed.dispose();
+  if (png == null) throw StateError('Could not encode annotated PDF page');
+  return png.buffer.asUint8List();
+}
+
 const double _kPagePad = 24;
 const double _kTitleBand = 30;
 
@@ -176,6 +294,7 @@ ui.Rect _contentBounds(NotebookExportSource source) {
         ),
       NotebookDumpCardBlock(:final double x, :final double y) => (x, y),
       NotebookImageBlock(:final double x, :final double y) => (x, y),
+      NotebookPdfPageBlock(:final double x, :final double y) => (x, y),
       // Tables are deliberately omitted until the exporter can paginate a
       // 100x100 grid without rasterising a 12,000px-wide page. See
       // docs/design/notebook-tables.md.
@@ -189,6 +308,9 @@ ui.Rect _contentBounds(NotebookExportSource source) {
     }
     // An image's real footprint can exceed the nominal block size.
     if (block is NotebookImageBlock) {
+      include(block.x + block.width, block.y + block.height);
+    }
+    if (block is NotebookPdfPageBlock) {
       include(block.x + block.width, block.y + block.height);
     }
   }
@@ -234,14 +356,14 @@ void _paintBlocks(
       NotebookTextBlock(
         :final String text,
         :final double? x,
-        :final double? y
+        :final double? y,
       ) =>
         (text, x, y),
       NotebookCheckboxBlock(
         :final String text,
         :final bool checked,
         :final double? x,
-        :final double? y
+        :final double? y,
       ) =>
         ('${checked ? '\u2611' : '\u2610'} $text', x, y),
       // The dump's title lives in another table; the export marks the spot.
@@ -257,10 +379,15 @@ void _paintBlocks(
           x,
           y
         ),
+      NotebookPdfPageBlock() => ('', null, null),
       NotebookTableBlock() => ('', null, null),
       NotebookUnknownBlock() => ('', null, null),
     };
-    if (block is NotebookUnknownBlock || block is NotebookTableBlock) continue;
+    if (block is NotebookUnknownBlock ||
+        block is NotebookTableBlock ||
+        block is NotebookPdfPageBlock) {
+      continue;
+    }
     final double x = bx ?? 16;
     final double y = by ?? fallbackY;
     fallbackY += _kBlockFallbackSize.height + 12;

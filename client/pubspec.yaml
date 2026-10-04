@@ -51,6 +51,7 @@ dependencies:
   timezone: ^0.9.4
   flutter_timezone: ^3.0.1
   local_notifier: ^0.1.6
+  pdfrx: 2.6.5
 
 dev_dependencies:
   flutter_test:

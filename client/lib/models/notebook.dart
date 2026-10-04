@@ -229,6 +229,41 @@ sealed class NotebookBlock {
           width: width.toDouble(),
           height: height.toDouble(),
         );
+      case 'pdfPage':
+        final documentId = raw['documentId'];
+        final pageNumber = raw['pageNumber'];
+        final pageCount = raw['pageCount'];
+        final data = raw['data'];
+        final x = raw['x'];
+        final y = raw['y'];
+        final width = raw['width'];
+        final height = raw['height'];
+        if (documentId is! String ||
+            documentId.isEmpty ||
+            pageNumber is! int ||
+            pageNumber < 1 ||
+            pageCount is! int ||
+            pageCount < pageNumber ||
+            (data != null && data is! String) ||
+            x is! num ||
+            y is! num ||
+            width is! num ||
+            width <= 0 ||
+            height is! num ||
+            height <= 0) {
+          return NotebookUnknownBlock(raw);
+        }
+        return NotebookPdfPageBlock(
+          id: id,
+          documentId: documentId,
+          pageNumber: pageNumber,
+          pageCount: pageCount,
+          data: data as String?,
+          x: x.toDouble(),
+          y: y.toDouble(),
+          width: width.toDouble(),
+          height: height.toDouble(),
+        );
       case 'table':
         final rows = raw['rows'];
         final columns = raw['columns'];
@@ -514,6 +549,77 @@ class NotebookImageBlock extends NotebookBlock {
         'width': width,
         'height': height,
       };
+}
+
+/// One imported PDF page positioned on the notebook canvas.
+///
+/// A PDF import creates one block per source page so pages can be laid out,
+/// rendered, and exported independently. The source PDF bytes are stored once,
+/// on the first page block, as base64 [data]; sibling pages resolve them by
+/// [documentId]. This keeps the durable notebook self-contained for sync
+/// without multiplying a large PDF by its page count.
+class NotebookPdfPageBlock extends NotebookBlock {
+  const NotebookPdfPageBlock({
+    required this.id,
+    required this.documentId,
+    required this.pageNumber,
+    required this.pageCount,
+    required this.x,
+    required this.y,
+    required this.width,
+    required this.height,
+    this.data,
+  }) : assert(pageNumber >= 1),
+       assert(pageCount >= pageNumber),
+       assert(width > 0),
+       assert(height > 0);
+
+  @override
+  final String id;
+
+  /// Stable SHA-256 of the source bytes, shared by all pages in one import.
+  final String documentId;
+  final int pageNumber;
+  final int pageCount;
+
+  /// Base64 source bytes. Present on exactly one block per imported document.
+  final String? data;
+
+  final double x;
+  final double y;
+  final double width;
+  final double height;
+
+  NotebookPdfPageBlock copyWith({
+    double? x,
+    double? y,
+    double? width,
+    double? height,
+  }) => NotebookPdfPageBlock(
+    id: id,
+    documentId: documentId,
+    pageNumber: pageNumber,
+    pageCount: pageCount,
+    data: data,
+    x: x ?? this.x,
+    y: y ?? this.y,
+    width: width ?? this.width,
+    height: height ?? this.height,
+  );
+
+  @override
+  Map<String, dynamic> toJson() => <String, dynamic>{
+    'kind': 'pdfPage',
+    'id': id,
+    'documentId': documentId,
+    'pageNumber': pageNumber,
+    'pageCount': pageCount,
+    if (data != null) 'data': data,
+    'x': x,
+    'y': y,
+    'width': width,
+    'height': height,
+  };
 }
 
 /// An editable grid positioned on the notebook page.
