@@ -53,6 +53,14 @@ void main() {
             x: 12,
             y: 340,
           ),
+          const NotebookTableBlock(
+            id: 'block-table',
+            rows: 2,
+            columns: 3,
+            x: 16,
+            y: 460,
+            cells: <int, String>{5: 'synced cell'},
+          ),
           NotebookUnknownBlock(const {
             'kind': 'from-the-future',
             'id': 'block-unknown',
@@ -132,7 +140,7 @@ void main() {
     expect(decoded.ink.strokes.single.width, 7.5);
     expect(decoded.ink.strokes.single.points.length, 2);
     expect(decoded.ink.strokes.single.points.last.y, 4);
-    expect(decoded.document.blocks.length, 4);
+    expect(decoded.document.blocks.length, 5);
     final unknown = decoded.document.blocks.last;
     expect(unknown, isA<NotebookUnknownBlock>());
     expect(
@@ -148,6 +156,8 @@ void main() {
     expect(card.dumpId, 'fixture-dump');
     expect(card.x, 12);
     expect(card.y, 340);
+    final table = decoded.document.blocks[3] as NotebookTableBlock;
+    expect(table.cellAt(1, 2), 'synced cell');
   });
 
   test('import adopts a durable file that has no database row', () async {
@@ -174,7 +184,7 @@ void main() {
     expect(adopted.createdAt, when);
     expect(adopted.updatedAt, when);
     expect(adopted.ink.strokes.single.id, 'stroke-1');
-    expect(adopted.document.blocks.length, 4);
+    expect(adopted.document.blocks.length, 5);
     expect(
       await notebookFile(h, id).exists(),
       isTrue,
@@ -297,7 +307,7 @@ void main() {
       reason: 'a publication fault must never lose the user edit',
     );
     expect(row!.title, 'Edited while storage was broken');
-    expect(row.document.blocks.length, 4);
+    expect(row.document.blocks.length, 5);
     // The prior publication is intact: the last durable copy is still the
     // last successfully published one, never a truncated file.
     expect(

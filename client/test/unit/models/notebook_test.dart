@@ -78,6 +78,62 @@ void main() {
       expect(_decode(document.encode()), _decode(source));
     });
 
+    test('round trips a sparse table and editable string cells', () {
+      const source = '{"blocks":[{"kind":"table","id":"table-1",'
+          '"rows":100,"columns":100,"x":16.0,"y":220.0,"cells":['
+          '{"r":0,"c":0,"text":"Name"},'
+          '{"r":99,"c":99,"text":"last"}]}]}';
+      final NotebookTableBlock table = NotebookDocument.decode(source)
+          .blocks
+          .single as NotebookTableBlock;
+
+      expect(table.rows, 100);
+      expect(table.columns, 100);
+      expect(table.cellAt(0, 0), 'Name');
+      expect(table.cellAt(50, 50), isEmpty);
+      expect(table.cellAt(99, 99), 'last');
+      expect(_decode(NotebookDocument([table]).encode()), _decode(source));
+
+      final NotebookTableBlock edited = table.copyWithCell(50, 50, 'middle');
+      expect(edited.cellAt(50, 50), 'middle');
+      expect(edited.copyWithCell(50, 50, '').cellAt(50, 50), isEmpty);
+    });
+
+    test('empty table cells are omitted instead of encoding 10,000 strings',
+        () {
+      const NotebookTableBlock table = NotebookTableBlock(
+        id: 'table-empty',
+        rows: 100,
+        columns: 100,
+        x: 16,
+        y: 24,
+      );
+
+      expect(table.toJson().containsKey('cells'), isFalse);
+      expect(
+        jsonEncode(table.toJson()),
+        '{"kind":"table","id":"table-empty","rows":100,'
+        '"columns":100,"x":16.0,"y":24.0}',
+      );
+    });
+
+    test('out-of-range or malformed table dimensions preserve the raw block',
+        () {
+      for (final String source in <String>[
+        '{"blocks":[{"kind":"table","id":"t","rows":0,'
+            '"columns":2,"x":0,"y":0}]}',
+        '{"blocks":[{"kind":"table","id":"t","rows":2,'
+            '"columns":101,"x":0,"y":0}]}',
+        '{"blocks":[{"kind":"table","id":"t","rows":2,'
+            '"columns":2,"x":0,"y":0,"cells":['
+            '{"r":2,"c":0,"text":"outside"}]}]}',
+      ]) {
+        final NotebookDocument document = NotebookDocument.decode(source);
+        expect(document.blocks.single, isA<NotebookUnknownBlock>());
+        expect(_decode(document.encode()), _decode(source));
+      }
+    });
+
     test('image copyWith moves and resizes without touching the bytes', () {
       const image = NotebookImageBlock(
         id: 'img-2',

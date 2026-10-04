@@ -102,6 +102,7 @@ String notebookMarkdown(Notebook notebook) {
 
   final body = StringBuffer();
   var images = 0;
+  var tables = 0;
   for (final block in blocks) {
     switch (block) {
       case NotebookTextBlock(:final text):
@@ -112,6 +113,8 @@ String notebookMarkdown(Notebook notebook) {
         body.writeln('- [${checked ? 'x' : ' '}] $text');
       case NotebookImageBlock():
         images++;
+      case NotebookTableBlock():
+        tables++;
       default:
         // Unknown/dumpCard blocks carry no exportable text.
         break;
@@ -123,6 +126,9 @@ String notebookMarkdown(Notebook notebook) {
       'This page also contains handwritten ink that markdown cannot carry.',
     if (images > 0)
       'This page also contains $images image${images == 1 ? '' : 's'} '
+          'not included in the export.',
+    if (tables > 0)
+      'This page also contains $tables table${tables == 1 ? '' : 's'} '
           'not included in the export.',
   ];
   final tail = notes.isEmpty

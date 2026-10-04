@@ -60,9 +60,11 @@ const double kNotebookImportCardSpacing = 104;
 /// Left edge every imported block lands on (the typed column's inset).
 const double kNotebookImportX = kNotebookPagePadding + 4;
 
-/// The lowest edge of everything on the page: placed blocks (plus a nominal
-/// footprint height), flow-laid blocks at their computed slots, and every
-/// ink point. Ink MUST count — without it cards land over handwriting.
+/// The lowest edge of everything on the page: text/cards use their nominal
+/// footprint, images their stored height, tables their bounded viewport,
+/// flow-laid blocks their computed slots, and ink every point. Unknown blocks
+/// have no geometry in this build. Ink MUST count — without it new content
+/// lands over handwriting.
 double notebookContentBottom(
   List<NotebookBlock> blocks,
   List<InkStroke> strokes,
@@ -81,7 +83,9 @@ double notebookContentBottom(
         lowest = math.max(lowest, d.y + kNotebookImportBlockHeight);
       case NotebookImageBlock i:
         lowest = math.max(lowest, i.y + i.height);
-      case NotebookBlock():
+      case NotebookTableBlock t:
+        lowest = math.max(lowest, t.y + t.viewportHeight);
+      case NotebookUnknownBlock():
         break;
     }
   }
@@ -104,8 +108,9 @@ double importedTextAdvance(String text) =>
 /// stacking downward — never on top of what is already there. Returns the
 /// positioned copies of [incoming] only; the caller appends them.
 ///
-/// Text and checkbox blocks advance by [importedTextAdvance]; cards and
-/// images by their own spacing. Unknown blocks pass through unpositioned.
+/// Text and checkbox blocks advance by [importedTextAdvance]; cards, images,
+/// and tables by their own bounded footprint. Unknown blocks pass through
+/// unpositioned.
 List<NotebookBlock> layoutImportedBlocks({
   required List<NotebookBlock> existing,
   required List<InkStroke> strokes,
@@ -128,7 +133,10 @@ List<NotebookBlock> layoutImportedBlocks({
       case NotebookImageBlock i:
         placed.add(i.copyWith(x: kNotebookImportX, y: insertY));
         insertY += i.height + kNotebookImportSpacing;
-      case NotebookBlock():
+      case NotebookTableBlock t:
+        placed.add(t.copyWith(x: kNotebookImportX, y: insertY));
+        insertY += t.viewportHeight + kNotebookImportSpacing;
+      case NotebookUnknownBlock():
         placed.add(block);
     }
   }

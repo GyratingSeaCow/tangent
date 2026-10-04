@@ -176,11 +176,17 @@ ui.Rect _contentBounds(NotebookExportSource source) {
         ),
       NotebookDumpCardBlock(:final double x, :final double y) => (x, y),
       NotebookImageBlock(:final double x, :final double y) => (x, y),
+      // Tables are deliberately omitted until the exporter can paginate a
+      // 100x100 grid without rasterising a 12,000px-wide page. See
+      // docs/design/notebook-tables.md.
+      NotebookTableBlock() => (16, fallbackY),
       NotebookUnknownBlock() => (16, fallbackY),
     };
     fallbackY += _kBlockFallbackSize.height + 12;
-    include(x, y);
-    include(x + _kBlockFallbackSize.width, y + _kBlockFallbackSize.height);
+    if (block is! NotebookTableBlock) {
+      include(x, y);
+      include(x + _kBlockFallbackSize.width, y + _kBlockFallbackSize.height);
+    }
     // An image's real footprint can exceed the nominal block size.
     if (block is NotebookImageBlock) {
       include(block.x + block.width, block.y + block.height);
@@ -251,9 +257,10 @@ void _paintBlocks(
           x,
           y
         ),
+      NotebookTableBlock() => ('', null, null),
       NotebookUnknownBlock() => ('', null, null),
     };
-    if (block is NotebookUnknownBlock) continue;
+    if (block is NotebookUnknownBlock || block is NotebookTableBlock) continue;
     final double x = bx ?? 16;
     final double y = by ?? fallbackY;
     fallbackY += _kBlockFallbackSize.height + 12;
