@@ -105,6 +105,99 @@ def _push_notebook(client, token, nb_id="nb-ink", ink=True, title="Ink", op="ups
 
 
 class TestPushStoresInk:
+    def test_password_metadata_round_trips_and_old_peers_do_not_erase_it(
+        self, authed_client, db
+    ):
+        client, token = authed_client
+        payload = {
+            "title": "Private",
+            "doc": {"blocks": []},
+            "ink": {"strokes": []},
+            "created_at": 1,
+            "password_hash": "hash-value",
+            "password_salt": "salt-value",
+            "password_iterations": 210000,
+        }
+        response = client.post(
+            "/v1/sync/push",
+            json={
+                "device_id": "device-new",
+                "changes": [{
+                    "entity_type": "notebook",
+                    "entity_id": "nb-private",
+                    "op": "upsert",
+                    "payload": payload,
+                }],
+            },
+            headers=_auth(token),
+        )
+        assert response.json()["results"][0]["status"] == "applied"
+        pulled = client.get(
+            "/v1/sync/pull?device_id=device-peer&since_seq=0",
+            headers=_auth(token),
+        ).json()
+        change = next(c for c in pulled["changes"] if c["entity_id"] == "nb-private")
+        assert change["payload"]["password_hash"] == "hash-value"
+        assert change["payload"]["password_salt"] == "salt-value"
+        assert change["payload"]["password_iterations"] == 210000
+
+        # An old app sends no verifier keys. Absence preserves protection.
+        _push_notebook(client, token, nb_id="nb-private", ink=False, title="Old edit")
+        row = db.execute(
+            "SELECT password_hash, password_salt, password_iterations "
+            "FROM notebooks WHERE id = 'nb-private'"
+        ).fetchone()
+        assert tuple(row) == ("hash-value", "salt-value", 210000)
+
+        # Explicit null is the synced meaning of "turn protection off".
+        unprotect = dict(payload)
+        unprotect.update(
+            password_hash=None,
+            password_salt=None,
+            password_iterations=None,
+        )
+        response = client.post(
+            "/v1/sync/push",
+            json={
+                "device_id": "device-new",
+                "changes": [{
+                    "entity_type": "notebook",
+                    "entity_id": "nb-private",
+                    "op": "upsert",
+                    "payload": unprotect,
+                }],
+            },
+            headers=_auth(token),
+        )
+        assert response.json()["results"][0]["status"] == "applied"
+        row = db.execute(
+            "SELECT password_hash, password_salt, password_iterations "
+            "FROM notebooks WHERE id = 'nb-private'"
+        ).fetchone()
+        assert tuple(row) == (None, None, None)
+
+    def test_rejects_incomplete_password_metadata(self, authed_client):
+        client, token = authed_client
+        response = client.post(
+            "/v1/sync/push",
+            json={
+                "device_id": "device-new",
+                "changes": [{
+                    "entity_type": "notebook",
+                    "entity_id": "nb-bad-password",
+                    "op": "upsert",
+                    "payload": {
+                        "title": "Bad",
+                        "doc": {"blocks": []},
+                        "created_at": 1,
+                        "password_hash": "hash-without-salt",
+                    },
+                }],
+            },
+            headers=_auth(token),
+        )
+        assert response.json()["results"][0]["status"] == "rejected"
+
     def test_pushed_ink_is_stored_and_the_worker_sees_the_strokes(
         self, authed_client, db
     ):

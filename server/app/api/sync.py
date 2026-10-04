@@ -665,7 +665,8 @@ def _apply_document(
         # SEPARATE fields, and a payload without ink (title edit, old app)
         # must not erase the strokes the server already holds.
         existing = conn.execute(
-            "SELECT folder_id, ink FROM notebooks WHERE id = ?",
+            "SELECT folder_id, ink, password_hash, password_salt, "
+            "password_iterations FROM notebooks WHERE id = ?",
             (change.entity_id,),
         ).fetchone()
         folder_id = (
@@ -682,19 +683,48 @@ def _apply_document(
             )
         else:
             ink = existing["ink"] if existing is not None else None
+        if "password_hash" in p:
+            password_hash = p["password_hash"]
+            if password_hash is None:
+                password_salt = None
+                password_iterations = None
+            else:
+                if not isinstance(password_hash, str) or not password_hash:
+                    raise ValueError("password_hash must be a non-empty string")
+                password_salt = p.get("password_salt")
+                password_iterations = p.get("password_iterations")
+                if not isinstance(password_salt, str) or not password_salt:
+                    raise ValueError("protected notebook requires password_salt")
+                if (
+                    type(password_iterations) is not int
+                    or password_iterations < 100_000
+                ):
+                    raise ValueError(
+                        "protected notebook requires sane password_iterations"
+                    )
+        else:
+            password_hash = existing["password_hash"] if existing is not None else None
+            password_salt = existing["password_salt"] if existing is not None else None
+            password_iterations = (
+                existing["password_iterations"] if existing is not None else None
+            )
         conn.execute(
             """
             INSERT INTO notebooks
                 (id, title, doc, ink, created_at, updated_at, deleted_at,
-                 origin_device_id, folder_id)
-            VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)
+                 origin_device_id, folder_id, password_hash, password_salt,
+                 password_iterations)
+            VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
                 doc = excluded.doc,
                 ink = excluded.ink,
                 updated_at = excluded.updated_at,
                 deleted_at = NULL,
-                folder_id = excluded.folder_id
+                folder_id = excluded.folder_id,
+                password_hash = excluded.password_hash,
+                password_salt = excluded.password_salt,
+                password_iterations = excluded.password_iterations
             """,
             (
                 change.entity_id,
@@ -705,6 +735,9 @@ def _apply_document(
                 now,
                 change.device_id,
                 folder_id,
+                password_hash,
+                password_salt,
+                password_iterations,
             ),
         )
         return

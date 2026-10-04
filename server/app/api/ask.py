@@ -106,7 +106,10 @@ def _all_chunks(db: sqlite3.Connection) -> list[_Chunk]:
         summary = "\n".join(part for part in (row["summary"], row["meeting_notes"]) if part and part.strip())
         if summary:
             chunks.append(_Chunk("summary", row["id"], summary, row["created_at"]))
-    for row in db.execute("SELECT id, title, doc, created_at FROM notebooks WHERE deleted_at IS NULL"):
+    for row in db.execute(
+        "SELECT id, title, doc, created_at FROM notebooks "
+        "WHERE deleted_at IS NULL AND password_hash IS NULL"
+    ):
         typed = " ".join(_strings(_json(row["doc"], row["doc"])))
         ink = " ".join(r[0] for r in db.execute("SELECT word_text FROM ink_index WHERE notebook_id = ? ORDER BY line_id, id", (row["id"],)))
         text = "\n".join(part for part in (row["title"], typed, ink) if part and part.strip())

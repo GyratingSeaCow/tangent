@@ -91,6 +91,31 @@ def test_all_four_corpora_are_retrievable(client, monkeypatch):
         assert kind in {source["entity_type"] for source in response.json()["sources"]}
 
 
+def test_password_protected_notebooks_are_not_retrievable(client, monkeypatch):
+    cli, auth, path = client
+    _seed(path)
+    conn = _db(path)
+    conn.execute(
+        "UPDATE notebooks SET password_hash = ?, password_salt = ?, "
+        "password_iterations = ? WHERE id = ?",
+        ("hash", "salt", 210000, "nb-1"),
+    )
+    conn.commit()
+    conn.close()
+
+    def sabotage(*_args):
+        raise AssertionError("protected notebook content must not reach the model")
+
+    monkeypatch.setattr(summarizer_worker, "run_inference", sabotage)
+    response = cli.post(
+        "/v1/ask",
+        json={"question": "What about the florist orchids?"},
+        headers=auth,
+    )
+    assert response.status_code == 200
+    assert response.json() == {"answer": HONEST_MISS, "sources": []}
+
+
 def test_absent_question_is_exact_honest_miss_without_calling_model(client, monkeypatch):
     cli, auth, path = client
     _seed(path)

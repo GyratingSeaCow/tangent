@@ -38,6 +38,44 @@ def test_init_db_is_idempotent(temp_data_dir: Path) -> None:
     init_db(str(temp_data_dir))  # Should not raise
 
 
+def test_init_db_migrates_notebook_password_metadata_without_locking_rows(
+    temp_data_dir: Path,
+) -> None:
+    db_path = temp_data_dir / "tangent.db"
+    legacy_schema = SCHEMA.replace(
+        "    folder_id TEXT,\n"
+        "    -- Salted PBKDF2-HMAC-SHA256 verifier metadata. Never plaintext.\n"
+        "    password_hash TEXT,\n"
+        "    password_salt TEXT,\n"
+        "    password_iterations INTEGER\n",
+        "    folder_id TEXT\n",
+    )
+    conn = sqlite3.connect(db_path)
+    conn.executescript(legacy_schema)
+    conn.execute(
+        "INSERT INTO notebooks (id, title, doc, created_at, updated_at) "
+        "VALUES ('legacy', 'Legacy', '{}', 1, 1)"
+    )
+    conn.commit()
+    conn.close()
+
+    init_db(str(temp_data_dir))
+    init_db(str(temp_data_dir))
+
+    conn = sqlite3.connect(db_path)
+    columns = [row[1] for row in conn.execute("PRAGMA table_info(notebooks)")]
+    metadata = conn.execute(
+        "SELECT password_hash, password_salt, password_iterations "
+        "FROM notebooks WHERE id = 'legacy'"
+    ).fetchone()
+    conn.close()
+
+    assert columns.count("password_hash") == 1
+    assert columns.count("password_salt") == 1
+    assert columns.count("password_iterations") == 1
+    assert metadata == (None, None, None)
+
+
 def test_get_db_yields_connection_with_row_factory(temp_data_dir: Path) -> None:
     init_db(str(temp_data_dir))
 

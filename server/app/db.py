@@ -172,7 +172,11 @@ CREATE TABLE IF NOT EXISTS notebooks (
     updated_at INTEGER NOT NULL,
     deleted_at INTEGER,
     origin_device_id TEXT,
-    folder_id TEXT
+    folder_id TEXT,
+    -- Salted PBKDF2-HMAC-SHA256 verifier metadata. Never plaintext.
+    password_hash TEXT,
+    password_salt TEXT,
+    password_iterations INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS idx_notebooks_updated_at
@@ -741,6 +745,20 @@ def _migrate_notebooks_folder_id(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE notebooks ADD COLUMN folder_id TEXT")
 
 
+def _migrate_notebooks_password_metadata(conn: sqlite3.Connection) -> None:
+    """Add nullable verifier metadata; every existing notebook stays open."""
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(notebooks)")}
+    for name, declaration in (
+        ("password_hash", "TEXT"),
+        ("password_salt", "TEXT"),
+        ("password_iterations", "INTEGER"),
+    ):
+        if name not in columns:
+            conn.execute(
+                f"ALTER TABLE notebooks ADD COLUMN {name} {declaration}"
+            )
+
+
 def _migrate_todos_folder_id(conn: sqlite3.Connection) -> None:
     """Add folder_id to pre-folder-sync todos. NULL means unfiled."""
     columns = {row[1] for row in conn.execute("PRAGMA table_info(todos)")}
@@ -1131,6 +1149,7 @@ def init_db(data_dir: str) -> None:
         timing_backfills = _migrate_dumps_transcript_timings(conn)
         _migrate_dumps_folder_id(conn)
         _migrate_notebooks_folder_id(conn)
+        _migrate_notebooks_password_metadata(conn)
         _migrate_todos_folder_id(conn)
         _migrate_todos_google_columns(conn)
         _migrate_google_lists(conn)

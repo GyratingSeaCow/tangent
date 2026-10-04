@@ -305,6 +305,8 @@ def build_mcp() -> FastMCP:
             ).fetchone()
             if row is None:
                 raise ValueError(f"Notebook {notebook_id!r} not found")
+            if row["password_hash"] is not None:
+                raise ValueError(f"Notebook {notebook_id!r} is password protected")
             words = [
                 r["word_text"]
                 for r in conn.execute(
