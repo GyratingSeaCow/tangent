@@ -291,6 +291,10 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
 
   /// Long-press opens the shared menu instead of deleting outright.
   Future<void> _showActions(NotebookHeader notebook) async {
+    final NotebookUnlockRegistry unlocks =
+        ref.read(notebookUnlockRegistryProvider);
+    final bool canLockNow = notebook.passwordProtected &&
+        unlocks.isUnlocked(notebook.id, notebook.passwordHash);
     final ItemAction? action = await showItemActionSheet(
       context,
       title: notebook.title.isEmpty ? '(untitled)' : notebook.title,
@@ -302,6 +306,7 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
         notebook.pinned ? ItemAction.unpin : ItemAction.pin,
         ItemAction.exportPdf,
         ItemAction.passwordProtection,
+        if (canLockNow) ItemAction.lockNow,
         ItemAction.delete,
       ],
       labelOverrides: <ItemAction, String>{
@@ -330,6 +335,8 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
         await _exportPdf(notebook);
       case ItemAction.passwordProtection:
         await _togglePasswordProtection(notebook);
+      case ItemAction.lockNow:
+        unlocks.lock(notebook.id);
       case ItemAction.delete:
         await _confirmDelete(notebook);
       case ItemAction.duplicate:
@@ -448,17 +455,26 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
         notebookTitle: notebook.title,
       );
       if (password == null || !mounted) return;
-      await persistence.setPassword(notebook.id, password);
-      final Notebook? protected = await ref
-          .read(notebookRepositoryProvider)
-          .getNotebook(notebook.id);
-      final String? hash = protected?.passwordHash;
-      if (hash == null) {
-        throw StateError('Notebook protection was not persisted');
+      try {
+        await persistence.setPassword(notebook.id, password);
+        final Notebook? protected = await ref
+            .read(notebookRepositoryProvider)
+            .getNotebook(notebook.id);
+        final String? hash = protected?.passwordHash;
+        if (hash == null) {
+          throw StateError('Notebook protection was not persisted');
+        }
+        // The user just entered and confirmed this password. Keep that notebook
+        // unlocked for this process; relaunch or a verifier change locks it.
+        unlocks.unlock(notebook.id, hash);
+      } catch (error) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Could not turn on password protection: $error'),
+          ),
+        );
       }
-      // The user just entered and confirmed this password. Keep that notebook
-      // unlocked for this process; relaunch or a verifier change locks it.
-      unlocks.unlock(notebook.id, hash);
       return;
     }
 

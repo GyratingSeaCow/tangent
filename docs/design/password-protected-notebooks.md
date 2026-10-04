@@ -16,11 +16,11 @@ Notebook password protection is an access-control guard for Tangent surfaces. It
 - Current durable files always carry all four verifier fields. A post-Turn-Off file therefore carries the predecessor needed to apply the clear when adopted by another folder-sharing device; legacy files with no verifier keys preserve local metadata.
 - Malformed or causally invalid verifier metadata in a client pull is skipped while the notebook body and pull checkpoint continue, preventing a bad payload from wedging sync. A fresh local/server row has no generation to defend, so a complete valid incoming tuple is accepted verbatim even when it carries a predecessor.
 - A rejected dirty notebook response includes the canonical server verifier tuple. The client rebases only those verifier fields, keeps the local body dirty, surfaces the rejection as a sync error, and retries the body with the current generation on the next sync instead of silently retrying a malformed tuple forever.
-- Unlock state is in-memory, process-local, and bound to the current hash. Successfully enabling protection keeps that notebook unlocked because the user just entered the password twice. Process exit or a password change received through sync invalidates the unlock automatically.
+- Unlock state is in-memory, process-local, and bound to the current hash. Successfully enabling protection keeps that notebook unlocked because the user just entered the password twice. **Lock Now** clears only that notebook's process-local unlock, so its next open prompts for the password. Process exit or a password change received through sync also invalidates the unlock automatically.
 
 ## User-visible behavior
 
-- The row and cover `⋮` menu says **Turn On Password Protection** or **Turn Off Password Protection**.
+- The row and cover `⋮` menu says **Turn On Password Protection** or **Turn Off Password Protection**. While a protected notebook is process-locally unlocked, the same menu also offers **Lock Now**; it is hidden for unprotected and already-locked notebooks.
 - Enabling requires the same non-empty password twice. Disabling requires the current password.
 - Opening from any route is guarded by the editor itself. A wrong password leaves the notebook closed.
 - Rename, pin/unpin, PDF export, Markdown/Obsidian export, and “Send to notebook” require an unlock.
@@ -37,5 +37,6 @@ Client schema v31 and the server's idempotent startup migration add the three nu
 - **M6:** `/v1/ocr/status` backlog counts still include protected notebooks.
 - **M7:** Ask history can retain snippets created before a notebook became protected.
 - **M8:** Server `ink_index` purge is asynchronous, so pull can briefly serve old words until the worker runs; current readers remain guarded.
+- **M13:** A stale-generation push may leave the pushing device's local verifier divergent until another device edits the notebook. Access fails closed in the meantime.
+- **M14:** A rejected entity of any type fails the whole sync batch; a mixed-batch pushed-count misreport remains untested.
 - The protected-notebook filter in OCR `backfill_scan` remains untested.
-- A user-facing **Lock** action remains deferred. An unlocked notebook stays unlocked until process exit or its verifier changes.

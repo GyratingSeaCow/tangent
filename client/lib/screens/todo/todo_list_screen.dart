@@ -264,6 +264,7 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
       case ItemAction.exportPdf:
       case ItemAction.exportMarkdown:
       case ItemAction.passwordProtection:
+      case ItemAction.lockNow:
       case ItemAction.sendToNotebook:
       case ItemAction.download:
       case ItemAction.regenerateSummary:
