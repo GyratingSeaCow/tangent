@@ -23,6 +23,10 @@ enum ItemAction {
   open,
   rename,
   move,
+
+  /// Attach, create, remove, rename or delete shared tags (v33). Offered on
+  /// notebooks and recordings; the sheet is [showEditTagsSheet].
+  editTags,
   pin,
   unpin,
   duplicate,
@@ -72,6 +76,7 @@ const List<ItemAction> _canonicalOrder = <ItemAction>[
   ItemAction.rename,
   ItemAction.nameSpeakers,
   ItemAction.move,
+  ItemAction.editTags,
   ItemAction.pin,
   ItemAction.unpin,
   ItemAction.duplicate,
@@ -123,6 +128,8 @@ class ItemActionSheet extends StatelessWidget {
         return 'Rename';
       case ItemAction.move:
         return 'Move to folder';
+      case ItemAction.editTags:
+        return 'Edit tags';
       case ItemAction.pin:
         return 'Pin';
       case ItemAction.unpin:
@@ -162,6 +169,8 @@ class ItemActionSheet extends StatelessWidget {
         return Icons.drive_file_rename_outline;
       case ItemAction.move:
         return Icons.drive_file_move_outline;
+      case ItemAction.editTags:
+        return Icons.sell_outlined;
       case ItemAction.pin:
         return Icons.push_pin_outlined;
       case ItemAction.unpin:

@@ -105,7 +105,7 @@ CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at DESC);
 CREATE TABLE IF NOT EXISTS change_log (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
     entity_type TEXT NOT NULL
-        CHECK (entity_type IN ('dump', 'notebook', 'note', 'folder', 'ink_index', 'todo', 'calendar_event', 'ask_message')),
+        CHECK (entity_type IN ('dump', 'notebook', 'note', 'folder', 'ink_index', 'todo', 'calendar_event', 'ask_message', 'tag', 'tag_assignment')),
     entity_id TEXT NOT NULL,
     op TEXT NOT NULL CHECK (op IN ('upsert', 'delete')),
     -- Who authored it, so a client can skip the echo of its own push.
@@ -332,6 +332,40 @@ CREATE TABLE IF NOT EXISTS app_settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+-- Shared custom tags: one vocabulary for notebooks AND recordings. Tags
+-- sync by id (same-named tags made offline on two devices stay separate,
+-- the folder precedent). Deletes tombstone, never remove.
+CREATE TABLE IF NOT EXISTS tags (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    deleted_at INTEGER,
+    origin_device_id TEXT
+);
+
+-- Polymorphic assignment: target_type says which table target_id names.
+-- Deliberately no foreign key to either target (a trashed notebook keeps
+-- its tags for a restore). The id is derived from the triple
+-- (see app.api.sync.tag_assignment_id), so the same tag on the same item is
+-- one row fleet-wide; the UNIQUE constraint backs that up.
+CREATE TABLE IF NOT EXISTS tag_assignments (
+    id TEXT PRIMARY KEY,
+    tag_id TEXT NOT NULL,
+    target_type TEXT NOT NULL CHECK (target_type IN ('notebook', 'dump')),
+    target_id TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    deleted_at INTEGER,
+    origin_device_id TEXT,
+    UNIQUE (tag_id, target_type, target_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_tag_assignments_target
+    ON tag_assignments(target_type, target_id);
+CREATE INDEX IF NOT EXISTS idx_tag_assignments_tag
+    ON tag_assignments(tag_id);
 
 -- v1.41 Morning Brief: one cached AI brief per server-local date
 -- (YYYY-MM-DD). Server-only; never on the sync feed — clients GET it.
@@ -1024,6 +1058,61 @@ def _migrate_change_log_ask_message_entity(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_change_log_tag_entities(conn: sqlite3.Connection) -> None:
+    """Rebuild change_log to admit shared tags and their assignments.
+
+    Idempotent: a log whose CHECK already names 'tag_assignment' is left
+    alone, and every existing row (and the AUTOINCREMENT high-water mark) is
+    carried across, so no device's checkpoint is invalidated.
+    """
+    ddl = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='change_log'"
+    ).fetchone()
+    if ddl is None or "'tag_assignment'" in (ddl[0] or ""):
+        return
+    # The true high-water mark, read BEFORE the old table (and its
+    # sqlite_sequence row) is dropped. MAX(seq) alone would hand a deleted
+    # tail seq out again, and a device already checkpointed past it would
+    # silently skip that new change.
+    prior = conn.execute(
+        "SELECT seq FROM sqlite_sequence WHERE name = 'change_log'"
+    ).fetchone()
+    prior_seq = int(prior[0]) if prior is not None else 0
+    conn.executescript(
+        """
+        PRAGMA foreign_keys = OFF;
+        CREATE TABLE change_log_new (
+            seq INTEGER PRIMARY KEY AUTOINCREMENT,
+            entity_type TEXT NOT NULL CHECK (entity_type IN
+                ('dump', 'notebook', 'note', 'folder', 'ink_index', 'todo',
+                 'calendar_event', 'ask_message', 'tag', 'tag_assignment')),
+            entity_id TEXT NOT NULL,
+            op TEXT NOT NULL CHECK (op IN ('upsert', 'delete')),
+            device_id TEXT NOT NULL,
+            payload TEXT,
+            created_at INTEGER NOT NULL
+        );
+        INSERT INTO change_log_new
+            (seq, entity_type, entity_id, op, device_id, payload, created_at)
+            SELECT seq, entity_type, entity_id, op, device_id, payload,
+                   created_at FROM change_log;
+        DROP TABLE change_log;
+        ALTER TABLE change_log_new RENAME TO change_log;
+        CREATE INDEX IF NOT EXISTS idx_change_log_seq ON change_log(seq);
+        CREATE INDEX IF NOT EXISTS idx_change_log_entity
+            ON change_log(entity_type, entity_id);
+        PRAGMA foreign_keys = ON;
+        """
+    )
+    # sqlite_sequence has no unique key on name: replace, never duplicate.
+    conn.execute("DELETE FROM sqlite_sequence WHERE name = 'change_log'")
+    conn.execute(
+        "INSERT INTO sqlite_sequence (name, seq) "
+        "SELECT 'change_log', MAX(?, COALESCE(MAX(seq), 0)) FROM change_log",
+        (prior_seq,),
+    )
+
+
 def _migrate_notebooks_ink(conn: sqlite3.Connection) -> None:
     """Add notebooks.ink and backfill it from the change feed.
 
@@ -1161,6 +1250,7 @@ def init_db(data_dir: str) -> None:
         _migrate_change_log_todo_entity(conn)
         _migrate_change_log_calendar_event_entity(conn)
         _migrate_change_log_ask_message_entity(conn)
+        _migrate_change_log_tag_entities(conn)
         _migrate_notebooks_ink(conn)
         _normalize_notebooks_ink(conn)
         _reconcile_audio_kept(conn, data_dir)

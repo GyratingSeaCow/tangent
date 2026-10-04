@@ -269,6 +269,8 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
       case ItemAction.download:
       case ItemAction.regenerateSummary:
       case ItemAction.nameSpeakers:
+      // Shared tags cover notebooks and recordings only.
+      case ItemAction.editTags:
       case ItemAction.select:
         break;
     }

@@ -8,6 +8,7 @@ import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:tangent/data/tag_repository.dart' show tagStoreProvider;
 import 'package:tangent/data/local_db.dart';
 import 'package:tangent/data/notebook_repository.dart' show foldersProvider;
 import 'package:tangent/screens/dump/dumps_list_screen.dart';
@@ -18,6 +19,7 @@ import 'package:tangent/services/summary_pending.dart';
 
 import '../support/legacy_audio_storage_fixture.dart';
 import '../support/resolved_temp.dart';
+import '../support/fake_tag_store.dart';
 
 DumpRow _row(
   String id,
@@ -82,6 +84,9 @@ void main() {
       ProviderScope(
         overrides: [
           localDbProvider.overrideWithValue(db),
+          // A real drift db here: the tag projections must not open drift
+          // streams too, or teardown trips !timersPending.
+          tagStoreProvider.overrideWithValue(FakeTagStore()),
           foldersProvider.overrideWith((_) => Stream.value(const <Folder>[])),
           audioStorageProvider.overrideWithValue(storage),
           deletionEligibilityProvider

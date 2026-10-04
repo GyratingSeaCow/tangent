@@ -10960,6 +10960,896 @@ class AskSourceVisitsCompanion extends UpdateCompanion<AskSourceVisitRow> {
   }
 }
 
+class $TagsTable extends Tags with TableInfo<$TagsTable, TagRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $TagsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<String> id = GeneratedColumn<String>(
+    'id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _nameMeta = const VerificationMeta('name');
+  @override
+  late final GeneratedColumn<String> name = GeneratedColumn<String>(
+    'name',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _createdAtMeta = const VerificationMeta(
+    'createdAt',
+  );
+  @override
+  late final GeneratedColumn<int> createdAt = GeneratedColumn<int>(
+    'created_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _updatedAtMeta = const VerificationMeta(
+    'updatedAt',
+  );
+  @override
+  late final GeneratedColumn<int> updatedAt = GeneratedColumn<int>(
+    'updated_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _syncDirtyMeta = const VerificationMeta(
+    'syncDirty',
+  );
+  @override
+  late final GeneratedColumn<bool> syncDirty = GeneratedColumn<bool>(
+    'sync_dirty',
+    aliasedName,
+    true,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("sync_dirty" IN (0, 1))',
+    ),
+  );
+  static const VerificationMeta _syncedSeqMeta = const VerificationMeta(
+    'syncedSeq',
+  );
+  @override
+  late final GeneratedColumn<int> syncedSeq = GeneratedColumn<int>(
+    'synced_seq',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    name,
+    createdAt,
+    updatedAt,
+    syncDirty,
+    syncedSeq,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'tags';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<TagRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    } else if (isInserting) {
+      context.missing(_idMeta);
+    }
+    if (data.containsKey('name')) {
+      context.handle(
+        _nameMeta,
+        name.isAcceptableOrUnknown(data['name']!, _nameMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_nameMeta);
+    }
+    if (data.containsKey('created_at')) {
+      context.handle(
+        _createdAtMeta,
+        createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_createdAtMeta);
+    }
+    if (data.containsKey('updated_at')) {
+      context.handle(
+        _updatedAtMeta,
+        updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_updatedAtMeta);
+    }
+    if (data.containsKey('sync_dirty')) {
+      context.handle(
+        _syncDirtyMeta,
+        syncDirty.isAcceptableOrUnknown(data['sync_dirty']!, _syncDirtyMeta),
+      );
+    }
+    if (data.containsKey('synced_seq')) {
+      context.handle(
+        _syncedSeqMeta,
+        syncedSeq.isAcceptableOrUnknown(data['synced_seq']!, _syncedSeqMeta),
+      );
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  TagRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return TagRow(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}id'],
+      )!,
+      name: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}name'],
+      )!,
+      createdAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}created_at'],
+      )!,
+      updatedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}updated_at'],
+      )!,
+      syncDirty: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}sync_dirty'],
+      ),
+      syncedSeq: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}synced_seq'],
+      ),
+    );
+  }
+
+  @override
+  $TagsTable createAlias(String alias) {
+    return $TagsTable(attachedDatabase, alias);
+  }
+}
+
+class TagRow extends DataClass implements Insertable<TagRow> {
+  final String id;
+  final String name;
+
+  /// Epoch milliseconds, integers like notebooks.
+  final int createdAt;
+  final int updatedAt;
+
+  /// Folder contract: nullable, and null reads as dirty.
+  final bool? syncDirty;
+  final int? syncedSeq;
+  const TagRow({
+    required this.id,
+    required this.name,
+    required this.createdAt,
+    required this.updatedAt,
+    this.syncDirty,
+    this.syncedSeq,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<String>(id);
+    map['name'] = Variable<String>(name);
+    map['created_at'] = Variable<int>(createdAt);
+    map['updated_at'] = Variable<int>(updatedAt);
+    if (!nullToAbsent || syncDirty != null) {
+      map['sync_dirty'] = Variable<bool>(syncDirty);
+    }
+    if (!nullToAbsent || syncedSeq != null) {
+      map['synced_seq'] = Variable<int>(syncedSeq);
+    }
+    return map;
+  }
+
+  TagsCompanion toCompanion(bool nullToAbsent) {
+    return TagsCompanion(
+      id: Value(id),
+      name: Value(name),
+      createdAt: Value(createdAt),
+      updatedAt: Value(updatedAt),
+      syncDirty: syncDirty == null && nullToAbsent
+          ? const Value.absent()
+          : Value(syncDirty),
+      syncedSeq: syncedSeq == null && nullToAbsent
+          ? const Value.absent()
+          : Value(syncedSeq),
+    );
+  }
+
+  factory TagRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return TagRow(
+      id: serializer.fromJson<String>(json['id']),
+      name: serializer.fromJson<String>(json['name']),
+      createdAt: serializer.fromJson<int>(json['createdAt']),
+      updatedAt: serializer.fromJson<int>(json['updatedAt']),
+      syncDirty: serializer.fromJson<bool?>(json['syncDirty']),
+      syncedSeq: serializer.fromJson<int?>(json['syncedSeq']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<String>(id),
+      'name': serializer.toJson<String>(name),
+      'createdAt': serializer.toJson<int>(createdAt),
+      'updatedAt': serializer.toJson<int>(updatedAt),
+      'syncDirty': serializer.toJson<bool?>(syncDirty),
+      'syncedSeq': serializer.toJson<int?>(syncedSeq),
+    };
+  }
+
+  TagRow copyWith({
+    String? id,
+    String? name,
+    int? createdAt,
+    int? updatedAt,
+    Value<bool?> syncDirty = const Value.absent(),
+    Value<int?> syncedSeq = const Value.absent(),
+  }) => TagRow(
+    id: id ?? this.id,
+    name: name ?? this.name,
+    createdAt: createdAt ?? this.createdAt,
+    updatedAt: updatedAt ?? this.updatedAt,
+    syncDirty: syncDirty.present ? syncDirty.value : this.syncDirty,
+    syncedSeq: syncedSeq.present ? syncedSeq.value : this.syncedSeq,
+  );
+  TagRow copyWithCompanion(TagsCompanion data) {
+    return TagRow(
+      id: data.id.present ? data.id.value : this.id,
+      name: data.name.present ? data.name.value : this.name,
+      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+      syncDirty: data.syncDirty.present ? data.syncDirty.value : this.syncDirty,
+      syncedSeq: data.syncedSeq.present ? data.syncedSeq.value : this.syncedSeq,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('TagRow(')
+          ..write('id: $id, ')
+          ..write('name: $name, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('syncDirty: $syncDirty, ')
+          ..write('syncedSeq: $syncedSeq')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode =>
+      Object.hash(id, name, createdAt, updatedAt, syncDirty, syncedSeq);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is TagRow &&
+          other.id == this.id &&
+          other.name == this.name &&
+          other.createdAt == this.createdAt &&
+          other.updatedAt == this.updatedAt &&
+          other.syncDirty == this.syncDirty &&
+          other.syncedSeq == this.syncedSeq);
+}
+
+class TagsCompanion extends UpdateCompanion<TagRow> {
+  final Value<String> id;
+  final Value<String> name;
+  final Value<int> createdAt;
+  final Value<int> updatedAt;
+  final Value<bool?> syncDirty;
+  final Value<int?> syncedSeq;
+  final Value<int> rowid;
+  const TagsCompanion({
+    this.id = const Value.absent(),
+    this.name = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+    this.syncDirty = const Value.absent(),
+    this.syncedSeq = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  TagsCompanion.insert({
+    required String id,
+    required String name,
+    required int createdAt,
+    required int updatedAt,
+    this.syncDirty = const Value.absent(),
+    this.syncedSeq = const Value.absent(),
+    this.rowid = const Value.absent(),
+  }) : id = Value(id),
+       name = Value(name),
+       createdAt = Value(createdAt),
+       updatedAt = Value(updatedAt);
+  static Insertable<TagRow> custom({
+    Expression<String>? id,
+    Expression<String>? name,
+    Expression<int>? createdAt,
+    Expression<int>? updatedAt,
+    Expression<bool>? syncDirty,
+    Expression<int>? syncedSeq,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (name != null) 'name': name,
+      if (createdAt != null) 'created_at': createdAt,
+      if (updatedAt != null) 'updated_at': updatedAt,
+      if (syncDirty != null) 'sync_dirty': syncDirty,
+      if (syncedSeq != null) 'synced_seq': syncedSeq,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  TagsCompanion copyWith({
+    Value<String>? id,
+    Value<String>? name,
+    Value<int>? createdAt,
+    Value<int>? updatedAt,
+    Value<bool?>? syncDirty,
+    Value<int?>? syncedSeq,
+    Value<int>? rowid,
+  }) {
+    return TagsCompanion(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+      syncDirty: syncDirty ?? this.syncDirty,
+      syncedSeq: syncedSeq ?? this.syncedSeq,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<String>(id.value);
+    }
+    if (name.present) {
+      map['name'] = Variable<String>(name.value);
+    }
+    if (createdAt.present) {
+      map['created_at'] = Variable<int>(createdAt.value);
+    }
+    if (updatedAt.present) {
+      map['updated_at'] = Variable<int>(updatedAt.value);
+    }
+    if (syncDirty.present) {
+      map['sync_dirty'] = Variable<bool>(syncDirty.value);
+    }
+    if (syncedSeq.present) {
+      map['synced_seq'] = Variable<int>(syncedSeq.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('TagsCompanion(')
+          ..write('id: $id, ')
+          ..write('name: $name, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('syncDirty: $syncDirty, ')
+          ..write('syncedSeq: $syncedSeq, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $TagAssignmentsTable extends TagAssignments
+    with TableInfo<$TagAssignmentsTable, TagAssignmentRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $TagAssignmentsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<String> id = GeneratedColumn<String>(
+    'id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _tagIdMeta = const VerificationMeta('tagId');
+  @override
+  late final GeneratedColumn<String> tagId = GeneratedColumn<String>(
+    'tag_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _targetTypeMeta = const VerificationMeta(
+    'targetType',
+  );
+  @override
+  late final GeneratedColumn<String> targetType = GeneratedColumn<String>(
+    'target_type',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _targetIdMeta = const VerificationMeta(
+    'targetId',
+  );
+  @override
+  late final GeneratedColumn<String> targetId = GeneratedColumn<String>(
+    'target_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _createdAtMeta = const VerificationMeta(
+    'createdAt',
+  );
+  @override
+  late final GeneratedColumn<int> createdAt = GeneratedColumn<int>(
+    'created_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _syncDirtyMeta = const VerificationMeta(
+    'syncDirty',
+  );
+  @override
+  late final GeneratedColumn<bool> syncDirty = GeneratedColumn<bool>(
+    'sync_dirty',
+    aliasedName,
+    true,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("sync_dirty" IN (0, 1))',
+    ),
+  );
+  static const VerificationMeta _syncedSeqMeta = const VerificationMeta(
+    'syncedSeq',
+  );
+  @override
+  late final GeneratedColumn<int> syncedSeq = GeneratedColumn<int>(
+    'synced_seq',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    tagId,
+    targetType,
+    targetId,
+    createdAt,
+    syncDirty,
+    syncedSeq,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'tag_assignments';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<TagAssignmentRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    } else if (isInserting) {
+      context.missing(_idMeta);
+    }
+    if (data.containsKey('tag_id')) {
+      context.handle(
+        _tagIdMeta,
+        tagId.isAcceptableOrUnknown(data['tag_id']!, _tagIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_tagIdMeta);
+    }
+    if (data.containsKey('target_type')) {
+      context.handle(
+        _targetTypeMeta,
+        targetType.isAcceptableOrUnknown(data['target_type']!, _targetTypeMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_targetTypeMeta);
+    }
+    if (data.containsKey('target_id')) {
+      context.handle(
+        _targetIdMeta,
+        targetId.isAcceptableOrUnknown(data['target_id']!, _targetIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_targetIdMeta);
+    }
+    if (data.containsKey('created_at')) {
+      context.handle(
+        _createdAtMeta,
+        createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_createdAtMeta);
+    }
+    if (data.containsKey('sync_dirty')) {
+      context.handle(
+        _syncDirtyMeta,
+        syncDirty.isAcceptableOrUnknown(data['sync_dirty']!, _syncDirtyMeta),
+      );
+    }
+    if (data.containsKey('synced_seq')) {
+      context.handle(
+        _syncedSeqMeta,
+        syncedSeq.isAcceptableOrUnknown(data['synced_seq']!, _syncedSeqMeta),
+      );
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  List<Set<GeneratedColumn>> get uniqueKeys => [
+    {tagId, targetType, targetId},
+  ];
+  @override
+  TagAssignmentRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return TagAssignmentRow(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}id'],
+      )!,
+      tagId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}tag_id'],
+      )!,
+      targetType: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}target_type'],
+      )!,
+      targetId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}target_id'],
+      )!,
+      createdAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}created_at'],
+      )!,
+      syncDirty: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}sync_dirty'],
+      ),
+      syncedSeq: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}synced_seq'],
+      ),
+    );
+  }
+
+  @override
+  $TagAssignmentsTable createAlias(String alias) {
+    return $TagAssignmentsTable(attachedDatabase, alias);
+  }
+}
+
+class TagAssignmentRow extends DataClass
+    implements Insertable<TagAssignmentRow> {
+  final String id;
+  final String tagId;
+  final String targetType;
+  final String targetId;
+  final int createdAt;
+  final bool? syncDirty;
+  final int? syncedSeq;
+  const TagAssignmentRow({
+    required this.id,
+    required this.tagId,
+    required this.targetType,
+    required this.targetId,
+    required this.createdAt,
+    this.syncDirty,
+    this.syncedSeq,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<String>(id);
+    map['tag_id'] = Variable<String>(tagId);
+    map['target_type'] = Variable<String>(targetType);
+    map['target_id'] = Variable<String>(targetId);
+    map['created_at'] = Variable<int>(createdAt);
+    if (!nullToAbsent || syncDirty != null) {
+      map['sync_dirty'] = Variable<bool>(syncDirty);
+    }
+    if (!nullToAbsent || syncedSeq != null) {
+      map['synced_seq'] = Variable<int>(syncedSeq);
+    }
+    return map;
+  }
+
+  TagAssignmentsCompanion toCompanion(bool nullToAbsent) {
+    return TagAssignmentsCompanion(
+      id: Value(id),
+      tagId: Value(tagId),
+      targetType: Value(targetType),
+      targetId: Value(targetId),
+      createdAt: Value(createdAt),
+      syncDirty: syncDirty == null && nullToAbsent
+          ? const Value.absent()
+          : Value(syncDirty),
+      syncedSeq: syncedSeq == null && nullToAbsent
+          ? const Value.absent()
+          : Value(syncedSeq),
+    );
+  }
+
+  factory TagAssignmentRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return TagAssignmentRow(
+      id: serializer.fromJson<String>(json['id']),
+      tagId: serializer.fromJson<String>(json['tagId']),
+      targetType: serializer.fromJson<String>(json['targetType']),
+      targetId: serializer.fromJson<String>(json['targetId']),
+      createdAt: serializer.fromJson<int>(json['createdAt']),
+      syncDirty: serializer.fromJson<bool?>(json['syncDirty']),
+      syncedSeq: serializer.fromJson<int?>(json['syncedSeq']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<String>(id),
+      'tagId': serializer.toJson<String>(tagId),
+      'targetType': serializer.toJson<String>(targetType),
+      'targetId': serializer.toJson<String>(targetId),
+      'createdAt': serializer.toJson<int>(createdAt),
+      'syncDirty': serializer.toJson<bool?>(syncDirty),
+      'syncedSeq': serializer.toJson<int?>(syncedSeq),
+    };
+  }
+
+  TagAssignmentRow copyWith({
+    String? id,
+    String? tagId,
+    String? targetType,
+    String? targetId,
+    int? createdAt,
+    Value<bool?> syncDirty = const Value.absent(),
+    Value<int?> syncedSeq = const Value.absent(),
+  }) => TagAssignmentRow(
+    id: id ?? this.id,
+    tagId: tagId ?? this.tagId,
+    targetType: targetType ?? this.targetType,
+    targetId: targetId ?? this.targetId,
+    createdAt: createdAt ?? this.createdAt,
+    syncDirty: syncDirty.present ? syncDirty.value : this.syncDirty,
+    syncedSeq: syncedSeq.present ? syncedSeq.value : this.syncedSeq,
+  );
+  TagAssignmentRow copyWithCompanion(TagAssignmentsCompanion data) {
+    return TagAssignmentRow(
+      id: data.id.present ? data.id.value : this.id,
+      tagId: data.tagId.present ? data.tagId.value : this.tagId,
+      targetType: data.targetType.present
+          ? data.targetType.value
+          : this.targetType,
+      targetId: data.targetId.present ? data.targetId.value : this.targetId,
+      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+      syncDirty: data.syncDirty.present ? data.syncDirty.value : this.syncDirty,
+      syncedSeq: data.syncedSeq.present ? data.syncedSeq.value : this.syncedSeq,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('TagAssignmentRow(')
+          ..write('id: $id, ')
+          ..write('tagId: $tagId, ')
+          ..write('targetType: $targetType, ')
+          ..write('targetId: $targetId, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('syncDirty: $syncDirty, ')
+          ..write('syncedSeq: $syncedSeq')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    id,
+    tagId,
+    targetType,
+    targetId,
+    createdAt,
+    syncDirty,
+    syncedSeq,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is TagAssignmentRow &&
+          other.id == this.id &&
+          other.tagId == this.tagId &&
+          other.targetType == this.targetType &&
+          other.targetId == this.targetId &&
+          other.createdAt == this.createdAt &&
+          other.syncDirty == this.syncDirty &&
+          other.syncedSeq == this.syncedSeq);
+}
+
+class TagAssignmentsCompanion extends UpdateCompanion<TagAssignmentRow> {
+  final Value<String> id;
+  final Value<String> tagId;
+  final Value<String> targetType;
+  final Value<String> targetId;
+  final Value<int> createdAt;
+  final Value<bool?> syncDirty;
+  final Value<int?> syncedSeq;
+  final Value<int> rowid;
+  const TagAssignmentsCompanion({
+    this.id = const Value.absent(),
+    this.tagId = const Value.absent(),
+    this.targetType = const Value.absent(),
+    this.targetId = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.syncDirty = const Value.absent(),
+    this.syncedSeq = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  TagAssignmentsCompanion.insert({
+    required String id,
+    required String tagId,
+    required String targetType,
+    required String targetId,
+    required int createdAt,
+    this.syncDirty = const Value.absent(),
+    this.syncedSeq = const Value.absent(),
+    this.rowid = const Value.absent(),
+  }) : id = Value(id),
+       tagId = Value(tagId),
+       targetType = Value(targetType),
+       targetId = Value(targetId),
+       createdAt = Value(createdAt);
+  static Insertable<TagAssignmentRow> custom({
+    Expression<String>? id,
+    Expression<String>? tagId,
+    Expression<String>? targetType,
+    Expression<String>? targetId,
+    Expression<int>? createdAt,
+    Expression<bool>? syncDirty,
+    Expression<int>? syncedSeq,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (tagId != null) 'tag_id': tagId,
+      if (targetType != null) 'target_type': targetType,
+      if (targetId != null) 'target_id': targetId,
+      if (createdAt != null) 'created_at': createdAt,
+      if (syncDirty != null) 'sync_dirty': syncDirty,
+      if (syncedSeq != null) 'synced_seq': syncedSeq,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  TagAssignmentsCompanion copyWith({
+    Value<String>? id,
+    Value<String>? tagId,
+    Value<String>? targetType,
+    Value<String>? targetId,
+    Value<int>? createdAt,
+    Value<bool?>? syncDirty,
+    Value<int?>? syncedSeq,
+    Value<int>? rowid,
+  }) {
+    return TagAssignmentsCompanion(
+      id: id ?? this.id,
+      tagId: tagId ?? this.tagId,
+      targetType: targetType ?? this.targetType,
+      targetId: targetId ?? this.targetId,
+      createdAt: createdAt ?? this.createdAt,
+      syncDirty: syncDirty ?? this.syncDirty,
+      syncedSeq: syncedSeq ?? this.syncedSeq,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<String>(id.value);
+    }
+    if (tagId.present) {
+      map['tag_id'] = Variable<String>(tagId.value);
+    }
+    if (targetType.present) {
+      map['target_type'] = Variable<String>(targetType.value);
+    }
+    if (targetId.present) {
+      map['target_id'] = Variable<String>(targetId.value);
+    }
+    if (createdAt.present) {
+      map['created_at'] = Variable<int>(createdAt.value);
+    }
+    if (syncDirty.present) {
+      map['sync_dirty'] = Variable<bool>(syncDirty.value);
+    }
+    if (syncedSeq.present) {
+      map['synced_seq'] = Variable<int>(syncedSeq.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('TagAssignmentsCompanion(')
+          ..write('id: $id, ')
+          ..write('tagId: $tagId, ')
+          ..write('targetType: $targetType, ')
+          ..write('targetId: $targetId, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('syncDirty: $syncDirty, ')
+          ..write('syncedSeq: $syncedSeq, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$LocalDb extends GeneratedDatabase {
   _$LocalDb(QueryExecutor e) : super(e);
   $LocalDbManager get managers => $LocalDbManager(this);
@@ -10992,6 +11882,8 @@ abstract class _$LocalDb extends GeneratedDatabase {
   late final $AskSourceVisitsTable askSourceVisits = $AskSourceVisitsTable(
     this,
   );
+  late final $TagsTable tags = $TagsTable(this);
+  late final $TagAssignmentsTable tagAssignments = $TagAssignmentsTable(this);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -11015,6 +11907,8 @@ abstract class _$LocalDb extends GeneratedDatabase {
     calendarEvents,
     askMessages,
     askSourceVisits,
+    tags,
+    tagAssignments,
   ];
   @override
   StreamQueryUpdateRules get streamUpdateRules => const StreamQueryUpdateRules([
@@ -16643,6 +17537,470 @@ typedef $$AskSourceVisitsTableProcessedTableManager =
       AskSourceVisitRow,
       PrefetchHooks Function()
     >;
+typedef $$TagsTableCreateCompanionBuilder =
+    TagsCompanion Function({
+      required String id,
+      required String name,
+      required int createdAt,
+      required int updatedAt,
+      Value<bool?> syncDirty,
+      Value<int?> syncedSeq,
+      Value<int> rowid,
+    });
+typedef $$TagsTableUpdateCompanionBuilder =
+    TagsCompanion Function({
+      Value<String> id,
+      Value<String> name,
+      Value<int> createdAt,
+      Value<int> updatedAt,
+      Value<bool?> syncDirty,
+      Value<int?> syncedSeq,
+      Value<int> rowid,
+    });
+
+class $$TagsTableFilterComposer extends Composer<_$LocalDb, $TagsTable> {
+  $$TagsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get name => $composableBuilder(
+    column: $table.name,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get syncDirty => $composableBuilder(
+    column: $table.syncDirty,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get syncedSeq => $composableBuilder(
+    column: $table.syncedSeq,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$TagsTableOrderingComposer extends Composer<_$LocalDb, $TagsTable> {
+  $$TagsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get name => $composableBuilder(
+    column: $table.name,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<bool> get syncDirty => $composableBuilder(
+    column: $table.syncDirty,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get syncedSeq => $composableBuilder(
+    column: $table.syncedSeq,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$TagsTableAnnotationComposer extends Composer<_$LocalDb, $TagsTable> {
+  $$TagsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<String> get name =>
+      $composableBuilder(column: $table.name, builder: (column) => column);
+
+  GeneratedColumn<int> get createdAt =>
+      $composableBuilder(column: $table.createdAt, builder: (column) => column);
+
+  GeneratedColumn<int> get updatedAt =>
+      $composableBuilder(column: $table.updatedAt, builder: (column) => column);
+
+  GeneratedColumn<bool> get syncDirty =>
+      $composableBuilder(column: $table.syncDirty, builder: (column) => column);
+
+  GeneratedColumn<int> get syncedSeq =>
+      $composableBuilder(column: $table.syncedSeq, builder: (column) => column);
+}
+
+class $$TagsTableTableManager
+    extends
+        RootTableManager<
+          _$LocalDb,
+          $TagsTable,
+          TagRow,
+          $$TagsTableFilterComposer,
+          $$TagsTableOrderingComposer,
+          $$TagsTableAnnotationComposer,
+          $$TagsTableCreateCompanionBuilder,
+          $$TagsTableUpdateCompanionBuilder,
+          (TagRow, BaseReferences<_$LocalDb, $TagsTable, TagRow>),
+          TagRow,
+          PrefetchHooks Function()
+        > {
+  $$TagsTableTableManager(_$LocalDb db, $TagsTable table)
+    : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$TagsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$TagsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$TagsTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback:
+              ({
+                Value<String> id = const Value.absent(),
+                Value<String> name = const Value.absent(),
+                Value<int> createdAt = const Value.absent(),
+                Value<int> updatedAt = const Value.absent(),
+                Value<bool?> syncDirty = const Value.absent(),
+                Value<int?> syncedSeq = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => TagsCompanion(
+                id: id,
+                name: name,
+                createdAt: createdAt,
+                updatedAt: updatedAt,
+                syncDirty: syncDirty,
+                syncedSeq: syncedSeq,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String id,
+                required String name,
+                required int createdAt,
+                required int updatedAt,
+                Value<bool?> syncDirty = const Value.absent(),
+                Value<int?> syncedSeq = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => TagsCompanion.insert(
+                id: id,
+                name: name,
+                createdAt: createdAt,
+                updatedAt: updatedAt,
+                syncDirty: syncDirty,
+                syncedSeq: syncedSeq,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map(
+                (e) => (
+                  e.readTable<$TagsTable, TagRow>(table),
+                  BaseReferences<_$LocalDb, $TagsTable, TagRow>(db, table, e),
+                ),
+              )
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$TagsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$LocalDb,
+      $TagsTable,
+      TagRow,
+      $$TagsTableFilterComposer,
+      $$TagsTableOrderingComposer,
+      $$TagsTableAnnotationComposer,
+      $$TagsTableCreateCompanionBuilder,
+      $$TagsTableUpdateCompanionBuilder,
+      (TagRow, BaseReferences<_$LocalDb, $TagsTable, TagRow>),
+      TagRow,
+      PrefetchHooks Function()
+    >;
+typedef $$TagAssignmentsTableCreateCompanionBuilder =
+    TagAssignmentsCompanion Function({
+      required String id,
+      required String tagId,
+      required String targetType,
+      required String targetId,
+      required int createdAt,
+      Value<bool?> syncDirty,
+      Value<int?> syncedSeq,
+      Value<int> rowid,
+    });
+typedef $$TagAssignmentsTableUpdateCompanionBuilder =
+    TagAssignmentsCompanion Function({
+      Value<String> id,
+      Value<String> tagId,
+      Value<String> targetType,
+      Value<String> targetId,
+      Value<int> createdAt,
+      Value<bool?> syncDirty,
+      Value<int?> syncedSeq,
+      Value<int> rowid,
+    });
+
+class $$TagAssignmentsTableFilterComposer
+    extends Composer<_$LocalDb, $TagAssignmentsTable> {
+  $$TagAssignmentsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get tagId => $composableBuilder(
+    column: $table.tagId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get targetType => $composableBuilder(
+    column: $table.targetType,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get targetId => $composableBuilder(
+    column: $table.targetId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get syncDirty => $composableBuilder(
+    column: $table.syncDirty,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get syncedSeq => $composableBuilder(
+    column: $table.syncedSeq,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$TagAssignmentsTableOrderingComposer
+    extends Composer<_$LocalDb, $TagAssignmentsTable> {
+  $$TagAssignmentsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get tagId => $composableBuilder(
+    column: $table.tagId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get targetType => $composableBuilder(
+    column: $table.targetType,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get targetId => $composableBuilder(
+    column: $table.targetId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<bool> get syncDirty => $composableBuilder(
+    column: $table.syncDirty,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get syncedSeq => $composableBuilder(
+    column: $table.syncedSeq,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$TagAssignmentsTableAnnotationComposer
+    extends Composer<_$LocalDb, $TagAssignmentsTable> {
+  $$TagAssignmentsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<String> get tagId =>
+      $composableBuilder(column: $table.tagId, builder: (column) => column);
+
+  GeneratedColumn<String> get targetType => $composableBuilder(
+    column: $table.targetType,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get targetId =>
+      $composableBuilder(column: $table.targetId, builder: (column) => column);
+
+  GeneratedColumn<int> get createdAt =>
+      $composableBuilder(column: $table.createdAt, builder: (column) => column);
+
+  GeneratedColumn<bool> get syncDirty =>
+      $composableBuilder(column: $table.syncDirty, builder: (column) => column);
+
+  GeneratedColumn<int> get syncedSeq =>
+      $composableBuilder(column: $table.syncedSeq, builder: (column) => column);
+}
+
+class $$TagAssignmentsTableTableManager
+    extends
+        RootTableManager<
+          _$LocalDb,
+          $TagAssignmentsTable,
+          TagAssignmentRow,
+          $$TagAssignmentsTableFilterComposer,
+          $$TagAssignmentsTableOrderingComposer,
+          $$TagAssignmentsTableAnnotationComposer,
+          $$TagAssignmentsTableCreateCompanionBuilder,
+          $$TagAssignmentsTableUpdateCompanionBuilder,
+          (
+            TagAssignmentRow,
+            BaseReferences<_$LocalDb, $TagAssignmentsTable, TagAssignmentRow>,
+          ),
+          TagAssignmentRow,
+          PrefetchHooks Function()
+        > {
+  $$TagAssignmentsTableTableManager(_$LocalDb db, $TagAssignmentsTable table)
+    : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$TagAssignmentsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$TagAssignmentsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$TagAssignmentsTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback:
+              ({
+                Value<String> id = const Value.absent(),
+                Value<String> tagId = const Value.absent(),
+                Value<String> targetType = const Value.absent(),
+                Value<String> targetId = const Value.absent(),
+                Value<int> createdAt = const Value.absent(),
+                Value<bool?> syncDirty = const Value.absent(),
+                Value<int?> syncedSeq = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => TagAssignmentsCompanion(
+                id: id,
+                tagId: tagId,
+                targetType: targetType,
+                targetId: targetId,
+                createdAt: createdAt,
+                syncDirty: syncDirty,
+                syncedSeq: syncedSeq,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String id,
+                required String tagId,
+                required String targetType,
+                required String targetId,
+                required int createdAt,
+                Value<bool?> syncDirty = const Value.absent(),
+                Value<int?> syncedSeq = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => TagAssignmentsCompanion.insert(
+                id: id,
+                tagId: tagId,
+                targetType: targetType,
+                targetId: targetId,
+                createdAt: createdAt,
+                syncDirty: syncDirty,
+                syncedSeq: syncedSeq,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map(
+                (e) => (
+                  e.readTable<$TagAssignmentsTable, TagAssignmentRow>(table),
+                  BaseReferences<
+                    _$LocalDb,
+                    $TagAssignmentsTable,
+                    TagAssignmentRow
+                  >(db, table, e),
+                ),
+              )
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$TagAssignmentsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$LocalDb,
+      $TagAssignmentsTable,
+      TagAssignmentRow,
+      $$TagAssignmentsTableFilterComposer,
+      $$TagAssignmentsTableOrderingComposer,
+      $$TagAssignmentsTableAnnotationComposer,
+      $$TagAssignmentsTableCreateCompanionBuilder,
+      $$TagAssignmentsTableUpdateCompanionBuilder,
+      (
+        TagAssignmentRow,
+        BaseReferences<_$LocalDb, $TagAssignmentsTable, TagAssignmentRow>,
+      ),
+      TagAssignmentRow,
+      PrefetchHooks Function()
+    >;
 
 class $LocalDbManager {
   final _$LocalDb _db;
@@ -16683,4 +18041,7 @@ class $LocalDbManager {
       $$AskMessagesTableTableManager(_db, _db.askMessages);
   $$AskSourceVisitsTableTableManager get askSourceVisits =>
       $$AskSourceVisitsTableTableManager(_db, _db.askSourceVisits);
+  $$TagsTableTableManager get tags => $$TagsTableTableManager(_db, _db.tags);
+  $$TagAssignmentsTableTableManager get tagAssignments =>
+      $$TagAssignmentsTableTableManager(_db, _db.tagAssignments);
 }
