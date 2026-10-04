@@ -6141,6 +6141,17 @@ class $NotebooksTable extends Notebooks
     type: DriftSqlType.int,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _passwordHashPrevMeta = const VerificationMeta(
+    'passwordHashPrev',
+  );
+  @override
+  late final GeneratedColumn<String> passwordHashPrev = GeneratedColumn<String>(
+    'password_hash_prev',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _syncDirtyMeta = const VerificationMeta(
     'syncDirty',
   );
@@ -6204,6 +6215,7 @@ class $NotebooksTable extends Notebooks
     passwordHash,
     passwordSalt,
     passwordIterations,
+    passwordHashPrev,
     syncDirty,
     syncedSeq,
     deletedAt,
@@ -6314,6 +6326,15 @@ class $NotebooksTable extends Notebooks
         ),
       );
     }
+    if (data.containsKey('password_hash_prev')) {
+      context.handle(
+        _passwordHashPrevMeta,
+        passwordHashPrev.isAcceptableOrUnknown(
+          data['password_hash_prev']!,
+          _passwordHashPrevMeta,
+        ),
+      );
+    }
     if (data.containsKey('sync_dirty')) {
       context.handle(
         _syncDirtyMeta,
@@ -6395,6 +6416,10 @@ class $NotebooksTable extends Notebooks
         DriftSqlType.int,
         data['${effectivePrefix}password_iterations'],
       ),
+      passwordHashPrev: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}password_hash_prev'],
+      ),
       syncDirty: attachedDatabase.typeMapping.read(
         DriftSqlType.bool,
         data['${effectivePrefix}sync_dirty'],
@@ -6457,6 +6482,10 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
   final String? passwordSalt;
   final int? passwordIterations;
 
+  /// Previous verifier hash: proof for a transition and, after a clear, the
+  /// durable tombstone that prevents a stale replica from restoring that hash.
+  final String? passwordHashPrev;
+
   /// True when this notebook has local edits the server has not accepted.
   ///
   /// Set on every local save and cleared only by a push the server confirmed.
@@ -6492,6 +6521,7 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
     this.passwordHash,
     this.passwordSalt,
     this.passwordIterations,
+    this.passwordHashPrev,
     required this.syncDirty,
     this.syncedSeq,
     this.deletedAt,
@@ -6523,6 +6553,9 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
     }
     if (!nullToAbsent || passwordIterations != null) {
       map['password_iterations'] = Variable<int>(passwordIterations);
+    }
+    if (!nullToAbsent || passwordHashPrev != null) {
+      map['password_hash_prev'] = Variable<String>(passwordHashPrev);
     }
     map['sync_dirty'] = Variable<bool>(syncDirty);
     if (!nullToAbsent || syncedSeq != null) {
@@ -6563,6 +6596,9 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
       passwordIterations: passwordIterations == null && nullToAbsent
           ? const Value.absent()
           : Value(passwordIterations),
+      passwordHashPrev: passwordHashPrev == null && nullToAbsent
+          ? const Value.absent()
+          : Value(passwordHashPrev),
       syncDirty: Value(syncDirty),
       syncedSeq: syncedSeq == null && nullToAbsent
           ? const Value.absent()
@@ -6594,6 +6630,7 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
       passwordHash: serializer.fromJson<String?>(json['passwordHash']),
       passwordSalt: serializer.fromJson<String?>(json['passwordSalt']),
       passwordIterations: serializer.fromJson<int?>(json['passwordIterations']),
+      passwordHashPrev: serializer.fromJson<String?>(json['passwordHashPrev']),
       syncDirty: serializer.fromJson<bool>(json['syncDirty']),
       syncedSeq: serializer.fromJson<int?>(json['syncedSeq']),
       deletedAt: serializer.fromJson<int?>(json['deletedAt']),
@@ -6616,6 +6653,7 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
       'passwordHash': serializer.toJson<String?>(passwordHash),
       'passwordSalt': serializer.toJson<String?>(passwordSalt),
       'passwordIterations': serializer.toJson<int?>(passwordIterations),
+      'passwordHashPrev': serializer.toJson<String?>(passwordHashPrev),
       'syncDirty': serializer.toJson<bool>(syncDirty),
       'syncedSeq': serializer.toJson<int?>(syncedSeq),
       'deletedAt': serializer.toJson<int?>(deletedAt),
@@ -6636,6 +6674,7 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
     Value<String?> passwordHash = const Value.absent(),
     Value<String?> passwordSalt = const Value.absent(),
     Value<int?> passwordIterations = const Value.absent(),
+    Value<String?> passwordHashPrev = const Value.absent(),
     bool? syncDirty,
     Value<int?> syncedSeq = const Value.absent(),
     Value<int?> deletedAt = const Value.absent(),
@@ -6655,6 +6694,9 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
     passwordIterations: passwordIterations.present
         ? passwordIterations.value
         : this.passwordIterations,
+    passwordHashPrev: passwordHashPrev.present
+        ? passwordHashPrev.value
+        : this.passwordHashPrev,
     syncDirty: syncDirty ?? this.syncDirty,
     syncedSeq: syncedSeq.present ? syncedSeq.value : this.syncedSeq,
     deletedAt: deletedAt.present ? deletedAt.value : this.deletedAt,
@@ -6682,6 +6724,9 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
       passwordIterations: data.passwordIterations.present
           ? data.passwordIterations.value
           : this.passwordIterations,
+      passwordHashPrev: data.passwordHashPrev.present
+          ? data.passwordHashPrev.value
+          : this.passwordHashPrev,
       syncDirty: data.syncDirty.present ? data.syncDirty.value : this.syncDirty,
       syncedSeq: data.syncedSeq.present ? data.syncedSeq.value : this.syncedSeq,
       deletedAt: data.deletedAt.present ? data.deletedAt.value : this.deletedAt,
@@ -6704,6 +6749,7 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
           ..write('passwordHash: $passwordHash, ')
           ..write('passwordSalt: $passwordSalt, ')
           ..write('passwordIterations: $passwordIterations, ')
+          ..write('passwordHashPrev: $passwordHashPrev, ')
           ..write('syncDirty: $syncDirty, ')
           ..write('syncedSeq: $syncedSeq, ')
           ..write('deletedAt: $deletedAt, ')
@@ -6726,6 +6772,7 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
     passwordHash,
     passwordSalt,
     passwordIterations,
+    passwordHashPrev,
     syncDirty,
     syncedSeq,
     deletedAt,
@@ -6747,6 +6794,7 @@ class NotebookRow extends DataClass implements Insertable<NotebookRow> {
           other.passwordHash == this.passwordHash &&
           other.passwordSalt == this.passwordSalt &&
           other.passwordIterations == this.passwordIterations &&
+          other.passwordHashPrev == this.passwordHashPrev &&
           other.syncDirty == this.syncDirty &&
           other.syncedSeq == this.syncedSeq &&
           other.deletedAt == this.deletedAt &&
@@ -6766,6 +6814,7 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
   final Value<String?> passwordHash;
   final Value<String?> passwordSalt;
   final Value<int?> passwordIterations;
+  final Value<String?> passwordHashPrev;
   final Value<bool> syncDirty;
   final Value<int?> syncedSeq;
   final Value<int?> deletedAt;
@@ -6784,6 +6833,7 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
     this.passwordHash = const Value.absent(),
     this.passwordSalt = const Value.absent(),
     this.passwordIterations = const Value.absent(),
+    this.passwordHashPrev = const Value.absent(),
     this.syncDirty = const Value.absent(),
     this.syncedSeq = const Value.absent(),
     this.deletedAt = const Value.absent(),
@@ -6803,6 +6853,7 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
     this.passwordHash = const Value.absent(),
     this.passwordSalt = const Value.absent(),
     this.passwordIterations = const Value.absent(),
+    this.passwordHashPrev = const Value.absent(),
     this.syncDirty = const Value.absent(),
     this.syncedSeq = const Value.absent(),
     this.deletedAt = const Value.absent(),
@@ -6827,6 +6878,7 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
     Expression<String>? passwordHash,
     Expression<String>? passwordSalt,
     Expression<int>? passwordIterations,
+    Expression<String>? passwordHashPrev,
     Expression<bool>? syncDirty,
     Expression<int>? syncedSeq,
     Expression<int>? deletedAt,
@@ -6846,6 +6898,7 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
       if (passwordHash != null) 'password_hash': passwordHash,
       if (passwordSalt != null) 'password_salt': passwordSalt,
       if (passwordIterations != null) 'password_iterations': passwordIterations,
+      if (passwordHashPrev != null) 'password_hash_prev': passwordHashPrev,
       if (syncDirty != null) 'sync_dirty': syncDirty,
       if (syncedSeq != null) 'synced_seq': syncedSeq,
       if (deletedAt != null) 'deleted_at': deletedAt,
@@ -6867,6 +6920,7 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
     Value<String?>? passwordHash,
     Value<String?>? passwordSalt,
     Value<int?>? passwordIterations,
+    Value<String?>? passwordHashPrev,
     Value<bool>? syncDirty,
     Value<int?>? syncedSeq,
     Value<int?>? deletedAt,
@@ -6886,6 +6940,7 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
       passwordHash: passwordHash ?? this.passwordHash,
       passwordSalt: passwordSalt ?? this.passwordSalt,
       passwordIterations: passwordIterations ?? this.passwordIterations,
+      passwordHashPrev: passwordHashPrev ?? this.passwordHashPrev,
       syncDirty: syncDirty ?? this.syncDirty,
       syncedSeq: syncedSeq ?? this.syncedSeq,
       deletedAt: deletedAt ?? this.deletedAt,
@@ -6933,6 +6988,9 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
     if (passwordIterations.present) {
       map['password_iterations'] = Variable<int>(passwordIterations.value);
     }
+    if (passwordHashPrev.present) {
+      map['password_hash_prev'] = Variable<String>(passwordHashPrev.value);
+    }
     if (syncDirty.present) {
       map['sync_dirty'] = Variable<bool>(syncDirty.value);
     }
@@ -6966,6 +7024,7 @@ class NotebooksCompanion extends UpdateCompanion<NotebookRow> {
           ..write('passwordHash: $passwordHash, ')
           ..write('passwordSalt: $passwordSalt, ')
           ..write('passwordIterations: $passwordIterations, ')
+          ..write('passwordHashPrev: $passwordHashPrev, ')
           ..write('syncDirty: $syncDirty, ')
           ..write('syncedSeq: $syncedSeq, ')
           ..write('deletedAt: $deletedAt, ')
@@ -14120,6 +14179,7 @@ typedef $$NotebooksTableCreateCompanionBuilder =
       Value<String?> passwordHash,
       Value<String?> passwordSalt,
       Value<int?> passwordIterations,
+      Value<String?> passwordHashPrev,
       Value<bool> syncDirty,
       Value<int?> syncedSeq,
       Value<int?> deletedAt,
@@ -14140,6 +14200,7 @@ typedef $$NotebooksTableUpdateCompanionBuilder =
       Value<String?> passwordHash,
       Value<String?> passwordSalt,
       Value<int?> passwordIterations,
+      Value<String?> passwordHashPrev,
       Value<bool> syncDirty,
       Value<int?> syncedSeq,
       Value<int?> deletedAt,
@@ -14213,6 +14274,11 @@ class $$NotebooksTableFilterComposer
 
   ColumnFilters<int> get passwordIterations => $composableBuilder(
     column: $table.passwordIterations,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get passwordHashPrev => $composableBuilder(
+    column: $table.passwordHashPrev,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -14306,6 +14372,11 @@ class $$NotebooksTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get passwordHashPrev => $composableBuilder(
+    column: $table.passwordHashPrev,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<bool> get syncDirty => $composableBuilder(
     column: $table.syncDirty,
     builder: (column) => ColumnOrderings(column),
@@ -14380,6 +14451,11 @@ class $$NotebooksTableAnnotationComposer
     builder: (column) => column,
   );
 
+  GeneratedColumn<String> get passwordHashPrev => $composableBuilder(
+    column: $table.passwordHashPrev,
+    builder: (column) => column,
+  );
+
   GeneratedColumn<bool> get syncDirty =>
       $composableBuilder(column: $table.syncDirty, builder: (column) => column);
 
@@ -14436,6 +14512,7 @@ class $$NotebooksTableTableManager
                 Value<String?> passwordHash = const Value.absent(),
                 Value<String?> passwordSalt = const Value.absent(),
                 Value<int?> passwordIterations = const Value.absent(),
+                Value<String?> passwordHashPrev = const Value.absent(),
                 Value<bool> syncDirty = const Value.absent(),
                 Value<int?> syncedSeq = const Value.absent(),
                 Value<int?> deletedAt = const Value.absent(),
@@ -14454,6 +14531,7 @@ class $$NotebooksTableTableManager
                 passwordHash: passwordHash,
                 passwordSalt: passwordSalt,
                 passwordIterations: passwordIterations,
+                passwordHashPrev: passwordHashPrev,
                 syncDirty: syncDirty,
                 syncedSeq: syncedSeq,
                 deletedAt: deletedAt,
@@ -14474,6 +14552,7 @@ class $$NotebooksTableTableManager
                 Value<String?> passwordHash = const Value.absent(),
                 Value<String?> passwordSalt = const Value.absent(),
                 Value<int?> passwordIterations = const Value.absent(),
+                Value<String?> passwordHashPrev = const Value.absent(),
                 Value<bool> syncDirty = const Value.absent(),
                 Value<int?> syncedSeq = const Value.absent(),
                 Value<int?> deletedAt = const Value.absent(),
@@ -14492,6 +14571,7 @@ class $$NotebooksTableTableManager
                 passwordHash: passwordHash,
                 passwordSalt: passwordSalt,
                 passwordIterations: passwordIterations,
+                passwordHashPrev: passwordHashPrev,
                 syncDirty: syncDirty,
                 syncedSeq: syncedSeq,
                 deletedAt: deletedAt,

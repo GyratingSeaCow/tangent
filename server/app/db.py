@@ -176,7 +176,9 @@ CREATE TABLE IF NOT EXISTS notebooks (
     -- Salted PBKDF2-HMAC-SHA256 verifier metadata. Never plaintext.
     password_hash TEXT,
     password_salt TEXT,
-    password_iterations INTEGER
+    password_iterations INTEGER,
+    -- Causal proof for verifier transitions and cleared-generation tombstone.
+    password_hash_prev TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_notebooks_updated_at
@@ -746,12 +748,13 @@ def _migrate_notebooks_folder_id(conn: sqlite3.Connection) -> None:
 
 
 def _migrate_notebooks_password_metadata(conn: sqlite3.Connection) -> None:
-    """Add nullable verifier metadata; every existing notebook stays open."""
+    """Add nullable verifier metadata and transition proof/tombstone."""
     columns = {row[1] for row in conn.execute("PRAGMA table_info(notebooks)")}
     for name, declaration in (
         ("password_hash", "TEXT"),
         ("password_salt", "TEXT"),
         ("password_iterations", "INTEGER"),
+        ("password_hash_prev", "TEXT"),
     ):
         if name not in columns:
             conn.execute(

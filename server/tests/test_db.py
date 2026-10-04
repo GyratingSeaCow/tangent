@@ -47,7 +47,9 @@ def test_init_db_migrates_notebook_password_metadata_without_locking_rows(
         "    -- Salted PBKDF2-HMAC-SHA256 verifier metadata. Never plaintext.\n"
         "    password_hash TEXT,\n"
         "    password_salt TEXT,\n"
-        "    password_iterations INTEGER\n",
+        "    password_iterations INTEGER,\n"
+        "    -- Causal proof for verifier transitions and cleared-generation tombstone.\n"
+        "    password_hash_prev TEXT\n",
         "    folder_id TEXT\n",
     )
     conn = sqlite3.connect(db_path)
@@ -65,7 +67,7 @@ def test_init_db_migrates_notebook_password_metadata_without_locking_rows(
     conn = sqlite3.connect(db_path)
     columns = [row[1] for row in conn.execute("PRAGMA table_info(notebooks)")]
     metadata = conn.execute(
-        "SELECT password_hash, password_salt, password_iterations "
+        "SELECT password_hash, password_salt, password_iterations, password_hash_prev "
         "FROM notebooks WHERE id = 'legacy'"
     ).fetchone()
     conn.close()
@@ -73,7 +75,8 @@ def test_init_db_migrates_notebook_password_metadata_without_locking_rows(
     assert columns.count("password_hash") == 1
     assert columns.count("password_salt") == 1
     assert columns.count("password_iterations") == 1
-    assert metadata == (None, None, None)
+    assert columns.count("password_hash_prev") == 1
+    assert metadata == (None, None, None, None)
 
 
 def test_get_db_yields_connection_with_row_factory(temp_data_dir: Path) -> None:

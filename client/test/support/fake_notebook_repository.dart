@@ -126,6 +126,7 @@ class FakeNotebookRepository extends NotebookRepository {
       passwordHash: notebook.passwordHash,
       passwordSalt: notebook.passwordSalt,
       passwordIterations: notebook.passwordIterations,
+      passwordHashPrev: notebook.passwordHashPrev,
     );
     _emit();
   }
@@ -134,8 +135,9 @@ class FakeNotebookRepository extends NotebookRepository {
   Future<void> setPassword(String id, String password) async {
     final Notebook? notebook = _notebooks[id];
     if (notebook == null) throw StateError('Notebook is no longer available');
-    final NotebookPasswordMetadata metadata =
-        fakeNotebookPasswordMetadata(password);
+    final NotebookPasswordMetadata metadata = fakeNotebookPasswordMetadata(
+      password,
+    );
     _notebooks[id] = Notebook(
       id: notebook.id,
       title: notebook.title,
@@ -150,6 +152,7 @@ class FakeNotebookRepository extends NotebookRepository {
       passwordHash: metadata.hash,
       passwordSalt: metadata.salt,
       passwordIterations: metadata.iterations,
+      passwordHashPrev: notebook.passwordHash ?? notebook.passwordHashPrev,
     );
     _emit();
   }
@@ -163,7 +166,8 @@ class FakeNotebookRepository extends NotebookRepository {
       return false;
     }
     if (notebook!.passwordSalt == _fakePasswordSalt) {
-      return notebook.passwordHash == fakeNotebookPasswordMetadata(password).hash;
+      return notebook.passwordHash ==
+          fakeNotebookPasswordMetadata(password).hash;
     }
     return verifyNotebookPassword(
       password: password,
@@ -188,6 +192,7 @@ class FakeNotebookRepository extends NotebookRepository {
       pinned: notebook.pinned,
       ruling: notebook.ruling,
       lastPenStyle: notebook.lastPenStyle,
+      passwordHashPrev: notebook.passwordHash,
     );
     _emit();
     return true;

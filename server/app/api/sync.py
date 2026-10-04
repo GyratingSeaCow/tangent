@@ -666,7 +666,7 @@ def _apply_document(
         # must not erase the strokes the server already holds.
         existing = conn.execute(
             "SELECT folder_id, ink, password_hash, password_salt, "
-            "password_iterations FROM notebooks WHERE id = ?",
+            "password_iterations, password_hash_prev FROM notebooks WHERE id = ?",
             (change.entity_id,),
         ).fetchone()
         folder_id = (
@@ -683,17 +683,39 @@ def _apply_document(
             )
         else:
             ink = existing["ink"] if existing is not None else None
-        # Missing comes from an older peer and preserves the held tuple.
-        # Present null is the current wire representation of "unprotected".
+        # password_hash_prev is both transition proof and a one-generation
+        # tombstone. Missing metadata is an old peer and preserves the state.
         if "password_hash" not in p:
             password_hash = existing["password_hash"] if existing is not None else None
             password_salt = existing["password_salt"] if existing is not None else None
             password_iterations = (
                 existing["password_iterations"] if existing is not None else None
             )
+            password_hash_prev = (
+                existing["password_hash_prev"] if existing is not None else None
+            )
         elif p["password_hash"] is None:
             if p.get("password_salt") is not None or p.get("password_iterations") is not None:
                 raise ValueError("unprotected notebook requires null password metadata")
+            incoming_prev = p.get("password_hash_prev")
+            held_hash = existing["password_hash"] if existing is not None else None
+            held_prev = existing["password_hash_prev"] if existing is not None else None
+            if existing is None:
+                if incoming_prev is not None:
+                    raise ValueError("new unprotected notebook cannot claim a predecessor")
+                password_hash_prev = None
+            elif held_hash is not None:
+                if incoming_prev != held_hash:
+                    raise ValueError("password clear requires the current verifier as proof")
+                password_hash_prev = held_hash
+            elif held_prev is not None:
+                if incoming_prev != held_prev:
+                    raise ValueError("unprotected notebook requires its cleared generation")
+                password_hash_prev = held_prev
+            else:
+                if incoming_prev is not None:
+                    raise ValueError("unprotected notebook predecessor is not recognized")
+                password_hash_prev = None
             password_hash = None
             password_salt = None
             password_iterations = None
@@ -712,13 +734,35 @@ def _apply_document(
                 raise ValueError(
                     "protected notebook requires sane password_iterations"
                 )
+            incoming_prev = p.get("password_hash_prev")
+            if incoming_prev is not None and (
+                not isinstance(incoming_prev, str) or not incoming_prev
+            ):
+                raise ValueError("password_hash_prev must be a non-empty string or null")
+            held_hash = existing["password_hash"] if existing is not None else None
+            held_prev = existing["password_hash_prev"] if existing is not None else None
+            if password_hash == held_hash:
+                # Ordinary edits re-push the current tuple; retain canonical proof.
+                password_hash_prev = held_prev
+            elif held_hash is not None:
+                if incoming_prev != held_hash:
+                    raise ValueError("password rotation requires the current verifier as proof")
+                password_hash_prev = held_hash
+            elif held_prev is not None:
+                if incoming_prev != held_prev or password_hash == held_prev:
+                    raise ValueError("password enable must follow the cleared generation")
+                password_hash_prev = held_prev
+            else:
+                if incoming_prev is not None:
+                    raise ValueError("initial password enable cannot claim a predecessor")
+                password_hash_prev = None
         conn.execute(
             """
             INSERT INTO notebooks
                 (id, title, doc, ink, created_at, updated_at, deleted_at,
                  origin_device_id, folder_id, password_hash, password_salt,
-                 password_iterations)
-            VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)
+                 password_iterations, password_hash_prev)
+            VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
                 doc = excluded.doc,
@@ -728,7 +772,8 @@ def _apply_document(
                 folder_id = excluded.folder_id,
                 password_hash = excluded.password_hash,
                 password_salt = excluded.password_salt,
-                password_iterations = excluded.password_iterations
+                password_iterations = excluded.password_iterations,
+                password_hash_prev = excluded.password_hash_prev
             """,
             (
                 change.entity_id,
@@ -742,6 +787,7 @@ def _apply_document(
                 password_hash,
                 password_salt,
                 password_iterations,
+                password_hash_prev,
             ),
         )
         return
@@ -844,6 +890,22 @@ def sync_push(
                         ]
             elif change.entity_type == "notebook":
                 _apply_document(db, "notebooks", change, now)
+                if change.op != "delete" and change.payload is not None:
+                    stored = db.execute(
+                        "SELECT password_hash, password_salt, password_iterations, "
+                        "password_hash_prev FROM notebooks WHERE id = ?",
+                        (change.entity_id,),
+                    ).fetchone()
+                    if stored is not None:
+                        publish_payload = dict(change.payload)
+                        publish_payload["password_hash"] = stored["password_hash"]
+                        publish_payload["password_salt"] = stored["password_salt"]
+                        publish_payload["password_iterations"] = stored[
+                            "password_iterations"
+                        ]
+                        publish_payload["password_hash_prev"] = stored[
+                            "password_hash_prev"
+                        ]
                 # The OCR worker re-derives this notebook's index (a delete
                 # purges it) — queued after the whole batch commits.
                 reindex_ids.append(change.entity_id)

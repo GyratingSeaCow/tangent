@@ -11,7 +11,7 @@ from app.api.ask import retrieve
 from app.db import init_db
 
 
-def test_protected_notebook_typed_and_ink_content_are_not_retrievable(
+def test_protected_notebook_is_hidden_then_available_after_authenticated_clear(
     temp_data_dir: Path,
 ) -> None:
     init_db(str(temp_data_dir))
@@ -52,4 +52,11 @@ def test_protected_notebook_typed_and_ink_content_are_not_retrievable(
     db.commit()
 
     assert retrieve(db, "classified orchid") == []
+    db.execute(
+        "UPDATE notebooks SET password_hash=NULL, password_salt=NULL, "
+        "password_iterations=NULL, password_hash_prev='hash' WHERE id='private'"
+    )
+    db.commit()
+    hits = retrieve(db, "classified orchid")
+    assert any(hit.entity_id == "private" for hit in hits)
     db.close()

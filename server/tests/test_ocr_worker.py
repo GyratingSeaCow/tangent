@@ -275,6 +275,22 @@ class TestReindex:
         assert _rows(db, "nb-private") == []
         assert _ink_changes(db, "nb-private")[-1]["op"] == "delete"
 
+        db.execute(
+            "UPDATE notebooks SET password_hash=NULL, password_salt=NULL, "
+            "password_iterations=NULL, password_hash_prev='protected-hash' "
+            "WHERE id='nb-private'"
+        )
+        db.commit()
+        ocr_worker.reindex_notebook(
+            db,
+            "nb-private",
+            infer=lambda _image: "visible again",
+            now=3000,
+        )
+        assert [row["word_text"] for row in _rows(db, "nb-private")] == [
+            "visible again",
+        ]
+
     def test_missing_or_inkless_notebook_is_a_quiet_noop(self, db):
         ocr_worker.reindex_notebook(db, "ghost", infer=lambda img: "x", now=1000)
         _insert_notebook(db, "nb-noink", None)

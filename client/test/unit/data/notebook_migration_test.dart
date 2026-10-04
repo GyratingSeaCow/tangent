@@ -31,6 +31,8 @@ const _notebookColumns = [
   'password_hash',
   'password_salt',
   'password_iterations',
+  // v32: causal proof and cleared-generation tombstone.
+  'password_hash_prev',
   'sync_dirty',
   'synced_seq',
   // v13: notebook trash. Deletion parks the row here for 7 days before
@@ -59,6 +61,7 @@ const _v30MigratedNotebookColumns = <String>[
   'password_hash',
   'password_salt',
   'password_iterations',
+  'password_hash_prev',
 ];
 
 const _insertNotebook =
@@ -69,159 +72,173 @@ List<Object?> _columnNames(Database db, String table) =>
     db.select('PRAGMA table_info($table)').map((r) => r['name']).toList();
 
 void main() {
-  test('v30 adds nullable password metadata without locking existing rows',
-      () async {
-    final Directory dir = createResolvedTempSync('notebook-password-migration-');
-    addTearDown(() => dir.deleteSync(recursive: true));
-    final File file = File('${dir.path}/fixture.sqlite');
-    var db = LocalDb.forTesting(NativeDatabase(file));
-    await db.listDumps();
-    await db.customStatement(_insertNotebook);
-    await db.close();
+  test(
+    'v30 adds nullable password metadata without locking existing rows',
+    () async {
+      final Directory dir = createResolvedTempSync(
+        'notebook-password-migration-',
+      );
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final File file = File('${dir.path}/fixture.sqlite');
+      var db = LocalDb.forTesting(NativeDatabase(file));
+      await db.listDumps();
+      await db.customStatement(_insertNotebook);
+      await db.close();
 
-    final Database sql = sqlite3.open(file.path);
-    sql.execute('ALTER TABLE notebooks DROP COLUMN password_hash');
-    sql.execute('ALTER TABLE notebooks DROP COLUMN password_salt');
-    sql.execute('ALTER TABLE notebooks DROP COLUMN password_iterations');
-    sql.userVersion = 30;
-    sql.close();
+      final Database sql = sqlite3.open(file.path);
+      sql.execute('ALTER TABLE notebooks DROP COLUMN password_hash');
+      sql.execute('ALTER TABLE notebooks DROP COLUMN password_salt');
+      sql.execute('ALTER TABLE notebooks DROP COLUMN password_iterations');
+      sql.execute('ALTER TABLE notebooks DROP COLUMN password_hash_prev');
+      sql.userVersion = 30;
+      sql.close();
 
-    db = LocalDb.forTesting(NativeDatabase(file));
-    addTearDown(db.close);
-    await db.listDumps();
+      db = LocalDb.forTesting(NativeDatabase(file));
+      addTearDown(db.close);
+      await db.listDumps();
 
-    final Database migrated = sqlite3.open(file.path);
-    addTearDown(migrated.close);
-    expect(migrated.userVersion, 31);
-    expect(_columnNames(migrated, 'notebooks'), _v30MigratedNotebookColumns);
-    final Row row = migrated.select(
-      'SELECT password_hash, password_salt, password_iterations '
-      "FROM notebooks WHERE id='n1'",
-    ).single;
-    expect(row['password_hash'], isNull);
-    expect(row['password_salt'], isNull);
-    expect(row['password_iterations'], isNull);
-  });
-
-  test('a fresh database is created at the current schema with notebooks',
-      () async {
-    final sql = sqlite3.openInMemory();
-    final db = LocalDb.forTesting(NativeDatabase.opened(sql));
-    addTearDown(db.close);
-
-    await db.listDumps();
-
-    expect(db.schemaVersion, 31);
-    expect(sql.userVersion, 31);
-    expect(_columnNames(sql, 'notebooks'), _notebookColumns);
-    expect(
-      sql.select('PRAGMA foreign_key_list(notebooks)'),
-      isEmpty,
-      reason: 'Notebooks must never cascade with dumps',
-    );
-    sql.execute(_insertNotebook);
-    expect(
-      () => sql.execute(_insertNotebook),
-      throwsA(isA<SqliteException>()),
-      reason: 'id is the primary key',
-    );
-  });
-
-  test('upgrading a v4 database adds notebooks and preserves every dump row',
-      () async {
-    final sql = oldStorageDatabase(4);
-    final before = sqlRows(sql, 'dumps');
-    final queue = sqlRows(sql, 'sync_queue');
-    final db = LocalDb.forTesting(NativeDatabase.opened(sql));
-    addTearDown(db.close);
-    expect(sql.userVersion, 4);
-
-    await db.listDumps();
-
-    expect(sql.userVersion, 31);
-    expect(_columnNames(sql, 'notebooks'), _notebookColumns);
-    // v8 adds folder_id to dumps, so compare the columns the fixture had:
-    // this test is about existing rows surviving, not about the column list.
-    expect(
-      sqlRows(sql, 'dumps')
-          .map(
-            (Map<String, Object?> row) => <String, Object?>{
-              for (final String name in before.first.keys) name: row[name],
-            },
+      final Database migrated = sqlite3.open(file.path);
+      addTearDown(migrated.close);
+      expect(migrated.userVersion, 32);
+      expect(_columnNames(migrated, 'notebooks'), _v30MigratedNotebookColumns);
+      final Row row = migrated
+          .select(
+            'SELECT password_hash, password_salt, password_iterations, password_hash_prev '
+            "FROM notebooks WHERE id='n1'",
           )
-          .toList(),
-      before,
-    );
-    expect(
-      sqlRows(sql, 'dumps').every((row) => row['folder_id'] == null),
-      isTrue,
-      reason: 'an upgraded recording must arrive unfiled',
-    );
-    expect(sqlRows(sql, 'sync_queue'), queue);
-    expect(sql.select('SELECT * FROM notebooks'), isEmpty);
-    expect(sql.select('PRAGMA integrity_check').single.values.single, 'ok');
-    expect(sql.select('PRAGMA foreign_key_check'), isEmpty);
-  });
+          .single;
+      expect(row['password_hash'], isNull);
+      expect(row['password_salt'], isNull);
+      expect(row['password_iterations'], isNull);
+      expect(row['password_hash_prev'], isNull);
+    },
+  );
 
-  test('the v5 to v6 step creates notebooks and touches nothing else',
-      () async {
-    final dir = createResolvedTempSync('notebook-migration-');
-    final file = File('${dir.path}/fixture.sqlite');
-    final fixture = oldStorageDatabase(4, path: file.path);
-    fixture.close();
+  test(
+    'a fresh database is created at the current schema with notebooks',
+    () async {
+      final sql = sqlite3.openInMemory();
+      final db = LocalDb.forTesting(NativeDatabase.opened(sql));
+      addTearDown(db.close);
 
-    var db = LocalDb.forTesting(NativeDatabase(file));
-    await db.listDumps();
-    await db.customStatement('UPDATE storage_catalog_state SET revision=9');
-    await db.close();
+      await db.listDumps();
 
-    // Rewind to a genuine v5 database: the storage catalog from the v4 -> v5
-    // step stays, the notebooks table does not exist yet.
-    var sql = sqlite3.open(file.path);
-    sql.execute('DROP TABLE notebooks');
-    sql.userVersion = 5;
-    final before = sqlRows(sql, 'dumps');
-    final queue = sqlRows(sql, 'sync_queue');
-    final locations = sqlRows(sql, 'storage_locations');
-    sql.close();
+      expect(db.schemaVersion, 32);
+      expect(sql.userVersion, 32);
+      expect(_columnNames(sql, 'notebooks'), _notebookColumns);
+      expect(
+        sql.select('PRAGMA foreign_key_list(notebooks)'),
+        isEmpty,
+        reason: 'Notebooks must never cascade with dumps',
+      );
+      sql.execute(_insertNotebook);
+      expect(
+        () => sql.execute(_insertNotebook),
+        throwsA(isA<SqliteException>()),
+        reason: 'id is the primary key',
+      );
+    },
+  );
 
-    db = LocalDb.forTesting(NativeDatabase(file));
-    addTearDown(() => dir.deleteSync(recursive: true));
-    await db.listDumps();
-    await db.close();
+  test(
+    'upgrading a v4 database adds notebooks and preserves every dump row',
+    () async {
+      final sql = oldStorageDatabase(4);
+      final before = sqlRows(sql, 'dumps');
+      final queue = sqlRows(sql, 'sync_queue');
+      final db = LocalDb.forTesting(NativeDatabase.opened(sql));
+      addTearDown(db.close);
+      expect(sql.userVersion, 4);
 
-    sql = sqlite3.open(file.path);
-    addTearDown(sql.close);
-    expect(sql.userVersion, 31);
-    expect(_columnNames(sql, 'notebooks'), _notebookColumns);
-    // v8 adds folder_id to dumps, so compare the columns the fixture had:
-    // this test is about existing rows surviving, not about the column list.
-    expect(
-      sqlRows(sql, 'dumps')
-          .map(
-            (Map<String, Object?> row) => <String, Object?>{
-              for (final String name in before.first.keys) name: row[name],
-            },
-          )
-          .toList(),
-      before,
-    );
-    expect(
-      sqlRows(sql, 'dumps').every((row) => row['folder_id'] == null),
-      isTrue,
-      reason: 'an upgraded recording must arrive unfiled',
-    );
-    expect(sqlRows(sql, 'sync_queue'), queue);
-    expect(sqlRows(sql, 'storage_locations'), locations);
-    expect(
-      sql
-          .select('SELECT revision FROM storage_catalog_state')
-          .single['revision'],
-      9,
-      reason: 'The v6 step must not re-run catalog bootstrap',
-    );
-    expect(sql.select('PRAGMA integrity_check').single.values.single, 'ok');
-  });
+      await db.listDumps();
+
+      expect(sql.userVersion, 32);
+      expect(_columnNames(sql, 'notebooks'), _notebookColumns);
+      // v8 adds folder_id to dumps, so compare the columns the fixture had:
+      // this test is about existing rows surviving, not about the column list.
+      expect(
+        sqlRows(sql, 'dumps')
+            .map(
+              (Map<String, Object?> row) => <String, Object?>{
+                for (final String name in before.first.keys) name: row[name],
+              },
+            )
+            .toList(),
+        before,
+      );
+      expect(
+        sqlRows(sql, 'dumps').every((row) => row['folder_id'] == null),
+        isTrue,
+        reason: 'an upgraded recording must arrive unfiled',
+      );
+      expect(sqlRows(sql, 'sync_queue'), queue);
+      expect(sql.select('SELECT * FROM notebooks'), isEmpty);
+      expect(sql.select('PRAGMA integrity_check').single.values.single, 'ok');
+      expect(sql.select('PRAGMA foreign_key_check'), isEmpty);
+    },
+  );
+
+  test(
+    'the v5 to v6 step creates notebooks and touches nothing else',
+    () async {
+      final dir = createResolvedTempSync('notebook-migration-');
+      final file = File('${dir.path}/fixture.sqlite');
+      final fixture = oldStorageDatabase(4, path: file.path);
+      fixture.close();
+
+      var db = LocalDb.forTesting(NativeDatabase(file));
+      await db.listDumps();
+      await db.customStatement('UPDATE storage_catalog_state SET revision=9');
+      await db.close();
+
+      // Rewind to a genuine v5 database: the storage catalog from the v4 -> v5
+      // step stays, the notebooks table does not exist yet.
+      var sql = sqlite3.open(file.path);
+      sql.execute('DROP TABLE notebooks');
+      sql.userVersion = 5;
+      final before = sqlRows(sql, 'dumps');
+      final queue = sqlRows(sql, 'sync_queue');
+      final locations = sqlRows(sql, 'storage_locations');
+      sql.close();
+
+      db = LocalDb.forTesting(NativeDatabase(file));
+      addTearDown(() => dir.deleteSync(recursive: true));
+      await db.listDumps();
+      await db.close();
+
+      sql = sqlite3.open(file.path);
+      addTearDown(sql.close);
+      expect(sql.userVersion, 32);
+      expect(_columnNames(sql, 'notebooks'), _notebookColumns);
+      // v8 adds folder_id to dumps, so compare the columns the fixture had:
+      // this test is about existing rows surviving, not about the column list.
+      expect(
+        sqlRows(sql, 'dumps')
+            .map(
+              (Map<String, Object?> row) => <String, Object?>{
+                for (final String name in before.first.keys) name: row[name],
+              },
+            )
+            .toList(),
+        before,
+      );
+      expect(
+        sqlRows(sql, 'dumps').every((row) => row['folder_id'] == null),
+        isTrue,
+        reason: 'an upgraded recording must arrive unfiled',
+      );
+      expect(sqlRows(sql, 'sync_queue'), queue);
+      expect(sqlRows(sql, 'storage_locations'), locations);
+      expect(
+        sql
+            .select('SELECT revision FROM storage_catalog_state')
+            .single['revision'],
+        9,
+        reason: 'The v6 step must not re-run catalog bootstrap',
+      );
+      expect(sql.select('PRAGMA integrity_check').single.values.single, 'ok');
+    },
+  );
 
   test('the v14 step re-pushes existing filings and nothing else', () async {
     // Build a current-schema database, then wind the version back to 13 and
@@ -250,7 +267,7 @@ void main() {
     addTearDown(db.close);
     await db.listDumps();
 
-    expect(sql.userVersion, 31);
+    expect(sql.userVersion, 32);
     final rows = <String, int>{
       for (final r in sql.select('SELECT id, sync_dirty FROM notebooks'))
         r['id'] as String: r['sync_dirty'] as int,
@@ -285,7 +302,7 @@ void main() {
     addTearDown(db.close);
     await db.listDumps();
 
-    expect(sql.userVersion, 31);
+    expect(sql.userVersion, 32);
     expect(
       sql.select(
         "SELECT name FROM sqlite_master WHERE type='table' "
@@ -311,8 +328,9 @@ void main() {
             indexedAt: 1000,
           ),
         );
-    final InkIndexEntry row = await (db.select(db.inkIndexEntries)
-          ..where((t) => t.id.equals('line-1:000')))
+    final InkIndexEntry row = await (db.select(
+      db.inkIndexEntries,
+    )..where((t) => t.id.equals('line-1:000')))
         .getSingle();
     expect(row.wordTextLower, 'brake');
   });

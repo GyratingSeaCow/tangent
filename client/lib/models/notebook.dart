@@ -39,6 +39,7 @@ class Notebook implements NotebookHeader {
     this.passwordHash,
     this.passwordSalt,
     this.passwordIterations,
+    this.passwordHashPrev,
     this.passwordMetadataPresent = true,
   });
 
@@ -85,8 +86,13 @@ class Notebook implements NotebookHeader {
   final String? passwordSalt;
   final int? passwordIterations;
 
+  /// Causal proof for the latest verifier transition. While unprotected this
+  /// is the cleared hash tombstone; while protected it is the predecessor that
+  /// authorized the install/rotation. It is a verifier, never plaintext.
+  final String? passwordHashPrev;
+
   /// False only for a decoded legacy durable file that predates verifier
-  /// fields. Present nulls are an authoritative unprotected state.
+  /// fields. Present metadata is still subject to causal proof validation.
   final bool passwordMetadataPresent;
   @override
   bool get passwordProtected => passwordHash != null;
@@ -113,6 +119,7 @@ class Notebook implements NotebookHeader {
         passwordHash: passwordHash,
         passwordSalt: passwordSalt,
         passwordIterations: passwordIterations,
+        passwordHashPrev: passwordHashPrev,
         passwordMetadataPresent: passwordMetadataPresent,
       );
 }
@@ -719,7 +726,7 @@ enum InkColor {
             yellow,
             lime,
             highlightBlue,
-            pink,
+            pink
           ],
       };
 

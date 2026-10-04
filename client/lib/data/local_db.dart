@@ -256,6 +256,10 @@ class Notebooks extends Table {
   TextColumn get passwordSalt => text().nullable()();
   IntColumn get passwordIterations => integer().nullable()();
 
+  /// Previous verifier hash: proof for a transition and, after a clear, the
+  /// durable tombstone that prevents a stale replica from restoring that hash.
+  TextColumn get passwordHashPrev => text().nullable()();
+
   /// True when this notebook has local edits the server has not accepted.
   ///
   /// Set on every local save and cleared only by a push the server confirmed.
@@ -511,7 +515,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   LocalDb.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 31;
+  int get schemaVersion => 32;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -591,8 +595,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
               "AND name='dumps'",
             ).get();
             if (dumpsTable.isNotEmpty) {
-              final List<QueryRow> columns =
-                  await customSelect('PRAGMA table_info(dumps)').get();
+              final List<QueryRow> columns = await customSelect(
+                'PRAGMA table_info(dumps)',
+              ).get();
               final bool hasFolderId = columns.any(
                 (QueryRow row) => row.data['name'] == 'folder_id',
               );
@@ -612,8 +617,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
             // notebooks table needs them added, and adding a column twice
             // throws "duplicate column name" — which would leave the app
             // unable to open its own database.
-            final List<QueryRow> notebookColumns =
-                await customSelect('PRAGMA table_info(notebooks)').get();
+            final List<QueryRow> notebookColumns = await customSelect(
+              'PRAGMA table_info(notebooks)',
+            ).get();
             final Set<String> present = notebookColumns
                 .map((QueryRow row) => row.data['name'] as String)
                 .toSet();
@@ -646,8 +652,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
             // Page ruling. One nullable column; null reads as blank, which is
             // how every page has rendered until now, so there is nothing to
             // backfill and no existing notebook changes appearance.
-            final List<QueryRow> rulingColumns =
-                await customSelect('PRAGMA table_info(notebooks)').get();
+            final List<QueryRow> rulingColumns = await customSelect(
+              'PRAGMA table_info(notebooks)',
+            ).get();
             if (rulingColumns.isEmpty) {
               // Ask the database rather than trusting the version number —
               // the same reasoning as v9, which is where "no such table:
@@ -670,8 +677,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
             // defaulted value, so existing rows keep their exact current
             // meaning: not dirty, never synced, local (not remote-only),
             // and no known server-side audio until a sync says otherwise.
-            final List<QueryRow> dumpColumns =
-                await customSelect('PRAGMA table_info(dumps)').get();
+            final List<QueryRow> dumpColumns = await customSelect(
+              'PRAGMA table_info(dumps)',
+            ).get();
             final Set<String> names = <String>{
               for (final QueryRow row in dumpColumns)
                 row.data['name'] as String,
@@ -711,8 +719,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
             // oldest installs — the exact upgrade-path hazard the v11
             // PRAGMA checks above exist to avoid. Those databases have no
             // synced transcripts to repair anyway.
-            final List<QueryRow> repairColumns =
-                await customSelect('PRAGMA table_info(dumps)').get();
+            final List<QueryRow> repairColumns = await customSelect(
+              'PRAGMA table_info(dumps)',
+            ).get();
             final bool hasStatus = repairColumns.any(
               (QueryRow row) => row.data['name'] == 'transcription_status',
             );
@@ -748,8 +757,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
             // Folder sync. Two additive columns; ask the database, never the
             // version number — adding a column twice throws "duplicate column
             // name" and bricks app launch for every existing install.
-            final List<QueryRow> folderColumns =
-                await customSelect('PRAGMA table_info(folders)').get();
+            final List<QueryRow> folderColumns = await customSelect(
+              'PRAGMA table_info(folders)',
+            ).get();
             final Set<String> present = <String>{
               for (final QueryRow row in folderColumns)
                 row.data['name'] as String,
@@ -766,8 +776,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
             }
 
             // Notebook trash: soft-deletes live 7 days before purge.
-            final List<QueryRow> nbColumns =
-                await customSelect('PRAGMA table_info(notebooks)').get();
+            final List<QueryRow> nbColumns = await customSelect(
+              'PRAGMA table_info(notebooks)',
+            ).get();
             final bool hasDeletedAt = nbColumns.any(
               (QueryRow row) => row.data['name'] == 'deleted_at',
             );
@@ -812,13 +823,16 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
             // Ask the database first: on ancient fixtures the earlier steps
             // may have built notebooks without these columns yet.
             final Set<String> nbColumns = <String>{
-              for (final QueryRow row
-                  in await customSelect('PRAGMA table_info(notebooks)').get())
+              for (final QueryRow row in await customSelect(
+                'PRAGMA table_info(notebooks)',
+              ).get())
                 row.data['name'] as String,
             };
-            if (nbColumns.containsAll(
-              const <String>['folder_id', 'sync_dirty', 'deleted_at'],
-            )) {
+            if (nbColumns.containsAll(const <String>[
+              'folder_id',
+              'sync_dirty',
+              'deleted_at',
+            ])) {
               await customStatement(
                 'UPDATE notebooks SET sync_dirty = 1 '
                 'WHERE folder_id IS NOT NULL AND deleted_at IS NULL',
@@ -844,8 +858,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
             // changes behaviour until its nib is next switched. Same
             // ask-the-database guard as v10's ruling: adding a column twice
             // throws "duplicate column name" and wedges the upgrade.
-            final List<QueryRow> penColumns =
-                await customSelect('PRAGMA table_info(notebooks)').get();
+            final List<QueryRow> penColumns = await customSelect(
+              'PRAGMA table_info(notebooks)',
+            ).get();
             final bool present = penColumns.any(
               (QueryRow row) => row.data['name'] == 'last_pen_style',
             );
@@ -861,8 +876,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
             // throws "duplicate column name" and bricks app launch (the
             // recurring upgrade-path hazard every step above guards against).
             final Set<String> dumpCols = <String>{
-              for (final QueryRow row
-                  in await customSelect('PRAGMA table_info(dumps)').get())
+              for (final QueryRow row in await customSelect(
+                'PRAGMA table_info(dumps)',
+              ).get())
                 row.data['name'] as String,
             };
             if (dumpCols.isNotEmpty) {
@@ -882,8 +898,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
             // ask-the-database guard as v17 — a repeat addColumn would
             // throw "duplicate column name" and brick launch.
             final Set<String> dumpCols = <String>{
-              for (final QueryRow row
-                  in await customSelect('PRAGMA table_info(dumps)').get())
+              for (final QueryRow row in await customSelect(
+                'PRAGMA table_info(dumps)',
+              ).get())
                 row.data['name'] as String,
             };
             if (dumpCols.isNotEmpty &&
@@ -898,8 +915,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
             // ask-the-database guard as v17/v18 — a repeat addColumn would
             // throw "duplicate column name" and brick launch.
             final Set<String> dumpCols = <String>{
-              for (final QueryRow row
-                  in await customSelect('PRAGMA table_info(dumps)').get())
+              for (final QueryRow row in await customSelect(
+                'PRAGMA table_info(dumps)',
+              ).get())
                 row.data['name'] as String,
             };
             if (dumpCols.isNotEmpty && !dumpCols.contains('summary_template')) {
@@ -912,8 +930,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
             // the one-time back-fill of the v1.15.0 rewrite-in-place.
             // Same ask-the-database guards as v17-v19.
             final Set<String> dumpCols = <String>{
-              for (final QueryRow row
-                  in await customSelect('PRAGMA table_info(dumps)').get())
+              for (final QueryRow row in await customSelect(
+                'PRAGMA table_info(dumps)',
+              ).get())
                 row.data['name'] as String,
             };
             if (dumpCols.isNotEmpty && !dumpCols.contains('speaker_names')) {
@@ -934,8 +953,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
             // Summary-in-progress marker (v1.18.0): one nullable, local-only
             // column on dumps. Same ask-the-database guard as v17-v20.
             final Set<String> dumpCols = <String>{
-              for (final QueryRow row
-                  in await customSelect('PRAGMA table_info(dumps)').get())
+              for (final QueryRow row in await customSelect(
+                'PRAGMA table_info(dumps)',
+              ).get())
                 row.data['name'] as String,
             };
             if (dumpCols.isNotEmpty &&
@@ -949,8 +969,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
             // all server-authored, pulled only — plus the local-only
             // summary_error_dismissed_at. Same ask-the-database guard.
             final Set<String> dumpCols = <String>{
-              for (final QueryRow row
-                  in await customSelect('PRAGMA table_info(dumps)').get())
+              for (final QueryRow row in await customSelect(
+                'PRAGMA table_info(dumps)',
+              ).get())
                 row.data['name'] as String,
             };
             if (dumpCols.isNotEmpty) {
@@ -991,10 +1012,12 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
             // above may have just created the table WITH this column (a
             // createTable uses the current schema), and addColumn on an
             // existing column is a hard failure.
-            final List<QueryRow> todoColumns =
-                await customSelect('PRAGMA table_info(todos)').get();
-            final bool hasFolderId = todoColumns
-                .any((QueryRow row) => row.read<String>('name') == 'folder_id');
+            final List<QueryRow> todoColumns = await customSelect(
+              'PRAGMA table_info(todos)',
+            ).get();
+            final bool hasFolderId = todoColumns.any(
+              (QueryRow row) => row.read<String>('name') == 'folder_id',
+            );
             if (!hasFolderId) {
               await m.addColumn(todos, todos.folderId);
             }
@@ -1003,8 +1026,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
             // v1.28.0: local-only capture_fingerprint on todos. Same
             // ask-the-database guard as v24: the v23 createTable branch may
             // already have built the table with this column.
-            final List<QueryRow> todoColumns =
-                await customSelect('PRAGMA table_info(todos)').get();
+            final List<QueryRow> todoColumns = await customSelect(
+              'PRAGMA table_info(todos)',
+            ).get();
             final bool hasFingerprint = todoColumns.any(
               (QueryRow row) =>
                   row.read<String>('name') == 'capture_fingerprint',
@@ -1036,8 +1060,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
             // never the version number (the duplicate-column lesson from
             // v8/v24).
             final Set<String> dumpColumns = <String>{
-              for (final QueryRow row
-                  in await customSelect('PRAGMA table_info(dumps)').get())
+              for (final QueryRow row in await customSelect(
+                'PRAGMA table_info(dumps)',
+              ).get())
                 row.read<String>('name'),
             };
             if (!dumpColumns.contains('auto_filed_at')) {
@@ -1074,14 +1099,13 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
             ) async {
               final bool exists = (await customSelect(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
-                variables: <Variable<Object>>[
-                  Variable<String>(tableName),
-                ],
+                variables: <Variable<Object>>[Variable<String>(tableName)],
               ).get())
                   .isNotEmpty;
               if (!exists) return;
-              final List<QueryRow> columns =
-                  await customSelect('PRAGMA table_info($tableName)').get();
+              final List<QueryRow> columns = await customSelect(
+                'PRAGMA table_info($tableName)',
+              ).get();
               final bool hasPinned = columns.any(
                 (QueryRow row) => row.data['name'] == 'pinned',
               );
@@ -1096,8 +1120,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
             // Three nullable verifier columns. Existing rows remain unlocked.
             // The v6 createTable step may already have used today's shape, so
             // introspect before every add to avoid duplicate-column failures.
-            final List<QueryRow> notebookColumns =
-                await customSelect('PRAGMA table_info(notebooks)').get();
+            final List<QueryRow> notebookColumns = await customSelect(
+              'PRAGMA table_info(notebooks)',
+            ).get();
             final Set<String> names = <String>{
               for (final QueryRow row in notebookColumns)
                 row.read<String>('name'),
@@ -1112,6 +1137,18 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
               if (!names.contains('password_iterations')) {
                 await m.addColumn(notebooks, notebooks.passwordIterations);
               }
+            }
+          }
+          if (from < 32) {
+            final List<QueryRow> notebookColumns = await customSelect(
+              'PRAGMA table_info(notebooks)',
+            ).get();
+            final bool hasPrevious = notebookColumns.any(
+              (QueryRow row) =>
+                  row.read<String>('name') == 'password_hash_prev',
+            );
+            if (notebookColumns.isNotEmpty && !hasPrevious) {
+              await m.addColumn(notebooks, notebooks.passwordHashPrev);
             }
           }
         },
@@ -1146,8 +1183,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     for (final QueryRow row in rows) {
       final String id = row.data['id'] as String;
       final String transcript = row.data['transcript'] as String;
-      final SpeakerNamesBackfillPlan? plan =
-          planSpeakerNamesBackfill(transcript);
+      final SpeakerNamesBackfillPlan? plan = planSpeakerNamesBackfill(
+        transcript,
+      );
       if (plan == null) {
         // Refused (ambiguous pairing) is recorded so Home can say so once;
         // a transcript with nothing to convert is simply not a skip.
@@ -1171,16 +1209,12 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     if (record.isEmpty) return;
     final List<QueryRow> prior = await customSelect(
       'SELECT value FROM settings WHERE key = ?',
-      variables: <Variable<Object>>[
-        Variable<String>(speakerNamesBackfillKey),
-      ],
+      variables: <Variable<Object>>[Variable<String>(speakerNamesBackfillKey)],
     ).get();
     if (prior.isNotEmpty) {
       final Object? old = jsonDecode(prior.single.data['value'] as String);
       if (old is Map<String, dynamic>) {
-        record.addEntries(
-          old.entries.where((e) => !record.containsKey(e.key)),
-        );
+        record.addEntries(old.entries.where((e) => !record.containsKey(e.key)));
       }
     }
     await customStatement(
@@ -1207,8 +1241,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   /// Dump ids the back-fill refused, oldest first; empty when none or
   /// after [clearSpeakerBackfillSkipped].
   Future<List<String>> speakerBackfillSkippedIds() async {
-    final LocalSettingRow? row = await (select(localSettings)
-          ..where((s) => s.key.equals(speakerBackfillSkippedKey)))
+    final LocalSettingRow? row = await (select(
+      localSettings,
+    )..where((s) => s.key.equals(speakerBackfillSkippedKey)))
         .getSingleOrNull();
     if (row == null) return <String>[];
     final Object? decoded = jsonDecode(row.value);
@@ -1218,15 +1253,17 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
 
   /// Deletes the skipped list: the banner was dismissed.
   Future<void> clearSpeakerBackfillSkipped() async {
-    await (delete(localSettings)
-          ..where((s) => s.key.equals(speakerBackfillSkippedKey)))
+    await (delete(
+      localSettings,
+    )..where((s) => s.key.equals(speakerBackfillSkippedKey)))
         .go();
   }
 
   /// The back-fill record, or null when no dump was ever converted.
   Future<Map<String, dynamic>?> speakerNamesBackfillRecord() async {
-    final LocalSettingRow? row = await (select(localSettings)
-          ..where((s) => s.key.equals(speakerNamesBackfillKey)))
+    final LocalSettingRow? row = await (select(
+      localSettings,
+    )..where((s) => s.key.equals(speakerNamesBackfillKey)))
         .getSingleOrNull();
     if (row == null) return null;
     return jsonDecode(row.value) as Map<String, dynamic>;
@@ -1240,8 +1277,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   /// id is testable and so identity generation lives with the rest of the sync
   /// policy instead of in the data layer.
   Future<SyncStateRow> syncState({required String newDeviceId}) async {
-    final SyncStateRow? existing = await (select(syncStates)
-          ..where((t) => t.id.equals(1)))
+    final SyncStateRow? existing = await (select(
+      syncStates,
+    )..where((t) => t.id.equals(1)))
         .getSingleOrNull();
     if (existing != null) return existing;
     await into(syncStates).insert(
@@ -1355,8 +1393,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     required List<InkIndexEntriesCompanion> rows,
   }) async {
     await transaction(() async {
-      await (delete(inkIndexEntries)
-            ..where((t) => t.notebookId.equals(notebookId)))
+      await (delete(
+        inkIndexEntries,
+      )..where((t) => t.notebookId.equals(notebookId)))
           .go();
       for (final InkIndexEntriesCompanion row in rows) {
         await into(inkIndexEntries).insert(row);
@@ -1367,17 +1406,19 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   /// Drops a notebook's mirrored index rows (its `ink_index` delete arrived —
   /// the notebook was purged server-side, so its words must stop matching).
   Future<void> applyRemoteInkIndexDeletion(String notebookId) async {
-    await (delete(inkIndexEntries)
-          ..where((t) => t.notebookId.equals(notebookId)))
+    await (delete(
+      inkIndexEntries,
+    )..where((t) => t.notebookId.equals(notebookId)))
         .go();
   }
 
   /// Notebooks with local edits the server has not confirmed. Trashed rows
   /// stay out: their tombstone travels instead, and pushing a trashed body
   /// would resurrect it on the peer.
-  Future<List<NotebookRow>> notebooksNeedingPush() => (select(notebooks)
-        ..where((t) => t.syncDirty.equals(true) & t.deletedAt.isNull()))
-      .get();
+  Future<List<NotebookRow>> notebooksNeedingPush() => (select(
+        notebooks,
+      )..where((t) => t.syncDirty.equals(true) & t.deletedAt.isNull()))
+          .get();
 
   /// Marks a notebook as accepted by the server at [seq].
   ///
@@ -1393,14 +1434,18 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     await (update(notebooks)
           ..where((t) => t.id.equals(id) & t.updatedAt.equals(pushedUpdatedAt)))
         .write(
-      NotebooksCompanion(syncDirty: const Value(false), syncedSeq: Value(seq)),
+      NotebooksCompanion(
+        syncDirty: const Value(false),
+        syncedSeq: Value(seq),
+      ),
     );
   }
 
   /// Marks a notebook dirty. Every local save funnels through here.
   Future<void> markNotebookDirty(String id) async {
-    await (update(notebooks)..where((t) => t.id.equals(id)))
-        .write(const NotebooksCompanion(syncDirty: Value(true)));
+    await (update(notebooks)..where((t) => t.id.equals(id))).write(
+      const NotebooksCompanion(syncDirty: Value(true)),
+    );
   }
 
   // ---- dump (recording) sync --------------------------------------------
@@ -1430,9 +1475,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     required DateTime pushedUpdatedAt,
   }) async {
     await (update(dumps)
-          ..where(
-            (d) => d.id.equals(id) & d.updatedAt.equals(pushedUpdatedAt),
-          ))
+          ..where((d) => d.id.equals(id) & d.updatedAt.equals(pushedUpdatedAt)))
         .write(
       DumpsCompanion(
         syncDirty: const Value<bool?>(false),
@@ -1445,8 +1488,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   /// through here — a sync engine with no dirty-marking call sites passes
   /// its whole suite while pushing nothing.
   Future<void> markDumpDirty(String id) async {
-    await (update(dumps)..where((d) => d.id.equals(id)))
-        .write(const DumpsCompanion(syncDirty: Value<bool?>(true)));
+    await (update(dumps)..where((d) => d.id.equals(id))).write(
+      const DumpsCompanion(syncDirty: Value<bool?>(true)),
+    );
   }
 
   /// One dump row, or null. Used by merge to see what is already here.
@@ -1615,8 +1659,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
       // and let the fresh remote-only row start with a clean identity.
       // A NON-completed ticket is live in-flight work and stays: the fence
       // must win that race, and the pull is skipped by the dirty-row guard.
-      await (delete(localDeletionTickets)
-            ..where((t) => t.dumpId.equals(id) & t.state.equals('completed')))
+      await (delete(
+        localDeletionTickets,
+      )..where((t) => t.dumpId.equals(id) & t.state.equals('completed')))
           .go();
       await into(dumps).insert(
         DumpsCompanion.insert(
@@ -1896,14 +1941,16 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     Object? passwordHash = absentPasswordMetadata,
     String? passwordSalt,
     int? passwordIterations,
+    String? passwordHashPrev,
   }) async {
     // insertOrReplace rewrites the whole row, so a null ruling here would
     // erase a value this device already holds whenever the peer is an older
     // build that does not send one. Fall back to what is already stored.
     // folder_id gets the same treatment with a twist: null is MEANINGFUL
     // (it says "unfiled"), so absence is a sentinel rather than null.
-    final NotebookRow? existing = await (select(notebooks)
-          ..where((t) => t.id.equals(id)))
+    final NotebookRow? existing = await (select(
+      notebooks,
+    )..where((t) => t.id.equals(id)))
         .getSingleOrNull();
     final String? effectiveRuling = ruling ?? existing?.ruling;
     // The nib gets the ruling treatment: an older peer that has never heard
@@ -1916,23 +1963,24 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     final bool? effectivePinned = identical(pinned, absentPinnedField)
         ? existing?.pinned
         : _wireBool(pinned);
-    final bool preservePassword =
-        identical(passwordHash, absentPasswordMetadata);
-    final String? effectivePasswordHash = preservePassword
-        ? existing?.passwordHash
-        : passwordHash as String?;
-    final String? effectivePasswordSalt =
-        preservePassword
-            ? existing?.passwordSalt
-            : effectivePasswordHash == null
-                ? null
-                : passwordSalt;
-    final int? effectivePasswordIterations =
-        preservePassword
-            ? existing?.passwordIterations
-            : effectivePasswordHash == null
-                ? null
-                : passwordIterations;
+    final bool preservePassword = identical(
+      passwordHash,
+      absentPasswordMetadata,
+    );
+    final String? effectivePasswordHash =
+        preservePassword ? existing?.passwordHash : passwordHash as String?;
+    final String? effectivePasswordSalt = preservePassword
+        ? existing?.passwordSalt
+        : effectivePasswordHash == null
+            ? null
+            : passwordSalt;
+    final int? effectivePasswordIterations = preservePassword
+        ? existing?.passwordIterations
+        : effectivePasswordHash == null
+            ? null
+            : passwordIterations;
+    final String? effectivePasswordHashPrev =
+        preservePassword ? existing?.passwordHashPrev : passwordHashPrev;
 
     await into(notebooks).insert(
       NotebooksCompanion.insert(
@@ -1949,6 +1997,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
         passwordHash: Value<String?>(effectivePasswordHash),
         passwordSalt: Value<String?>(effectivePasswordSalt),
         passwordIterations: Value<int?>(effectivePasswordIterations),
+        passwordHashPrev: Value<String?>(effectivePasswordHashPrev),
         syncDirty: const Value(false),
         syncedSeq: Value(seq),
         // An arriving upsert means the notebook lives; a copy sitting in
@@ -1964,8 +2013,8 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   /// for [applyRemoteNotebook]'s folderId: null MEANS unfiled there.
   static const Object absentFolderId = Object();
 
-  /// A peer predating password metadata sent no verifier fields. Missing
-  /// preserves protection; explicit null is an authoritative clear.
+  /// A peer predating password metadata sent no verifier fields. Missing or a
+  /// verifier transition that failed causal validation preserves protection.
   static const Object absentPasswordMetadata = Object();
 
   /// Removes a notebook the server says was deleted elsewhere.
@@ -2128,8 +2177,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
         sourceRef: Value(resolve(sourceRef, existing?.sourceRef)),
         deletedAt: Value(resolve(deletedAt, existing?.deletedAt)),
         googleEventId: Value(resolve(googleEventId, existing?.googleEventId)),
-        googleHtmlLink:
-            Value(resolve(googleHtmlLink, existing?.googleHtmlLink)),
+        googleHtmlLink: Value(
+          resolve(googleHtmlLink, existing?.googleHtmlLink),
+        ),
         googleUpdated: Value(resolve(googleUpdated, existing?.googleUpdated)),
         captureFingerprint: Value(existing?.captureFingerprint),
         syncDirty: const Value(false),
@@ -2270,8 +2320,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     required String dumpId,
     required String title,
   }) async {
-    await (update(dumps)..where((t) => t.id.equals(dumpId)))
-        .write(DumpsCompanion(title: Value<String>(title)));
+    await (update(dumps)..where((t) => t.id.equals(dumpId))).write(
+      DumpsCompanion(title: Value<String>(title)),
+    );
   }
 
   /// Deletes a folder and unfiles everything inside it.
@@ -2283,7 +2334,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   /// pushes with it.
   Future<void> deleteFolder(String folderId) async {
     await transaction(() async {
-      await (update(notebooks)..where((t) => t.folderId.equals(folderId)))
+      await (update(
+        notebooks,
+      )..where((t) => t.folderId.equals(folderId)))
           .write(
         const NotebooksCompanion(
           folderId: Value<String?>(null),
@@ -2315,9 +2368,10 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
 
   /// Folders with local changes the server has not confirmed. Null reads as
   /// dirty: a folder that predates folder sync has never been pushed.
-  Future<List<Folder>> foldersNeedingPush() => (select(folders)
-        ..where((t) => t.syncDirty.equals(true) | t.syncDirty.isNull()))
-      .get();
+  Future<List<Folder>> foldersNeedingPush() => (select(
+        folders,
+      )..where((t) => t.syncDirty.equals(true) | t.syncDirty.isNull()))
+          .get();
 
   /// Marks a folder accepted by the server at [seq].
   Future<void> markFolderSynced(String id, {required int seq}) async {
@@ -2354,10 +2408,12 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   /// already pushed its own unfilings, and re-pushing ours would echo.
   Future<void> applyRemoteFolderDeletion(String id) async {
     await transaction(() async {
-      await (update(notebooks)..where((t) => t.folderId.equals(id)))
-          .write(const NotebooksCompanion(folderId: Value<String?>(null)));
-      await (update(dumps)..where((t) => t.folderId.equals(id)))
-          .write(const DumpsCompanion(folderId: Value<String?>(null)));
+      await (update(notebooks)..where((t) => t.folderId.equals(id))).write(
+        const NotebooksCompanion(folderId: Value<String?>(null)),
+      );
+      await (update(dumps)..where((t) => t.folderId.equals(id))).write(
+        const DumpsCompanion(folderId: Value<String?>(null)),
+      );
       await (delete(folders)..where((t) => t.id.equals(id))).go();
     });
   }
@@ -2457,26 +2513,20 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   }
 
   Future<void> _createFtsTriggers() async {
-    await customStatement(
-      '''CREATE TRIGGER dumps_ai AFTER INSERT ON dumps BEGIN
+    await customStatement('''CREATE TRIGGER dumps_ai AFTER INSERT ON dumps BEGIN
         INSERT INTO dumps_fts(rowid, title, transcript)
         VALUES (new.rowid, new.title, new.transcript);
-      END''',
-    );
-    await customStatement(
-      '''CREATE TRIGGER dumps_ad AFTER DELETE ON dumps BEGIN
+      END''');
+    await customStatement('''CREATE TRIGGER dumps_ad AFTER DELETE ON dumps BEGIN
         INSERT INTO dumps_fts("dumps_fts", rowid, title, transcript)
         VALUES ('delete', old.rowid, old.title, old.transcript);
-      END''',
-    );
-    await customStatement(
-      '''CREATE TRIGGER dumps_au AFTER UPDATE ON dumps BEGIN
+      END''');
+    await customStatement('''CREATE TRIGGER dumps_au AFTER UPDATE ON dumps BEGIN
         INSERT INTO dumps_fts("dumps_fts", rowid, title, transcript)
         VALUES ('delete', old.rowid, old.title, old.transcript);
         INSERT INTO dumps_fts(rowid, title, transcript)
         VALUES (new.rowid, new.title, new.transcript);
-      END''',
-    );
+      END''');
   }
 
   /// Atomic catalog commit boundary, also used to reconcile uncertain acknowledgements.
@@ -2494,9 +2544,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
                     s.bootstrapVersion.equals(0),
               ))
             .write(
-          StorageCatalogStatesCompanion(
-            legacyAnchorJson: Value(anchorJson),
-          ),
+          StorageCatalogStatesCompanion(legacyAnchorJson: Value(anchorJson)),
         );
       });
 
@@ -2508,23 +2556,26 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   /// sweep re-enumerates the user's folder on every single launch forever.
   /// Callers must only reach here after a fully settled sweep — a partial
   /// success has to stay authorized so the next launch retries.
-  Future<void> completeLegacyRestore(String locationId) =>
-      transaction(() async {
-        await (update(storageLocations)..where((l) => l.id.equals(locationId)))
-            .write(
-          const StorageLocationsCompanion(legacyRestore: Value(false)),
-        );
-      });
+  Future<void> completeLegacyRestore(String locationId) => transaction(
+        () async {
+          await (update(storageLocations)
+                ..where((l) => l.id.equals(locationId)))
+              .write(
+                  const StorageLocationsCompanion(legacyRestore: Value(false)));
+        },
+      );
 
   /// Resolve only persisted original ownership, never a current default.
   @override
   Future<BoundRecording?> boundRecording(String id) => transaction(() async {
-        final row = await (select(recordingBindings)
-              ..where((b) => b.dumpId.equals(id)))
+        final row = await (select(
+          recordingBindings,
+        )..where((b) => b.dumpId.equals(id)))
             .getSingleOrNull();
         if (row == null || !row.resolved || row.locationId == null) return null;
-        final location = await (select(storageLocations)
-              ..where((l) => l.id.equals(row.locationId!)))
+        final location = await (select(
+          storageLocations,
+        )..where((l) => l.id.equals(row.locationId!)))
             .getSingleOrNull();
         if (location == null) return null;
         final binding = (
@@ -2532,7 +2583,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
           location: (
             id: location.id,
             label: location.label,
-            directory: StorageCodec.decodeDirectory(location.directoryJson)
+            directory: StorageCodec.decodeDirectory(location.directoryJson),
           ),
           audio: StorageCodec.decodeAudio(row.audioJson),
           metadataName: row.metadataName,
@@ -2543,8 +2594,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
 
   Never _storageFault(ProblemCode code, String message) =>
       throw StorageFault((code: code, message: message));
-  Future<LocalDeletionTicketRow?> _deletionFence(String id) =>
-      (select(localDeletionTickets)..where((t) => t.dumpId.equals(id)))
+  Future<LocalDeletionTicketRow?> _deletionFence(String id) => (select(
+        localDeletionTickets,
+      )..where((t) => t.dumpId.equals(id)))
           .getSingleOrNull();
 
   /// One-time heal for receipts orphaned by the resurrection bug.
@@ -2601,12 +2653,11 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
         final row = await getDump(id);
         if (row == null || row.audioPath != binding.audio.value) {
           _storageFault(
-            ProblemCode.conflict,
-            'Original audio identity differs',
-          );
+              ProblemCode.conflict, 'Original audio identity differs');
         }
-        final location = await (select(storageLocations)
-              ..where((l) => l.id.equals(binding.location.id)))
+        final location = await (select(
+          storageLocations,
+        )..where((l) => l.id.equals(binding.location.id)))
             .getSingleOrNull();
         if (location == null ||
             location.directoryJson !=
@@ -2617,8 +2668,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
             'Location is not the persisted capability',
           );
         }
-        final prior = await (select(recordingBindings)
-              ..where((b) => b.dumpId.equals(id)))
+        final prior = await (select(
+          recordingBindings,
+        )..where((b) => b.dumpId.equals(id)))
             .getSingleOrNull();
         if (prior != null) {
           if (prior.incarnation != binding.key.incarnation ||
@@ -2628,7 +2680,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
             _storageFault(ProblemCode.conflict, 'Binding is immutable');
           }
           if (prior.resolved) return;
-          await (update(recordingBindings)..where((b) => b.dumpId.equals(id)))
+          await (update(
+            recordingBindings,
+          )..where((b) => b.dumpId.equals(id)))
               .write(
             RecordingBindingsCompanion(
               locationId: Value(binding.location.id),
@@ -2660,8 +2714,8 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
             ? null
             : (
                 code: ProblemCode.values.byName(raw['code'] as String),
-                message: raw['message'] as String
-              )
+                message: raw['message'] as String,
+              ),
       );
     }
 
@@ -2675,7 +2729,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
       binding: binding,
       audio: component('audio', row.audioState),
       metadata: component('metadata', row.metadataState),
-      state: TicketState.values.byName(row.state)
+      state: TicketState.values.byName(row.state),
     );
   }
 
@@ -2685,7 +2739,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
 
   /// Every retained capture journal owns staging cleanup, even after row commit.
   Future<bool> hasCaptureJournal(String id) async =>
-      await (select(captureReservations)..where((r) => r.dumpId.equals(id)))
+      await (select(
+        captureReservations,
+      )..where((r) => r.dumpId.equals(id)))
           .getSingleOrNull() !=
       null;
 
@@ -2698,15 +2754,17 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
         StorageCodec.validateLiteralId(operationId);
         final binding = target.binding;
         if (binding == null) {
-          return const Fail(
-            (code: ProblemCode.unresolved, message: 'No confirmed binding'),
-          );
+          return const Fail((
+            code: ProblemCode.unresolved,
+            message: 'No confirmed binding',
+          ));
         }
         final encoded = StorageCodec.encodeBinding(binding);
         if (target.id != binding.key.dumpId) {
-          return const Fail(
-            (code: ProblemCode.invalid, message: 'Target identity differs'),
-          );
+          return const Fail((
+            code: ProblemCode.invalid,
+            message: 'Target identity differs',
+          ));
         }
         final prior = await _deletionFence(target.id);
         if (prior != null) {
@@ -2714,53 +2772,51 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
               (prior.operationId != operationId &&
                   (target.retryTicketId != prior.ticketId ||
                       prior.state == 'completed'))) {
-            return const Fail(
-              (
-                code: ProblemCode.conflict,
-                message: 'Different deletion already owns this identity'
-              ),
-            );
+            return const Fail((
+              code: ProblemCode.conflict,
+              message: 'Different deletion already owns this identity',
+            ));
           }
           if (prior.state == 'completed') return Ok(_decodeTicket(prior));
         }
         if (prior == null && target.retryTicketId != null) {
-          return const Fail(
-            (code: ProblemCode.conflict, message: 'Retry ticket missing'),
-          );
+          return const Fail((
+            code: ProblemCode.conflict,
+            message: 'Retry ticket missing',
+          ));
         }
         if (await hasCaptureJournal(target.id)) {
-          return const Fail(
-            (
-              code: ProblemCode.busy,
-              message: 'Owned staging cleanup is pending'
-            ),
-          );
+          return const Fail((
+            code: ProblemCode.busy,
+            message: 'Owned staging cleanup is pending',
+          ));
         }
         final row = await getDump(target.id);
         if (row == null) {
-          return const Fail(
-            (code: ProblemCode.absent, message: 'Recording missing'),
-          );
+          return const Fail((
+            code: ProblemCode.absent,
+            message: 'Recording missing',
+          ));
         }
         if (await boundRecording(target.id) != binding) {
-          return const Fail(
-            (
-              code: ProblemCode.wrongIncarnation,
-              message: 'Confirmed binding changed'
-            ),
-          );
+          return const Fail((
+            code: ProblemCode.wrongIncarnation,
+            message: 'Confirmed binding changed',
+          ));
         }
-        if (!['not_transcribed', 'completed', 'failed', 'not_applicable']
-                .contains(row.transcriptionStatus) ||
+        if (![
+              'not_transcribed',
+              'completed',
+              'failed',
+              'not_applicable',
+            ].contains(row.transcriptionStatus) ||
             row.syncStatus == 'syncing' ||
             (row.transcriptionError?.startsWith('sidecar_sync_pending:') ??
                 false)) {
-          return const Fail(
-            (
-              code: ProblemCode.busy,
-              message: 'Recording has durable pending work'
-            ),
-          );
+          return const Fail((
+            code: ProblemCode.busy,
+            message: 'Recording has durable pending work',
+          ));
         }
         if (prior != null) return Ok(_decodeTicket(prior));
         final id = const Uuid().v4();
@@ -2779,8 +2835,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
         return Ok(_decodeTicket((await _deletionFence(target.id))!));
       });
   Future<LocalDeletionTicketRow> _ticketById(String id) async {
-    final row = await (select(localDeletionTickets)
-          ..where((t) => t.ticketId.equals(id)))
+    final row = await (select(
+      localDeletionTickets,
+    )..where((t) => t.ticketId.equals(id)))
         .getSingleOrNull();
     if (row == null) {
       _storageFault(ProblemCode.invalid, 'Deletion ticket missing');
@@ -2819,8 +2876,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
         final metadata = component == RecordingComponent.metadata
             ? result.state.name
             : row.metadataState;
-        await (update(localDeletionTickets)
-              ..where((t) => t.ticketId.equals(ticketId)))
+        await (update(
+          localDeletionTickets,
+        )..where((t) => t.ticketId.equals(ticketId)))
             .write(
           LocalDeletionTicketsCompanion(
             audioState: Value(audio),
@@ -2840,9 +2898,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
         if (ticket.state == 'completed') return;
         if (!_gone(ticket.audioState) || !_gone(ticket.metadataState)) {
           _storageFault(
-            ProblemCode.busy,
-            'Both components must be proven gone',
-          );
+              ProblemCode.busy, 'Both components must be proven gone');
         }
         if (await hasCaptureJournal(ticket.dumpId)) {
           _storageFault(ProblemCode.busy, 'Owned staging cleanup is pending');
@@ -2854,7 +2910,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
             'Ticket no longer owns binding',
           );
         }
-        await (delete(syncQueue)..where((q) => q.dumpId.equals(ticket.dumpId)))
+        await (delete(
+          syncQueue,
+        )..where((q) => q.dumpId.equals(ticket.dumpId)))
             .go();
         await (delete(recordingBindings)
               ..where(
@@ -2864,8 +2922,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
               ))
             .go();
         await (delete(dumps)..where((d) => d.id.equals(ticket.dumpId))).go();
-        await (update(localDeletionTickets)
-              ..where((t) => t.ticketId.equals(ticketId)))
+        await (update(
+          localDeletionTickets,
+        )..where((t) => t.ticketId.equals(ticketId)))
             .write(
           const LocalDeletionTicketsCompanion(
             state: Value('completed'),
@@ -2876,16 +2935,17 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
 
   /// Read immutable deletion ownership, including completed replay receipts.
   Future<DeletionTicket?> deletionTicketById(String ticketId) async {
-    final row = await (select(localDeletionTickets)
-          ..where((t) => t.ticketId.equals(ticketId)))
+    final row = await (select(
+      localDeletionTickets,
+    )..where((t) => t.ticketId.equals(ticketId)))
         .getSingleOrNull();
     return row == null ? null : _decodeTicket(row);
   }
 
   @override
-  Future<List<DeletionTicket>> pendingLocalDeletions() async =>
-      (await (select(localDeletionTickets)
-                ..where((t) => t.state.isNotValue('completed')))
+  Future<List<DeletionTicket>> pendingLocalDeletions() async => (await (select(
+        localDeletionTickets,
+      )..where((t) => t.state.isNotValue('completed')))
               .get())
           .map(_decodeTicket)
           .toList();
@@ -2926,7 +2986,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   /// Reactive stream of all dumps, newest first.
   /// Emits whenever any row in [dumps] changes.
   Stream<List<DumpRow>> watchAllDumps() {
-    return (select(dumps)..orderBy([(d) => OrderingTerm.desc(d.createdAt)]))
+    return (select(
+      dumps,
+    )..orderBy([(d) => OrderingTerm.desc(d.createdAt)]))
         .watch();
   }
 
@@ -2943,10 +3005,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
       'JOIN dumps_fts f ON d.rowid = f.rowid '
       'WHERE dumps_fts MATCH ? '
       'ORDER BY rank LIMIT ?',
-      variables: [
-        Variable.withString('"$escaped"'),
-        Variable.withInt(limit),
-      ],
+      variables: [Variable.withString('"$escaped"'), Variable.withInt(limit)],
       readsFrom: {dumps},
     ).map((row) => dumps.map(row.data)).watch();
   }
@@ -2973,10 +3032,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
       'JOIN dumps_fts f ON d.rowid = f.rowid '
       'WHERE dumps_fts MATCH ? '
       'ORDER BY rank LIMIT ?',
-      variables: [
-        Variable.withString('"$escaped"'),
-        Variable.withInt(limit),
-      ],
+      variables: [Variable.withString('"$escaped"'), Variable.withInt(limit)],
       readsFrom: {dumps},
     ).watch().map((rows) {
       final out = <String, DumpSearchMatch>{};
@@ -3016,8 +3072,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     final Set<String> skip = exclude.toSet();
     final List<String> out = <String>[];
     for (final row in rows) {
-      final SpeakerNames names =
-          SpeakerNames.decode(row.read<String?>('speaker_names'));
+      final SpeakerNames names = SpeakerNames.decode(
+        row.read<String?>('speaker_names'),
+      );
       for (final String name in names.names) {
         if (skip.contains(name) || out.contains(name)) continue;
         out.add(name);
@@ -3035,10 +3092,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
       'JOIN dumps_fts f ON d.rowid = f.rowid '
       'WHERE dumps_fts MATCH ? '
       'ORDER BY rank LIMIT ?',
-      variables: [
-        Variable.withString('"$escaped"'),
-        Variable.withInt(limit),
-      ],
+      variables: [Variable.withString('"$escaped"'), Variable.withInt(limit)],
       readsFrom: {dumps},
     ).map((row) => dumps.map(row.data)).get();
   }
@@ -3057,10 +3111,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     return transaction(() async {
       await _requireMutationKey(id, storageKey);
       final count = await (update(dumps)..where((d) => d.id.equals(id))).write(
-        DumpsCompanion(
-          title: Value(title),
-          updatedAt: Value(now.toUtc()),
-        ),
+        DumpsCompanion(title: Value(title), updatedAt: Value(now.toUtc())),
       );
       if (count != 1) throw StateError('Dump not found: $id');
       // Metadata edits sync. Without this the engine has no dirty rows and
@@ -3086,22 +3137,20 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     return transaction(() async {
       await _requireMutationKey(id, storageKey);
       final count = await (update(dumps)
-            ..where(
-              (d) {
-                final requestIdMatches = expectedTranscriptionRequestId == null
-                    ? d.transcriptionRequestId.isNull()
-                    : d.transcriptionRequestId.equals(
-                        expectedTranscriptionRequestId,
-                      );
-                return d.id.equals(id) &
-                    d.title.equals(expectedTitle) &
-                    d.transcript.equals(expectedTranscript) &
-                    d.transcriptionAttempt.equals(
-                      expectedTranscriptionAttempt,
-                    ) &
-                    requestIdMatches;
-              },
-            ))
+            ..where((d) {
+              final requestIdMatches = expectedTranscriptionRequestId == null
+                  ? d.transcriptionRequestId.isNull()
+                  : d.transcriptionRequestId.equals(
+                      expectedTranscriptionRequestId,
+                    );
+              return d.id.equals(id) &
+                  d.title.equals(expectedTitle) &
+                  d.transcript.equals(expectedTranscript) &
+                  d.transcriptionAttempt.equals(
+                    expectedTranscriptionAttempt,
+                  ) &
+                  requestIdMatches;
+            }))
           .write(
         DumpsCompanion(
           meetingNotes: Value(meetingNotes),
@@ -3137,43 +3186,40 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
       final current = await getDump(id);
       final priorError = errorAfterSidecarSync(current?.transcriptionError);
       final count = await (update(dumps)
-            ..where(
-              (d) {
-                final requestIdMatches = expectedTranscriptionRequestId == null
-                    ? d.transcriptionRequestId.isNull()
-                    : d.transcriptionRequestId.equals(
-                        expectedTranscriptionRequestId,
-                      );
-                return d.id.equals(id) &
-                    d.transcriptionStatus.isIn([
-                      TranscriptionStatus.completed.wireValue,
-                      TranscriptionStatus.failed.wireValue,
-                      // Text notes never transcribe; their body edits go
-                      // through the same guarded manual-edit path.
-                      TranscriptionStatus.notApplicable.wireValue,
-                    ]) &
-                    d.transcript.equals(expectedTranscript) &
-                    d.transcriptionAttempt.equals(
-                      expectedTranscriptionAttempt,
-                    ) &
-                    requestIdMatches;
-              },
-            ))
+            ..where((d) {
+              final requestIdMatches = expectedTranscriptionRequestId == null
+                  ? d.transcriptionRequestId.isNull()
+                  : d.transcriptionRequestId.equals(
+                      expectedTranscriptionRequestId,
+                    );
+              return d.id.equals(id) &
+                  d.transcriptionStatus.isIn([
+                    TranscriptionStatus.completed.wireValue,
+                    TranscriptionStatus.failed.wireValue,
+                    // Text notes never transcribe; their body edits go
+                    // through the same guarded manual-edit path.
+                    TranscriptionStatus.notApplicable.wireValue,
+                  ]) &
+                  d.transcript.equals(expectedTranscript) &
+                  d.transcriptionAttempt.equals(
+                    expectedTranscriptionAttempt,
+                  ) &
+                  requestIdMatches;
+            }))
           .write(
         DumpsCompanion(
           transcript: Value(transcript),
-          transcriptionError:
-              Value('sidecar_sync_pending: manual_edit:${jsonEncode({
-                'error': priorError,
-                'revision': const Uuid().v4(),
-              })}'),
+          transcriptionError: Value(
+            'sidecar_sync_pending: manual_edit:${jsonEncode({
+                  'error': priorError,
+                  'revision': const Uuid().v4()
+                })}',
+          ),
           updatedAt: Value(now.toUtc()),
         ),
       );
       if (count != 1) {
-        throw StateError(
-          'Transcript revision changed while editing: $id',
-        );
+        throw StateError('Transcript revision changed while editing: $id');
       }
       await markDumpDirty(id);
       return (await getDump(id))!;
@@ -3201,8 +3247,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
       await _requireMutationKey(id, storageKey);
       final current = await getDump(id);
       if (current == null) throw StateError('Dump not found: $id');
-      final currentStatus =
-          TranscriptionStatus.fromWire(current.transcriptionStatus);
+      final currentStatus = TranscriptionStatus.fromWire(
+        current.transcriptionStatus,
+      );
       if (currentStatus == TranscriptionStatus.notApplicable) {
         throw StateError('Transcription is not applicable: $id');
       }
@@ -3332,7 +3379,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
             transcript: Value(transcript),
             meetingNotes:
                 preserveNotes ? const Value.absent() : Value(meetingNotes),
-            transcriptionStatus: Value(TranscriptionStatus.completed.wireValue),
+            transcriptionStatus: Value(
+              TranscriptionStatus.completed.wireValue,
+            ),
             transcriptionUpdatedAt: Value(timestamp),
             transcriptionCompletedAt: Value(timestamp),
             transcriptionError: Value(sidecarError),
@@ -3363,8 +3412,11 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
                     (requestId == null
                         ? d.transcriptionRequestId.isNull()
                         : d.transcriptionRequestId.equals(requestId)) &
-                    d.transcriptionStatus
-                        .isIn(['completed', 'failed', 'not_applicable']) &
+                    d.transcriptionStatus.isIn([
+                      'completed',
+                      'failed',
+                      'not_applicable',
+                    ]) &
                     (expectedTranscript == null
                         ? const Constant(true)
                         : d.transcript.equals(expectedTranscript)) &
@@ -3399,8 +3451,11 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
               TranscriptionStatus.queued.wireValue,
               TranscriptionStatus.running.wireValue,
             ]) |
-            (d.transcriptionStatus
-                    .isIn(['completed', 'failed', 'not_applicable']) &
+            (d.transcriptionStatus.isIn([
+                  'completed',
+                  'failed',
+                  'not_applicable',
+                ]) &
                 d.transcriptionError.like('sidecar_sync_pending:%')),
       )
       ..orderBy([(d) => OrderingTerm.asc(d.transcriptionStartedAt)]));
@@ -3437,9 +3492,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
       "AND mode != 'meeting' "
       'AND sync_attempts < ? '
       'ORDER BY created_at ASC',
-      variables: [
-        Variable.withInt(maxAttempts),
-      ],
+      variables: [Variable.withInt(maxAttempts)],
       readsFrom: {dumps},
     ).map((row) => dumps.map(row.data)).get();
   }

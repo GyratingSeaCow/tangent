@@ -78,8 +78,9 @@ class NotebookRepository {
     // Trashed rows read as absent: to the live app a trashed notebook is
     // gone, and only Settings → Trash can see it. Without this filter the
     // editor could reopen (and re-save) a notebook the user just deleted.
-    final row = await (_db.select(_db.notebooks)
-          ..where((n) => n.id.equals(id) & n.deletedAt.isNull()))
+    final row = await (_db.select(
+      _db.notebooks,
+    )..where((n) => n.id.equals(id) & n.deletedAt.isNull()))
         .getSingleOrNull();
     return row == null ? null : _fromRow(row);
   }
@@ -113,7 +114,9 @@ class NotebookRepository {
   /// immutable; unknown block kinds ride through untouched inside [doc_json].
   Future<void> saveNotebook(Notebook notebook) async {
     final timestamp = _now();
-    await (_db.update(_db.notebooks)..where((n) => n.id.equals(notebook.id)))
+    await (_db.update(
+      _db.notebooks,
+    )..where((n) => n.id.equals(notebook.id)))
         .write(
       NotebooksCompanion(
         title: Value(notebook.title),
@@ -145,10 +148,12 @@ class NotebookRepository {
     // would empty the user's folders one adoption at a time: file twenty
     // notebooks, let durable adoption re-import them, and the folder is bare.
     // Keep the existing filing unless the caller states one.
-    final NotebookRow? existing = await (_db.select(_db.notebooks)
-          ..where((row) => row.id.equals(notebook.id)))
+    final NotebookRow? existing = await (_db.select(
+      _db.notebooks,
+    )..where((row) => row.id.equals(notebook.id)))
         .getSingleOrNull();
     final String? existingFolderId = notebook.folderId ?? existing?.folderId;
+    final _PasswordState password = _durablePasswordState(notebook, existing);
 
     await _db.into(_db.notebooks).insertOnConflictUpdate(
           NotebooksCompanion.insert(
@@ -161,19 +166,13 @@ class NotebookRepository {
             folderId: Value<String?>(existingFolderId),
             ruling: Value<String?>(notebook.ruling.wireValue),
             lastPenStyle: Value<String?>(notebook.lastPenStyle?.wireValue),
-            // A legacy durable file has no verifier keys and therefore cannot
-            // speak about protection. A current file always has the keys;
-            // present nulls are the durable, authoritative "unprotected"
-            // state and must clear a verifier left in the working copy.
-            passwordHash: Value<String?>(notebook.passwordMetadataPresent
-                ? notebook.passwordHash
-                : existing?.passwordHash),
-            passwordSalt: Value<String?>(notebook.passwordMetadataPresent
-                ? notebook.passwordSalt
-                : existing?.passwordSalt),
-            passwordIterations: Value<int?>(notebook.passwordMetadataPresent
-                ? notebook.passwordIterations
-                : existing?.passwordIterations),
+            // Durable verifier transitions are causal. A null clears only
+            // when passwordHashPrev proves knowledge of the verifier held by
+            // this working copy; legacy/mismatched metadata preserves it.
+            passwordHash: Value<String?>(password.hash),
+            passwordSalt: Value<String?>(password.salt),
+            passwordIterations: Value<int?>(password.iterations),
+            passwordHashPrev: Value<String?>(password.previous),
           ),
         );
   }
@@ -195,15 +194,25 @@ class NotebookRepository {
 
   /// Enables password protection without ever storing the plaintext.
   Future<void> setPassword(String id, String password) async {
-    final NotebookPasswordMetadata metadata =
-        await hashNotebookPassword(password);
-    final int changed = await (_db.update(_db.notebooks)
-          ..where((n) => n.id.equals(id) & n.deletedAt.isNull()))
+    final NotebookRow? existing = await (_db.select(
+      _db.notebooks,
+    )..where((n) => n.id.equals(id) & n.deletedAt.isNull()))
+        .getSingleOrNull();
+    if (existing == null) throw StateError('Notebook is no longer available');
+    final NotebookPasswordMetadata metadata = await hashNotebookPassword(
+      password,
+    );
+    final int changed = await (_db.update(
+      _db.notebooks,
+    )..where((n) => n.id.equals(id) & n.deletedAt.isNull()))
         .write(
       NotebooksCompanion(
         passwordHash: Value<String?>(metadata.hash),
         passwordSalt: Value<String?>(metadata.salt),
         passwordIterations: Value<int?>(metadata.iterations),
+        passwordHashPrev: Value<String?>(
+          existing.passwordHash ?? existing.passwordHashPrev,
+        ),
         updatedAt: Value(_now().millisecondsSinceEpoch),
         syncDirty: const Value(true),
       ),
@@ -212,8 +221,9 @@ class NotebookRepository {
   }
 
   Future<bool> verifyPassword(String id, String password) async {
-    final NotebookRow? row = await (_db.select(_db.notebooks)
-          ..where((n) => n.id.equals(id) & n.deletedAt.isNull()))
+    final NotebookRow? row = await (_db.select(
+      _db.notebooks,
+    )..where((n) => n.id.equals(id) & n.deletedAt.isNull()))
         .getSingleOrNull();
     if (row == null) return false;
     final String? hash = row.passwordHash;
@@ -230,8 +240,9 @@ class NotebookRepository {
 
   /// Disables protection only after the current password is verified.
   Future<bool> removePassword(String id, String password) async {
-    final NotebookRow? row = await (_db.select(_db.notebooks)
-          ..where((n) => n.id.equals(id) & n.deletedAt.isNull()))
+    final NotebookRow? row = await (_db.select(
+      _db.notebooks,
+    )..where((n) => n.id.equals(id) & n.deletedAt.isNull()))
         .getSingleOrNull();
     final String? hash = row?.passwordHash;
     final String? salt = row?.passwordSalt;
@@ -256,6 +267,7 @@ class NotebookRepository {
         passwordHash: const Value<String?>(null),
         passwordSalt: const Value<String?>(null),
         passwordIterations: const Value<int?>(null),
+        passwordHashPrev: Value<String?>(hash),
         updatedAt: Value(_now().millisecondsSinceEpoch),
         syncDirty: const Value(true),
       ),
@@ -289,7 +301,58 @@ class NotebookRepository {
         passwordHash: row.passwordHash,
         passwordSalt: row.passwordSalt,
         passwordIterations: row.passwordIterations,
+        passwordHashPrev: row.passwordHashPrev,
       );
+}
+
+typedef _PasswordState = ({
+  String? hash,
+  String? salt,
+  int? iterations,
+  String? previous,
+});
+
+_PasswordState _durablePasswordState(Notebook incoming, NotebookRow? existing) {
+  final _PasswordState held = (
+    hash: existing?.passwordHash,
+    salt: existing?.passwordSalt,
+    iterations: existing?.passwordIterations,
+    previous: existing?.passwordHashPrev,
+  );
+  if (!incoming.passwordMetadataPresent) return held;
+
+  final String? next = incoming.passwordHash;
+  final String? previous = incoming.passwordHashPrev;
+  if (existing == null) {
+    return (
+      hash: next,
+      salt: incoming.passwordSalt,
+      iterations: incoming.passwordIterations,
+      previous: previous,
+    );
+  }
+  if (next == existing.passwordHash) {
+    if (next == null && previous != existing.passwordHashPrev) return held;
+    return (
+      hash: next,
+      salt: incoming.passwordSalt,
+      iterations: incoming.passwordIterations,
+      previous: previous ?? existing.passwordHashPrev,
+    );
+  }
+  final bool authorized = existing.passwordHash != null
+      ? previous == existing.passwordHash
+      : existing.passwordHashPrev == null
+          ? previous == null
+          : previous == existing.passwordHashPrev &&
+              next != existing.passwordHashPrev;
+  if (!authorized) return held;
+  return (
+    hash: next,
+    salt: incoming.passwordSalt,
+    iterations: incoming.passwordIterations,
+    previous: previous,
+  );
 }
 
 final notebookRepositoryProvider = Provider<NotebookRepository>(

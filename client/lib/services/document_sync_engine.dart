@@ -507,8 +507,9 @@ class DocumentSyncEngine extends ChangeNotifier {
   /// `google_*` fields, which only ever arrive this way.
   Future<void> _applyRemoteCalendarEvent(RemoteChange change) async {
     final Map<String, dynamic> payload = change.payload ?? const {};
-    final CalendarEventRow? local =
-        await _db.getCalendarEventRow(change.entityId);
+    final CalendarEventRow? local = await _db.getCalendarEventRow(
+      change.entityId,
+    );
     if (local != null && local.syncDirty == true) return;
     if (change.op == SyncOp.delete) {
       if (local != null && local.deletedAt == null) {
@@ -768,10 +769,7 @@ class DocumentSyncEngine extends ChangeNotifier {
         ),
       );
     }
-    await _db.applyRemoteInkIndex(
-      notebookId: change.entityId,
-      rows: rows,
-    );
+    await _db.applyRemoteInkIndex(notebookId: change.entityId, rows: rows);
   }
 
   Future<void> _writeRemote(
@@ -781,38 +779,56 @@ class DocumentSyncEngine extends ChangeNotifier {
   ) async {
     final Object? doc = payload['doc'];
     final Object? ink = payload['ink'];
-    // Missing means an older peer and preserves the local tuple. Present null
-    // is an authoritative unprotected state. A non-null verifier is accepted
-    // only as a complete, bounded tuple before PBKDF2 can consume its count.
+    // Verifier metadata is an untrusted subdocument. A malformed or causally
+    // invalid tuple is ignored while the rest of the notebook still lands, so
+    // one bad payload cannot poison this pull page's checkpoint forever.
+    final NotebookRow? existing = await _db.getNotebookRow(id);
     Object? passwordHash = LocalDb.absentPasswordMetadata;
     String? passwordSalt;
     int? passwordIterations;
-    final Object? incomingPasswordHash = payload['password_hash'];
-    if (payload.containsKey('password_hash') && incomingPasswordHash == null) {
-      if (payload['password_salt'] != null ||
-          payload['password_iterations'] != null) {
-        throw const FormatException(
-          'Invalid notebook password verifier metadata',
-        );
+    String? passwordHashPrev;
+    if (payload.containsKey('password_hash')) {
+      final Object? incomingHash = payload['password_hash'];
+      final Object? incomingSalt = payload['password_salt'];
+      final Object? incomingIterations = payload['password_iterations'];
+      final Object? incomingPrev = payload['password_hash_prev'];
+      final bool validPrev = incomingPrev == null ||
+          incomingPrev is String && incomingPrev.isNotEmpty;
+
+      if (incomingHash == null) {
+        // A clear is authenticated by the verifier currently held locally.
+        // Missing/wrong proof and mixed null/non-null tuples preserve it.
+        if (incomingSalt == null &&
+            incomingIterations == null &&
+            incomingPrev is String &&
+            incomingPrev.isNotEmpty &&
+            existing?.passwordHash == incomingPrev) {
+          passwordHash = null;
+          passwordHashPrev = incomingPrev;
+        }
+      } else if (incomingHash is String &&
+          incomingHash.isNotEmpty &&
+          incomingSalt is String &&
+          incomingSalt.isNotEmpty &&
+          incomingIterations is int &&
+          incomingIterations >= notebookPasswordMinIterations &&
+          incomingIterations <= notebookPasswordMaxIterations &&
+          validPrev) {
+        final String? heldHash = existing?.passwordHash;
+        final String? heldPrev = existing?.passwordHashPrev;
+        final bool authorized = incomingHash == heldHash ||
+            (heldHash != null
+                ? incomingPrev == heldHash
+                : heldPrev == null
+                    ? incomingPrev == null
+                    : incomingPrev == heldPrev && incomingHash != heldPrev);
+        if (authorized) {
+          passwordHash = incomingHash;
+          passwordSalt = incomingSalt;
+          passwordIterations = incomingIterations;
+          passwordHashPrev = incomingPrev as String?;
+        }
       }
-      passwordHash = null;
-    } else if (incomingPasswordHash != null) {
-      final Object? incomingPasswordSalt = payload['password_salt'];
-      final Object? incomingPasswordIterations = payload['password_iterations'];
-      if (incomingPasswordHash is! String ||
-          incomingPasswordHash.isEmpty ||
-          incomingPasswordSalt is! String ||
-          incomingPasswordSalt.isEmpty ||
-          incomingPasswordIterations is! int ||
-          incomingPasswordIterations < notebookPasswordMinIterations ||
-          incomingPasswordIterations > notebookPasswordMaxIterations) {
-        throw const FormatException(
-          'Invalid notebook password verifier metadata',
-        );
-      }
-      passwordHash = incomingPasswordHash;
-      passwordSalt = incomingPasswordSalt;
-      passwordIterations = incomingPasswordIterations;
     }
     await _db.applyRemoteNotebook(
       id: id,
@@ -848,6 +864,7 @@ class DocumentSyncEngine extends ChangeNotifier {
       passwordHash: passwordHash,
       passwordSalt: passwordSalt,
       passwordIterations: passwordIterations,
+      passwordHashPrev: passwordHashPrev,
       seq: seq,
     );
   }
@@ -901,12 +918,13 @@ class DocumentSyncEngine extends ChangeNotifier {
             'folder_id': row.folderId,
             'pinned': row.pinned == true,
             // The plaintext password never leaves the password dialog. A
-            // complete verifier installs/rotates protection on peers; explicit
-            // nulls remove it. Omitting the keys is reserved for legacy peers
-            // and means "preserve whatever you already hold".
+            // complete verifier installs/rotates protection on peers. A null
+            // clears only when password_hash_prev matches the held verifier;
+            // the predecessor also persists as a stale-generation tombstone.
             'password_hash': row.passwordHash,
             'password_salt': row.passwordSalt,
             'password_iterations': row.passwordIterations,
+            'password_hash_prev': row.passwordHashPrev,
           },
         },
       for (final DumpRow row in dirtyDumps)

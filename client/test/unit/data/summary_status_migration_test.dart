@@ -145,7 +145,7 @@ void main() {
     addTearDown(db.close);
     await db.listDumps();
 
-    expect(raw.userVersion, 31);
+    expect(raw.userVersion, 32);
     final Set<String> columns = _columns(raw, 'dumps');
     for (final String column in _v22Columns) {
       expect(columns, contains(column), reason: '$column is the v22 add');
@@ -177,7 +177,7 @@ void main() {
     final LocalDb db = LocalDb.forTesting(NativeDatabase.opened(raw));
     addTearDown(db.close);
     await expectLater(db.listDumps(), completes);
-    expect(raw.userVersion, 31);
+    expect(raw.userVersion, 32);
     expect(_columns(raw, 'dumps'), containsAll(_v22Columns));
   });
 
@@ -213,7 +213,8 @@ void main() {
     expect(row.syncDirty ?? false, isFalse);
   });
 
-  test("applyRemoteDump with summary_status='failed' clears the local "
+  test(
+      "applyRemoteDump with summary_status='failed' clears the local "
       'summary_requested_at marker (the server verdict ends the request)',
       () async {
     final LocalDb db = LocalDb.forTesting(NativeDatabase.memory());
@@ -247,7 +248,8 @@ void main() {
     expect(after.summarizedAt, t0 - 500);
   });
 
-  test('a queued/running publish with an older summarized_at leaves the '
+  test(
+      'a queued/running publish with an older summarized_at leaves the '
       'requested marker (still in progress)', () async {
     final LocalDb db = LocalDb.forTesting(NativeDatabase.memory());
     addTearDown(db.close);
@@ -277,7 +279,8 @@ void main() {
     expect((await db.getDump('s-2'))!.summaryRequestedAt, t0);
   });
 
-  test('dismissSummaryError stamps summary_error_dismissed_at only: not '
+  test(
+      'dismissSummaryError stamps summary_error_dismissed_at only: not '
       'dirty, updated_at untouched, status kept', () async {
     final LocalDb db = LocalDb.forTesting(NativeDatabase.memory());
     addTearDown(db.close);
@@ -307,7 +310,8 @@ void main() {
     );
   });
 
-  test('a successful summary (status null, summarized_at advances) clears '
+  test(
+      'a successful summary (status null, summarized_at advances) clears '
       'summary_error_dismissed_at so the NEXT failure shows again', () async {
     final LocalDb db = LocalDb.forTesting(NativeDatabase.memory());
     addTearDown(db.close);
@@ -345,7 +349,8 @@ void main() {
     );
   });
 
-  test('a stale echo (status null, summarized_at NOT newer) keeps the '
+  test(
+      'a stale echo (status null, summarized_at NOT newer) keeps the '
       'dismissal', () async {
     final LocalDb db = LocalDb.forTesting(NativeDatabase.memory());
     addTearDown(db.close);
@@ -415,7 +420,8 @@ void main() {
     expect((await db.getDump('s-6'))!.summaryErrorDismissedAt, isNull);
   });
 
-  test('recordRequestedSummaryTemplate (a fresh local request) clears the '
+  test(
+      'recordRequestedSummaryTemplate (a fresh local request) clears the '
       'dismissal', () async {
     final LocalDb db = LocalDb.forTesting(NativeDatabase.memory());
     addTearDown(db.close);
@@ -437,7 +443,8 @@ void main() {
     expect(after.summaryRequestedAt, t0);
   });
 
-  test('applyRemoteDump without the v1.19.0 keys (older server) keeps what '
+  test(
+      'applyRemoteDump without the v1.19.0 keys (older server) keeps what '
       'we hold', () async {
     final LocalDb db = LocalDb.forTesting(NativeDatabase.memory());
     addTearDown(db.close);

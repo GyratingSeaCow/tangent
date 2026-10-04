@@ -105,7 +105,7 @@ def _push_notebook(client, token, nb_id="nb-ink", ink=True, title="Ink", op="ups
 
 
 class TestPushStoresInk:
-    def test_password_metadata_missing_preserves_null_clears_and_peer_relocks(
+    def test_password_clear_requires_prev_and_tombstone_blocks_stale_reenable(
         self, authed_client, db
     ):
         client, token = authed_client
@@ -149,9 +149,9 @@ class TestPushStoresInk:
         ).fetchone()
         assert tuple(row) == ("hash-value", "salt-value", 210000)
 
-        # A current peer states the unprotected state with explicit nulls.
-        unprotect = dict(payload)
-        unprotect.update(
+        # Explicit null without proof is unauthenticated and preserves H.
+        unauthenticated = dict(payload)
+        unauthenticated.update(
             password_hash=None,
             password_salt=None,
             password_iterations=None,
@@ -164,25 +164,101 @@ class TestPushStoresInk:
                     "entity_type": "notebook",
                     "entity_id": "nb-private",
                     "op": "upsert",
-                    "payload": unprotect,
+                    "payload": unauthenticated,
+                }],
+            },
+            headers=_auth(token),
+        )
+        assert response.json()["results"][0]["status"] == "rejected"
+        row = db.execute(
+            "SELECT password_hash, password_salt, password_iterations, "
+            "password_hash_prev "
+            "FROM notebooks WHERE id = 'nb-private'"
+        ).fetchone()
+        assert tuple(row) == ("hash-value", "salt-value", 210000, None)
+
+        wrong = dict(unauthenticated, password_hash_prev="wrong-hash")
+        response = client.post(
+            "/v1/sync/push",
+            json={
+                "device_id": "device-new",
+                "changes": [{
+                    "entity_type": "notebook",
+                    "entity_id": "nb-private",
+                    "op": "upsert",
+                    "payload": wrong,
+                }],
+            },
+            headers=_auth(token),
+        )
+        assert response.json()["results"][0]["status"] == "rejected"
+        assert db.execute(
+            "SELECT password_hash FROM notebooks WHERE id = 'nb-private'"
+        ).fetchone()[0] == "hash-value"
+
+        # Turn Off proves knowledge of H. The server clears and republishes the
+        # same predecessor so every peer can authenticate the inbound null.
+        authenticated = dict(unauthenticated, password_hash_prev="hash-value")
+        response = client.post(
+            "/v1/sync/push",
+            json={
+                "device_id": "device-new",
+                "changes": [{
+                    "entity_type": "notebook",
+                    "entity_id": "nb-private",
+                    "op": "upsert",
+                    "payload": authenticated,
                 }],
             },
             headers=_auth(token),
         )
         assert response.json()["results"][0]["status"] == "applied"
         row = db.execute(
-            "SELECT password_hash, password_salt, password_iterations "
+            "SELECT password_hash, password_salt, password_iterations, "
+            "password_hash_prev "
             "FROM notebooks WHERE id = 'nb-private'"
         ).fetchone()
-        assert tuple(row) == (None, None, None)
+        assert tuple(row) == (None, None, None, "hash-value")
+        for device_id in ("device-peer-a", "device-peer-b"):
+            pulled = client.get(
+                f"/v1/sync/pull?device_id={device_id}&since_seq=2",
+                headers=_auth(token),
+            ).json()
+            clear = next(
+                c for c in pulled["changes"]
+                if c["entity_id"] == "nb-private"
+            )
+            assert clear["payload"]["password_hash"] is None
+            assert clear["payload"]["password_hash_prev"] == "hash-value"
 
-        # A second peer can protect the notebook again after observing the
-        # clear; the fresh verifier tuple replaces the null state.
-        relock = dict(payload)
-        relock.update(
+        # A stale device still carrying H cannot replay that cleared tuple.
+        stale = dict(payload)
+        response = client.post(
+            "/v1/sync/push",
+            json={
+                "device_id": "device-stale",
+                "changes": [{
+                    "entity_type": "notebook",
+                    "entity_id": "nb-private",
+                    "op": "upsert",
+                    "payload": stale,
+                }],
+            },
+            headers=_auth(token),
+        )
+        assert response.json()["results"][0]["status"] == "rejected"
+        assert db.execute(
+            "SELECT password_hash FROM notebooks WHERE id = 'nb-private'"
+        ).fetchone()[0] is None
+
+        # A device that observed the tombstone can genuinely enable a fresh
+        # verifier by presenting the cleared generation as its predecessor.
+        relock = dict(
+            payload,
             password_hash="hash-relocked",
             password_salt="salt-relocked",
             password_iterations=230000,
+            password_hash_prev="hash-value",
         )
         response = client.post(
             "/v1/sync/push",
@@ -199,10 +275,12 @@ class TestPushStoresInk:
         )
         assert response.json()["results"][0]["status"] == "applied"
         row = db.execute(
-            "SELECT password_hash, password_salt, password_iterations "
-            "FROM notebooks WHERE id = 'nb-private'"
+            "SELECT password_hash, password_salt, password_iterations, "
+            "password_hash_prev FROM notebooks WHERE id = 'nb-private'"
         ).fetchone()
-        assert tuple(row) == ("hash-relocked", "salt-relocked", 230000)
+        assert tuple(row) == (
+            "hash-relocked", "salt-relocked", 230000, "hash-value"
+        )
 
     def test_rejects_incomplete_password_metadata(self, authed_client):
         client, token = authed_client

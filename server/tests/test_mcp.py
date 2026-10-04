@@ -259,7 +259,7 @@ def test_get_notebook_includes_typed_text_and_ink_words(client):
     assert payload["handwriting_words"] == ["Zeppelin"]
 
 
-def test_get_notebook_denies_password_protected_content(client):
+def test_get_notebook_denies_protected_then_allows_authenticated_clear(client):
     cli, token, path = client
     _seed(path)
     conn = _db(path)
@@ -281,6 +281,17 @@ def test_get_notebook_denies_password_protected_content(client):
     assert result["isError"] is True
     assert "password protected" in result["content"][0]["text"]
     assert "florist" not in result["content"][0]["text"]
+
+    conn = _db(path)
+    conn.execute(
+        "UPDATE notebooks SET password_hash=NULL, password_salt=NULL, "
+        "password_iterations=NULL, password_hash_prev='hash' WHERE id='nb-1'"
+    )
+    conn.commit()
+    conn.close()
+    payload = _call_tool(cli, token, "get_notebook", {"notebook_id": "nb-1"})
+    assert "florist" in payload["text"]
+    assert payload["handwriting_words"] == ["Zeppelin"]
 
 
 def test_list_todos_default_hides_done(client):

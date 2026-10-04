@@ -77,13 +77,16 @@ void main() {
     addTearDown(db.close);
     await db.listDumps();
 
-    expect(raw.userVersion, 31);
+    expect(raw.userVersion, 32);
     expect(_columns(raw, 'dumps'), contains('transcript_timings'));
     final DumpRow row = (await db.getDump('old-dump'))!;
     expect(row.transcript, 'we talked', reason: 'existing data survives');
     expect(row.summary, '# S', reason: 'v17 columns untouched');
-    expect(row.transcriptTimings, isNull,
-        reason: 'no timings were ever produced for this row',);
+    expect(
+      row.transcriptTimings,
+      isNull,
+      reason: 'no timings were ever produced for this row',
+    );
   });
 
   test('the upgrade is safe when the timings column somehow already exists',
@@ -95,7 +98,7 @@ void main() {
     addTearDown(db.close);
     await db.listDumps();
 
-    expect(raw.userVersion, 31);
+    expect(raw.userVersion, 32);
     expect(_columns(raw, 'dumps'), contains('transcript_timings'));
   });
 
@@ -120,16 +123,22 @@ void main() {
         );
 
     await apply(
-        timings:
-            '{"segments":[{"start":0,"end":1,"text":"hello","words":[]}]}',);
+      timings: '{"segments":[{"start":0,"end":1,"text":"hello","words":[]}]}',
+    );
     expect((await db.getDump('d1'))!.transcriptTimings, contains('hello'));
 
     await apply(); // older server: key absent
-    expect((await db.getDump('d1'))!.transcriptTimings, contains('hello'),
-        reason: 'absence is not an eraser',);
+    expect(
+      (await db.getDump('d1'))!.transcriptTimings,
+      contains('hello'),
+      reason: 'absence is not an eraser',
+    );
 
     await apply(timings: null); // server says: none
-    expect((await db.getDump('d1'))!.transcriptTimings, isNull,
-        reason: 'an explicit null is authoritative',);
+    expect(
+      (await db.getDump('d1'))!.transcriptTimings,
+      isNull,
+      reason: 'an explicit null is authoritative',
+    );
   });
 }

@@ -75,8 +75,10 @@ void main() {
     addTearDown(h.close);
     await h.bootstrap();
     final repository = repositoryFor(h);
-    final created = await persistenceFor(h, repository: repository)
-        .createNotebook(title: 'Groceries');
+    final created = await persistenceFor(
+      h,
+      repository: repository,
+    ).createNotebook(title: 'Groceries');
     final published = notebookFile(h, created.id);
     expect(
       await published.exists(),
@@ -84,8 +86,9 @@ void main() {
       reason: 'notebooks publish into the Tangent Notebooks subdirectory',
     );
     expect(
-      File(p.join(h.f.directory('A'), '${created.id}$notebookFileSuffix'))
-          .existsSync(),
+      File(
+        p.join(h.f.directory('A'), '${created.id}$notebookFileSuffix'),
+      ).existsSync(),
       isFalse,
       reason: 'publication must never land at the selected folder root',
     );
@@ -99,24 +102,25 @@ void main() {
     expect(payload['doc'], isA<Map<String, dynamic>>());
     expect(payload['ink'], isA<Map<String, dynamic>>());
     expect(
-      payload.keys.toSet(),
-      {
-        'schema',
-        'id',
-        'title',
-        'createdAt',
-        'updatedAt',
-        'doc',
-        'ink',
-        'passwordHash',
-        'passwordSalt',
-        'passwordIterations',
-      },
-      reason: 'one self-contained file per notebook, no sidecar',
-    );
+        payload.keys.toSet(),
+        {
+          'schema',
+          'id',
+          'title',
+          'createdAt',
+          'updatedAt',
+          'doc',
+          'ink',
+          'passwordHash',
+          'passwordSalt',
+          'passwordIterations',
+          'passwordHashPrev',
+        },
+        reason: 'one self-contained file per notebook, no sidecar');
     expect(payload['passwordHash'], isNull);
     expect(payload['passwordSalt'], isNull);
     expect(payload['passwordIterations'], isNull);
+    expect(payload['passwordHashPrev'], isNull);
     expect(
       Directory(notebookDirectory(h)).listSync().length,
       1,
@@ -124,80 +128,130 @@ void main() {
     );
   });
 
-  test('the published payload round-trips ink and unknown block kinds',
-      () async {
-    final h = CatalogHarness();
-    addTearDown(h.close);
-    await h.bootstrap();
-    final repository = repositoryFor(h);
-    final persistence = persistenceFor(h, repository: repository);
-    final created = await persistence.createNotebook();
-    final saved = await persistence.saveNotebook(
-      sampleNotebook(created.id, when: created.createdAt)
-          .copyWith(title: 'Round trip'),
-    );
-    final decoded = decodeNotebookFile(
-      await notebookFile(h, created.id).readAsString(),
-    );
-    expect(decoded.id, saved.id);
-    expect(decoded.title, 'Round trip');
-    expect(decoded.updatedAt, saved.updatedAt);
-    expect(decoded.createdAt, saved.createdAt);
-    expect(decoded.ink.strokes.single.width, 7.5);
-    expect(decoded.ink.strokes.single.points.length, 2);
-    expect(decoded.ink.strokes.single.points.last.y, 4);
-    expect(decoded.document.blocks.length, 4);
-    final unknown = decoded.document.blocks.last;
-    expect(unknown, isA<NotebookUnknownBlock>());
-    expect(
-      (unknown as NotebookUnknownBlock).raw,
-      {
-        'kind': 'from-the-future',
-        'id': 'block-unknown',
-        'payload': {'deep': 1},
-      },
-      reason: 'a newer build\'s blocks must survive verbatim',
-    );
-    final card = decoded.document.blocks[2] as NotebookDumpCardBlock;
-    expect(card.dumpId, 'fixture-dump');
-    expect(card.x, 12);
-    expect(card.y, 340);
-  });
+  test(
+    'the published payload round-trips ink and unknown block kinds',
+    () async {
+      final h = CatalogHarness();
+      addTearDown(h.close);
+      await h.bootstrap();
+      final repository = repositoryFor(h);
+      final persistence = persistenceFor(h, repository: repository);
+      final created = await persistence.createNotebook();
+      final saved = await persistence.saveNotebook(
+        sampleNotebook(
+          created.id,
+          when: created.createdAt,
+        ).copyWith(title: 'Round trip'),
+      );
+      final decoded = decodeNotebookFile(
+        await notebookFile(h, created.id).readAsString(),
+      );
+      expect(decoded.id, saved.id);
+      expect(decoded.title, 'Round trip');
+      expect(decoded.updatedAt, saved.updatedAt);
+      expect(decoded.createdAt, saved.createdAt);
+      expect(decoded.ink.strokes.single.width, 7.5);
+      expect(decoded.ink.strokes.single.points.length, 2);
+      expect(decoded.ink.strokes.single.points.last.y, 4);
+      expect(decoded.document.blocks.length, 4);
+      final unknown = decoded.document.blocks.last;
+      expect(unknown, isA<NotebookUnknownBlock>());
+      expect(
+          (unknown as NotebookUnknownBlock).raw,
+          {
+            'kind': 'from-the-future',
+            'id': 'block-unknown',
+            'payload': {'deep': 1},
+          },
+          reason: 'a newer build\'s blocks must survive verbatim');
+      final card = decoded.document.blocks[2] as NotebookDumpCardBlock;
+      expect(card.dumpId, 'fixture-dump');
+      expect(card.x, 12);
+      expect(card.y, 340);
+    },
+  );
 
-  test('password verifier survives a real durable-file reinstall round-trip',
-      () async {
-    final h = CatalogHarness();
-    addTearDown(h.close);
-    await h.bootstrap();
-    final repository = repositoryFor(h);
-    final persistence = persistenceFor(h, repository: repository);
-    final Notebook created =
-        await persistence.createNotebook(title: 'Durably private');
+  test(
+    'password verifier survives a real durable-file reinstall round-trip',
+    () async {
+      final h = CatalogHarness();
+      addTearDown(h.close);
+      await h.bootstrap();
+      final repository = repositoryFor(h);
+      final persistence = persistenceFor(h, repository: repository);
+      final Notebook created = await persistence.createNotebook(
+        title: 'Durably private',
+      );
 
-    await persistence.setPassword(created.id, 'correct horse battery staple');
-    final Map<String, dynamic> payload = jsonDecode(
-      await notebookFile(h, created.id).readAsString(),
-    ) as Map<String, dynamic>;
-    expect(payload['passwordHash'], isA<String>());
-    expect(payload['passwordSalt'], isA<String>());
-    expect(payload['passwordIterations'], 210000);
+      await persistence.setPassword(created.id, 'correct horse battery staple');
+      final Map<String, dynamic> payload =
+          jsonDecode(await notebookFile(h, created.id).readAsString())
+              as Map<String, dynamic>;
+      expect(payload['passwordHash'], isA<String>());
+      expect(payload['passwordSalt'], isA<String>());
+      expect(payload['passwordIterations'], 210000);
 
-    // Simulate uninstall/reinstall: the durable file stays while SQLite is
-    // empty, then adoption recreates the row from the real published bytes.
-    await h.f.db.customStatement('DELETE FROM notebooks');
-    expect(await repository.getNotebook(created.id), isNull);
-    final NotebookAdoptionResult result = await persistence.importNotebooks();
-    expect(result.problems, isEmpty);
-    expect(result.adoptedIds, <String>[created.id]);
-    expect(
-      await repository.verifyPassword(
+      // Simulate uninstall/reinstall: the durable file stays while SQLite is
+      // empty, then adoption recreates the row from the real published bytes.
+      await h.f.db.customStatement('DELETE FROM notebooks');
+      expect(await repository.getNotebook(created.id), isNull);
+      final NotebookAdoptionResult result = await persistence.importNotebooks();
+      expect(result.problems, isEmpty);
+      expect(result.adoptedIds, <String>[created.id]);
+      expect(
+        await repository.verifyPassword(
+          created.id,
+          'correct horse battery staple',
+        ),
+        isTrue,
+      );
+      expect(await repository.verifyPassword(created.id, 'wrong'), isFalse);
+    },
+  );
+
+  test(
+    'Turn Off file carries proof and clears a folder-sharing working copy',
+    () async {
+      final h = CatalogHarness();
+      addTearDown(h.close);
+      await h.bootstrap();
+      final repository = repositoryFor(h);
+      final persistence = persistenceFor(h, repository: repository);
+      final Notebook created = await persistence.createNotebook(
+        title: 'Shared',
+      );
+      await persistence.setPassword(created.id, 'folder password');
+      final Notebook protected = (await repository.getNotebook(created.id))!;
+      final String heldHash = protected.passwordHash!;
+
+      expect(
+        await persistence.removePassword(created.id, 'folder password'),
+        isTrue,
+      );
+      final String clearedBytes = await notebookFile(
+        h,
         created.id,
-        'correct horse battery staple',
-      ),
-      isTrue,
-    );
-    expect(await repository.verifyPassword(created.id, 'wrong'), isFalse);
-  });
+      ).readAsString();
+      final Map<String, dynamic> payload =
+          jsonDecode(clearedBytes) as Map<String, dynamic>;
+      expect(payload['passwordHash'], isNull);
+      expect(payload['passwordSalt'], isNull);
+      expect(payload['passwordIterations'], isNull);
+      expect(payload['passwordHashPrev'], heldHash);
+
+      // Stand in for another folder-sharing device still holding H, then adopt
+      // the exact post-Turn-Off durable bytes.
+      await h.f.db.customStatement(
+        'UPDATE notebooks SET password_hash=?, password_salt=?, '
+        'password_iterations=?, password_hash_prev=NULL WHERE id=?',
+        <Object>[heldHash, protected.passwordSalt!, 210000, created.id],
+      );
+      await repository.upsertNotebook(decodeNotebookFile(clearedBytes));
+      final Notebook adopted = (await repository.getNotebook(created.id))!;
+      expect(adopted.passwordHash, isNull);
+      expect(adopted.passwordHashPrev, heldHash);
+    },
+  );
 
   test('durable files reject PBKDF2 iterations above the maximum', () {
     final Notebook protected = sampleNotebook(
@@ -226,7 +280,10 @@ void main() {
     final persistence = persistenceFor(h, repository: repository);
     // Simulate a reinstall: the file survives, the row does not.
     const id = 'fixture-orphan-notebook';
-    final when = DateTime.fromMillisecondsSinceEpoch(1700000000000, isUtc: true);
+    final when = DateTime.fromMillisecondsSinceEpoch(
+      1700000000000,
+      isUtc: true,
+    );
     await Directory(notebookDirectory(h)).create(recursive: true);
     await notebookFile(h, id).writeAsString(
       encodeNotebookFile(sampleNotebook(id, when: when)),
@@ -250,138 +307,152 @@ void main() {
     );
   });
 
-  test('import resolves conflicts by newer updated_at in both directions',
-      () async {
-    final h = CatalogHarness();
-    addTearDown(h.close);
-    await h.bootstrap();
-    final older = DateTime.fromMillisecondsSinceEpoch(1000, isUtc: true);
-    final newer = DateTime.fromMillisecondsSinceEpoch(2000, isUtc: true);
-    final repository = repositoryFor(h);
-    final persistence = persistenceFor(h, repository: repository);
+  test(
+    'import resolves conflicts by newer updated_at in both directions',
+    () async {
+      final h = CatalogHarness();
+      addTearDown(h.close);
+      await h.bootstrap();
+      final older = DateTime.fromMillisecondsSinceEpoch(1000, isUtc: true);
+      final newer = DateTime.fromMillisecondsSinceEpoch(2000, isUtc: true);
+      final repository = repositoryFor(h);
+      final persistence = persistenceFor(h, repository: repository);
 
-    // 1. File newer than row -> the file wins.
-    const fileWins = 'fixture-file-wins';
-    await repository.upsertNotebook(
-      sampleNotebook(fileWins, when: older).copyWith(title: 'stale row'),
-    );
-    await Directory(notebookDirectory(h)).create(recursive: true);
-    await notebookFile(h, fileWins).writeAsString(
-      encodeNotebookFile(
-        sampleNotebook(fileWins, when: newer).copyWith(title: 'fresh file'),
-      ),
-      flush: true,
-    );
-
-    // 2. Row newer than file -> the row survives untouched.
-    const rowWins = 'fixture-row-wins';
-    await repository.upsertNotebook(
-      sampleNotebook(rowWins, when: newer).copyWith(title: 'fresh row'),
-    );
-    await notebookFile(h, rowWins).writeAsString(
-      encodeNotebookFile(
-        sampleNotebook(rowWins, when: older).copyWith(title: 'stale file'),
-      ),
-      flush: true,
-    );
-
-    // 3. Equal timestamps -> the local row is kept.
-    const tie = 'fixture-tie';
-    await repository.upsertNotebook(
-      sampleNotebook(tie, when: newer).copyWith(title: 'local row'),
-    );
-    await notebookFile(h, tie).writeAsString(
-      encodeNotebookFile(
-        sampleNotebook(tie, when: newer).copyWith(title: 'remote file'),
-      ),
-      flush: true,
-    );
-
-    final result = await persistence.importNotebooks();
-    expect(result.problems, isEmpty);
-    expect(result.adoptedIds, [fileWins]);
-    expect(result.keptLocalIds..sort(), [rowWins, tie]);
-    expect((await repository.getNotebook(fileWins))!.title, 'fresh file');
-    expect((await repository.getNotebook(rowWins))!.title, 'fresh row');
-    expect((await repository.getNotebook(tie))!.title, 'local row');
-    for (final id in [fileWins, rowWins, tie]) {
-      expect(
-        await notebookFile(h, id).exists(),
-        isTrue,
-        reason: 'import never deletes a user file',
+      // 1. File newer than row -> the file wins.
+      const fileWins = 'fixture-file-wins';
+      await repository.upsertNotebook(
+        sampleNotebook(fileWins, when: older).copyWith(title: 'stale row'),
       );
-    }
-  });
-
-  test('a malformed durable file is reported but never deleted or adopted',
-      () async {
-    final h = CatalogHarness();
-    addTearDown(h.close);
-    await h.bootstrap();
-    final repository = repositoryFor(h);
-    await Directory(notebookDirectory(h)).create(recursive: true);
-    final broken =
-        File(p.join(notebookDirectory(h), 'fixture-broken$notebookFileSuffix'));
-    await broken.writeAsString('{ not json', flush: true);
-    final result =
-        await persistenceFor(h, repository: repository).importNotebooks();
-    expect(result.adoptedIds, isEmpty);
-    expect(result.problems.single.code, ProblemCode.invalid);
-    expect(await broken.exists(), isTrue);
-    expect(await repository.getNotebook('fixture-broken'), isNull);
-  });
-
-  test('a dropped publication still leaves the edit durable in the database',
-      () async {
-    final h = CatalogHarness();
-    addTearDown(h.close);
-    await h.bootstrap();
-    final repository = repositoryFor(h);
-    final persistence = persistenceFor(h, repository: repository);
-    final created = await persistence.createNotebook(title: 'Survivor');
-    h.backend.documentPublication = (location, directory, name, content, id) =>
-        ImmediateIo(
-      'fixture-notebook-publish-fail',
-      const Fail<DurableDocument>(
-        (code: ProblemCode.io, message: 'fixture notebook publication died'),
-      ),
-    );
-    final edited = sampleNotebook(created.id, when: created.createdAt)
-        .copyWith(title: 'Edited while storage was broken');
-    await expectLater(
-      persistence.saveNotebook(edited),
-      throwsA(
-        isA<StorageFault>().having(
-          (e) => e.problem.message,
-          'message',
-          'fixture notebook publication died',
+      await Directory(notebookDirectory(h)).create(recursive: true);
+      await notebookFile(h, fileWins).writeAsString(
+        encodeNotebookFile(
+          sampleNotebook(fileWins, when: newer).copyWith(title: 'fresh file'),
         ),
-      ),
-    );
-    final row = await repository.getNotebook(created.id);
-    expect(
-      row,
-      isNotNull,
-      reason: 'a publication fault must never lose the user edit',
-    );
-    expect(row!.title, 'Edited while storage was broken');
-    expect(row.document.blocks.length, 4);
-    // The prior publication is intact: the last durable copy is still the
-    // last successfully published one, never a truncated file.
-    expect(
-      decodeNotebookFile(await notebookFile(h, created.id).readAsString())
-          .title,
-      'Survivor',
-    );
-    h.backend.documentPublication = null;
-    final repaired = await persistence.saveNotebook(row);
-    expect(
-      decodeNotebookFile(await notebookFile(h, created.id).readAsString())
-          .title,
-      repaired.title,
-      reason: 'a later successful save republishes the durable file',
-    );
-  });
+        flush: true,
+      );
+
+      // 2. Row newer than file -> the row survives untouched.
+      const rowWins = 'fixture-row-wins';
+      await repository.upsertNotebook(
+        sampleNotebook(rowWins, when: newer).copyWith(title: 'fresh row'),
+      );
+      await notebookFile(h, rowWins).writeAsString(
+        encodeNotebookFile(
+          sampleNotebook(rowWins, when: older).copyWith(title: 'stale file'),
+        ),
+        flush: true,
+      );
+
+      // 3. Equal timestamps -> the local row is kept.
+      const tie = 'fixture-tie';
+      await repository.upsertNotebook(
+        sampleNotebook(tie, when: newer).copyWith(title: 'local row'),
+      );
+      await notebookFile(h, tie).writeAsString(
+        encodeNotebookFile(
+          sampleNotebook(tie, when: newer).copyWith(title: 'remote file'),
+        ),
+        flush: true,
+      );
+
+      final result = await persistence.importNotebooks();
+      expect(result.problems, isEmpty);
+      expect(result.adoptedIds, [fileWins]);
+      expect(result.keptLocalIds..sort(), [rowWins, tie]);
+      expect((await repository.getNotebook(fileWins))!.title, 'fresh file');
+      expect((await repository.getNotebook(rowWins))!.title, 'fresh row');
+      expect((await repository.getNotebook(tie))!.title, 'local row');
+      for (final id in [fileWins, rowWins, tie]) {
+        expect(
+          await notebookFile(h, id).exists(),
+          isTrue,
+          reason: 'import never deletes a user file',
+        );
+      }
+    },
+  );
+
+  test(
+    'a malformed durable file is reported but never deleted or adopted',
+    () async {
+      final h = CatalogHarness();
+      addTearDown(h.close);
+      await h.bootstrap();
+      final repository = repositoryFor(h);
+      await Directory(notebookDirectory(h)).create(recursive: true);
+      final broken = File(
+        p.join(notebookDirectory(h), 'fixture-broken$notebookFileSuffix'),
+      );
+      await broken.writeAsString('{ not json', flush: true);
+      final result = await persistenceFor(
+        h,
+        repository: repository,
+      ).importNotebooks();
+      expect(result.adoptedIds, isEmpty);
+      expect(result.problems.single.code, ProblemCode.invalid);
+      expect(await broken.exists(), isTrue);
+      expect(await repository.getNotebook('fixture-broken'), isNull);
+    },
+  );
+
+  test(
+    'a dropped publication still leaves the edit durable in the database',
+    () async {
+      final h = CatalogHarness();
+      addTearDown(h.close);
+      await h.bootstrap();
+      final repository = repositoryFor(h);
+      final persistence = persistenceFor(h, repository: repository);
+      final created = await persistence.createNotebook(title: 'Survivor');
+      h.backend.documentPublication =
+          (location, directory, name, content, id) => ImmediateIo(
+                'fixture-notebook-publish-fail',
+                const Fail<DurableDocument>((
+                  code: ProblemCode.io,
+                  message: 'fixture notebook publication died',
+                )),
+              );
+      final edited = sampleNotebook(
+        created.id,
+        when: created.createdAt,
+      ).copyWith(title: 'Edited while storage was broken');
+      await expectLater(
+        persistence.saveNotebook(edited),
+        throwsA(
+          isA<StorageFault>().having(
+            (e) => e.problem.message,
+            'message',
+            'fixture notebook publication died',
+          ),
+        ),
+      );
+      final row = await repository.getNotebook(created.id);
+      expect(
+        row,
+        isNotNull,
+        reason: 'a publication fault must never lose the user edit',
+      );
+      expect(row!.title, 'Edited while storage was broken');
+      expect(row.document.blocks.length, 4);
+      // The prior publication is intact: the last durable copy is still the
+      // last successfully published one, never a truncated file.
+      expect(
+        decodeNotebookFile(
+          await notebookFile(h, created.id).readAsString(),
+        ).title,
+        'Survivor',
+      );
+      h.backend.documentPublication = null;
+      final repaired = await persistence.saveNotebook(row);
+      expect(
+        decodeNotebookFile(
+          await notebookFile(h, created.id).readAsString(),
+        ).title,
+        repaired.title,
+        reason: 'a later successful save republishes the durable file',
+      );
+    },
+  );
 
   test('deleteNotebook removes both the row and the durable file', () async {
     final h = CatalogHarness();
@@ -407,32 +478,35 @@ void main() {
     expect(await repository.getNotebook(drop.id), isNull);
   });
 
-  test('repeated saves reuse one directory and one file per notebook',
-      () async {
-    final h = CatalogHarness();
-    addTearDown(h.close);
-    await h.bootstrap();
-    final repository = repositoryFor(h);
-    final persistence = persistenceFor(h, repository: repository);
-    final created = await persistence.createNotebook(title: 'First');
-    for (final title in ['Second', 'Third']) {
-      await persistence.saveNotebook(
-        (await repository.getNotebook(created.id))!.copyWith(title: title),
+  test(
+    'repeated saves reuse one directory and one file per notebook',
+    () async {
+      final h = CatalogHarness();
+      addTearDown(h.close);
+      await h.bootstrap();
+      final repository = repositoryFor(h);
+      final persistence = persistenceFor(h, repository: repository);
+      final created = await persistence.createNotebook(title: 'First');
+      for (final title in ['Second', 'Third']) {
+        await persistence.saveNotebook(
+          (await repository.getNotebook(created.id))!.copyWith(title: title),
+        );
+      }
+      expect(
+        Directory(h.f.directory('A'))
+            .listSync()
+            .where((e) => p.basename(e.path) == notebookSubdirectoryName)
+            .length,
+        1,
+        reason: 'the notebooks directory resolves idempotently',
       );
-    }
-    expect(
-      Directory(h.f.directory('A'))
-          .listSync()
-          .where((e) => p.basename(e.path) == notebookSubdirectoryName)
-          .length,
-      1,
-      reason: 'the notebooks directory resolves idempotently',
-    );
-    expect(Directory(notebookDirectory(h)).listSync().length, 1);
-    expect(
-      decodeNotebookFile(await notebookFile(h, created.id).readAsString())
-          .title,
-      'Third',
-    );
-  });
+      expect(Directory(notebookDirectory(h)).listSync().length, 1);
+      expect(
+        decodeNotebookFile(
+          await notebookFile(h, created.id).readAsString(),
+        ).title,
+        'Third',
+      );
+    },
+  );
 }

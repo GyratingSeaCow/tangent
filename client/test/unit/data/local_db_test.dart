@@ -193,7 +193,7 @@ void main() {
           )
           .single['sql'] as String;
       expect(trigger, contains("VALUES ('delete'"));
-      expect(sqlite.userVersion, 31);
+      expect(sqlite.userVersion, 32);
     });
 
     test('migrates v2 by adding meeting notes without changing transcript',
@@ -231,7 +231,7 @@ void main() {
 
       final row = await migrated.getDump('meeting-1');
 
-      expect(sqlite.userVersion, 31);
+      expect(sqlite.userVersion, 32);
       expect(row!.transcript, 'Raw legacy transcript');
       expect(row.meetingNotes, isNull);
       expect(row.syncStatus, 'local_only');
@@ -345,7 +345,7 @@ void main() {
       final blank = await migrated.getDump('blank');
       final done = await migrated.getDump('done');
 
-      expect(sqlite.userVersion, 31);
+      expect(sqlite.userVersion, 32);
       expect(blank!.transcriptionStatus, 'not_transcribed');
       expect(blank.transcriptionAttempt, 0);
       expect(blank.transcriptionCompletedAt, isNull);
@@ -1104,25 +1104,28 @@ void main() {
           requestId: 'request-note',
           now: now,
         ),
-        throwsA(isA<StateError>().having(
-          (e) => e.message,
-          'message',
-          contains('not applicable'),
-        ),),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            contains('not applicable'),
+          ),
+        ),
       );
       final after = (await db.getDump('note-na'))!;
       expect(after.transcriptionStatus, 'not_applicable');
       expect(after.transcriptionAttempt, 0);
     });
-    test('createFolder ids never collide, even back-to-back in one clock tick', () async {
-    // Regression: ids were DateTime.now().microsecondsSinceEpoch; Windows
-    // advances that in ~1 ms steps, so a burst of creates hit UNIQUE
-    // constraint failed: folders.id.
-    final Set<String> ids = <String>{};
-    for (int i = 0; i < 50; i++) {
-      ids.add(await db.createFolder(name: 'Burst $i'));
-    }
-    expect(ids, hasLength(50));
+    test('createFolder ids never collide, even back-to-back in one clock tick',
+        () async {
+      // Regression: ids were DateTime.now().microsecondsSinceEpoch; Windows
+      // advances that in ~1 ms steps, so a burst of creates hit UNIQUE
+      // constraint failed: folders.id.
+      final Set<String> ids = <String>{};
+      for (int i = 0; i < 50; i++) {
+        ids.add(await db.createFolder(name: 'Burst $i'));
+      }
+      expect(ids, hasLength(50));
+    });
   });
-});
 }
