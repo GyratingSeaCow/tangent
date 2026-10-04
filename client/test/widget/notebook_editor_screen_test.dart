@@ -112,18 +112,28 @@ final class _FixedPdfPicker implements NotebookPdfPicker {
   Future<PickedPdf?> pick() async => pdf;
 }
 
+final class _ThrowingPdfPicker implements NotebookPdfPicker {
+  const _ThrowingPdfPicker(this.error);
+
+  final Object error;
+
+  @override
+  Future<PickedPdf?> pick() => Future<PickedPdf?>.error(error);
+}
+
 final class _FailingPdfLoader implements PdfPageRasterLoader {
   const _FailingPdfLoader();
 
   @override
   Future<File> loadPage({
+    required String documentId,
     required String sourceData,
     required int pageNumber,
     required int width,
     required int height,
   }) => Future<File>.error(
-        StateError('raster intentionally omitted in widget test'),
-      );
+    StateError('raster intentionally omitted in widget test'),
+  );
 }
 
 void main() {
@@ -294,8 +304,9 @@ void main() {
     await unmount(tester);
   });
 
-  testWidgets('PDF import menu adds ordered background below the ink layer',
-      (tester) async {
+  testWidgets('PDF import menu adds ordered background below the ink layer', (
+    tester,
+  ) async {
     await mountEditor(
       tester,
       notebook: testNotebook(id: 'nb-pdf', title: 'PDF notes'),
@@ -353,9 +364,9 @@ void main() {
     final int firstPdfLayer = canvasStack.children.indexWhere(
       (Widget child) =>
           child.key is ValueKey<String> &&
-          (child.key! as ValueKey<String>)
-              .value
-              .startsWith('notebook-pdf-layer-'),
+          (child.key! as ValueKey<String>).value.startsWith(
+            'notebook-pdf-layer-',
+          ),
     );
     final int inkLayer = canvasStack.children.indexWhere(
       (Widget child) => child.key == const ValueKey('notebook-ink-layer'),
@@ -368,8 +379,96 @@ void main() {
     await unmount(tester);
   });
 
-  testWidgets('a dump-card block whose dump is gone renders unavailable',
-      (tester) async {
+  testWidgets('oversized PDF refusal is visible in the editor', (tester) async {
+    await mountEditor(
+      tester,
+      notebook: testNotebook(id: 'nb-pdf-limit'),
+      pdfPicker: const _ThrowingPdfPicker(
+        PdfImportTooLargeException(kNotebookPdfMaxSourceBytes + 1),
+      ),
+      pdfPageRasterLoader: const _FailingPdfLoader(),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('notebook-insert-menu')));
+    await tester.pump(const Duration(milliseconds: 200));
+    final dynamic state = tester.state(
+      find.byKey(const ValueKey('notebook-insert-pdf')),
+    );
+    state.handleTap();
+    await tester.pump();
+
+    expect(find.textContaining('20 MB import limit'), findsOneWidget);
+    expect(find.byType(NotebookPdfPageBlockWidget), findsNothing);
+    await unmount(tester);
+  });
+
+  testWidgets(
+    'remove imported PDF is discoverable and undo restores the group',
+    (tester) async {
+      await mountEditor(
+        tester,
+        notebook: testNotebook(
+          id: 'nb-pdf-remove',
+          blocks: const <NotebookBlock>[
+            NotebookPdfPageBlock(
+              id: 'pdf-1',
+              documentId: 'doc-remove',
+              pageNumber: 1,
+              pageCount: 2,
+              data: 'cGRm',
+              x: 16,
+              y: 20,
+              width: 688,
+              height: 900,
+            ),
+            NotebookPdfPageBlock(
+              id: 'pdf-2',
+              documentId: 'doc-remove',
+              pageNumber: 2,
+              pageCount: 2,
+              x: 16,
+              y: 944,
+              width: 688,
+              height: 900,
+            ),
+          ],
+        ),
+        pdfPageRasterLoader: const _FailingPdfLoader(),
+      );
+      expect(find.byType(NotebookPdfPageBlockWidget), findsNWidgets(2));
+
+      await tester.tap(find.byKey(const ValueKey('notebook-insert-menu')));
+      await tester.pump(const Duration(milliseconds: 200));
+      final Finder remove = find.byKey(const ValueKey('notebook-remove-pdf'));
+      expect(remove, findsOneWidget);
+      final dynamic removeState = tester.state(remove);
+      removeState.handleTap();
+      await tester.pump();
+
+      expect(find.byType(NotebookPdfPageBlockWidget), findsNothing);
+      expect(find.text('Removed 2-page PDF'), findsOneWidget);
+      expect(find.text('Undo'), findsOneWidget);
+      tester.widget<SnackBarAction>(find.byType(SnackBarAction)).onPressed();
+      await tester.pump();
+
+      final List<NotebookPdfPageBlockWidget> restored = tester
+          .widgetList<NotebookPdfPageBlockWidget>(
+            find.byType(NotebookPdfPageBlockWidget),
+          )
+          .toList(growable: false);
+      expect(restored, hasLength(2));
+      expect(
+        restored.map((NotebookPdfPageBlockWidget widget) => widget.block.id),
+        <String>['pdf-1', 'pdf-2'],
+      );
+      expect(restored.first.block.data, 'cGRm');
+      await unmount(tester);
+    },
+  );
+
+  testWidgets('a dump-card block whose dump is gone renders unavailable', (
+    tester,
+  ) async {
     await mountEditor(
       tester,
       notebook: testNotebook(

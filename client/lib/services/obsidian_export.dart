@@ -94,16 +94,17 @@ String notebookMarkdown(Notebook notebook) {
 
   final blocks = List<NotebookBlock>.of(notebook.document.blocks);
   double key(NotebookBlock b) => switch (b) {
-        NotebookTextBlock(:final y) => y ?? double.maxFinite,
-        NotebookCheckboxBlock(:final y) => y ?? double.maxFinite,
-        NotebookImageBlock(:final y) => y,
-        _ => double.maxFinite,
-      };
+    NotebookTextBlock(:final y) => y ?? double.maxFinite,
+    NotebookCheckboxBlock(:final y) => y ?? double.maxFinite,
+    NotebookImageBlock(:final y) => y,
+    _ => double.maxFinite,
+  };
   blocks.sort((a, b) => key(a).compareTo(key(b)));
 
   final body = StringBuffer();
   var images = 0;
   var tables = 0;
+  var pdfPages = 0;
   for (final block in blocks) {
     switch (block) {
       case NotebookTextBlock(:final text):
@@ -116,6 +117,8 @@ String notebookMarkdown(Notebook notebook) {
         images++;
       case NotebookTableBlock():
         tables++;
+      case NotebookPdfPageBlock():
+        pdfPages++;
       default:
         // Unknown/dumpCard blocks carry no exportable text.
         break;
@@ -131,6 +134,9 @@ String notebookMarkdown(Notebook notebook) {
     if (tables > 0)
       'This page also contains $tables table${tables == 1 ? '' : 's'} '
           'not included in the export.',
+    if (pdfPages > 0)
+      'This page also contains $pdfPages imported PDF '
+          'page${pdfPages == 1 ? '' : 's'} not included in the export.',
   ];
   final tail = notes.isEmpty
       ? ''
@@ -158,7 +164,7 @@ String vaultFileName(String title, DateTime createdAt) {
 String uniqueVaultName(String name, Set<String> taken) {
   if (taken.add(name)) return name;
   final stem = name.substring(0, name.length - 3);
-  for (var i = 2;; i++) {
+  for (var i = 2; ; i++) {
     final candidate = '$stem $i.md';
     if (taken.add(candidate)) return candidate;
   }
@@ -179,18 +185,18 @@ class ObsidianExporter {
     required StorageCatalog catalog,
     bool Function(String notebookId, String? passwordHash)? isNotebookUnlocked,
     this.options = const TranscriptMarkdownOptions(),
-  })  : _db = db,
-        _notebooks = notebooks,
-        _backend = backend,
-        _catalog = catalog,
-        _isNotebookUnlocked = isNotebookUnlocked ?? ((_, _) => false);
+  }) : _db = db,
+       _notebooks = notebooks,
+       _backend = backend,
+       _catalog = catalog,
+       _isNotebookUnlocked = isNotebookUnlocked ?? ((_, _) => false);
 
   final LocalDb _db;
   final NotebookRepository _notebooks;
   final StorageBackend _backend;
   final StorageCatalog _catalog;
   final bool Function(String notebookId, String? passwordHash)
-      _isNotebookUnlocked;
+  _isNotebookUnlocked;
 
   /// Document shape for every dump (Settings toggles: timestamps off by
   /// default so an existing vault keeps its shape; summary on).
@@ -282,7 +288,7 @@ class ObsidianExporter {
 
   Future<List<DumpRow>> _allDumps() async {
     final rows = <DumpRow>[];
-    for (var offset = 0;; offset += 200) {
+    for (var offset = 0; ; offset += 200) {
       final page = await _db.listDumps(limit: 200, offset: offset);
       rows.addAll(page);
       if (page.length < 200) return rows;
@@ -294,7 +300,7 @@ class ObsidianExporter {
 /// the only case the word-timestamps switch (L4) can change anything, so
 /// the Settings section shows it only then. Stops at the first hit.
 Future<bool> anyDumpHasWordTimings(LocalDb db) async {
-  for (var offset = 0;; offset += 200) {
+  for (var offset = 0; ; offset += 200) {
     final page = await db.listDumps(limit: 200, offset: offset);
     for (final dump in page) {
       if (TranscriptTimings.parse(dump.transcriptTimings)?.hasWords ?? false) {
@@ -315,8 +321,9 @@ final obsidianWordTimingsAvailableProvider = FutureProvider<bool>(
 /// Rebuilt whenever an Obsidian switch flips, so the next run uses what
 /// the user just chose.
 final obsidianExporterProvider = Provider<ObsidianExporter>((ref) {
-  final NotebookUnlockRegistry unlocked =
-      ref.watch(notebookUnlockRegistryProvider);
+  final NotebookUnlockRegistry unlocked = ref.watch(
+    notebookUnlockRegistryProvider,
+  );
   return ObsidianExporter(
     db: ref.watch(localDbProvider),
     notebooks: ref.watch(notebookRepositoryProvider),
@@ -331,10 +338,10 @@ final obsidianExporterProvider = Provider<ObsidianExporter>((ref) {
 /// store; the section writes both places on every flip.
 final obsidianMarkdownOptionsProvider =
     StateProvider<TranscriptMarkdownOptions>((ref) {
-  final settings = ref.watch(settingsStoreProvider);
-  return TranscriptMarkdownOptions(
-    timestamps: settings.obsidianExportTimestamps,
-    includeSummary: settings.obsidianExportSummary,
-    wordTimestamps: settings.obsidianExportWordTimestamps,
-  );
-});
+      final settings = ref.watch(settingsStoreProvider);
+      return TranscriptMarkdownOptions(
+        timestamps: settings.obsidianExportTimestamps,
+        includeSummary: settings.obsidianExportSummary,
+        wordTimestamps: settings.obsidianExportWordTimestamps,
+      );
+    });

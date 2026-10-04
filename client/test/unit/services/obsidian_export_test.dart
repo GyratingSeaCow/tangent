@@ -10,25 +10,23 @@ import 'package:tangent/services/obsidian_export.dart';
 
 class _AvailableCatalog extends Fake implements StorageCatalog {
   @override
-  Stream<DefaultFolderState> watchDefault() => Stream.value(
-        (
-          location: const (
-            id: 'test-location',
-            directory: (
-              kind: 'path',
-              path: '/test',
-              treeUri: '',
-              authority: '',
-              documentId: '',
-            ),
-            label: 'Test',
-          ),
-          revision: 1,
-          available: true,
-          canChooseDefault: true,
-          problem: null,
-        ),
-      );
+  Stream<DefaultFolderState> watchDefault() => Stream.value((
+    location: const (
+      id: 'test-location',
+      directory: (
+        kind: 'path',
+        path: '/test',
+        treeUri: '',
+        authority: '',
+        documentId: '',
+      ),
+      label: 'Test',
+    ),
+    revision: 1,
+    available: true,
+    canChooseDefault: true,
+    problem: null,
+  ));
 }
 
 class _RejectUnexpectedPublish extends Fake implements StorageBackend {
@@ -39,8 +37,7 @@ class _RejectUnexpectedPublish extends Fake implements StorageBackend {
     String name,
     String content,
     String publicationId,
-  ) =>
-      throw StateError('locked notebook content reached the storage backend');
+  ) => throw StateError('locked notebook content reached the storage backend');
 }
 
 /// Obsidian export (2026-09-23): every dump and notebook becomes a
@@ -151,6 +148,36 @@ void main() {
         reason: 'the reader must know the page has ink the export cannot carry',
       );
     });
+
+    test('PDF pages degrade to an honest omission note', () {
+      final String md = notebookMarkdown(
+        notebook(const <NotebookBlock>[
+          NotebookPdfPageBlock(
+            id: 'pdf-1',
+            documentId: 'doc',
+            pageNumber: 1,
+            pageCount: 2,
+            data: 'cGRm',
+            x: 16,
+            y: 20,
+            width: 688,
+            height: 900,
+          ),
+          NotebookPdfPageBlock(
+            id: 'pdf-2',
+            documentId: 'doc',
+            pageNumber: 2,
+            pageCount: 2,
+            x: 16,
+            y: 944,
+            width: 688,
+            height: 900,
+          ),
+        ]),
+      );
+
+      expect(md, contains('2 imported PDF pages not included'));
+    });
   });
 
   group('vault-safe filenames', () {
@@ -183,39 +210,42 @@ void main() {
     });
   });
 
-  test('bulk export rejects a protected notebook until it is unlocked',
-      () async {
-    final LocalDb db = LocalDb.forTesting(NativeDatabase.memory());
-    addTearDown(db.close);
-    final NotebookRepository notebooks = NotebookRepository(db: db);
-    final int at = DateTime.utc(2026, 9, 23).millisecondsSinceEpoch;
-    await db.applyRemoteNotebook(
-      id: 'private',
-      title: 'Private',
-      docJson: '{"blocks":[{"kind":"text","id":"b1","text":"secret"}]}',
-      inkJson: '{"strokes":[]}',
-      createdAt: at,
-      updatedAt: at,
-      passwordHash: 'hash',
-      passwordSalt: 'salt',
-      passwordIterations: 210000,
-      seq: 1,
-    );
-    final ObsidianExporter exporter = ObsidianExporter(
-      db: db,
-      notebooks: notebooks,
-      backend: _RejectUnexpectedPublish(),
-      catalog: _AvailableCatalog(),
-      isNotebookUnlocked: (_, _) => false,
-    );
+  test(
+    'bulk export rejects a protected notebook until it is unlocked',
+    () async {
+      final LocalDb db = LocalDb.forTesting(NativeDatabase.memory());
+      addTearDown(db.close);
+      final NotebookRepository notebooks = NotebookRepository(db: db);
+      final int at = DateTime.utc(2026, 9, 23).millisecondsSinceEpoch;
+      await db.applyRemoteNotebook(
+        id: 'private',
+        title: 'Private',
+        docJson: '{"blocks":[{"kind":"text","id":"b1","text":"secret"}]}',
+        inkJson: '{"strokes":[]}',
+        createdAt: at,
+        updatedAt: at,
+        passwordHash: 'hash',
+        passwordSalt: 'salt',
+        passwordIterations: 210000,
+        seq: 1,
+      );
+      final ObsidianExporter exporter = ObsidianExporter(
+        db: db,
+        notebooks: notebooks,
+        backend: _RejectUnexpectedPublish(),
+        catalog: _AvailableCatalog(),
+        isNotebookUnlocked: (_, _) => false,
+      );
 
-    final ExportSummary summary =
-        await exporter.run(onProgress: (_, _, _) {});
+      final ExportSummary summary = await exporter.run(
+        onProgress: (_, _, _) {},
+      );
 
-    expect(summary.exported, 0);
-    expect(summary.failed, hasLength(1));
-    expect(summary.failed.single.reason, contains('Unlock this notebook'));
-  });
+      expect(summary.exported, 0);
+      expect(summary.failed, hasLength(1));
+      expect(summary.failed.single.reason, contains('Unlock this notebook'));
+    },
+  );
 
   group('anyDumpHasWordTimings (L4 switch gate)', () {
     Future<LocalDb> dbWith(List<(String, String?)> dumps) async {
@@ -242,7 +272,8 @@ void main() {
 
     const segmentOnly =
         '{"segments":[{"start":0,"end":1,"text":"hello","words":[]}]}';
-    const withWords = '{"segments":[{"start":0,"end":1,"text":"hello",'
+    const withWords =
+        '{"segments":[{"start":0,"end":1,"text":"hello",'
         '"words":[{"w":"hello","s":0,"e":1}]}]}';
 
     test('false with no recordings', () async {
@@ -255,8 +286,11 @@ void main() {
     });
 
     test('true once any recording carries word timings', () async {
-      final db =
-          await dbWith([('a', null), ('b', segmentOnly), ('c', withWords)]);
+      final db = await dbWith([
+        ('a', null),
+        ('b', segmentOnly),
+        ('c', withWords),
+      ]);
       expect(await anyDumpHasWordTimings(db), isTrue);
     });
   });
