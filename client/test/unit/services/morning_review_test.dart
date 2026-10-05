@@ -257,6 +257,7 @@ void main() {
           syncedSeq: null,
           folderId: null,
           pinned: pinned,
+          boardOrder: 0,
         );
     final DateTime now = DateTime(2026, 9, 30, 9);
 

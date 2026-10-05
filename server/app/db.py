@@ -105,7 +105,7 @@ CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at DESC);
 CREATE TABLE IF NOT EXISTS change_log (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
     entity_type TEXT NOT NULL
-        CHECK (entity_type IN ('dump', 'notebook', 'note', 'folder', 'ink_index', 'todo', 'calendar_event', 'ask_message', 'tag', 'tag_assignment')),
+        CHECK (entity_type IN ('dump', 'notebook', 'note', 'folder', 'ink_index', 'todo', 'todo_column', 'calendar_event', 'ask_message', 'tag', 'tag_assignment')),
     entity_id TEXT NOT NULL,
     op TEXT NOT NULL CHECK (op IN ('upsert', 'delete')),
     -- Who authored it, so a client can skip the echo of its own push.
@@ -249,7 +249,18 @@ CREATE TABLE IF NOT EXISTS todos (
     google_updated TEXT,
     -- v1.30: the list the task currently lives in ON GOOGLE (source list
     -- for tasks.move). Server-only, same projection rule.
-    google_tasklist_id TEXT
+    google_tasklist_id TEXT,
+    column_id TEXT,
+    board_order INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS todo_columns (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    sort_order INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    deleted_at TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_todos_updated_at ON todos(updated_at DESC);
@@ -812,6 +823,15 @@ def _migrate_todos_google_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE todos ADD COLUMN google_updated TEXT")
 
 
+def _migrate_todo_kanban(conn: sqlite3.Connection) -> None:
+    """Add synced Kanban placement to existing todos."""
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(todos)")}
+    if "column_id" not in columns:
+        conn.execute("ALTER TABLE todos ADD COLUMN column_id TEXT")
+    if "board_order" not in columns:
+        conn.execute("ALTER TABLE todos ADD COLUMN board_order INTEGER NOT NULL DEFAULT 0")
+
+
 def _migrate_google_lists(conn: sqlite3.Connection) -> None:
     """v1.30 folders <-> Google lists (spec 2026-09-28, Data model).
 
@@ -1020,12 +1040,18 @@ def _migrate_change_log_calendar_event_entity(conn: sqlite3.Connection) -> None:
 
 
 def _migrate_change_log_ask_message_entity(conn: sqlite3.Connection) -> None:
-    """Rebuild change_log to admit server-authored ask messages."""
+    """Rebuild change_log to admit Ask, Kanban, and shared-tag entities."""
     ddl = conn.execute(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='change_log'"
     ).fetchone()
-    if ddl is None or "'ask_message'" in (ddl[0] or ""):
+    if ddl is None or all(
+        value in (ddl[0] or "") for value in ("'ask_message'", "'todo_column'")
+    ):
         return
+    prior = conn.execute(
+        "SELECT seq FROM sqlite_sequence WHERE name = 'change_log'"
+    ).fetchone()
+    prior_seq = int(prior[0]) if prior is not None else 0
     conn.executescript(
         """
         PRAGMA foreign_keys = OFF;
@@ -1033,7 +1059,8 @@ def _migrate_change_log_ask_message_entity(conn: sqlite3.Connection) -> None:
             seq INTEGER PRIMARY KEY AUTOINCREMENT,
             entity_type TEXT NOT NULL CHECK (entity_type IN
                 ('dump', 'notebook', 'note', 'folder', 'ink_index', 'todo',
-                 'calendar_event', 'ask_message')),
+                 'todo_column', 'calendar_event', 'ask_message', 'tag',
+                 'tag_assignment')),
             entity_id TEXT NOT NULL,
             op TEXT NOT NULL CHECK (op IN ('upsert', 'delete')),
             device_id TEXT NOT NULL,
@@ -1052,9 +1079,11 @@ def _migrate_change_log_ask_message_entity(conn: sqlite3.Connection) -> None:
         PRAGMA foreign_keys = ON;
         """
     )
+    conn.execute("DELETE FROM sqlite_sequence WHERE name = 'change_log'")
     conn.execute(
-        "INSERT OR REPLACE INTO sqlite_sequence (name, seq) "
-        "SELECT 'change_log', COALESCE(MAX(seq), 0) FROM change_log"
+        "INSERT INTO sqlite_sequence (name, seq) "
+        "SELECT 'change_log', MAX(?, COALESCE(MAX(seq), 0)) FROM change_log",
+        (prior_seq,),
     )
 
 
@@ -1085,7 +1114,8 @@ def _migrate_change_log_tag_entities(conn: sqlite3.Connection) -> None:
             seq INTEGER PRIMARY KEY AUTOINCREMENT,
             entity_type TEXT NOT NULL CHECK (entity_type IN
                 ('dump', 'notebook', 'note', 'folder', 'ink_index', 'todo',
-                 'calendar_event', 'ask_message', 'tag', 'tag_assignment')),
+                 'todo_column', 'calendar_event', 'ask_message', 'tag',
+                 'tag_assignment')),
             entity_id TEXT NOT NULL,
             op TEXT NOT NULL CHECK (op IN ('upsert', 'delete')),
             device_id TEXT NOT NULL,
@@ -1244,6 +1274,7 @@ def init_db(data_dir: str) -> None:
         _migrate_notebooks_password_metadata(conn)
         _migrate_todos_folder_id(conn)
         _migrate_todos_google_columns(conn)
+        _migrate_todo_kanban(conn)
         _migrate_google_lists(conn)
         _migrate_change_log_folder_entity(conn)
         _migrate_change_log_ink_index_entity(conn)

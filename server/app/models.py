@@ -221,8 +221,8 @@ class SyncChange(BaseModel):
     """
 
     entity_type: Literal[
-        "dump", "notebook", "note", "folder", "ink_index", "todo", "calendar_event",
-        "ask_message", "tag", "tag_assignment"
+        "dump", "notebook", "note", "folder", "ink_index", "todo", "todo_column",
+        "calendar_event", "ask_message", "tag", "tag_assignment"
     ]
     entity_id: str = Field(min_length=1, max_length=64, pattern=ENTITY_ID_PATTERN)
     op: Literal["upsert", "delete"]

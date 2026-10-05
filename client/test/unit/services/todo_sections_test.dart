@@ -28,6 +28,7 @@ void main() {
         deletedAt: null,
         syncDirty: false,
         syncedSeq: null,
+        boardOrder: 0,
       );
 
   test('due yesterday is overdue', () {

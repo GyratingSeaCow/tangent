@@ -601,6 +601,8 @@ def _todo_sync_payload(row: sqlite3.Row) -> dict[str, Any]:
         "source": row["source"],
         "source_ref": row["source_ref"],
         "folder_id": row["folder_id"],
+        "column_id": row["column_id"],
+        "board_order": row["board_order"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
         "deleted_at": row["deleted_at"],
@@ -622,7 +624,7 @@ def _apply_todo(
         if existing is not None and _instant_value(incoming_updated) <= _instant_value(
             existing["updated_at"]
         ):
-            return False, None
+            return False, _todo_sync_payload(existing)
         if existing is not None:
             deleted_at = p.get("deleted_at", incoming_updated)
             _iso_instant(deleted_at, "deleted_at")
@@ -644,7 +646,7 @@ def _apply_todo(
     if existing is not None and _instant_value(updated_at) <= _instant_value(
         existing["updated_at"]
     ):
-        return False, None
+        return False, _todo_sync_payload(existing)
 
     def nullable(field: str) -> str | None:
         value = p[field] if field in p else (existing[field] if existing is not None else None)
@@ -664,6 +666,12 @@ def _apply_todo(
             raise ValueError("todo due_date must be YYYY-MM-DD or null") from exc
     source_ref = nullable("source_ref")
     folder_id = nullable("folder_id")
+    column_id = nullable("column_id")
+    board_order = p.get(
+        "board_order", existing["board_order"] if existing is not None else 0
+    )
+    if not isinstance(board_order, int) or isinstance(board_order, bool):
+        raise ValueError("todo board_order must be an integer")
     deleted_at = nullable("deleted_at")
     if deleted_at is not None:
         _iso_instant(deleted_at, "deleted_at")
@@ -675,20 +683,84 @@ def _apply_todo(
         """
         INSERT INTO todos
             (id, text, done_at, due_date, source, source_ref, folder_id,
-             created_at, updated_at, deleted_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             created_at, updated_at, deleted_at, column_id, board_order)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             text = excluded.text, done_at = excluded.done_at,
             due_date = excluded.due_date, source = excluded.source,
             source_ref = excluded.source_ref, folder_id = excluded.folder_id,
+            column_id = excluded.column_id, board_order = excluded.board_order,
             updated_at = excluded.updated_at,
             deleted_at = excluded.deleted_at
         """,
         (change.entity_id, p["text"], done_at, due_date, source, source_ref,
-         folder_id, created_at, updated_at, deleted_at),
+         folder_id, created_at, updated_at, deleted_at, column_id, board_order),
     )
     stored = conn.execute("SELECT * FROM todos WHERE id = ?", (change.entity_id,)).fetchone()
     return True, _todo_sync_payload(stored)
+
+
+def _apply_todo_column(
+    conn: sqlite3.Connection, change: SyncChange, now: int
+) -> tuple[bool, dict[str, Any] | None]:
+    """Apply one soft-deletable Kanban lane with ISO last-write-wins."""
+    existing = conn.execute(
+        "SELECT * FROM todo_columns WHERE id = ?", (change.entity_id,)
+    ).fetchone()
+    p: dict[str, Any] = change.payload or {}
+    if change.op == "delete":
+        stamp = datetime.fromtimestamp(now, tz=UTC).isoformat()
+        p = {
+            "name": existing["name"] if existing is not None else "Column",
+            "sort_order": existing["sort_order"] if existing is not None else 0,
+            "created_at": existing["created_at"] if existing is not None else stamp,
+            "updated_at": stamp,
+            "deleted_at": stamp,
+        }
+    for field in ("name", "sort_order", "created_at", "updated_at"):
+        if field not in p:
+            raise ValueError(f"todo_column upsert requires {field}")
+    if not isinstance(p["name"], str) or not p["name"].strip():
+        raise ValueError("todo_column name must be non-empty")
+    if not isinstance(p["sort_order"], int) or isinstance(p["sort_order"], bool):
+        raise ValueError("todo_column sort_order must be an integer")
+    created_at = _iso_instant(p["created_at"], "created_at")
+    updated_at = _iso_instant(p["updated_at"], "updated_at")
+    if existing is not None and _instant_value(updated_at) <= _instant_value(existing["updated_at"]):
+        return False, {
+            "id": existing["id"],
+            "name": existing["name"],
+            "sort_order": existing["sort_order"],
+            "created_at": existing["created_at"],
+            "updated_at": existing["updated_at"],
+            "deleted_at": existing["deleted_at"],
+        }
+    deleted_at = p.get(
+        "deleted_at", existing["deleted_at"] if existing is not None else None
+    )
+    if deleted_at is not None:
+        deleted_at = _iso_instant(deleted_at, "deleted_at")
+    conn.execute(
+        """
+        INSERT INTO todo_columns(id,name,sort_order,created_at,updated_at,deleted_at)
+        VALUES(?,?,?,?,?,?)
+        ON CONFLICT(id) DO UPDATE SET name=excluded.name,
+          sort_order=excluded.sort_order, updated_at=excluded.updated_at,
+          deleted_at=excluded.deleted_at
+        """,
+        (change.entity_id, p["name"].strip(), p["sort_order"], created_at, updated_at, deleted_at),
+    )
+    row = conn.execute(
+        "SELECT * FROM todo_columns WHERE id = ?", (change.entity_id,)
+    ).fetchone()
+    return True, {
+        "id": row["id"],
+        "name": row["name"],
+        "sort_order": row["sort_order"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+        "deleted_at": row["deleted_at"],
+    }
 
 
 def _calendar_event_payload(row: sqlite3.Row) -> dict[str, Any]:
@@ -1129,6 +1201,20 @@ def sync_push(
                             entity_type=change.entity_type,
                             seq=0,
                             status="applied",
+                            canonical_payload=publish_payload,
+                        )
+                    )
+                    continue
+            elif change.entity_type == "todo_column":
+                changed, publish_payload = _apply_todo_column(db, change, now)
+                if not changed:
+                    results.append(
+                        SyncPushResult(
+                            entity_id=change.entity_id,
+                            entity_type=change.entity_type,
+                            seq=0,
+                            status="applied",
+                            canonical_payload=publish_payload,
                         )
                     )
                     continue

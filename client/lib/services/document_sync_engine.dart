@@ -56,7 +56,8 @@ class SyncReport {
 /// [requestedAt] is the row's `summary_requested_at` at the moment the
 /// answer landed (unix seconds) — always non-null here, because a summary
 /// nobody on this device asked for is never reported. Must never throw.
-typedef SummaryLandedHook = void Function({
+typedef SummaryLandedHook =
+    void Function({
   required String dumpId,
   required String title,
   required String? template,
@@ -238,6 +239,10 @@ class DocumentSyncEngine extends ChangeNotifier {
       await _applyRemoteTodo(change);
       return false;
     }
+    if (change.entityType == 'todo_column') {
+      await _applyRemoteTodoColumn(change);
+      return false;
+    }
     if (change.entityType == 'calendar_event') {
       await _applyRemoteCalendarEvent(change);
       return false;
@@ -265,7 +270,8 @@ class DocumentSyncEngine extends ChangeNotifier {
         await _db.applyRemoteFolder(
           id: change.entityId,
           name: p['name'] as String? ?? 'Folder',
-          createdAt: (p['created_at'] as num?)?.toInt() ??
+          createdAt:
+              (p['created_at'] as num?)?.toInt() ??
               DateTime.now().millisecondsSinceEpoch,
           seq: change.seq,
         );
@@ -625,9 +631,12 @@ class DocumentSyncEngine extends ChangeNotifier {
   Future<void> _applyRemoteTodo(RemoteChange change) async {
     final Map<String, dynamic> payload = change.payload ?? const {};
     final TodoRow? local = await _db.getTodoRow(change.entityId);
-    if (local != null && local.syncDirty == true) {
-      // This device has an unpushed edit. Keep it; our push will carry it
-      // up and the peer converges on the next cycle.
+    final int? pendingBoardOrder = await _db.pendingTodoBoardOrder(
+      change.entityId,
+    );
+    if (local != null && local.syncDirty && pendingBoardOrder == null) {
+      // This device has a real unpushed edit. Migration-only placement dirt is
+      // different: accept the canonical body, then restore only its placement.
       return;
     }
     if (change.op == SyncOp.delete) {
@@ -642,6 +651,9 @@ class DocumentSyncEngine extends ChangeNotifier {
           deletedAt: DateTime.now().toUtc().toIso8601String(),
           seq: change.seq,
         );
+      }
+      if (pendingBoardOrder != null) {
+        await _db.completeTodoBoardBackfill(change.entityId);
       }
       return;
     }
@@ -684,9 +696,60 @@ class DocumentSyncEngine extends ChangeNotifier {
       pinned: payload.containsKey('pinned')
           ? payload['pinned']
           : LocalDb.absentPinnedField,
+      columnId: payload.containsKey('column_id')
+          ? payload['column_id'] as String?
+          : LocalDb.absentTodoField,
+      boardOrder: payload.containsKey('board_order')
+          ? payload['board_order']
+          : LocalDb.absentTodoField,
       seq: change.seq,
     );
+    if (pendingBoardOrder != null) {
+      final Object? remoteColumn = payload['column_id'];
+      if (payload.containsKey('column_id') && remoteColumn is String) {
+        // The server already has an intentional placement; it wins over the
+        // migration default and the one-shot marker is spent.
+        await _db.completeTodoBoardBackfill(change.entityId);
+      } else {
+        await _db.restorePendingTodoBoardPlacement(
+          change.entityId,
+          updatedAt: _stampStrictlyAfter(remoteUpdatedAt),
+        );
+      }
+    }
     await _dedupeVoiceTodo(change.entityId);
+  }
+
+  String _stampStrictlyAfter(String other) {
+    final DateTime now = DateTime.now().toUtc();
+    final DateTime? parsed = DateTime.tryParse(other)?.toUtc();
+    if (parsed == null || now.isAfter(parsed)) return now.toIso8601String();
+    return parsed.add(const Duration(microseconds: 1)).toIso8601String();
+  }
+
+  Future<void> _applyRemoteTodoColumn(RemoteChange change) async {
+    final Map<String, dynamic> payload = change.payload ?? const {};
+    final TodoColumnRow? local = await _db.getTodoColumnRow(change.entityId);
+    final String stamp =
+        payload['updated_at'] as String? ??
+        DateTime.now().toUtc().toIso8601String();
+    if (local?.syncDirty == true && local!.updatedAt.compareTo(stamp) >= 0) {
+      return;
+    }
+    await _db.applyRemoteTodoColumn(
+      id: change.entityId,
+      name: payload['name'] as String? ?? local?.name ?? 'Column',
+      sortOrder:
+          (payload['sort_order'] as num?)?.toInt() ?? local?.sortOrder ?? 0,
+      createdAt: payload['created_at'] as String? ?? local?.createdAt ?? stamp,
+      updatedAt: stamp,
+      deletedAt: change.op == SyncOp.delete
+          ? stamp
+          : payload.containsKey('deleted_at')
+          ? payload['deleted_at'] as String?
+          : LocalDb.absentTodoField,
+      seq: change.seq,
+    );
   }
 
   /// v1.28.0 cross-device dedupe (retranscribe-guard spec, rule 4).
@@ -707,8 +770,8 @@ class DocumentSyncEngine extends ChangeNotifier {
         applied.deletedAt != null) {
       return;
     }
-    final List<TodoRow> twins = await (_db.select(_db.todos)
-          ..where(
+    final List<TodoRow> twins =
+        await (_db.select(_db.todos)..where(
             (t) =>
                 t.sourceRef.equals(applied.sourceRef!) &
                 t.body.equals(applied.body) &
@@ -726,8 +789,8 @@ class DocumentSyncEngine extends ChangeNotifier {
   /// devices pulled long ago. Runs once per sync cycle; a clean DB is one
   /// query and no writes.
   Future<int> _sweepVoiceTodoDuplicates() async {
-    final List<TodoRow> live = await (_db.select(_db.todos)
-          ..where(
+    final List<TodoRow> live =
+        await (_db.select(_db.todos)..where(
             (t) =>
                 t.source.equals(voiceTodoSource) &
                 t.sourceRef.isNotNull() &
@@ -846,7 +909,8 @@ class DocumentSyncEngine extends ChangeNotifier {
       final Object? incomingSalt = payload['password_salt'];
       final Object? incomingIterations = payload['password_iterations'];
       final Object? incomingPrev = payload['password_hash_prev'];
-      final bool validPrev = incomingPrev == null ||
+      final bool validPrev =
+          incomingPrev == null ||
           incomingPrev is String && incomingPrev.isNotEmpty;
 
       if (incomingHash == null) {
@@ -872,7 +936,8 @@ class DocumentSyncEngine extends ChangeNotifier {
           validPrev) {
         final String? heldHash = existing?.passwordHash;
         final String? heldPrev = existing?.passwordHashPrev;
-        final bool authorized = existing == null ||
+        final bool authorized =
+            existing == null ||
             incomingHash == heldHash ||
             (heldHash != null
                 ? incomingPrev == heldHash
@@ -890,9 +955,11 @@ class DocumentSyncEngine extends ChangeNotifier {
     await _db.applyRemoteNotebook(
       id: id,
       title: payload['title'] as String? ?? 'Notebook',
-      createdAt: (payload['created_at'] as num?)?.toInt() ??
+      createdAt:
+          (payload['created_at'] as num?)?.toInt() ??
           DateTime.now().millisecondsSinceEpoch,
-      updatedAt: (payload['updated_at'] as num?)?.toInt() ??
+      updatedAt:
+          (payload['updated_at'] as num?)?.toInt() ??
           DateTime.now().millisecondsSinceEpoch,
       // Bodies travel as JSON text. Encoding a decoded map back to a string
       // keeps the column's contract regardless of what the transport handed
@@ -902,8 +969,9 @@ class DocumentSyncEngine extends ChangeNotifier {
       // Absent means the peer is an older build that does not know about
       // ruling. Passing null through would erase a ruling this device already
       // has, so a missing value leaves the local one alone.
-      ruling:
-          payload.containsKey('ruling') ? payload['ruling'] as String? : null,
+      ruling: payload.containsKey('ruling')
+          ? payload['ruling'] as String?
+          : null,
       // The nib rides the same rule: absent means an older peer, and null
       // through applyRemoteNotebook falls back to the locally stored value.
       lastPenStyle: payload.containsKey('last_pen_style')
@@ -937,9 +1005,10 @@ class DocumentSyncEngine extends ChangeNotifier {
     final Object? salt = canonical['password_salt'];
     final Object? iterations = canonical['password_iterations'];
     final Object? previous = canonical['password_hash_prev'];
-    final bool validPrevious = previous == null ||
-        previous is String && previous.isNotEmpty;
-    final bool valid = validPrevious &&
+    final bool validPrevious =
+        previous == null || previous is String && previous.isNotEmpty;
+    final bool valid =
+        validPrevious &&
         (hash == null
             ? salt == null && iterations == null
             : hash is String &&
@@ -961,6 +1030,83 @@ class DocumentSyncEngine extends ChangeNotifier {
     );
   }
 
+  Future<void> _reconcileStaleTodoAck(
+    PushResult result,
+    String pushedUpdatedAt,
+  ) async {
+    final TodoRow? current = await _db.getTodoRow(result.entityId);
+    final Map<String, dynamic>? p = result.canonicalPayload;
+    if (current == null || current.updatedAt != pushedUpdatedAt || p == null) {
+      return;
+    }
+    final String? text = p['text'] as String?;
+    final String? createdAt = p['created_at'] as String?;
+    final String? updatedAt = p['updated_at'] as String?;
+    if (text == null || createdAt == null || updatedAt == null) return;
+    Object? field(String key) =>
+        p.containsKey(key) ? p[key] : LocalDb.absentTodoField;
+    final int? pendingBoardOrder = await _db.pendingTodoBoardOrder(
+      result.entityId,
+    );
+    await _db.applyRemoteTodo(
+      id: result.entityId,
+      text: text,
+      createdAt: createdAt,
+      updatedAt: updatedAt,
+      seq: current.syncedSeq ?? 0,
+      source: p['source'] as String?,
+      doneAt: field('done_at'),
+      dueDate: field('due_date'),
+      sourceRef: field('source_ref'),
+      deletedAt: field('deleted_at'),
+      folderId: field('folder_id'),
+      pinned: p.containsKey('pinned') ? p['pinned'] : LocalDb.absentPinnedField,
+      columnId: field('column_id'),
+      boardOrder: field('board_order'),
+    );
+    if (pendingBoardOrder == null) return;
+    if (p['column_id'] is String) {
+      await _db.completeTodoBoardBackfill(result.entityId);
+    } else {
+      await _db.restorePendingTodoBoardPlacement(
+        result.entityId,
+        updatedAt: _stampStrictlyAfter(updatedAt),
+      );
+    }
+  }
+
+  Future<void> _reconcileStaleTodoColumnAck(
+    PushResult result,
+    String pushedUpdatedAt,
+  ) async {
+    final TodoColumnRow? current = await _db.getTodoColumnRow(result.entityId);
+    final Map<String, dynamic>? p = result.canonicalPayload;
+    if (current == null || current.updatedAt != pushedUpdatedAt || p == null) {
+      return;
+    }
+    final String? name = p['name'] as String?;
+    final String? createdAt = p['created_at'] as String?;
+    final String? updatedAt = p['updated_at'] as String?;
+    final int? sortOrder = (p['sort_order'] as num?)?.toInt();
+    if (name == null ||
+        createdAt == null ||
+        updatedAt == null ||
+        sortOrder == null) {
+      return;
+    }
+    await _db.applyRemoteTodoColumn(
+      id: result.entityId,
+      name: name,
+      sortOrder: sortOrder,
+      createdAt: createdAt,
+      updatedAt: updatedAt,
+      deletedAt: p.containsKey('deleted_at')
+          ? p['deleted_at'] as String?
+          : LocalDb.absentTodoField,
+      seq: current.syncedSeq ?? 0,
+    );
+  }
+
   Future<int> _pushLocal(TranscriptionClient client, String deviceId) async {
     final List<NotebookRow> dirty = await _db.notebooksNeedingPush();
     final List<DumpRow> dirtyDumps = await _db.dumpsNeedingMetadataPush();
@@ -968,15 +1114,18 @@ class DocumentSyncEngine extends ChangeNotifier {
     final List<TagRow> dirtyTags = await _db.tagsNeedingPush();
     final List<TagAssignmentRow> dirtyAssignments =
         await _db.tagAssignmentsNeedingPush();
+    final List<TodoColumnRow> dirtyTodoColumns = await _db
+        .todoColumnsNeedingPush();
     final List<TodoRow> dirtyTodos = await _db.todosNeedingPush();
-    final List<CalendarEventRow> dirtyEvents =
-        await _db.calendarEventsNeedingPush();
+    final List<CalendarEventRow> dirtyEvents = await _db
+        .calendarEventsNeedingPush();
     final List<SyncTombstoneRow> tombstones = await _db.pendingTombstones();
     if (dirty.isEmpty &&
         dirtyDumps.isEmpty &&
         dirtyFolders.isEmpty &&
         dirtyTags.isEmpty &&
         dirtyAssignments.isEmpty &&
+        dirtyTodoColumns.isEmpty &&
         dirtyTodos.isEmpty &&
         dirtyEvents.isEmpty &&
         tombstones.isEmpty) {
@@ -1009,6 +1158,20 @@ class DocumentSyncEngine extends ChangeNotifier {
             'name': row.name,
             'created_at': row.createdAt,
             'updated_at': row.updatedAt,
+          },
+        },
+      // Columns before todos: todo placement references the lane id.
+      for (final TodoColumnRow row in dirtyTodoColumns)
+        <String, dynamic>{
+          'entity_type': 'todo_column',
+          'entity_id': row.id,
+          'op': 'upsert',
+          'payload': <String, dynamic>{
+            'name': row.name,
+            'sort_order': row.sortOrder,
+            'created_at': row.createdAt,
+            'updated_at': row.updatedAt,
+            'deleted_at': row.deletedAt,
           },
         },
       for (final NotebookRow row in dirty)
@@ -1089,6 +1252,8 @@ class DocumentSyncEngine extends ChangeNotifier {
             // v1.24.0: filing travels with the item; null means unfiled.
             'folder_id': row.folderId,
             'pinned': row.pinned == true,
+            'column_id': row.columnId,
+            'board_order': row.boardOrder,
           },
         },
       for (final CalendarEventRow row in dirtyEvents)
@@ -1159,6 +1324,9 @@ class DocumentSyncEngine extends ChangeNotifier {
     final Map<String, String> pushedTodoUpdatedAt = <String, String>{
       for (final TodoRow row in dirtyTodos) row.id: row.updatedAt,
     };
+    final Map<String, String> pushedTodoColumnUpdatedAt = <String, String>{
+      for (final TodoColumnRow row in dirtyTodoColumns) row.id: row.updatedAt,
+    };
     final Map<String, String> pushedEventUpdatedAt = <String, String>{
       for (final CalendarEventRow row in dirtyEvents) row.id: row.updatedAt,
     };
@@ -1179,6 +1347,20 @@ class DocumentSyncEngine extends ChangeNotifier {
           '${result.entityType}/${result.entityId}: '
           '${result.reason ?? 'server rejected change'}',
         );
+        continue;
+      }
+      if (result.seq == 0 && result.entityType == 'todo') {
+        final String? wasTodo = pushedTodoUpdatedAt[result.entityId];
+        if (wasTodo != null) {
+          await _reconcileStaleTodoAck(result, wasTodo);
+        }
+        continue;
+      }
+      if (result.seq == 0 && result.entityType == 'todo_column') {
+        final String? was = pushedTodoColumnUpdatedAt[result.entityId];
+        if (was != null) {
+          await _reconcileStaleTodoColumnAck(result, was);
+        }
         continue;
       }
       accepted++;
@@ -1261,6 +1443,18 @@ class DocumentSyncEngine extends ChangeNotifier {
             result.entityId,
             seq: result.seq,
             pushedUpdatedAt: wasTodo,
+          );
+          await _db.completeTodoBoardBackfill(result.entityId);
+        }
+        continue;
+      }
+      if (result.entityType == 'todo_column') {
+        final String? was = pushedTodoColumnUpdatedAt[result.entityId];
+        if (was != null) {
+          await _db.markTodoColumnSynced(
+            result.entityId,
+            seq: result.seq,
+            pushedUpdatedAt: was,
           );
         }
         continue;

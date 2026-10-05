@@ -99,7 +99,7 @@ void main() {
 
       final Database migrated = sqlite3.open(file.path);
       addTearDown(migrated.close);
-      expect(migrated.userVersion, 33);
+      expect(migrated.userVersion, 34);
       expect(_columnNames(migrated, 'notebooks'), _v30MigratedNotebookColumns);
       final Row row = migrated
           .select(
@@ -123,8 +123,8 @@ void main() {
 
       await db.listDumps();
 
-      expect(db.schemaVersion, 33);
-      expect(sql.userVersion, 33);
+      expect(db.schemaVersion, 34);
+      expect(sql.userVersion, 34);
       expect(_columnNames(sql, 'notebooks'), _notebookColumns);
       expect(
         sql.select('PRAGMA foreign_key_list(notebooks)'),
@@ -152,7 +152,7 @@ void main() {
 
       await db.listDumps();
 
-      expect(sql.userVersion, 33);
+      expect(sql.userVersion, 34);
       expect(_columnNames(sql, 'notebooks'), _notebookColumns);
       // v8 adds folder_id to dumps, so compare the columns the fixture had:
       // this test is about existing rows surviving, not about the column list.
@@ -208,7 +208,7 @@ void main() {
 
       sql = sqlite3.open(file.path);
       addTearDown(sql.close);
-      expect(sql.userVersion, 33);
+      expect(sql.userVersion, 34);
       expect(_columnNames(sql, 'notebooks'), _notebookColumns);
       // v8 adds folder_id to dumps, so compare the columns the fixture had:
       // this test is about existing rows surviving, not about the column list.
@@ -267,7 +267,7 @@ void main() {
     addTearDown(db.close);
     await db.listDumps();
 
-    expect(sql.userVersion, 33);
+    expect(sql.userVersion, 34);
     final rows = <String, int>{
       for (final r in sql.select('SELECT id, sync_dirty FROM notebooks'))
         r['id'] as String: r['sync_dirty'] as int,
@@ -302,7 +302,7 @@ void main() {
     addTearDown(db.close);
     await db.listDumps();
 
-    expect(sql.userVersion, 33);
+    expect(sql.userVersion, 34);
     expect(
       sql.select(
         "SELECT name FROM sqlite_master WHERE type='table' "
