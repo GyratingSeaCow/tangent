@@ -1,8 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import 'dart:async';
 import 'dart:io';
+import 'dart:ui' show PlatformDispatcher;
 
-import 'package:flutter/foundation.dart' show LicenseEntryWithLineBreaks, LicenseRegistry;
+import 'package:flutter/foundation.dart'
+    show
+        FlutterError,
+        FlutterErrorDetails,
+        FlutterExceptionHandler,
+        LicenseEntryWithLineBreaks,
+        LicenseRegistry;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -29,6 +36,8 @@ import 'data/todo_repository.dart';
 import 'screens/home/home_providers.dart';
 import 'screens/home/home_screen.dart';
 import 'screens/notebook/notebook_editor_screen.dart';
+import 'services/debug_log.dart';
+import 'services/debug_log_export.dart';
 import 'services/widget_launch.dart';
 import 'screens/recording/recording_controller.dart';
 import 'screens/server/server_connection_screen.dart';
@@ -254,7 +263,48 @@ void openDumpFromLaunch(String dumpId) {
 /// Composes the app: single-instance/CLI handling, storage, database, and
 /// notification ports are all built here and injected into [runApp].
 Future<void> main(List<String> args) async {
-  WidgetsFlutterBinding.ensureInitialized();
+  final FlutterExceptionHandler? previousFlutter = FlutterError.onError;
+  final PlatformErrorHandler? previousPlatform =
+      PlatformDispatcher.instance.onError;
+  final DebugLogBuffer buffer = DebugLogBuffer.inMemory();
+  final DebugErrorCapture capture = DebugErrorCapture(buffer);
+
+  final Future<void>? running = runZonedGuarded<Future<void>>(
+    () async {
+      WidgetsFlutterBinding.ensureInitialized();
+      final Directory support = await getApplicationSupportDirectory();
+      await buffer.initializeWithFile(
+        File(
+          '${support.path}${Platform.pathSeparator}debug_logs'
+          '${Platform.pathSeparator}errors.json',
+        ),
+      );
+      capture.installFlutterHandler();
+      PlatformDispatcher.instance.onError = capture.platformHandler(
+        previous: previousPlatform,
+      );
+      await _runTangent(args, buffer);
+    },
+    (Object error, StackTrace stack) {
+      capture.handleZoneError(
+        error,
+        stack,
+        forward: (Object forwardedError, StackTrace forwardedStack) {
+          (previousFlutter ?? FlutterError.presentError)(
+            FlutterErrorDetails(
+              exception: forwardedError,
+              stack: forwardedStack,
+              library: 'zone',
+            ),
+          );
+        },
+      );
+    },
+  );
+  if (running != null) await running;
+}
+
+Future<void> _runTangent(List<String> args, DebugLogBuffer debugLog) async {
   // Tangent's own license belongs in the registry alongside the package
   // licenses Flutter collects automatically — the Settings > Licenses page
   // shows exactly what ships, from the bundled LICENSE file, never a copy
@@ -428,9 +478,21 @@ Future<void> main(List<String> args) async {
     mutations: mutations,
   );
 
+  final DebugLogExporter debugLogExporter = DebugLogExportService(
+    buffer: debugLog,
+    platform: Platform.isAndroid
+        ? MethodChannelDebugLogExportPlatform(buffer: debugLog)
+        : desktop
+            ? DesktopDebugLogExportPlatform()
+            : const UnsupportedDebugLogExportPlatform(),
+    loadMetadata: loadDebugLogMetadata,
+    writeReport: writeDebugLogReport,
+  );
+
   runApp(
     ProviderScope(
       overrides: [
+        debugLogExporterProvider.overrideWithValue(debugLogExporter),
         secureStoreProvider.overrideWithValue(secureStore),
         transcriptionClientProvider.overrideWith((ref) => client),
         localDbProvider.overrideWithValue(db),

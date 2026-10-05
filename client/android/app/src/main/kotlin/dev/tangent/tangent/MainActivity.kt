@@ -36,6 +36,7 @@ class MainActivity : FlutterActivity() {
     private val channelName = "dev.tangent.tangent/storage"
     private val audioChannelName = "dev.tangent.tangent/audio"
     private val launchChannelName = "dev.tangent.tangent/launch"
+    private val debugLogsChannelName = "dev.tangent.tangent/debug_logs"
 
     /** Widget-tap notebook / launch command waiting for the Dart side to
      *  ask (cold start), and the channel to push through when the app is
@@ -54,6 +55,7 @@ class MainActivity : FlutterActivity() {
         CommunicationRouting(AndroidCommunicationDevices(this))
     }
     private val documentsPort by lazy { AndroidDocumentsPort(applicationContext) }
+    private val debugLogExporter by lazy { DebugLogExportIntents(this) }
     private val candidatePicker by lazy {
         CandidatePicker<Uri>(
             launch = ::pickDirectory,
@@ -207,6 +209,19 @@ class MainActivity : FlutterActivity() {
                         }
                     }
                 }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, debugLogsChannelName)
+            .setMethodCallHandler { call, result ->
+                val launched = when (call.method) {
+                    "sendAttachedEmail" -> debugLogExporter.sendAttachedEmail(call.arguments)
+                    "openMailto" -> debugLogExporter.openMailto(call.arguments)
+                    "shareFile" -> debugLogExporter.shareFile(call.arguments)
+                    else -> {
+                        result.notImplemented()
+                        return@setMethodCallHandler
+                    }
+                }
+                result.success(launched)
+            }
         storageOwner?.detach()
         storageOwner = StorageChannel(NativeIoSupervisor.process, documentsPort::execute)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)
