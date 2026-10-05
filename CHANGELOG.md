@@ -5,6 +5,36 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.50.0 — 2026-10-05
+
+### Added
+- PDF import into notebooks: **Insert → PDF** adds one fixed page block per
+  source page (files up to 20 MiB). Pages render on demand through pdfrx
+  at device resolution with a disk cache, so a 100-page import only
+  decodes the pages near the viewport. Annotate with the existing ink
+  tools; notebook PDF export composites your ink onto each imported page.
+  Imported PDFs can be removed from the notebook again. Protected
+  notebooks keep imported pages out of search, Ask/MCP and OCR.
+- To-Do Kanban board: a small toggle in the top-right of the To-Do page
+  switches between the list and a board with user-defined columns (rename,
+  reorder, add and delete columns from the board; defaults **To Do / In
+  Progress / Done**). Press and hold a card for 200 ms to move or reorder
+  it; ordinary swipes scroll. Columns and card placement sync between
+  devices.
+- Debug-log export: **Settings → Maintenance & About → Export debug
+  logs** captures the last 200 app errors (1 MiB cap, sanitized — SQL
+  parameters, transcripts and password material are never logged) and
+  emails them to support@westtalkstech.com with the log attached, with a
+  mailto fallback and save-to-file on desktop.
+
+### Changed
+- Server: `todo_column` sync entity and `column_id`/`board_order` on
+  to-dos (schema migration runs on startup); text extraction skips
+  imported PDF blobs. **Server update required** for the Kanban board to
+  sync across devices.
+- Tests that render through native PDFium skip with an explicit reason
+  on hosts without `libpdfium.so` (Linux CI) instead of failing.
+
 ## 1.49.0 — 2026-10-04
 
 ### Added

@@ -50,9 +50,9 @@ ADH2/
 
 ## Status
 
-Shipping — **v1.49.0** (see CHANGELOG.md). Client and server are both
-implemented and tested (2966
-Flutter tests, 801 server tests, 129 Kotlin tests). Toolchain:
+Shipping — **v1.50.0** (see CHANGELOG.md). Client and server are both
+implemented and tested (3040
+Flutter tests, 807 server tests, 129 Kotlin tests). Toolchain:
 Flutter 3.47.6 / Dart 3.13, AGP 9.1 / Kotlin 2.4 / Gradle 9.3.1 /
 Java 17 (v1.48.1); APKs exclude Google's dependency-info
 signing block for F-Droid (v1.48.2). The client runs
@@ -60,6 +60,15 @@ natively on Linux AND Windows (tray icon, global record hotkey,
 close-to-tray, single instance, right-click = long-press; AppImage and
 Inno Setup installer under `packaging/`) — verified on CachyOS/KDE
 Plasma Wayland and Windows 11; see the README's Desktop sections.
+
+v1.50.0 **PDF import, To-Do Kanban board, debug-log export**: Insert →
+PDF adds one `pdfPage` block per page (pdfrx on-demand rendering + disk
+cache, JPEG-composited export — `docs/design/notebook-pdf-import.md`);
+To-Do list/board toggle with synced user-defined `todo_columns` and a
+200 ms hold-to-drag contract (`docs/design/todo-kanban.md`); Settings →
+Maintenance & About → Export debug logs (sanitized 1 MiB ring buffer,
+send intent + FileProvider, mailto fallback). Server update required.
+Tests that need native PDFium skip on Linux CI (no `libpdfium.so`).
 
 v1.49.0 **Password-protected notebooks, notebook tables, shared tags**:
 notebook ⋮ menu gains Turn On/Off Password Protection and Lock Now
