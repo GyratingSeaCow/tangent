@@ -83,6 +83,8 @@ double notebookContentBottom(
         lowest = math.max(lowest, d.y + kNotebookImportBlockHeight);
       case NotebookImageBlock i:
         lowest = math.max(lowest, i.y + i.height);
+      case NotebookPdfPageBlock p:
+        lowest = math.max(lowest, p.y + p.height);
       case NotebookTableBlock t:
         lowest = math.max(lowest, t.y + t.viewportHeight);
       case NotebookUnknownBlock():
@@ -133,6 +135,9 @@ List<NotebookBlock> layoutImportedBlocks({
       case NotebookImageBlock i:
         placed.add(i.copyWith(x: kNotebookImportX, y: insertY));
         insertY += i.height + kNotebookImportSpacing;
+      case NotebookPdfPageBlock p:
+        placed.add(p.copyWith(x: kNotebookImportX, y: insertY));
+        insertY += p.height + kNotebookImportSpacing;
       case NotebookTableBlock t:
         placed.add(t.copyWith(x: kNotebookImportX, y: insertY));
         insertY += t.viewportHeight + kNotebookImportSpacing;

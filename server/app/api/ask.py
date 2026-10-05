@@ -4,12 +4,12 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
 import re
 import sqlite3
 import time
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -78,7 +78,17 @@ def _strings(value: Any) -> list[str]:
     if isinstance(value, list):
         return [part for item in value for part in _strings(item)]
     if isinstance(value, dict):
-        return [part for key, item in value.items() if key not in {"id", "type"} for part in _strings(item)]
+        # Base64 is syntactically text, but binary notebook blocks must never
+        # be copied into FTS, retrieved chunks, LLM prompts, or MCP output.
+        if value.get("kind") in {"pdfPage", "image"}:
+            return []
+        opaque_keys = {"id", "type", "kind", "data", "sha", "documentId", "mime"}
+        return [
+            part
+            for key, item in value.items()
+            if key not in opaque_keys
+            for part in _strings(item)
+        ]
     return []
 
 

@@ -38,6 +38,7 @@ import '../../services/ink_search.dart';
 import '../../services/notebook_import.dart';
 import '../../services/notebook_persistence.dart';
 import '../../services/notebook_password.dart';
+import '../../services/notebook_pdf_import.dart';
 import '../../services/ocr_settings_client.dart';
 import '../../services/recording_playback.dart';
 import '../../services/stamp_reconcile.dart';
@@ -50,6 +51,7 @@ import '../../widgets/notebook_dump_card.dart';
 import '../../widgets/notebook_image_block.dart';
 import '../../widgets/notebook_ink_canvas.dart';
 import '../../widgets/notebook_password_dialog.dart';
+import '../../widgets/notebook_pdf_page_block.dart';
 import '../../widgets/notebook_table_block.dart';
 import '../../widgets/page_background_sheet.dart';
 import '../../widgets/top_nav_rail.dart';
@@ -216,6 +218,8 @@ enum _InsertAction {
   meeting,
   textNote,
   image,
+  pdf,
+  removePdf,
   recentre,
 }
 
@@ -229,6 +233,8 @@ class NotebookEditorScreen extends ConsumerStatefulWidget {
     required this.notebookId,
     this.initialFindQuery,
     this.scrollToBlockId,
+    this.pdfPicker,
+    this.pdfPageRasterLoader,
   });
 
   final String notebookId;
@@ -243,6 +249,10 @@ class NotebookEditorScreen extends ConsumerStatefulWidget {
   /// on a search result lands "at the top of the ctrl+f results"). Null (the
   /// ordinary open) mounts no find bar.
   final String? initialFindQuery;
+
+  /// Test seams for the system picker and PDFium-backed disk cache.
+  final NotebookPdfPicker? pdfPicker;
+  final PdfPageRasterLoader? pdfPageRasterLoader;
 
   @override
   ConsumerState<NotebookEditorScreen> createState() =>
@@ -289,6 +299,9 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
 
   /// Vertical position of the page, so it can be scrolled back to the top.
   final ScrollController _pageScroll = ScrollController();
+  final ValueNotifier<Rect> _visiblePageRect = ValueNotifier<Rect>(Rect.zero);
+  late final NotebookPdfPicker _pdfPicker;
+  late final PdfPageRasterLoader _pdfPageRasterLoader;
   bool _erasing = false;
 
   /// Lasso mode: pointer input selects instead of drawing.
@@ -363,6 +376,12 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
   @override
   void initState() {
     super.initState();
+    _pdfPicker = widget.pdfPicker ?? SystemNotebookPdfPicker();
+    _pdfPageRasterLoader = widget.pdfPageRasterLoader ?? NotebookPdfPageCache();
+    _pageScroll.addListener(_updateVisiblePageRect);
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _updateVisiblePageRect(),
+    );
     final String? deepLinked = widget.initialFindQuery;
     if (deepLinked != null && deepLinked.trim().isNotEmpty) {
       // Deep link from the home screen's search: the bar opens populated;
@@ -375,7 +394,9 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
 
   @override
   void dispose() {
+    _pageScroll.removeListener(_updateVisiblePageRect);
     _pageScroll.dispose();
+    _visiblePageRect.dispose();
     _title.dispose();
     _findQuery.dispose();
     for (final TextEditingController controller in _controllers.values) {
@@ -450,6 +471,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
           _controllerFor(c.id, c.text);
         case NotebookDumpCardBlock():
         case NotebookImageBlock():
+        case NotebookPdfPageBlock():
         case NotebookTableBlock():
         case NotebookUnknownBlock():
           break;
@@ -966,6 +988,98 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
     });
   }
 
+  /// Imports a local PDF as ordered page blocks, not as a viewer.
+  ///
+  /// Import inspects page geometry only. PDFium rasterises an individual page
+  /// later, when its block approaches the visible canvas, and the result is
+  /// reused from the disk cache.
+  Future<void> _importPdf() async {
+    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+    final PickedPdf? picked;
+    try {
+      picked = await _pdfPicker.pick();
+    } catch (error) {
+      messenger.showSnackBar(
+        SnackBar(content: Text('Could not import the PDF: $error')),
+      );
+      return;
+    }
+    if (picked == null || !mounted) return;
+    final List<NotebookPdfPageBlock> pages;
+    try {
+      pages = buildImportedPdfPageBlocks(
+        picked: picked,
+        existing: _blocks,
+        strokes: _strokes,
+        newId: _uuid.v4,
+      );
+    } catch (error) {
+      messenger.showSnackBar(
+        SnackBar(content: Text('Could not import the PDF: $error')),
+      );
+      return;
+    }
+    if (pages.isEmpty) return;
+    setState(() {
+      _blocks = <NotebookBlock>[..._blocks, ...pages];
+      _dirty = true;
+    });
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _updateVisiblePageRect(),
+    );
+  }
+
+  /// Removes the most recently imported PDF as one document-sized action.
+  /// The insert menu exposes the affordance beside PDF import, and the snackbar
+  /// restores the exact blocks (including the sole source-bearing page).
+  void _removeLastImportedPdf() {
+    final List<NotebookPdfPageBlock> imported = _blocks
+        .whereType<NotebookPdfPageBlock>()
+        .toList(growable: false);
+    if (imported.isEmpty) return;
+    final String documentId = imported.last.documentId;
+    final List<(int, NotebookBlock)> removed = <(int, NotebookBlock)>[
+      for (int index = 0; index < _blocks.length; index++)
+        if (_blocks[index] case final NotebookPdfPageBlock page
+            when page.documentId == documentId)
+          (index, page),
+    ];
+    setState(() {
+      _blocks = _blocks
+          .where(
+            (NotebookBlock block) =>
+                block is! NotebookPdfPageBlock ||
+                block.documentId != documentId,
+          )
+          .toList(growable: false);
+      _dirty = true;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Removed ${removed.length}-page PDF'),
+        action: SnackBarAction(
+          label: 'Undo',
+          onPressed: () {
+            if (!mounted) return;
+            setState(() {
+              final List<NotebookBlock> restored = List<NotebookBlock>.of(
+                _blocks,
+              );
+              for (final (int index, NotebookBlock block) in removed) {
+                restored.insert(index.clamp(0, restored.length), block);
+              }
+              _blocks = restored;
+              _dirty = true;
+            });
+            WidgetsBinding.instance.addPostFrameCallback(
+              (_) => _updateVisiblePageRect(),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
   /// Moves the selected image by one drag step, in canonical page space.
   void _moveImage(String id, Offset delta) {
     setState(() {
@@ -1254,6 +1368,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
       c.x == null && c.y == null ? null : Offset(c.x ?? 0, c.y ?? 0),
     NotebookDumpCardBlock d => Offset(d.x, d.y),
     NotebookImageBlock i => Offset(i.x, i.y),
+    NotebookPdfPageBlock() => null,
     NotebookTableBlock t => Offset(t.x, t.y),
     NotebookUnknownBlock() => null,
   };
@@ -1331,6 +1446,10 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                 x: i.x + step.dx,
                 y: i.y + step.dy,
               ),
+              // PDF pages are fixed document backgrounds. Ink above them is
+              // selectable; moving one page independently would break source
+              // order and the multi-page export.
+              NotebookPdfPageBlock() => block,
               NotebookTableBlock t => t.copyWith(
                 x: t.x + step.dx,
                 y: t.y + step.dy,
@@ -1578,6 +1697,8 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
       switch (block) {
         case NotebookImageBlock i:
           rightmost = math.max(rightmost, i.x + i.width);
+        case NotebookPdfPageBlock p:
+          rightmost = math.max(rightmost, p.x + p.width);
         case NotebookDumpCardBlock d:
           rightmost = math.max(rightmost, d.x + _minBlockWidth);
         case NotebookTextBlock t:
@@ -1598,6 +1719,20 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
     return rightmost + _pagePadding;
   }
 
+  /// Publishes only viewport geometry to PDF page widgets. Scrolling therefore
+  /// wakes nearby pages without rebuilding the full editor or its ink canvas.
+  void _updateVisiblePageRect() {
+    if (!_pageScroll.hasClients || _pageScale <= 0) return;
+    final ScrollPosition position = _pageScroll.position;
+    final Rect next = Rect.fromLTWH(
+      0,
+      position.pixels / _pageScale,
+      _pageColumnWidth,
+      position.viewportDimension / _pageScale,
+    );
+    if (_visiblePageRect.value != next) _visiblePageRect.value = next;
+  }
+
   /// Height of the page: always a screen beyond the lowest thing on it, so
   /// there is fresh page to write on however far down you scroll.
   double _pageHeight(double viewportHeight) {
@@ -1615,6 +1750,8 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
           lowest = math.max(lowest, d.y);
         case NotebookImageBlock():
           break;
+        case NotebookPdfPageBlock p:
+          lowest = math.max(lowest, p.y + p.height);
         case NotebookTableBlock t:
           lowest = math.max(lowest, t.y + t.viewportHeight);
         case NotebookUnknownBlock():
@@ -2084,6 +2221,10 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                               unawaited(_importDumps(dumps, DumpMode.textNote));
                             case _InsertAction.image:
                               unawaited(_importImage());
+                            case _InsertAction.pdf:
+                              unawaited(_importPdf());
+                            case _InsertAction.removePdf:
+                              _removeLastImportedPdf();
                             case _InsertAction.recentre:
                               _pageScroll.jumpTo(0);
                           }
@@ -2153,6 +2294,28 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                                   contentPadding: EdgeInsets.zero,
                                 ),
                               ),
+                              const PopupMenuItem<_InsertAction>(
+                                key: ValueKey('notebook-insert-pdf'),
+                                value: _InsertAction.pdf,
+                                child: ListTile(
+                                  leading: Icon(Icons.picture_as_pdf_outlined),
+                                  title: Text('PDF'),
+                                  contentPadding: EdgeInsets.zero,
+                                ),
+                              ),
+                              if (_blocks.any(
+                                (NotebookBlock block) =>
+                                    block is NotebookPdfPageBlock,
+                              ))
+                                const PopupMenuItem<_InsertAction>(
+                                  key: ValueKey('notebook-remove-pdf'),
+                                  value: _InsertAction.removePdf,
+                                  child: ListTile(
+                                    leading: Icon(Icons.delete_outline),
+                                    title: Text('Remove last imported PDF'),
+                                    contentPadding: EdgeInsets.zero,
+                                  ),
+                                ),
                               const PopupMenuDivider(),
                               // The page can be panned until the work is off-screen
                               // on identical black canvas; this is the way home.
@@ -2266,6 +2429,11 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
         // scroll offset is in viewport px. Plain assignment — layout is not
         // a place to setState, and nothing rebuilds off this value.
         _pageScale = scale;
+        // Layout changes (rotation, folding, split-screen) do not necessarily
+        // scroll; republish the viewport after the new dimensions settle.
+        WidgetsBinding.instance.addPostFrameCallback(
+          (_) => _updateVisiblePageRect(),
+        );
         final double canonicalWidth = constraints.maxWidth / scale;
         final double pageHeight = _pageHeight(constraints.maxHeight / scale);
         return SingleChildScrollView(
@@ -2318,6 +2486,26 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                         ),
                       ),
                     ),
+                    // Imported PDF pages are document backgrounds, not a
+                    // viewer. Each page wakes only near the viewport and sits
+                    // beneath every editable block and the topmost ink layer.
+                    for (final NotebookBlock block in _blocks)
+                      if (block is NotebookPdfPageBlock)
+                        Positioned(
+                          key: ValueKey<String>(
+                            'notebook-pdf-layer-${block.id}',
+                          ),
+                          left: block.x,
+                          top: block.y,
+                          child: IgnorePointer(
+                            child: NotebookPdfPageBlockWidget(
+                              block: block,
+                              sourceData: pdfSourceDataFor(block, _blocks),
+                              loader: _pdfPageRasterLoader,
+                              visiblePageRect: _visiblePageRect,
+                            ),
+                          ),
+                        ),
                     // Typed blocks, each positioned where it was left. Laid out
                     // in canonical space; the FittedBox above scales them.
                     ..._buildPositionedBlocks(canonicalWidth),
@@ -2389,6 +2577,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                     // Top: the ink layer. It ignores pointers unless draw mode is
                     // on, so typing and card dragging work normally otherwise.
                     Positioned.fill(
+                      key: const ValueKey('notebook-ink-layer'),
                       child: RepaintBoundary(
                         child: NotebookInkCanvas(
                           key: _canvasKey,

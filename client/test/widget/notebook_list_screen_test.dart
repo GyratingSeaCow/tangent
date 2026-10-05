@@ -34,10 +34,7 @@ import '../support/fake_notebook_repository.dart';
 /// bare repository — the device found the editor and list wired to the wrong
 /// one, leaving orphan files in 'Tangent Notebooks'.
 class _ForwardingNotebookPersistence implements NotebookPersistence {
-  _ForwardingNotebookPersistence(
-    this._repository, {
-    this.setPasswordError,
-  });
+  _ForwardingNotebookPersistence(this._repository, {this.setPasswordError});
 
   final NotebookRepository _repository;
   final Object? setPasswordError;
@@ -175,9 +172,7 @@ void main() {
           // Task 6: the search icon hangs off the feature toggle, and the
           // query runs over a REAL in-memory ink index when a test seeds one.
           if (localDb != null) localDbProvider.overrideWithValue(localDb),
-          handwritingSearchEnabledProvider.overrideWith(
-            (ref) => searchEnabled,
-          ),
+          handwritingSearchEnabledProvider.overrideWith((ref) => searchEnabled),
         ],
         child: MaterialApp(
           home: NotebookListScreen(sharePdfOverride: sharePdf),
@@ -195,8 +190,9 @@ void main() {
     await tester.pump(const Duration(milliseconds: 1));
   }
 
-  testWidgets('renders the notebooks the provider emits, newest first',
-      (tester) async {
+  testWidgets('renders the notebooks the provider emits, newest first', (
+    tester,
+  ) async {
     await mountList(
       tester,
       seed: <Notebook>[
@@ -261,160 +257,162 @@ void main() {
   });
 
   testWidgets(
-      'turning protection on requires the password twice and keeps the session unlocked',
-      (tester) async {
-    await mountList(
-      tester,
-      seed: <Notebook>[testNotebook(id: 'nb-protect', title: 'Private')],
-    );
-    expect(
-      find.byKey(const ValueKey<String>('notebook-lock-nb-protect')),
-      findsNothing,
-    );
+    'turning protection on requires the password twice and keeps the session unlocked',
+    (tester) async {
+      await mountList(
+        tester,
+        seed: <Notebook>[testNotebook(id: 'nb-protect', title: 'Private')],
+      );
+      expect(
+        find.byKey(const ValueKey<String>('notebook-lock-nb-protect')),
+        findsNothing,
+      );
 
-    await tester.tap(
-      find.byKey(const ValueKey<String>('notebook-menu-nb-protect')),
-    );
-    await tester.pumpAndSettle();
-    expect(find.text('Turn On Password Protection'), findsOneWidget);
-    await tester.tap(
-      find.byKey(ItemActionSheet.keyFor(ItemAction.passwordProtection)),
-    );
-    await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey<String>('notebook-menu-nb-protect')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Turn On Password Protection'), findsOneWidget);
+      await tester.tap(
+        find.byKey(ItemActionSheet.keyFor(ItemAction.passwordProtection)),
+      );
+      await tester.pumpAndSettle();
 
-    expect(
-      find.byKey(const ValueKey<String>('notebook-new-password')),
-      findsOneWidget,
-    );
-    expect(
-      find.byKey(const ValueKey<String>('notebook-confirm-password')),
-      findsOneWidget,
-    );
-    await tester.enterText(
-      find.byKey(const ValueKey<String>('notebook-new-password')),
-      'secret phrase',
-    );
-    await tester.enterText(
-      find.byKey(const ValueKey<String>('notebook-confirm-password')),
-      'different',
-    );
-    await tester.tap(
-      find.byKey(const ValueKey<String>('notebook-password-enable')),
-    );
-    await tester.pump();
-    expect(find.text('Passwords do not match'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey<String>('notebook-new-password')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey<String>('notebook-confirm-password')),
+        findsOneWidget,
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey<String>('notebook-new-password')),
+        'secret phrase',
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey<String>('notebook-confirm-password')),
+        'different',
+      );
+      await tester.tap(
+        find.byKey(const ValueKey<String>('notebook-password-enable')),
+      );
+      await tester.pump();
+      expect(find.text('Passwords do not match'), findsOneWidget);
 
-    await tester.enterText(
-      find.byKey(const ValueKey<String>('notebook-confirm-password')),
-      'secret phrase',
-    );
-    await tester.tap(
-      find.byKey(const ValueKey<String>('notebook-password-enable')),
-    );
-    await tester.pumpAndSettle(
-      const Duration(milliseconds: 50),
-      EnginePhase.sendSemanticsUpdate,
-      const Duration(seconds: 30),
-    );
+      await tester.enterText(
+        find.byKey(const ValueKey<String>('notebook-confirm-password')),
+        'secret phrase',
+      );
+      await tester.tap(
+        find.byKey(const ValueKey<String>('notebook-password-enable')),
+      );
+      await tester.pumpAndSettle(
+        const Duration(milliseconds: 50),
+        EnginePhase.sendSemanticsUpdate,
+        const Duration(seconds: 30),
+      );
 
-    final Notebook protected = (await repository.getNotebook('nb-protect'))!;
-    expect(protected.passwordProtected, isTrue);
-    expect(protected.passwordHash, isNot(contains('secret phrase')));
-    expect(
-      find.byKey(const ValueKey<String>('notebook-lock-nb-protect')),
-      findsOneWidget,
-    );
+      final Notebook protected = (await repository.getNotebook('nb-protect'))!;
+      expect(protected.passwordProtected, isTrue);
+      expect(protected.passwordHash, isNot(contains('secret phrase')));
+      expect(
+        find.byKey(const ValueKey<String>('notebook-lock-nb-protect')),
+        findsOneWidget,
+      );
 
-    await tester.tap(
-      find.byKey(const ValueKey<String>('notebook-row-nb-protect')),
-    );
-    await tester.pumpAndSettle();
-    expect(
-      find.byKey(const ValueKey<String>('notebook-current-password')),
-      findsNothing,
-      reason: 'entering and confirming the new password unlocks this process',
-    );
-    expect(find.byType(NotebookEditorScreen), findsOneWidget);
-    await unmount(tester);
-  });
+      await tester.tap(
+        find.byKey(const ValueKey<String>('notebook-row-nb-protect')),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey<String>('notebook-current-password')),
+        findsNothing,
+        reason: 'entering and confirming the new password unlocks this process',
+      );
+      expect(find.byType(NotebookEditorScreen), findsOneWidget);
+      await unmount(tester);
+    },
+  );
 
   testWidgets(
-      'Lock Now is offered only while protected and unlocked, then the next open prompts',
-      (tester) async {
-    final NotebookPasswordMetadata metadata =
-        fakeNotebookPasswordMetadata('right password');
-    final NotebookUnlockRegistry unlocks = NotebookUnlockRegistry()
-      ..unlock('nb-unlocked', metadata.hash);
-    await mountList(
-      tester,
-      seed: <Notebook>[
-        testNotebook(id: 'nb-open', title: 'Open notebook'),
-        testNotebook(
-          id: 'nb-locked',
-          title: 'Already locked',
-          passwordHash: metadata.hash,
-          passwordSalt: metadata.salt,
-          passwordIterations: metadata.iterations,
-        ),
-        testNotebook(
-          id: 'nb-unlocked',
-          title: 'Unlocked private',
-          passwordHash: metadata.hash,
-          passwordSalt: metadata.salt,
-          passwordIterations: metadata.iterations,
-        ),
-      ],
-      unlockRegistry: unlocks,
-    );
+    'Lock Now is offered only while protected and unlocked, then the next open prompts',
+    (tester) async {
+      final NotebookPasswordMetadata metadata = fakeNotebookPasswordMetadata(
+        'right password',
+      );
+      final NotebookUnlockRegistry unlocks = NotebookUnlockRegistry()
+        ..unlock('nb-unlocked', metadata.hash);
+      await mountList(
+        tester,
+        seed: <Notebook>[
+          testNotebook(id: 'nb-open', title: 'Open notebook'),
+          testNotebook(
+            id: 'nb-locked',
+            title: 'Already locked',
+            passwordHash: metadata.hash,
+            passwordSalt: metadata.salt,
+            passwordIterations: metadata.iterations,
+          ),
+          testNotebook(
+            id: 'nb-unlocked',
+            title: 'Unlocked private',
+            passwordHash: metadata.hash,
+            passwordSalt: metadata.salt,
+            passwordIterations: metadata.iterations,
+          ),
+        ],
+        unlockRegistry: unlocks,
+      );
 
-    for (final String id in <String>['nb-open', 'nb-locked']) {
-      await tester.tap(find.byKey(ValueKey<String>('notebook-menu-$id')));
+      for (final String id in <String>['nb-open', 'nb-locked']) {
+        await tester.tap(find.byKey(ValueKey<String>('notebook-menu-$id')));
+        await tester.pumpAndSettle();
+        expect(
+          find.byKey(ItemActionSheet.keyFor(ItemAction.lockNow)),
+          findsNothing,
+          reason: '$id must not offer Lock Now',
+        );
+        await tester.tapAt(const Offset(20, 20));
+        await tester.pumpAndSettle();
+      }
+
+      await tester.tap(find.byKey(const ValueKey('notebook-view-toggle')));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('notebook-cover-menu-nb-unlocked')),
+      );
       await tester.pumpAndSettle();
       expect(
         find.byKey(ItemActionSheet.keyFor(ItemAction.lockNow)),
-        findsNothing,
-        reason: '$id must not offer Lock Now',
+        findsOneWidget,
+        reason: 'the cover menu shares the row menu Lock Now action',
       );
-      await tester.tapAt(const Offset(20, 20));
+      await tester.tap(find.byKey(ItemActionSheet.keyFor(ItemAction.lockNow)));
       await tester.pumpAndSettle();
-    }
+      expect(unlocks.isUnlocked('nb-unlocked', metadata.hash), isFalse);
 
-    await tester.tap(find.byKey(const ValueKey('notebook-view-toggle')));
-    await tester.pumpAndSettle();
-    await tester.tap(
-      find.byKey(const ValueKey('notebook-cover-menu-nb-unlocked')),
-    );
-    await tester.pumpAndSettle();
-    expect(
-      find.byKey(ItemActionSheet.keyFor(ItemAction.lockNow)),
-      findsOneWidget,
-      reason: 'the cover menu shares the row menu Lock Now action',
-    );
-    await tester.tap(find.byKey(ItemActionSheet.keyFor(ItemAction.lockNow)));
-    await tester.pumpAndSettle();
-    expect(unlocks.isUnlocked('nb-unlocked', metadata.hash), isFalse);
+      await tester.tap(
+        find.byKey(const ValueKey('notebook-cover-nb-unlocked')),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey<String>('notebook-current-password')),
+        findsOneWidget,
+        reason: 'Lock Now must make the next open request the password',
+      );
+      expect(find.byType(NotebookEditorScreen), findsNothing);
+      expect(tester.takeException(), isNull);
+      await unmount(tester);
+    },
+  );
 
-    await tester.tap(
-      find.byKey(const ValueKey('notebook-cover-nb-unlocked')),
-    );
-    await tester.pumpAndSettle();
-    expect(
-      find.byKey(const ValueKey<String>('notebook-current-password')),
-      findsOneWidget,
-      reason: 'Lock Now must make the next open request the password',
-    );
-    expect(find.byType(NotebookEditorScreen), findsNothing);
-    expect(tester.takeException(), isNull);
-    await unmount(tester);
-  });
-
-  testWidgets('password enable failures show an error instead of escaping',
-      (tester) async {
+  testWidgets('password enable failures show an error instead of escaping', (
+    tester,
+  ) async {
     await mountList(
       tester,
-      seed: <Notebook>[
-        testNotebook(id: 'nb-persist-fails', title: 'Private'),
-      ],
+      seed: <Notebook>[testNotebook(id: 'nb-persist-fails', title: 'Private')],
       setPasswordError: StateError('durable publication failed'),
     );
 
@@ -451,10 +449,12 @@ void main() {
     await unmount(tester);
   });
 
-  testWidgets('wrong password never opens a protected notebook',
-      (tester) async {
-    final NotebookPasswordMetadata metadata =
-        fakeNotebookPasswordMetadata('right password');
+  testWidgets('wrong password never opens a protected notebook', (
+    tester,
+  ) async {
+    final NotebookPasswordMetadata metadata = fakeNotebookPasswordMetadata(
+      'right password',
+    );
     await mountList(
       tester,
       seed: <Notebook>[
@@ -509,55 +509,58 @@ void main() {
   });
 
   testWidgets(
-      'Turn Off Password Protection rejects a wrong password and stays protected',
-      (tester) async {
-    final NotebookPasswordMetadata metadata =
-        fakeNotebookPasswordMetadata('right password');
-    await mountList(
-      tester,
-      seed: <Notebook>[
-        testNotebook(
-          id: 'nb-stays-protected',
-          title: 'Private',
-          passwordHash: metadata.hash,
-          passwordSalt: metadata.salt,
-          passwordIterations: metadata.iterations,
-        ),
-      ],
-    );
+    'Turn Off Password Protection rejects a wrong password and stays protected',
+    (tester) async {
+      final NotebookPasswordMetadata metadata = fakeNotebookPasswordMetadata(
+        'right password',
+      );
+      await mountList(
+        tester,
+        seed: <Notebook>[
+          testNotebook(
+            id: 'nb-stays-protected',
+            title: 'Private',
+            passwordHash: metadata.hash,
+            passwordSalt: metadata.salt,
+            passwordIterations: metadata.iterations,
+          ),
+        ],
+      );
 
-    await tester.tap(
-      find.byKey(const ValueKey<String>('notebook-menu-nb-stays-protected')),
-    );
-    await tester.pumpAndSettle();
-    expect(find.text('Turn Off Password Protection'), findsOneWidget);
-    await tester.tap(
-      find.byKey(ItemActionSheet.keyFor(ItemAction.passwordProtection)),
-    );
-    await tester.pumpAndSettle();
-    expect(find.text('Turn off password protection'), findsOneWidget);
+      await tester.tap(
+        find.byKey(const ValueKey<String>('notebook-menu-nb-stays-protected')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Turn Off Password Protection'), findsOneWidget);
+      await tester.tap(
+        find.byKey(ItemActionSheet.keyFor(ItemAction.passwordProtection)),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Turn off password protection'), findsOneWidget);
 
-    await tester.enterText(
-      find.byKey(const ValueKey<String>('notebook-current-password')),
-      'wrong password',
-    );
-    await tester.tap(
-      find.byKey(const ValueKey<String>('notebook-password-submit')),
-    );
-    await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey<String>('notebook-current-password')),
+        'wrong password',
+      );
+      await tester.tap(
+        find.byKey(const ValueKey<String>('notebook-password-submit')),
+      );
+      await tester.pumpAndSettle();
 
-    expect(find.text('Wrong password'), findsOneWidget);
-    expect(find.text('Turn off password protection'), findsOneWidget);
-    final Notebook stillProtected =
-        (await repository.getNotebook('nb-stays-protected'))!;
-    expect(stillProtected.passwordProtected, isTrue);
-    expect(stillProtected.passwordHash, metadata.hash);
-    expect(
-      find.byKey(const ValueKey<String>('notebook-lock-nb-stays-protected')),
-      findsOneWidget,
-    );
-    await unmount(tester);
-  });
+      expect(find.text('Wrong password'), findsOneWidget);
+      expect(find.text('Turn off password protection'), findsOneWidget);
+      final Notebook stillProtected = (await repository.getNotebook(
+        'nb-stays-protected',
+      ))!;
+      expect(stillProtected.passwordProtected, isTrue);
+      expect(stillProtected.passwordHash, metadata.hash);
+      expect(
+        find.byKey(const ValueKey<String>('notebook-lock-nb-stays-protected')),
+        findsOneWidget,
+      );
+      await unmount(tester);
+    },
+  );
 
   testWidgets('an empty library reads "No notebooks yet"', (tester) async {
     await mountList(tester);
@@ -568,8 +571,9 @@ void main() {
     await unmount(tester);
   });
 
-  testWidgets('the create key creates a notebook and opens its editor',
-      (tester) async {
+  testWidgets('the create key creates a notebook and opens its editor', (
+    tester,
+  ) async {
     await mountList(tester);
 
     // Instrument Console v2: the global create key opens the create sheet;
@@ -596,8 +600,9 @@ void main() {
     await unmount(tester);
   });
 
-  testWidgets('tapping a row opens that notebook in the editor',
-      (tester) async {
+  testWidgets('tapping a row opens that notebook in the editor', (
+    tester,
+  ) async {
     await mountList(
       tester,
       seed: <Notebook>[testNotebook(id: 'nb-7', title: 'Sprint ideas')],
@@ -620,8 +625,9 @@ void main() {
     await unmount(tester);
   });
 
-  testWidgets('delete asks for confirmation and cancelling deletes nothing',
-      (tester) async {
+  testWidgets('delete asks for confirmation and cancelling deletes nothing', (
+    tester,
+  ) async {
     await mountList(
       tester,
       seed: <Notebook>[testNotebook(id: 'nb-7', title: 'Sprint ideas')],
@@ -681,8 +687,9 @@ void main() {
 
   // The unified contract: long-press means multi-select on every list, the
   // same as dumps. Per-item actions live behind the row's own menu button.
-  testWidgets('long-press enters selection instead of opening a menu',
-      (tester) async {
+  testWidgets('long-press enters selection instead of opening a menu', (
+    tester,
+  ) async {
     await mountList(
       tester,
       seed: <Notebook>[testNotebook(id: 'nb-7', title: 'Sprint ideas')],
@@ -701,7 +708,8 @@ void main() {
     expect(
       find.byKey(const ValueKey('item-action-rename')),
       findsNothing,
-      reason: 'the per-item menu belongs to the row menu button, not '
+      reason:
+          'the per-item menu belongs to the row menu button, not '
           'long-press',
     );
     expect(find.text('Delete notebook?'), findsNothing);
@@ -714,8 +722,9 @@ void main() {
   // Grouping is unit-tested as a pure function; these prove the screen
   // actually renders it. The pure-function tests all passed while the screen
   // was throwing 'Override in main()', so rendering needs its own proof.
-  testWidgets('with no folders the list shows no folder headers',
-      (tester) async {
+  testWidgets('with no folders the list shows no folder headers', (
+    tester,
+  ) async {
     await mountList(
       tester,
       seed: <Notebook>[testNotebook(id: 'nb-7', title: 'Sprint ideas')],
@@ -737,9 +746,7 @@ void main() {
         testNotebook(id: 'nb-7', title: 'Sprint ideas', folderId: 'f-work'),
         testNotebook(id: 'nb-8', title: 'Groceries'),
       ],
-      folders: <Folder>[
-        Folder(id: 'f-work', name: 'Work', createdAt: 1),
-      ],
+      folders: <Folder>[Folder(id: 'f-work', name: 'Work', createdAt: 1)],
     );
 
     expect(find.text('Work'), findsOneWidget);
@@ -757,14 +764,13 @@ void main() {
     await unmount(tester);
   });
 
-  testWidgets('an empty folder still shows so it can be filed into',
-      (tester) async {
+  testWidgets('an empty folder still shows so it can be filed into', (
+    tester,
+  ) async {
     await mountList(
       tester,
       seed: <Notebook>[testNotebook(id: 'nb-8', title: 'Groceries')],
-      folders: <Folder>[
-        Folder(id: 'f-work', name: 'Work', createdAt: 1),
-      ],
+      folders: <Folder>[Folder(id: 'f-work', name: 'Work', createdAt: 1)],
     );
 
     expect(find.text('Work'), findsOneWidget);
@@ -809,12 +815,14 @@ void main() {
       contains('Q4 planning'),
       reason: 'rename must persist through the notebook persistence layer',
     );
-    final Notebook renamed =
-        repository.saved.lastWhere((Notebook n) => n.title == 'Q4 planning');
+    final Notebook renamed = repository.saved.lastWhere(
+      (Notebook n) => n.title == 'Q4 planning',
+    );
     expect(
       renamed.document.blocks.whereType<NotebookTextBlock>().single.text,
       'keep me',
-      reason: 'rename must save the FULL notebook: the list row is a '
+      reason:
+          'rename must save the FULL notebook: the list row is a '
           'header with no content, and saving it verbatim would erase '
           'the page',
     );
@@ -824,8 +832,9 @@ void main() {
     await unmount(tester);
   });
 
-  testWidgets('a view toggle switches the list to a cover grid',
-      (tester) async {
+  testWidgets('a view toggle switches the list to a cover grid', (
+    tester,
+  ) async {
     await mountList(
       tester,
       seed: <Notebook>[
@@ -854,7 +863,8 @@ void main() {
     expect(
       find.text('Ideas'),
       findsOneWidget,
-      reason: 'a cover still names its notebook -- an unlabelled grid of '
+      reason:
+          'a cover still names its notebook -- an unlabelled grid of '
           'identical covers cannot be navigated',
     );
 
@@ -870,9 +880,7 @@ void main() {
         testNotebook(id: 'nb-1', title: 'Filed', folderId: 'f-1'),
         testNotebook(id: 'nb-2', title: 'Loose'),
       ],
-      folders: <Folder>[
-        Folder(id: 'f-1', name: 'Work', createdAt: 1),
-      ],
+      folders: <Folder>[Folder(id: 'f-1', name: 'Work', createdAt: 1)],
     );
 
     await tester.tap(find.byKey(const ValueKey('notebook-view-toggle')));
@@ -886,8 +894,9 @@ void main() {
     expect(find.text('Work'), findsOneWidget);
   });
 
-  testWidgets('a cover opens and offers the same actions as a row',
-      (tester) async {
+  testWidgets('a cover opens and offers the same actions as a row', (
+    tester,
+  ) async {
     await mountList(
       tester,
       seed: <Notebook>[testNotebook(id: 'nb-1', title: 'Ideas')],
@@ -965,9 +974,9 @@ void main() {
 
   testWidgets('a stored cover preference opens in cover view', (tester) async {
     // The read path, proved independently of the write path.
-    SharedPreferences.setMockInitialValues(
-      <String, Object>{'notebooks.coverView': true},
-    );
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'notebooks.coverView': true,
+    });
     await mountList(
       tester,
       seed: <Notebook>[testNotebook(id: 'nb-1', title: 'Ideas')],
@@ -981,8 +990,9 @@ void main() {
     );
   });
 
-  testWidgets('tapping a folder header collapses only that section (list)',
-      (tester) async {
+  testWidgets('tapping a folder header collapses only that section (list)', (
+    tester,
+  ) async {
     // Folder names are tap targets: collapse hides the folder's notebooks so
     // a long library can be skimmed. Other sections must not move state.
     SharedPreferences.setMockInitialValues(<String, Object>{});
@@ -1031,8 +1041,9 @@ void main() {
     await unmount(tester);
   });
 
-  testWidgets('folder collapse works identically in the cover view',
-      (tester) async {
+  testWidgets('folder collapse works identically in the cover view', (
+    tester,
+  ) async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
     await mountList(
       tester,
@@ -1040,9 +1051,7 @@ void main() {
         testNotebook(id: 'nb-1', title: 'Filed', folderId: 'f-1'),
         testNotebook(id: 'nb-2', title: 'Loose'),
       ],
-      folders: <Folder>[
-        Folder(id: 'f-1', name: 'Work', createdAt: 1),
-      ],
+      folders: <Folder>[Folder(id: 'f-1', name: 'Work', createdAt: 1)],
     );
 
     await tester.tap(find.byKey(const ValueKey('notebook-view-toggle')));
@@ -1055,7 +1064,8 @@ void main() {
     expect(
       find.byKey(const ValueKey('notebook-cover-nb-1')),
       findsNothing,
-      reason: 'the alternate view must collapse too, or the feature is a lie '
+      reason:
+          'the alternate view must collapse too, or the feature is a lie '
           'for cover users',
     );
     expect(
@@ -1081,9 +1091,7 @@ void main() {
       seed: <Notebook>[
         testNotebook(id: 'nb-1', title: 'Filed', folderId: 'f-1'),
       ],
-      folders: <Folder>[
-        Folder(id: 'f-1', name: 'Work', createdAt: 1),
-      ],
+      folders: <Folder>[Folder(id: 'f-1', name: 'Work', createdAt: 1)],
     );
 
     await tester.tap(find.byKey(const ValueKey('notebook-section-f-1')));
@@ -1114,8 +1122,9 @@ void main() {
       return db;
     }
 
-    testWidgets('long-pressing a folder header offers rename and delete',
-        (tester) async {
+    testWidgets('long-pressing a folder header offers rename and delete', (
+      tester,
+    ) async {
       final _FakeFoldersDb db = mkDb();
       await mountList(
         tester,
@@ -1145,8 +1154,9 @@ void main() {
       await tester.pumpAndSettle();
     });
 
-    testWidgets('deleting a folder asks first and then unfiles, not deletes',
-        (tester) async {
+    testWidgets('deleting a folder asks first and then unfiles, not deletes', (
+      tester,
+    ) async {
       final _FakeFoldersDb db = mkDb();
       await mountList(
         tester,
@@ -1266,8 +1276,9 @@ void main() {
   });
 
   group('notebook multi-select', () {
-    testWidgets('tap toggles rows and select-all covers every notebook',
-        (tester) async {
+    testWidgets('tap toggles rows and select-all covers every notebook', (
+      tester,
+    ) async {
       await mountList(
         tester,
         seed: <Notebook>[
@@ -1298,17 +1309,15 @@ void main() {
       await unmount(tester);
     });
 
-    testWidgets('the row menu button is hidden while selecting',
-        (tester) async {
+    testWidgets('the row menu button is hidden while selecting', (
+      tester,
+    ) async {
       await mountList(
         tester,
         seed: <Notebook>[testNotebook(id: 'nb-1', title: 'One')],
       );
 
-      expect(
-        find.byKey(const ValueKey('notebook-menu-nb-1')),
-        findsOneWidget,
-      );
+      expect(find.byKey(const ValueKey('notebook-menu-nb-1')), findsOneWidget);
 
       await tester.longPress(find.byKey(const ValueKey('notebook-row-nb-1')));
       await tester.pumpAndSettle();
@@ -1322,8 +1331,9 @@ void main() {
       await unmount(tester);
     });
 
-    testWidgets('cancel leaves selection mode with nothing deleted',
-        (tester) async {
+    testWidgets('cancel leaves selection mode with nothing deleted', (
+      tester,
+    ) async {
       await mountList(
         tester,
         seed: <Notebook>[testNotebook(id: 'nb-1', title: 'One')],
@@ -1331,23 +1341,19 @@ void main() {
 
       await tester.longPress(find.byKey(const ValueKey('notebook-row-nb-1')));
       await tester.pumpAndSettle();
-      await tester.tap(
-        find.byKey(const ValueKey('notebook-selection-cancel')),
-      );
+      await tester.tap(find.byKey(const ValueKey('notebook-selection-cancel')));
       await tester.pumpAndSettle();
 
       expect(find.text('1 selected'), findsNothing);
-      expect(
-        find.byKey(const ValueKey('notebook-menu-nb-1')),
-        findsOneWidget,
-      );
+      expect(find.byKey(const ValueKey('notebook-menu-nb-1')), findsOneWidget);
       expect(repository.deleted, isEmpty);
 
       await unmount(tester);
     });
 
-    testWidgets('bulk delete confirms once and deletes every selected row',
-        (tester) async {
+    testWidgets('bulk delete confirms once and deletes every selected row', (
+      tester,
+    ) async {
       await mountList(
         tester,
         seed: <Notebook>[
@@ -1362,9 +1368,7 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('notebook-row-nb-2')));
       await tester.pumpAndSettle();
 
-      await tester.tap(
-        find.byKey(const ValueKey('notebook-selection-delete')),
-      );
+      await tester.tap(find.byKey(const ValueKey('notebook-selection-delete')));
       await tester.pumpAndSettle();
 
       expect(
@@ -1388,8 +1392,9 @@ void main() {
       await unmount(tester);
     });
 
-    testWidgets('long-press on a folder header still opens folder actions',
-        (tester) async {
+    testWidgets('long-press on a folder header still opens folder actions', (
+      tester,
+    ) async {
       // Selection must not swallow the folder-header gesture shipped
       // earlier: headers are not rows.
       SharedPreferences.setMockInitialValues(<String, Object>{});
@@ -1421,8 +1426,9 @@ void main() {
   });
 
   group('export to PDF', () {
-    testWidgets('the menu offers Export to PDF and shares real PDF bytes',
-        (tester) async {
+    testWidgets('the menu offers Export to PDF and shares real PDF bytes', (
+      tester,
+    ) async {
       final List<({Uint8List bytes, String filename, String subject})> shared =
           <({Uint8List bytes, String filename, String subject})>[];
       await mountList(
@@ -1446,13 +1452,14 @@ void main() {
             ],
           ),
         ],
-        sharePdf: ({
-          required Uint8List bytes,
-          required String filename,
-          required String subject,
-        }) async {
-          shared.add((bytes: bytes, filename: filename, subject: subject));
-        },
+        sharePdf:
+            ({
+              required Uint8List bytes,
+              required String filename,
+              required String subject,
+            }) async {
+              shared.add((bytes: bytes, filename: filename, subject: subject));
+            },
       );
 
       await tester.tap(find.byKey(const ValueKey('notebook-menu-nb-1')));
@@ -1482,18 +1489,78 @@ void main() {
       await unmount(tester);
     });
 
-    testWidgets('a failed export reports instead of dying silently',
-        (tester) async {
+    testWidgets('protected notebook export requires a valid unlock', (
+      tester,
+    ) async {
+      final NotebookPasswordMetadata metadata = fakeNotebookPasswordMetadata(
+        'right password',
+      );
+      final List<Uint8List> shared = <Uint8List>[];
+      await mountList(
+        tester,
+        seed: <Notebook>[
+          testNotebook(
+            id: 'nb-protected-export',
+            title: 'Private export',
+            passwordHash: metadata.hash,
+            passwordSalt: metadata.salt,
+            passwordIterations: metadata.iterations,
+          ),
+        ],
+        sharePdf:
+            ({
+              required Uint8List bytes,
+              required String filename,
+              required String subject,
+            }) async {
+              shared.add(bytes);
+            },
+      );
+
+      await tester.tap(
+        find.byKey(const ValueKey('notebook-menu-nb-protected-export')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('item-action-exportPdf')));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey<String>('notebook-current-password')),
+        findsOneWidget,
+      );
+      expect(shared, isEmpty);
+      await tester.enterText(
+        find.byKey(const ValueKey<String>('notebook-current-password')),
+        'wrong password',
+      );
+      await tester.tap(
+        find.byKey(const ValueKey<String>('notebook-password-submit')),
+      );
+      await tester.pumpAndSettle(
+        const Duration(milliseconds: 50),
+        EnginePhase.sendSemanticsUpdate,
+        const Duration(seconds: 30),
+      );
+      expect(find.text('Wrong password'), findsOneWidget);
+      expect(shared, isEmpty);
+
+      await unmount(tester);
+    });
+
+    testWidgets('a failed export reports instead of dying silently', (
+      tester,
+    ) async {
       await mountList(
         tester,
         seed: <Notebook>[testNotebook(id: 'nb-1', title: 'Field notes')],
-        sharePdf: ({
-          required Uint8List bytes,
-          required String filename,
-          required String subject,
-        }) async {
-          throw StateError('no share targets');
-        },
+        sharePdf:
+            ({
+              required Uint8List bytes,
+              required String filename,
+              required String subject,
+            }) async {
+              throw StateError('no share targets');
+            },
       );
 
       await tester.tap(find.byKey(const ValueKey('notebook-menu-nb-1')));
@@ -1529,8 +1596,9 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
   }
 
-  testWidgets('right-click on a row enters selection, like long-press',
-      (tester) async {
+  testWidgets('right-click on a row enters selection, like long-press', (
+    tester,
+  ) async {
     await mountList(
       tester,
       seed: <Notebook>[testNotebook(id: 'nb-7', title: 'Sprint ideas')],
@@ -1549,8 +1617,9 @@ void main() {
     await unmount(tester);
   });
 
-  testWidgets('right-click on a folder header opens folder actions',
-      (tester) async {
+  testWidgets('right-click on a folder header opens folder actions', (
+    tester,
+  ) async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
     final _FakeFoldersDb db = _FakeFoldersDb()
       ..seedFolder(Folder(id: 'f-1', name: 'Work', createdAt: 1));
@@ -1592,7 +1661,9 @@ void main() {
       required String text,
       required List<double> bbox,
     }) async {
-      await db.into(db.inkIndexEntries).insert(
+      await db
+          .into(db.inkIndexEntries)
+          .insert(
             InkIndexEntriesCompanion.insert(
               id: '$notebook:$line:${slot.toString().padLeft(3, '0')}',
               notebookId: notebook,
@@ -1607,8 +1678,9 @@ void main() {
           );
     }
 
-    testWidgets('the search icon is absent while the toggle is off',
-        (tester) async {
+    testWidgets('the search icon is absent while the toggle is off', (
+      tester,
+    ) async {
       await mountList(
         tester,
         seed: <Notebook>[testNotebook(id: 'nb-1', title: 'Sprint ideas')],
@@ -1625,79 +1697,82 @@ void main() {
     });
 
     testWidgets(
-        'searching filters rows to matching notebooks with count and snippet',
-        (tester) async {
-      final LocalDb searchDb = LocalDb.forTesting(NativeDatabase.memory());
-      addTearDown(searchDb.close);
-      // nb-hit: two 'meeting' matches on a line reading "team meeting".
-      await seedWord(
-        searchDb,
-        notebook: 'nb-hit',
-        line: 'l1',
-        slot: 0,
-        text: 'team',
-        bbox: <double>[0, 0, 40, 10],
-      );
-      await seedWord(
-        searchDb,
-        notebook: 'nb-hit',
-        line: 'l1',
-        slot: 1,
-        text: 'meeting',
-        bbox: <double>[50, 0, 100, 10],
-      );
-      await seedWord(
-        searchDb,
-        notebook: 'nb-hit',
-        line: 'l2',
-        slot: 0,
-        text: 'meetings',
-        bbox: <double>[0, 20, 60, 30],
-      );
-      await mountList(
-        tester,
-        seed: <Notebook>[
-          testNotebook(id: 'nb-hit', title: 'Work log'),
-          testNotebook(id: 'nb-miss', title: 'Groceries'),
-        ],
-        searchDb: searchDb,
-        searchEnabled: true,
-      );
+      'searching filters rows to matching notebooks with count and snippet',
+      (tester) async {
+        final LocalDb searchDb = LocalDb.forTesting(NativeDatabase.memory());
+        addTearDown(searchDb.close);
+        // nb-hit: two 'meeting' matches on a line reading "team meeting".
+        await seedWord(
+          searchDb,
+          notebook: 'nb-hit',
+          line: 'l1',
+          slot: 0,
+          text: 'team',
+          bbox: <double>[0, 0, 40, 10],
+        );
+        await seedWord(
+          searchDb,
+          notebook: 'nb-hit',
+          line: 'l1',
+          slot: 1,
+          text: 'meeting',
+          bbox: <double>[50, 0, 100, 10],
+        );
+        await seedWord(
+          searchDb,
+          notebook: 'nb-hit',
+          line: 'l2',
+          slot: 0,
+          text: 'meetings',
+          bbox: <double>[0, 20, 60, 30],
+        );
+        await mountList(
+          tester,
+          seed: <Notebook>[
+            testNotebook(id: 'nb-hit', title: 'Work log'),
+            testNotebook(id: 'nb-miss', title: 'Groceries'),
+          ],
+          searchDb: searchDb,
+          searchEnabled: true,
+        );
 
-      await tester
-          .tap(find.byKey(const ValueKey<String>('notebook-list-search')));
-      await tester.pumpAndSettle();
-      await tester.enterText(
-        find.byKey(const ValueKey<String>('notebook-list-search-field')),
-        'meeting',
-      );
-      await tester.pumpAndSettle();
+        await tester.tap(
+          find.byKey(const ValueKey<String>('notebook-list-search')),
+        );
+        await tester.pumpAndSettle();
+        await tester.enterText(
+          find.byKey(const ValueKey<String>('notebook-list-search-field')),
+          'meeting',
+        );
+        await tester.pumpAndSettle();
 
-      expect(
-        find.byKey(const ValueKey<String>('notebook-row-nb-hit')),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(const ValueKey<String>('notebook-row-nb-miss')),
-        findsNothing,
-        reason: 'rows are FILTERED to matching notebooks',
-      );
-      expect(
-        find.textContaining('2 match'),
-        findsOneWidget,
-        reason: 'the row shows how many hits the notebook holds',
-      );
-      expect(
-        find.textContaining('team meeting'),
-        findsOneWidget,
-        reason: "the row shows the first matched line's snippet",
-      );
+        expect(
+          find.byKey(const ValueKey<String>('notebook-row-nb-hit')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey<String>('notebook-row-nb-miss')),
+          findsNothing,
+          reason: 'rows are FILTERED to matching notebooks',
+        );
+        expect(
+          find.textContaining('2 match'),
+          findsOneWidget,
+          reason: 'the row shows how many hits the notebook holds',
+        );
+        expect(
+          find.textContaining('team meeting'),
+          findsOneWidget,
+          reason: "the row shows the first matched line's snippet",
+        );
 
-      await unmount(tester);
-    });
+        await unmount(tester);
+      },
+    );
 
-    testWidgets('tapping a search result opens the editor with the query',
-        (tester) async {
+    testWidgets('tapping a search result opens the editor with the query', (
+      tester,
+    ) async {
       final LocalDb searchDb = LocalDb.forTesting(NativeDatabase.memory());
       addTearDown(searchDb.close);
       await seedWord(
@@ -1714,16 +1789,18 @@ void main() {
         searchEnabled: true,
       );
 
-      await tester
-          .tap(find.byKey(const ValueKey<String>('notebook-list-search')));
+      await tester.tap(
+        find.byKey(const ValueKey<String>('notebook-list-search')),
+      );
       await tester.pumpAndSettle();
       await tester.enterText(
         find.byKey(const ValueKey<String>('notebook-list-search-field')),
         'meeting',
       );
       await tester.pumpAndSettle();
-      await tester
-          .tap(find.byKey(const ValueKey<String>('notebook-row-nb-hit')));
+      await tester.tap(
+        find.byKey(const ValueKey<String>('notebook-row-nb-hit')),
+      );
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
 
@@ -1734,71 +1811,78 @@ void main() {
       expect(
         editor.initialFindQuery,
         'meeting',
-        reason: 'the tap deep-links the query so the editor opens at the '
+        reason:
+            'the tap deep-links the query so the editor opens at the '
             'top ctrl+f result',
       );
 
       await unmount(tester);
     });
 
-    testWidgets('tapping a search result COVER opens the editor with the query',
-        (tester) async {
-      // Fix round 1, finding 1: the tile path above left the grid-cover tap
-      // unproven — a mutation dropping the cover's findQuery survived the
-      // whole suite. Same contract, covers view.
-      SharedPreferences.setMockInitialValues(<String, Object>{});
-      final LocalDb searchDb = LocalDb.forTesting(NativeDatabase.memory());
-      addTearDown(searchDb.close);
-      await seedWord(
-        searchDb,
-        notebook: 'nb-hit',
-        line: 'l1',
-        text: 'meeting',
-        bbox: <double>[0, 0, 40, 10],
-      );
-      await mountList(
-        tester,
-        seed: <Notebook>[testNotebook(id: 'nb-hit', title: 'Work log')],
-        searchDb: searchDb,
-        searchEnabled: true,
-      );
+    testWidgets(
+      'tapping a search result COVER opens the editor with the query',
+      (tester) async {
+        // Fix round 1, finding 1: the tile path above left the grid-cover tap
+        // unproven — a mutation dropping the cover's findQuery survived the
+        // whole suite. Same contract, covers view.
+        SharedPreferences.setMockInitialValues(<String, Object>{});
+        final LocalDb searchDb = LocalDb.forTesting(NativeDatabase.memory());
+        addTearDown(searchDb.close);
+        await seedWord(
+          searchDb,
+          notebook: 'nb-hit',
+          line: 'l1',
+          text: 'meeting',
+          bbox: <double>[0, 0, 40, 10],
+        );
+        await mountList(
+          tester,
+          seed: <Notebook>[testNotebook(id: 'nb-hit', title: 'Work log')],
+          searchDb: searchDb,
+          searchEnabled: true,
+        );
 
-      await tester.tap(find.byKey(const ValueKey('notebook-view-toggle')));
-      await tester.pumpAndSettle();
-      expect(
-        find.byKey(const ValueKey<String>('notebook-cover-nb-hit')),
-        findsOneWidget,
-      );
+        await tester.tap(find.byKey(const ValueKey('notebook-view-toggle')));
+        await tester.pumpAndSettle();
+        expect(
+          find.byKey(const ValueKey<String>('notebook-cover-nb-hit')),
+          findsOneWidget,
+        );
 
-      await tester
-          .tap(find.byKey(const ValueKey<String>('notebook-list-search')));
-      await tester.pumpAndSettle();
-      await tester.enterText(
-        find.byKey(const ValueKey<String>('notebook-list-search-field')),
-        'meeting',
-      );
-      await tester.pumpAndSettle();
-      await tester
-          .tap(find.byKey(const ValueKey<String>('notebook-cover-nb-hit')));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 400));
+        await tester.tap(
+          find.byKey(const ValueKey<String>('notebook-list-search')),
+        );
+        await tester.pumpAndSettle();
+        await tester.enterText(
+          find.byKey(const ValueKey<String>('notebook-list-search-field')),
+          'meeting',
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(
+          find.byKey(const ValueKey<String>('notebook-cover-nb-hit')),
+        );
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
 
-      final NotebookEditorScreen editor = tester.widget(
-        find.byType(NotebookEditorScreen),
-      );
-      expect(editor.notebookId, 'nb-hit');
-      expect(
-        editor.initialFindQuery,
-        'meeting',
-        reason: 'a cover tap must deep-link the query exactly like a row '
-            'tap — switching views must not cost the searcher the carry',
-      );
+        final NotebookEditorScreen editor = tester.widget(
+          find.byType(NotebookEditorScreen),
+        );
+        expect(editor.notebookId, 'nb-hit');
+        expect(
+          editor.initialFindQuery,
+          'meeting',
+          reason:
+              'a cover tap must deep-link the query exactly like a row '
+              'tap — switching views must not cost the searcher the carry',
+        );
 
-      await unmount(tester);
-    });
+        await unmount(tester);
+      },
+    );
 
-    testWidgets('covers show the match count and snippet while searching',
-        (tester) async {
+    testWidgets('covers show the match count and snippet while searching', (
+      tester,
+    ) async {
       // Fix round 1, finding 2: the match info landed only on the list
       // tile; covers silently kept their resting timestamp. Both views
       // must answer the searcher's question.
@@ -1842,8 +1926,9 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('notebook-view-toggle')));
       await tester.pumpAndSettle();
 
-      await tester
-          .tap(find.byKey(const ValueKey<String>('notebook-list-search')));
+      await tester.tap(
+        find.byKey(const ValueKey<String>('notebook-list-search')),
+      );
       await tester.pumpAndSettle();
       await tester.enterText(
         find.byKey(const ValueKey<String>('notebook-list-search-field')),
@@ -1874,8 +1959,9 @@ void main() {
       await unmount(tester);
     });
 
-    testWidgets('a live search hides selected rows without deselecting them',
-        (tester) async {
+    testWidgets('a live search hides selected rows without deselecting them', (
+      tester,
+    ) async {
       // Fix round 1, finding 3: typing a search used to prune _selectedIds
       // to the FILTERED rows, so a selection made before searching was
       // silently destroyed and closing the search did not bring it back.
@@ -1901,13 +1987,15 @@ void main() {
       );
 
       // Select the notebook that the upcoming search will NOT match.
-      await tester
-          .longPress(find.byKey(const ValueKey('notebook-row-nb-miss')));
+      await tester.longPress(
+        find.byKey(const ValueKey('notebook-row-nb-miss')),
+      );
       await tester.pumpAndSettle();
       expect(find.text('1 selected'), findsOneWidget);
 
-      await tester
-          .tap(find.byKey(const ValueKey<String>('notebook-list-search')));
+      await tester.tap(
+        find.byKey(const ValueKey<String>('notebook-list-search')),
+      );
       await tester.pumpAndSettle();
       await tester.enterText(
         find.byKey(const ValueKey<String>('notebook-list-search-field')),
@@ -1923,13 +2011,15 @@ void main() {
       expect(
         find.text('1 selected'),
         findsOneWidget,
-        reason: 'hiding a selected row must not deselect it — the count '
+        reason:
+            'hiding a selected row must not deselect it — the count '
             'still answers for the hidden notebook',
       );
 
       // Closing the search restores the row exactly as the user left it.
-      await tester
-          .tap(find.byKey(const ValueKey<String>('notebook-list-search')));
+      await tester.tap(
+        find.byKey(const ValueKey<String>('notebook-list-search')),
+      );
       await tester.pumpAndSettle();
 
       expect(
