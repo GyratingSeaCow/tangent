@@ -49,6 +49,8 @@ abstract class DebugLogExporter {
 }
 
 abstract class DebugLogExportPlatform {
+  String? get sharedFilePath;
+
   Future<bool> sendAttachedEmail(DebugLogAttachmentRequest request);
   Future<bool> openMailto(Uri uri);
   Future<bool> shareFile(String path);
@@ -69,6 +71,9 @@ class MethodChannelDebugLogExportPlatform implements DebugLogExportPlatform {
   final DebugLogChannelInvoke _invoke;
 
   static const MethodChannel _channel = MethodChannel(kDebugLogChannelName);
+
+  @override
+  String? get sharedFilePath => null;
 
   static Future<bool> _defaultInvoke(
     String method,
@@ -106,6 +111,9 @@ class UnsupportedDebugLogExportPlatform implements DebugLogExportPlatform {
   const UnsupportedDebugLogExportPlatform();
 
   @override
+  String? get sharedFilePath => null;
+
+  @override
   Future<bool> openMailto(Uri uri) async => false;
 
   @override
@@ -123,6 +131,10 @@ class DesktopDebugLogExportPlatform implements DebugLogExportPlatform {
     : _share = share ?? DesktopMarkdownShare();
 
   final DesktopMarkdownShare _share;
+  String? _sharedFilePath;
+
+  @override
+  String? get sharedFilePath => _sharedFilePath;
 
   @override
   Future<bool> sendAttachedEmail(DebugLogAttachmentRequest request) async =>
@@ -134,12 +146,14 @@ class DesktopDebugLogExportPlatform implements DebugLogExportPlatform {
   @override
   Future<bool> shareFile(String path) async {
     try {
-      await _share.shareMarkdown(
+      final DesktopMarkdownShareResult result = await _share.shareMarkdown(
         markdown: await File(path).readAsString(),
         filename: p.basename(path),
       );
+      _sharedFilePath = result.path;
       return true;
     } on Object {
+      _sharedFilePath = null;
       return false;
     }
   }
@@ -202,7 +216,7 @@ class DebugLogExportService implements DebugLogExporter {
     if (await platform.shareFile(path)) {
       return DebugLogExportResult(
         DebugLogExportRoute.sharedFile,
-        filePath: path,
+        filePath: platform.sharedFilePath ?? path,
       );
     }
     return DebugLogExportResult(
@@ -277,6 +291,9 @@ Future<DebugLogMetadata> loadDebugLogMetadata() async {
   );
 }
 
+/// TODO(debug-log-retention): Cleanup is deferred. Android cache file
+/// `tangent-debug-logs.txt` is not deleted, and desktop exports accumulate
+/// numbered files when names collide.
 Future<String> writeDebugLogReport(String report) async {
   final Directory cache = await getTemporaryDirectory();
   final Directory directory = Directory(p.join(cache.path, 'debug_logs'));

@@ -8,6 +8,16 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sqlite3/sqlite3.dart';
 import 'package:tangent/services/debug_log.dart';
 
+class _ThrowingError {
+  @override
+  String toString() => throw StateError('error toString failed');
+}
+
+class _ThrowingStackTrace implements StackTrace {
+  @override
+  String toString() => throw StateError('stack toString failed');
+}
+
 void main() {
   group('DebugLogBuffer', () {
     test('keeps at most 200 entries, newest last', () async {
@@ -111,6 +121,70 @@ void main() {
       expect(stopwatch.elapsed, lessThan(const Duration(seconds: 1)));
       expect(tiny.entries, hasLength(1));
       expect(tiny.encodedByteLength, lessThanOrEqualTo(300));
+    });
+
+    test('multi-megabyte regex inputs are nonthrowing and bounded', () {
+      final DebugLogBuffer buffer = DebugLogBuffer.inMemory();
+      buffer.record(
+        source: 'zone',
+        error: 'prior',
+        stackTrace: StackTrace.fromString('prior-stack'),
+      );
+
+      int expectedEntries = 1;
+      for (final String error in <String>[
+        'A' * (5 * 1024 * 1024),
+        '"${'Q' * (5 * 1024 * 1024)}"',
+      ]) {
+        expectedEntries++;
+        expect(
+          () => buffer.record(
+            source: 'zone',
+            error: error,
+            stackTrace: StackTrace.fromString(error),
+          ),
+          returnsNormally,
+        );
+        expect(buffer.entries, hasLength(expectedEntries));
+        expect(
+          utf8.encode(buffer.entries.last.error).length,
+          lessThanOrEqualTo(kDebugLogMaxErrorBytes),
+        );
+        expect(
+          utf8.encode(buffer.entries.last.stack).length,
+          lessThanOrEqualTo(kDebugLogMaxStackBytes),
+        );
+        expect(buffer.entries.first.error, 'prior');
+      }
+    });
+
+    test('record drops conversion failures and retains prior entries', () {
+      final DebugLogBuffer buffer = DebugLogBuffer.inMemory();
+      buffer.record(
+        source: 'zone',
+        error: 'prior',
+        stackTrace: StackTrace.fromString('prior-stack'),
+      );
+
+      expect(
+        () => buffer.record(
+          source: 'zone',
+          error: _ThrowingError(),
+          stackTrace: StackTrace.fromString('unused'),
+        ),
+        returnsNormally,
+      );
+      expect(
+        () => buffer.record(
+          source: 'zone',
+          error: 'unused',
+          stackTrace: _ThrowingStackTrace(),
+        ),
+        returnsNormally,
+      );
+
+      expect(buffer.entries, hasLength(1));
+      expect(buffer.entries.single.error, 'prior');
     });
 
     test('persists entries atomically and reloads them in order', () async {
@@ -272,6 +346,23 @@ void main() {
       for (final String sentinel in sentinels) {
         expect(buffer.entries.single.error, isNot(contains(sentinel)));
       }
+    });
+
+    test('causing-statement redaction retains the diagnostic prefix', () {
+      final DebugLogBuffer buffer = DebugLogBuffer.inMemory();
+      buffer.record(
+        source: 'zone',
+        error:
+            'SqliteException: useful diagnostic prefix\n'
+            'Causing statement: SELECT secret FROM notes',
+        stackTrace: StackTrace.fromString('safe-stack'),
+      );
+
+      expect(
+        buffer.entries.single.error,
+        'SqliteException: useful diagnostic prefix\n'
+        '[REDACTED SQL STATEMENT AND PARAMETERS]',
+      );
     });
 
     test(

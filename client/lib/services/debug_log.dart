@@ -10,6 +10,7 @@ const int kDebugLogMaxEntries = 200;
 const int kDebugLogMaxBytes = 1024 * 1024;
 const int kDebugLogMaxErrorBytes = 16 * 1024;
 const int kDebugLogMaxStackBytes = 64 * 1024;
+const int _kDebugLogPreSanitizeMultiplier = 4;
 const Duration _kDebugLogSaveDebounce = Duration(milliseconds: 25);
 
 /// One error observed by a top-level runtime hook.
@@ -233,20 +234,26 @@ class DebugLogBuffer {
     required StackTrace stackTrace,
     DateTime? timestamp,
   }) {
-    final DebugLogEntry? entry = _fitSingleEntry(
-      DebugLogEntry(
-        timestamp: (timestamp ?? DateTime.now()).toUtc(),
-        source: source,
-        error: _truncateUtf8(_sanitizeError(error), kDebugLogMaxErrorBytes),
-        stack: _truncateUtf8(
-          _sanitizeText(stackTrace.toString()),
-          kDebugLogMaxStackBytes,
+    try {
+      final DebugLogEntry? entry = _fitSingleEntry(
+        DebugLogEntry(
+          timestamp: (timestamp ?? DateTime.now()).toUtc(),
+          source: source,
+          error: _truncateUtf8(_sanitizeError(error), kDebugLogMaxErrorBytes),
+          stack: _truncateUtf8(
+            _sanitizeText(_preTruncateStack(stackTrace.toString())),
+            kDebugLogMaxStackBytes,
+          ),
         ),
-      ),
-    );
-    if (entry == null) return;
-    _appendPrepared(entry, alreadyFitted: true);
-    if (_initialized) _markDirty();
+      );
+      if (entry == null) return;
+      _appendPrepared(entry, alreadyFitted: true);
+      if (_initialized) _markDirty();
+    } on Object {
+      // This method runs inside global error hooks. A hostile toString, regex,
+      // encoding, or fit failure must drop only this entry, never replace the
+      // original application failure with a logging failure.
+    }
   }
 
   Future<void> flush() async {
@@ -262,8 +269,14 @@ class DebugLogBuffer {
   }
 
   DebugLogEntry _prepareStoredEntry(DebugLogEntry entry) => entry.copyWith(
-    error: _truncateUtf8(_sanitizeText(entry.error), kDebugLogMaxErrorBytes),
-    stack: _truncateUtf8(_sanitizeText(entry.stack), kDebugLogMaxStackBytes),
+    error: _truncateUtf8(
+      _sanitizeText(_preTruncateError(entry.error)),
+      kDebugLogMaxErrorBytes,
+    ),
+    stack: _truncateUtf8(
+      _sanitizeText(_preTruncateStack(entry.stack)),
+      kDebugLogMaxStackBytes,
+    ),
   );
 
   bool _appendPrepared(DebugLogEntry entry, {bool alreadyFitted = false}) {
@@ -375,19 +388,32 @@ enum _EntryField { error, stack }
 
 String _sanitizeError(Object error) => switch (error) {
   SqliteException() => _sanitizeSqliteException(error),
-  FormatException() => 'FormatException: ${_sanitizeText(error.message)}',
-  _ => _sanitizeText(error.toString()),
+  FormatException() =>
+    'FormatException: ${_sanitizeText(_preTruncateError(error.message))}',
+  _ => _sanitizeText(_preTruncateError(error.toString())),
 };
 
 String _sanitizeSqliteException(SqliteException error) {
   final String operation = error.operation == null
       ? ''
-      : ' while ${_sanitizeText(error.operation!)}';
+      : ' while ${_sanitizeText(_preTruncateError(error.operation!))}';
   return 'SqliteException(${error.extendedResultCode})$operation: '
-      '${_sanitizeText(error.message)}';
+      '${_sanitizeText(_preTruncateError(error.message))}';
 }
 
+String _preTruncateError(String value) => _truncateUtf8(
+  value,
+  kDebugLogMaxErrorBytes * _kDebugLogPreSanitizeMultiplier,
+);
+
+String _preTruncateStack(String value) => _truncateUtf8(
+  value,
+  kDebugLogMaxStackBytes * _kDebugLogPreSanitizeMultiplier,
+);
+
 String _sanitizeText(String value) {
+  // TODO(debug-log-redaction): Diagnostic over-redaction from these broad
+  // patterns is deferred; keep their scope unchanged until it is reviewed.
   String sanitized = value;
   final Match? causingStatement = RegExp(
     r'\bCausing statement\b',

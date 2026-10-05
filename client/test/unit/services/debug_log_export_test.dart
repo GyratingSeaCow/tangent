@@ -2,6 +2,7 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 import 'package:tangent/services/debug_log.dart';
 import 'package:tangent/services/debug_log_export.dart';
 import 'package:tangent/services/desktop_markdown_share.dart';
@@ -13,6 +14,10 @@ class _FakePlatform implements DebugLogExportPlatform {
   bool attachedResult = false;
   bool mailtoResult = false;
   bool shareResult = false;
+  String? sharedPath;
+
+  @override
+  String? get sharedFilePath => sharedPath;
 
   @override
   Future<bool> sendAttachedEmail(DebugLogAttachmentRequest request) async {
@@ -90,12 +95,15 @@ void main() {
   test(
     'falls back in strict attached-email, mailto, share-file order',
     () async {
-      final _FakePlatform platform = _FakePlatform()..shareResult = true;
+      final _FakePlatform platform = _FakePlatform()
+        ..shareResult = true
+        ..sharedPath = '/documents/Tangent/Exports/tangent-debug-logs.txt';
       final DebugLogExportResult result = await (await _service(
         platform,
       )).export();
 
       expect(result.route, DebugLogExportRoute.sharedFile);
+      expect(result.filePath, platform.sharedPath);
       expect(platform.calls, <String>['attached', 'mailto', 'share']);
       expect(
         platform.mailto.toString(),
@@ -164,6 +172,10 @@ void main() {
         );
 
     expect(await platform.shareFile(source.path), isTrue);
+    expect(
+      platform.sharedFilePath,
+      p.join(exportDir.path, 'tangent-debug-logs.txt'),
+    );
     expect(
       await File('${exportDir.path}/tangent-debug-logs.txt').readAsString(),
       'sanitized report',

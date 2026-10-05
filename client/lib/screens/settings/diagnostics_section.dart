@@ -50,7 +50,7 @@ class _DiagnosticsSectionState extends ConsumerState<DiagnosticsSection> {
           'No app accepted the attachment; opening an email with truncated logs…',
         DebugLogExportRoute.sharedFile =>
           Platform.isLinux || Platform.isWindows
-              ? 'Saved debug logs to Tangent/Exports and opened the file.'
+              ? 'Saved debug logs to ${result.filePath}'
               : 'Opening the file share sheet…',
         DebugLogExportRoute.unavailable =>
           'No email or share app is available. Log saved to ${result.filePath}',
