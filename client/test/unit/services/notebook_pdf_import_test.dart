@@ -360,5 +360,25 @@ void main() {
     );
     expect(png.sublist(0, 8), <int>[137, 80, 78, 71, 13, 10, 26, 10]);
     expect(png.length, greaterThan(500));
-  });
+  }, skip: _pdfiumUnavailableReason());
+}
+
+/// pdfrx needs the native PDFium library. Flutter's Linux engine
+/// artifacts (used by CI) do not ship `libpdfium.so`, so the real-render
+/// test is skipped there with an explicit reason instead of failing; it
+/// still runs on every host where PDFium is present (Windows/macOS dev
+/// machines, devices). Returns `false` (= run the test) when available.
+Object _pdfiumUnavailableReason() {
+  if (!Platform.isLinux) {
+    return false;
+  }
+  // flutter_tester lives in <engine>/linux-x64/; pdfrx loads
+  // <engine>/linux-x64/lib/libpdfium.so from the same artifact dir.
+  final Directory engineDir = File(Platform.resolvedExecutable).parent;
+  final File lib = File('${engineDir.path}/lib/libpdfium.so');
+  if (lib.existsSync()) {
+    return false;
+  }
+  return 'libpdfium.so is not shipped with the Linux Flutter engine '
+      '(${lib.path}); real pdfrx rendering is covered on PDFium hosts.';
 }
