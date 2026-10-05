@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import '../../services/debug_log_export.dart';
 import '../../theme/tangent_tokens.dart';
 import '../home/home_screen.dart';
 
@@ -32,7 +33,37 @@ class DiagnosticsSection extends ConsumerStatefulWidget {
 
 class _DiagnosticsSectionState extends ConsumerState<DiagnosticsSection> {
   bool _running = false;
+  bool _exportingLogs = false;
   String? _lastPath;
+
+  Future<void> _exportDebugLogs() async {
+    setState(() => _exportingLogs = true);
+    try {
+      final DebugLogExportResult result = await ref
+          .read(debugLogExporterProvider)
+          .export();
+      if (!mounted) return;
+      final String message = switch (result.route) {
+        DebugLogExportRoute.attachedEmail =>
+          'Opening an email with debug logs attached…',
+        DebugLogExportRoute.mailto =>
+          'No app accepted the attachment; opening an email with truncated logs…',
+        DebugLogExportRoute.sharedFile => 'Opening the file share sheet…',
+        DebugLogExportRoute.unavailable =>
+          'No email or share app is available. Log saved to ${result.filePath}',
+      };
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Debug log export failed: $error')),
+      );
+    } finally {
+      if (mounted) setState(() => _exportingLogs = false);
+    }
+  }
 
   Future<void> _export() async {
     setState(() => _running = true);
@@ -61,6 +92,23 @@ class _DiagnosticsSectionState extends ConsumerState<DiagnosticsSection> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        ListTile(
+          key: const ValueKey<String>('export-debug-logs'),
+          leading: _exportingLogs
+              ? const SizedBox(
+                  width: 24,
+                  height: 24,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.email_outlined),
+          title: const Text('Export debug logs'),
+          subtitle: const Text(
+            'Emails recent runtime errors and stack traces to Tangent support. '
+            'No transcripts or note content are intentionally collected.',
+          ),
+          onTap: _exportingLogs ? null : _exportDebugLogs,
+        ),
+        const Divider(),
         ListTile(
           leading: _running
               ? const SizedBox(

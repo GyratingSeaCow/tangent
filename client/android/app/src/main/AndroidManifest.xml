@@ -128,6 +128,18 @@
                 <action android:name="android.appwidget.action.APPWIDGET_CONFIGURE"/>
             </intent-filter>
         </activity>
+        <!-- Debug-log attachments are served from cache/debug_logs only. The
+             recipient gets a temporary read grant; no storage permission or
+             file:// URI is used. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.debug_logs"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/debug_log_paths" />
+        </provider>
         <!-- flutter_local_notifications: delivers the scheduled reminder and
              restores pending schedules after a reboot. -->
         <receiver
@@ -155,6 +167,16 @@
 
          In particular, this is used by the Flutter engine in io.flutter.plugin.text.ProcessTextPlugin. -->
     <queries>
+        <!-- Package visibility for the addressed email composer and the final
+             plain-file share fallback on Android 11+. -->
+        <intent>
+            <action android:name="android.intent.action.SENDTO"/>
+            <data android:scheme="mailto"/>
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SEND"/>
+            <data android:mimeType="text/plain"/>
+        </intent>
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
