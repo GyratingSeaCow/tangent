@@ -751,7 +751,7 @@ void main() {
       await unmount(tester);
     });
 
-    testWidgets('direct drag moves across columns and reorders within a lane', (
+    testWidgets('held drag moves across columns and reorders within a lane', (
       tester,
     ) async {
       final TodoRepository repo = await mount(tester);
@@ -763,20 +763,26 @@ void main() {
       await tester.pumpAndSettle();
       final String progress = (await repo.listColumns())[1].id;
 
-      await tester.drag(
+      Future<void> dragAfterHold(Finder source, Finder target) async {
+        final TestGesture gesture = await tester.startGesture(
+          tester.getCenter(source),
+        );
+        await tester.pump(const Duration(milliseconds: 250));
+        await gesture.moveTo(tester.getCenter(target));
+        await tester.pump();
+        await gesture.up();
+      }
+
+      await dragAfterHold(
         find.byKey(TodoListScreen.cardKey(b.id)),
-        tester.getCenter(find.byKey(TodoListScreen.dropKey(progress, 0))) -
-            tester.getCenter(find.byKey(TodoListScreen.cardKey(b.id))),
+        find.byKey(TodoListScreen.dropKey(progress, 0)),
       );
       await tester.pumpAndSettle();
       expect((await db.getTodoRow(b.id))!.columnId, progress);
 
-      await tester.drag(
+      await dragAfterHold(
         find.byKey(TodoListScreen.cardKey(c.id)),
-        tester.getCenter(
-              find.byKey(TodoListScreen.dropKey(defaultTodoColumnId, 0)),
-            ) -
-            tester.getCenter(find.byKey(TodoListScreen.cardKey(c.id))),
+        find.byKey(TodoListScreen.dropKey(defaultTodoColumnId, 0)),
       );
       await tester.pumpAndSettle();
       final List<TodoRow> lane =
@@ -820,7 +826,7 @@ void main() {
       await unmount(tester);
     });
 
-    testWidgets('a 360x880 phone lane scrolls to its twentieth usable card', (
+    testWidgets('a 360x880 phone card scrolls both lane and board', (
       tester,
     ) async {
       tester.view.physicalSize = const Size(360, 880);
@@ -856,23 +862,55 @@ void main() {
         laneScrollable,
       );
       expect(laneState.position.maxScrollExtent, greaterThan(0));
-      final Rect laneRect = tester.getRect(lane);
+      final Finder firstCard = find.byKey(TodoListScreen.cardKey(rows.first.id));
       await tester.flingFrom(
-        Offset(laneRect.right - 2, laneRect.center.dy),
+        tester.getCenter(firstCard),
         const Offset(0, -500),
         1500,
       );
       await tester.pumpAndSettle();
       expect(laneState.position.pixels, greaterThan(0));
-      laneState.position.jumpTo(laneState.position.maxScrollExtent);
-      await tester.pumpAndSettle();
-      final Finder lastCard = find.byKey(TodoListScreen.cardKey(rows.last.id));
-      expect(lastCard.hitTestable(), findsOneWidget);
-      expect(tester.takeException(), isNull, reason: 'no vertical overflow');
 
+      final Finder lastCard = find.byKey(TodoListScreen.cardKey(rows.last.id));
+      for (int attempt = 0;
+          attempt < 12 && lastCard.hitTestable().evaluate().isEmpty;
+          attempt++) {
+        final Finder visibleCard = rows
+            .map((TodoRow row) =>
+                find.byKey(TodoListScreen.cardKey(row.id)).hitTestable())
+            .lastWhere((Finder card) => card.evaluate().isNotEmpty);
+        await tester.flingFrom(
+          tester.getCenter(visibleCard),
+          const Offset(0, -500),
+          1500,
+        );
+        await tester.pumpAndSettle();
+      }
+      expect(lastCard.hitTestable(), findsOneWidget);
       await tester.tap(find.byKey(Key('todo-check-${rows.last.id}')));
       await tester.pumpAndSettle();
       expect((await db.getTodoRow(rows.last.id))!.doneAt, isNotNull);
+
+      final Finder boardScrollable = find.descendant(
+        of: find.byKey(const Key('todo-board-scroll')),
+        matching: find.byWidgetPredicate(
+          (Widget widget) =>
+              widget is Scrollable && widget.axisDirection == AxisDirection.right,
+        ),
+      );
+      expect(boardScrollable, findsOneWidget);
+      final ScrollableState boardState = tester.state<ScrollableState>(
+        boardScrollable,
+      );
+      expect(boardState.position.maxScrollExtent, greaterThan(0));
+      await tester.flingFrom(
+        tester.getCenter(lastCard),
+        const Offset(-500, 0),
+        1500,
+      );
+      await tester.pumpAndSettle();
+      expect(boardState.position.pixels, greaterThan(0));
+      expect(tester.takeException(), isNull, reason: 'no vertical overflow');
       await unmount(tester);
     });
 

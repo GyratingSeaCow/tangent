@@ -28,10 +28,12 @@ duplicate defaults.
 
 ## Interaction contract
 
-- Direct card drag is the primary board move and reorder gesture. Insertion
-  strips, full card bodies, and the full body of an empty lane accept drops.
-- Board mode has no row long-press or multi-select. This avoids a gesture
-  conflict with drag. Card editing and deletion remain under the **⋮** action.
+- Pressing and holding a card for 200 ms starts the primary board move and
+  reorder gesture. Ordinary vertical or horizontal swipes from a card scroll
+  immediately. Insertion strips, full card bodies, and the full body of an
+  empty lane accept drops.
+- Board mode has no row selection or multi-select gesture. Card editing and
+  deletion remain under the **⋮** action.
 - The checkbox changes completion only. It never changes `column_id`, so a
   completed card remains in its current board lane. List mode may still render
   completed items in its existing Done section; that is a list projection, not

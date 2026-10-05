@@ -911,9 +911,10 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
         ),
       ),
     );
-    // Board mode gives the row gesture to drag immediately. It deliberately
-    // has no long-press selection gesture; checkbox and ⋮ remain explicit.
-    return Draggable<TodoRow>(
+    // Let touch scrolling win unless the card is deliberately held. Board
+    // mode has no long-press selection gesture; checkbox and ⋮ remain explicit.
+    return LongPressDraggable<TodoRow>(
+      delay: const Duration(milliseconds: 200),
       data: todo,
       feedback: Material(
         elevation: 6,
