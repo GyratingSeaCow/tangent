@@ -50,9 +50,9 @@ ADH2/
 
 ## Status
 
-Shipping — **v1.48.4** (see CHANGELOG.md). Client and server are both
-implemented and tested (2885
-Flutter tests, 777 server tests, 129 Kotlin tests). Toolchain:
+Shipping — **v1.49.0** (see CHANGELOG.md). Client and server are both
+implemented and tested (2966
+Flutter tests, 801 server tests, 129 Kotlin tests). Toolchain:
 Flutter 3.47.6 / Dart 3.13, AGP 9.1 / Kotlin 2.4 / Gradle 9.3.1 /
 Java 17 (v1.48.1); APKs exclude Google's dependency-info
 signing block for F-Droid (v1.48.2). The client runs
@@ -60,6 +60,16 @@ natively on Linux AND Windows (tray icon, global record hotkey,
 close-to-tray, single instance, right-click = long-press; AppImage and
 Inno Setup installer under `packaging/`) — verified on CachyOS/KDE
 Plasma Wayland and Windows 11; see the README's Desktop sections.
+
+v1.49.0 **Password-protected notebooks, notebook tables, shared tags**:
+notebook ⋮ menu gains Turn On/Off Password Protection and Lock Now
+(PBKDF2 verifier synced as compare-and-swap, never plaintext; protected
+content excluded from search/Ask/MCP/OCR — `docs/design/password-
+protected-notebooks.md`); sparse 1–100×1–100 table blocks with
+viewport-virtualized painting (`docs/design/notebook-tables.md`); one
+custom-tag namespace for notebooks and recordings with an Edit tags
+sheet, list filters and `tag`/`tag_assignment` sync entities
+(`docs/design/shared-tags.md`). Server update required.
 
 v1.48.4 **F-Droid reproducible-build determinism** (packaging-only):
 release CI builds at F-Droid's exact buildserver path
