@@ -9,6 +9,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import 'debug_log.dart';
+import 'desktop_markdown_share.dart';
 
 const String kDebugLogSupportAddress = 'support@westtalkstech.com';
 const String kDebugLogChannelName = 'dev.tangent.tangent/debug_logs';
@@ -115,6 +116,35 @@ class UnsupportedDebugLogExportPlatform implements DebugLogExportPlatform {
   Future<bool> shareFile(String path) async => false;
 }
 
+/// Desktop exports use the same durable Documents/Tangent/Exports plumbing as
+/// recording Markdown exports, then ask the system to open the text file.
+class DesktopDebugLogExportPlatform implements DebugLogExportPlatform {
+  DesktopDebugLogExportPlatform({DesktopMarkdownShare? share})
+    : _share = share ?? DesktopMarkdownShare();
+
+  final DesktopMarkdownShare _share;
+
+  @override
+  Future<bool> sendAttachedEmail(DebugLogAttachmentRequest request) async =>
+      false;
+
+  @override
+  Future<bool> openMailto(Uri uri) async => false;
+
+  @override
+  Future<bool> shareFile(String path) async {
+    try {
+      await _share.shareMarkdown(
+        markdown: await File(path).readAsString(),
+        filename: p.basename(path),
+      );
+      return true;
+    } on Object {
+      return false;
+    }
+  }
+}
+
 class DebugLogExportService implements DebugLogExporter {
   DebugLogExportService({
     required this.buffer,
@@ -193,10 +223,10 @@ Uri buildDebugLogMailtoUri({
       'truncated copy of the log follows.\n\n';
   const String marker = '\n\n[log truncated for email]';
 
-  Uri makeUri(String body) => Uri(
-    scheme: 'mailto',
-    path: recipient,
-    queryParameters: <String, String>{'subject': subject, 'body': body},
+  Uri makeUri(String body) => Uri.parse(
+    'mailto:${Uri.encodeFull(recipient)}'
+    '?subject=${Uri.encodeComponent(subject)}'
+    '&body=${Uri.encodeComponent(body)}',
   );
 
   final Uri complete = makeUri('$intro$report');

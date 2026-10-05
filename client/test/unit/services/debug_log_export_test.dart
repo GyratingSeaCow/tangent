@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tangent/services/debug_log.dart';
 import 'package:tangent/services/debug_log_export.dart';
+import 'package:tangent/services/desktop_markdown_share.dart';
 
 class _FakePlatform implements DebugLogExportPlatform {
   final List<String> calls = <String>[];
@@ -125,6 +128,46 @@ void main() {
     expect(uri.path, 'support@westtalkstech.com');
     expect(uri.queryParameters['body'], contains('[log truncated for email]'));
     expect(uri.queryParameters['body'], isNot(contains('secret-tail')));
+  });
+
+  test('mailto URI encodes spaces as percent-20 rather than plus', () {
+    final Uri uri = buildDebugLogMailtoUri(
+      recipient: 'support@westtalkstech.com',
+      subject: 'Tangent debug logs',
+      report: 'two words',
+    );
+
+    expect(uri.toString(), contains('Tangent%20debug%20logs'));
+    expect(uri.toString(), contains('two%20words'));
+    expect(uri.toString(), isNot(contains('+')));
+  });
+
+  test('desktop file route writes through durable export plumbing', () async {
+    final Directory sourceDir = await Directory.systemTemp.createTemp(
+      'tangent-debug-source-',
+    );
+    final Directory exportDir = await Directory.systemTemp.createTemp(
+      'tangent-debug-export-',
+    );
+    addTearDown(() async {
+      await sourceDir.delete(recursive: true);
+      await exportDir.delete(recursive: true);
+    });
+    final File source = File('${sourceDir.path}/tangent-debug-logs.txt');
+    await source.writeAsString('sanitized report');
+    final DesktopDebugLogExportPlatform platform =
+        DesktopDebugLogExportPlatform(
+          share: DesktopMarkdownShare(
+            exportDirectory: () async => exportDir,
+            open: (_) async => false,
+          ),
+        );
+
+    expect(await platform.shareFile(source.path), isTrue);
+    expect(
+      await File('${exportDir.path}/tangent-debug-logs.txt').readAsString(),
+      'sanitized report',
+    );
   });
 
   test(

@@ -48,7 +48,10 @@ class _DiagnosticsSectionState extends ConsumerState<DiagnosticsSection> {
           'Opening an email with debug logs attached…',
         DebugLogExportRoute.mailto =>
           'No app accepted the attachment; opening an email with truncated logs…',
-        DebugLogExportRoute.sharedFile => 'Opening the file share sheet…',
+        DebugLogExportRoute.sharedFile =>
+          Platform.isLinux || Platform.isWindows
+              ? 'Saved debug logs to Tangent/Exports and opened the file.'
+              : 'Opening the file share sheet…',
         DebugLogExportRoute.unavailable =>
           'No email or share app is available. Log saved to ${result.filePath}',
       };
@@ -104,7 +107,8 @@ class _DiagnosticsSectionState extends ConsumerState<DiagnosticsSection> {
           title: const Text('Export debug logs'),
           subtitle: const Text(
             'Emails recent runtime errors and stack traces to Tangent support. '
-            'No transcripts or note content are intentionally collected.',
+            'Errors and stacks are sanitized before storage; SQL details, '
+            'credentials, and transcript or note-content fields are removed.',
           ),
           onTap: _exportingLogs ? null : _exportDebugLogs,
         ),

@@ -11,12 +11,20 @@ void main() {
     final String paths = File(
       'android/app/src/main/res/xml/debug_log_paths.xml',
     ).readAsStringSync();
+    final String queries = manifest.substring(
+      manifest.indexOf('<queries>'),
+      manifest.indexOf('</queries>') + '</queries>'.length,
+    );
 
     expect(manifest, contains('androidx.core.content.FileProvider'));
     expect(manifest, contains('android:exported="false"'));
     expect(manifest, contains('android:grantUriPermissions="true"'));
     expect(manifest, isNot(contains('MANAGE_EXTERNAL_STORAGE')));
     expect(manifest, isNot(contains('WRITE_EXTERNAL_STORAGE')));
+    expect(queries, contains('android.intent.action.SENDTO'));
+    expect(queries, contains('android:scheme="mailto"'));
+    expect(queries, contains('android.intent.action.SEND'));
+    expect(queries, contains('android:mimeType="text/plain"'));
     expect(paths, contains('<cache-path'));
     expect(paths, contains('path="debug_logs/"'));
   });
@@ -40,6 +48,15 @@ void main() {
     expect(intents, contains('Intent.EXTRA_STREAM'));
     expect(intents, contains('Intent.EXTRA_EMAIL'));
     expect(intents, contains('Intent.FLAG_GRANT_READ_URI_PERMISSION'));
+    expect(intents, contains('candidates.drop(1).take(2)'));
+    expect(intents, isNot(contains('activity.grantUriPermission')));
     expect(intents, isNot(contains('Uri.fromFile')));
+  });
+
+  test('startup replays early errors into the persistent buffer', () {
+    final String main = File('lib/main.dart').readAsStringSync();
+
+    expect(main, contains('await buffer.initializeWithFile('));
+    expect(main, isNot(contains('buffer = DebugLogBuffer.file(')));
   });
 }

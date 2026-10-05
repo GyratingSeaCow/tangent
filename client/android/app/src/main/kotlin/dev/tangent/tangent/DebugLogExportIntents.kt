@@ -41,18 +41,11 @@ class DebugLogExportIntents(private val activity: Activity) {
         }
         if (candidates.isEmpty()) return false
 
-        for (packageName in candidates.mapNotNull { it.`package` }) {
-            activity.grantUriPermission(
-                packageName,
-                uri,
-                Intent.FLAG_GRANT_READ_URI_PERMISSION,
-            )
-        }
         val chooser = Intent.createChooser(candidates.first(), "Send Tangent debug logs")
         if (candidates.size > 1) {
             chooser.putExtra(
                 Intent.EXTRA_INITIAL_INTENTS,
-                candidates.drop(1).toTypedArray(),
+                candidates.drop(1).take(2).toTypedArray(),
             )
         }
         return start(chooser)

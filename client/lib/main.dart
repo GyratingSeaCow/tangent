@@ -266,21 +266,19 @@ Future<void> main(List<String> args) async {
   final FlutterExceptionHandler? previousFlutter = FlutterError.onError;
   final PlatformErrorHandler? previousPlatform =
       PlatformDispatcher.instance.onError;
-  DebugLogBuffer buffer = DebugLogBuffer.inMemory();
-  DebugErrorCapture capture = DebugErrorCapture(buffer);
+  final DebugLogBuffer buffer = DebugLogBuffer.inMemory();
+  final DebugErrorCapture capture = DebugErrorCapture(buffer);
 
   final Future<void>? running = runZonedGuarded<Future<void>>(
     () async {
       WidgetsFlutterBinding.ensureInitialized();
       final Directory support = await getApplicationSupportDirectory();
-      buffer = DebugLogBuffer.file(
+      await buffer.initializeWithFile(
         File(
           '${support.path}${Platform.pathSeparator}debug_logs'
           '${Platform.pathSeparator}errors.json',
         ),
       );
-      await buffer.initialize();
-      capture = DebugErrorCapture(buffer);
       capture.installFlutterHandler();
       PlatformDispatcher.instance.onError = capture.platformHandler(
         previous: previousPlatform,
@@ -484,7 +482,9 @@ Future<void> _runTangent(List<String> args, DebugLogBuffer debugLog) async {
     buffer: debugLog,
     platform: Platform.isAndroid
         ? MethodChannelDebugLogExportPlatform(buffer: debugLog)
-        : const UnsupportedDebugLogExportPlatform(),
+        : desktop
+            ? DesktopDebugLogExportPlatform()
+            : const UnsupportedDebugLogExportPlatform(),
     loadMetadata: loadDebugLogMetadata,
     writeReport: writeDebugLogReport,
   );
