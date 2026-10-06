@@ -6,12 +6,17 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Matrix
 import android.graphics.pdf.PdfRenderer
+import android.graphics.pdf.RenderParams
+import android.os.Build
 import android.os.ParcelFileDescriptor
 import java.io.File
 import java.io.FileOutputStream
 
 /** Android framework implementation; no bundled PDF engine is required. */
-class AndroidPdfRendererBackend(context: Context) : PdfRendererBackend {
+class AndroidPdfRendererBackend(
+    context: Context,
+    private val sdkInt: Int = Build.VERSION.SDK_INT,
+) : PdfRendererBackend {
     private val cacheRoot = context.cacheDir.canonicalFile
 
     override fun inspect(sourcePath: String): PdfDocumentInfo =
@@ -63,12 +68,7 @@ class AndroidPdfRendererBackend(context: Context) : PdfRendererBackend {
                         val matrix = Matrix().apply {
                             setScale(width.toFloat() / page.width, height.toFloat() / page.height)
                         }
-                        page.render(
-                            bitmap,
-                            null,
-                            matrix,
-                            PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY,
-                        )
+                        renderPdfPage(page, bitmap, matrix, sdkInt)
                         FileOutputStream(output, false).use { stream ->
                             if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)) {
                                 throw PdfRendererFailure("encode_failed", "Could not encode PDF page")
@@ -143,3 +143,33 @@ class AndroidPdfRendererBackend(context: Context) : PdfRendererBackend {
         const val MAX_PIXELS = 64_000_000L
     }
 }
+
+/** Selects the annotation-aware Android 15 overload without calling it below 35. */
+internal fun renderPdfPage(
+    page: PdfRenderer.Page,
+    bitmap: Bitmap,
+    matrix: Matrix,
+    sdkInt: Int,
+) {
+    if (pdfRenderPathForSdk(sdkInt) == PdfRenderPath.ANNOTATIONS_AND_FORMS) {
+        val params = RenderParams.Builder(RenderParams.RENDER_MODE_FOR_DISPLAY)
+            .setRenderFlags(PDF_ANNOTATION_RENDER_FLAGS)
+            .build()
+        page.render(bitmap, null, matrix, params)
+    } else {
+        page.render(bitmap, null, matrix, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+    }
+}
+
+internal enum class PdfRenderPath { LEGACY_CONTENT_ONLY, ANNOTATIONS_AND_FORMS }
+
+internal fun pdfRenderPathForSdk(sdkInt: Int): PdfRenderPath =
+    if (sdkInt >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+        PdfRenderPath.ANNOTATIONS_AND_FORMS
+    } else {
+        PdfRenderPath.LEGACY_CONTENT_ONLY
+    }
+
+internal const val PDF_ANNOTATION_RENDER_FLAGS =
+    RenderParams.FLAG_RENDER_TEXT_ANNOTATIONS or
+        RenderParams.FLAG_RENDER_HIGHLIGHT_ANNOTATIONS
