@@ -1021,7 +1021,7 @@ packages:
     source: hosted
     version: "3.13.1"
   pdfium_dart:
-    dependency: "direct overridden"
+    dependency: "direct dev"
     description:
       path: "third_party/pdfium_dart"
       relative: true

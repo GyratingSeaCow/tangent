@@ -60,6 +60,12 @@ void main() {
       notebookPdfRasterSize(page.copyWith(width: 4000, height: 10000), 3),
       (3200, 8000),
     );
+    final (int width, int height) = notebookPdfRasterSize(
+      page.copyWith(width: 8000, height: 8000),
+      3,
+    );
+    expect((width, height), (8000, 8000));
+    expect(width * height, lessThanOrEqualTo(64 * 1000 * 1000));
   });
 
   testWidgets('100 page blocks raster only pages near the viewport', (

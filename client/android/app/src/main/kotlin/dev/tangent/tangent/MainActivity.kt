@@ -26,9 +26,9 @@ import dev.tangent.tangent.storage.NativeStorageException
 import dev.tangent.tangent.audio.AndroidCommunicationDevices
 import dev.tangent.tangent.audio.CommunicationRouting
 import dev.tangent.tangent.pdf.AndroidPdfRendererBackend
-import dev.tangent.tangent.pdf.PdfRendererFailure
+import dev.tangent.tangent.pdf.PdfRendererChannelDispatcher
 import dev.tangent.tangent.pdf.PdfRendererMethodRouter
-import dev.tangent.tangent.pdf.PdfRendererNotImplemented
+import dev.tangent.tangent.pdf.PdfRendererReply
 import dev.tangent.tangent.storage.StorageChannel
 import dev.tangent.tangent.storage.CandidatePicker
 import dev.tangent.tangent.storage.StorageMethodRouter
@@ -61,9 +61,8 @@ class MainActivity : FlutterActivity() {
     }
     private val documentsPort by lazy { AndroidDocumentsPort(applicationContext) }
     private val debugLogExporter by lazy { DebugLogExportIntents(this) }
-    private val pdfRendererRouter by lazy {
-        PdfRendererMethodRouter(AndroidPdfRendererBackend(applicationContext))
-    }
+    private var pdfRendererChannel: MethodChannel? = null
+    private var pdfRendererDispatcher: PdfRendererChannelDispatcher? = null
     private val candidatePicker by lazy {
         CandidatePicker<Uri>(
             launch = ::pickDirectory,
@@ -230,27 +229,28 @@ class MainActivity : FlutterActivity() {
                 }
                 result.success(launched)
             }
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, pdfRendererChannelName)
-            .setMethodCallHandler { call, result ->
-                Thread {
-                    try {
-                        val value = pdfRendererRouter.handle(call.method, call.arguments)
-                        runOnUiThread { result.success(value) }
-                    } catch (_: PdfRendererNotImplemented) {
-                        runOnUiThread { result.notImplemented() }
-                    } catch (error: PdfRendererFailure) {
-                        runOnUiThread { result.error(error.code, error.message, null) }
-                    } catch (error: Exception) {
-                        runOnUiThread {
-                            result.error(
-                                "pdf_renderer",
-                                error.message ?: "Android PDF renderer failed",
-                                null,
-                            )
-                        }
+        shutDownPdfRenderer()
+        val pdfDispatcher = PdfRendererChannelDispatcher(
+            PdfRendererMethodRouter(AndroidPdfRendererBackend(applicationContext)),
+            replyExecutor = java.util.concurrent.Executor { command -> runOnUiThread(command) },
+        )
+        pdfRendererDispatcher = pdfDispatcher
+        pdfRendererChannel =
+            MethodChannel(flutterEngine.dartExecutor.binaryMessenger, pdfRendererChannelName)
+                .also { channel ->
+                    channel.setMethodCallHandler { call, result ->
+                        pdfDispatcher.dispatch(
+                            call.method,
+                            call.arguments,
+                            object : PdfRendererReply {
+                                override fun success(value: Any?) = result.success(value)
+                                override fun error(code: String, message: String?) =
+                                    result.error(code, message, null)
+                                override fun notImplemented() = result.notImplemented()
+                            },
+                        )
                     }
-                }.start()
-            }
+                }
         storageOwner?.detach()
         storageOwner = StorageChannel(NativeIoSupervisor.process, documentsPort::execute)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)
@@ -701,7 +701,15 @@ class MainActivity : FlutterActivity() {
         }.start()
     }
 
+    private fun shutDownPdfRenderer() {
+        pdfRendererChannel?.setMethodCallHandler(null)
+        pdfRendererChannel = null
+        pdfRendererDispatcher?.close()
+        pdfRendererDispatcher = null
+    }
+
     override fun onDestroy() {
+        shutDownPdfRenderer()
         storageOwner?.detach()
         storageOwner = null
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -714,6 +722,7 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+        shutDownPdfRenderer()
         storageOwner?.detach()
         storageOwner = null
         super.cleanUpFlutterEngine(flutterEngine)
