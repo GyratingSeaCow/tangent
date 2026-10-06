@@ -11,6 +11,9 @@ analyzer:
     - "**/*.g.dart"
     - "**/*.freezed.dart"
     - build/**
+    # Vendored upstream package; analyzed in its own release pipeline. Tangent's
+    # one-line Android hook guard is exercised by the source-build contract test.
+    - third_party/pdfium_dart/**
     - android/**
     - windows/**
     - linux/**
