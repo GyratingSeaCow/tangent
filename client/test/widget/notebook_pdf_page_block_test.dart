@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -35,6 +36,36 @@ class _RecordingLoader implements PdfPageRasterLoader {
   }
 }
 
+class _CancellableLoader implements CancellablePdfPageRasterLoader {
+  final Completer<File> pending = Completer<File>();
+  final List<int> cancelledPages = <int>[];
+
+  @override
+  Future<File> loadPage({
+    required String documentId,
+    required String sourceData,
+    required int pageNumber,
+    required int width,
+    required int height,
+  }) => pending.future;
+
+  @override
+  void cancelPage({
+    required String documentId,
+    required int pageNumber,
+    required int width,
+    required int height,
+  }) {
+    cancelledPages.add(pageNumber);
+    if (!pending.isCompleted) {
+      pending.completeError(const PdfRenderCancelledException());
+    }
+  }
+
+  @override
+  Future<void> dispose() async {}
+}
+
 const String _tinyPngBase64 =
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk'
     'YPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
@@ -66,6 +97,45 @@ void main() {
     );
     expect((width, height), (8000, 8000));
     expect(width * height, lessThanOrEqualTo(64 * 1000 * 1000));
+  });
+
+  testWidgets('leaving viewport cancels the in-flight page generation', (
+    WidgetTester tester,
+  ) async {
+    final _CancellableLoader loader = _CancellableLoader();
+    final ValueNotifier<Rect> visible = ValueNotifier<Rect>(
+      const Rect.fromLTWH(0, 0, 720, 800),
+    );
+    addTearDown(visible.dispose);
+    const NotebookPdfPageBlock page = NotebookPdfPageBlock(
+      id: 'page',
+      documentId: 'doc',
+      pageNumber: 4,
+      pageCount: 10,
+      data: 'cGRm',
+      x: 16,
+      y: 0,
+      width: 688,
+      height: 1000,
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: NotebookPdfPageBlockWidget(
+          block: page,
+          sourceData: page.data,
+          loader: loader,
+          visiblePageRect: visible,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    visible.value = const Rect.fromLTWH(0, 5000, 720, 800);
+    await tester.pump();
+    await tester.pump();
+
+    expect(loader.cancelledPages, <int>[4]);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('100 page blocks raster only pages near the viewport', (

@@ -67,7 +67,7 @@ abstract interface class NotebookPdfPicker {
 }
 
 abstract interface class PdfDocumentInspector {
-  Future<List<Size>> inspect(Uint8List bytes);
+  Future<List<Size>> inspect(Uint8List bytes, {required String documentId});
 }
 
 const String kAndroidPdfRendererChannel = 'dev.tangent.tangent/pdf_renderer';
@@ -122,12 +122,14 @@ class AndroidPdfRendererChannel {
   }
 
   Future<void> renderPage({
+    required String requestId,
     required String sourcePath,
     required String outputPath,
     required int pageNumber,
     required int width,
     required int height,
   }) => _channel.invokeMethod<void>('renderPage', <String, Object?>{
+    'requestId': requestId,
     'sourcePath': sourcePath,
     'outputPath': outputPath,
     'pageNumber': pageNumber,
@@ -135,6 +137,11 @@ class AndroidPdfRendererChannel {
     'height': height,
     'format': 'png',
   });
+
+  Future<void> cancelRender(String requestId) => _channel.invokeMethod<void>(
+    'cancelRender',
+    <String, Object?>{'requestId': requestId},
+  );
 }
 
 /// Android metadata reader. The framework only accepts seekable file
@@ -150,13 +157,17 @@ class AndroidPdfDocumentInspector implements PdfDocumentInspector {
   final Future<Directory> Function() _cacheDirectory;
 
   @override
-  Future<List<Size>> inspect(Uint8List bytes) async {
+  Future<List<Size>> inspect(
+    Uint8List bytes, {
+    required String documentId,
+  }) async {
     if (bytes.isEmpty) throw const FormatException('The PDF is empty');
     final Directory root = Directory(
       p.join((await _cacheDirectory()).path, 'notebook_pdf_inspection'),
     );
     await root.create(recursive: true);
-    final File source = File(p.join(root.path, '${sha256.convert(bytes)}.pdf'));
+    await _pruneCacheDirectory(root);
+    final File source = File(p.join(root.path, '$documentId.pdf'));
     if (!await source.exists() || await source.length() != bytes.length) {
       final File partial = File('${source.path}.partial');
       await partial.writeAsBytes(bytes, flush: true);
@@ -172,9 +183,18 @@ class PlatformPdfDocumentInspector implements PdfDocumentInspector {
   const PlatformPdfDocumentInspector();
 
   @override
-  Future<List<Size>> inspect(Uint8List bytes) => Platform.isAndroid
-      ? const AndroidPdfDocumentInspector().inspect(bytes)
-      : const DesktopPdfDocumentInspector().inspect(bytes);
+  Future<List<Size>> inspect(
+    Uint8List bytes, {
+    required String documentId,
+  }) => Platform.isAndroid
+      ? const AndroidPdfDocumentInspector().inspect(
+          bytes,
+          documentId: documentId,
+        )
+      : const DesktopPdfDocumentInspector().inspect(
+          bytes,
+          documentId: documentId,
+        );
 }
 
 /// Desktop-only PDFium metadata reader. Page pixels are not loaded.
@@ -182,7 +202,10 @@ class DesktopPdfDocumentInspector implements PdfDocumentInspector {
   const DesktopPdfDocumentInspector();
 
   @override
-  Future<List<Size>> inspect(Uint8List bytes) async {
+  Future<List<Size>> inspect(
+    Uint8List bytes, {
+    required String documentId,
+  }) async {
     await pdfrx.pdfrxInitialize();
     final pdfrx.PdfDocument document = await pdfrx.PdfDocument.openData(
       bytes,
@@ -234,10 +257,14 @@ class SystemNotebookPdfPicker implements NotebookPdfPicker {
     }
     final Uint8List bytes = await file.readAsBytes();
     if (bytes.isEmpty) throw const FormatException('The PDF is empty');
-    final List<Size> pageSizes = await _inspector.inspect(bytes);
+    final String documentId = sha256.convert(bytes).toString();
+    final List<Size> pageSizes = await _inspector.inspect(
+      bytes,
+      documentId: documentId,
+    );
     return PickedPdf(
       bytes: bytes,
-      documentId: sha256.convert(bytes).toString(),
+      documentId: documentId,
       pageSizes: pageSizes,
       name: p.basename(file.path.replaceAll('\\', '/')),
     );
@@ -320,7 +347,42 @@ abstract interface class PdfPagePngRenderer {
   });
 }
 
-class PlatformPdfPagePngRenderer implements PdfPagePngRenderer {
+/// Optional direct-file contract. Android writes the cache transaction's
+/// temporary file directly, avoiding a PNG disk -> Dart bytes -> disk cycle.
+abstract interface class PdfPageFileRenderer {
+  Future<void> renderPageToFile({
+    required String requestId,
+    required File source,
+    required File output,
+    required int pageNumber,
+    required int width,
+    required int height,
+  });
+
+  Future<void> cancelRender(String requestId);
+}
+
+abstract interface class CancellablePdfPageRasterLoader
+    implements PdfPageRasterLoader {
+  void cancelPage({
+    required String documentId,
+    required int pageNumber,
+    required int width,
+    required int height,
+  });
+
+  Future<void> dispose();
+}
+
+class PdfRenderCancelledException implements Exception {
+  const PdfRenderCancelledException();
+
+  @override
+  String toString() => 'PDF page render was superseded';
+}
+
+class PlatformPdfPagePngRenderer
+    implements PdfPagePngRenderer, PdfPageFileRenderer {
   const PlatformPdfPagePngRenderer();
 
   @override
@@ -342,12 +404,45 @@ class PlatformPdfPagePngRenderer implements PdfPagePngRenderer {
           width: width,
           height: height,
         );
+
+  @override
+  Future<void> renderPageToFile({
+    required String requestId,
+    required File source,
+    required File output,
+    required int pageNumber,
+    required int width,
+    required int height,
+  }) async {
+    if (Platform.isAndroid) {
+      await const AndroidPdfPagePngRenderer().renderPageToFile(
+        requestId: requestId,
+        source: source,
+        output: output,
+        pageNumber: pageNumber,
+        width: width,
+        height: height,
+      );
+      return;
+    }
+    final Uint8List png = await const DesktopPdfPagePngRenderer().renderPage(
+      source: source,
+      pageNumber: pageNumber,
+      width: width,
+      height: height,
+    );
+    await output.writeAsBytes(png, flush: true);
+  }
+
+  @override
+  Future<void> cancelRender(String requestId) => Platform.isAndroid
+      ? const AndroidPdfPagePngRenderer().cancelRender(requestId)
+      : Future<void>.value();
 }
 
-/// Android framework renderer. Kotlin writes the PNG below the same private
-/// cache root as [source], then Dart returns its bytes to the existing cache
-/// transaction so callers keep the same API and atomic-file semantics.
-class AndroidPdfPagePngRenderer implements PdfPagePngRenderer {
+/// Android writes directly to the cache transaction's temporary output.
+class AndroidPdfPagePngRenderer
+    implements PdfPagePngRenderer, PdfPageFileRenderer {
   const AndroidPdfPagePngRenderer({
     AndroidPdfRendererChannel channel = const AndroidPdfRendererChannel(),
   }) : _channel = channel;
@@ -355,30 +450,51 @@ class AndroidPdfPagePngRenderer implements PdfPagePngRenderer {
   final AndroidPdfRendererChannel _channel;
 
   @override
+  Future<void> renderPageToFile({
+    required String requestId,
+    required File source,
+    required File output,
+    required int pageNumber,
+    required int width,
+    required int height,
+  }) async {
+    await _channel.renderPage(
+      requestId: requestId,
+      sourcePath: source.path,
+      outputPath: output.path,
+      pageNumber: pageNumber,
+      width: width,
+      height: height,
+    );
+    if (!await output.exists() || await output.length() <= 0) {
+      throw StateError('Android PDF renderer returned an empty page');
+    }
+  }
+
+  @override
+  Future<void> cancelRender(String requestId) => _channel.cancelRender(requestId);
+
+  /// Compatibility path for direct renderer tests. Production uses the
+  /// direct-file method and never reads the PNG back into Dart.
+  @override
   Future<Uint8List> renderPage({
     required File source,
     required int pageNumber,
     required int width,
     required int height,
   }) async {
-    final File output = File(
-      p.join(
-        source.parent.path,
-        '.android-p$pageNumber-${width}x$height-'
-        '${DateTime.now().microsecondsSinceEpoch}.png',
-      ),
-    );
+    final String requestId =
+        'direct-${DateTime.now().microsecondsSinceEpoch}-$pageNumber';
+    final File output = File(p.join(source.parent.path, '.$requestId.png'));
     try {
-      await _channel.renderPage(
-        sourcePath: source.path,
-        outputPath: output.path,
+      await renderPageToFile(
+        requestId: requestId,
+        source: source,
+        output: output,
         pageNumber: pageNumber,
         width: width,
         height: height,
       );
-      if (!await output.exists() || await output.length() <= 0) {
-        throw StateError('Android PDF renderer returned an empty page');
-      }
       return await output.readAsBytes();
     } finally {
       try {
@@ -457,11 +573,8 @@ class DesktopPdfPagePngRenderer implements PdfPagePngRenderer {
   }
 }
 
-/// Disk-backed, render-once page cache.
-///
-/// No decoded page image is retained here. The caller controls the small set of
-/// visible FileImages; off-screen pages remain compressed PNG files on disk.
-class NotebookPdfPageCache implements PdfPageRasterLoader {
+/// Disk-backed cache with one active render and one newest pending render.
+class NotebookPdfPageCache implements CancellablePdfPageRasterLoader {
   NotebookPdfPageCache({
     PdfPagePngRenderer renderer = const PlatformPdfPagePngRenderer(),
     Future<Directory> Function()? cacheDirectory,
@@ -473,9 +586,13 @@ class NotebookPdfPageCache implements PdfPageRasterLoader {
   final PdfPagePngRenderer _renderer;
   final Future<Directory> Function() _cacheDirectory;
   final FutureOr<Uint8List> Function(String) _decodeSource;
-  final Map<String, Future<File>> _inFlight = <String, Future<File>>{};
+  final Map<String, _PdfRenderTask> _inFlight = <String, _PdfRenderTask>{};
   final Map<String, Future<File>> _sources = <String, Future<File>>{};
   Future<Directory>? _rootFuture;
+  _PdfRenderTask? _active;
+  _PdfRenderTask? _pending;
+  int _nextRequestId = 0;
+  bool _disposed = false;
 
   @override
   Future<File> loadPage({
@@ -485,54 +602,144 @@ class NotebookPdfPageCache implements PdfPageRasterLoader {
     required int width,
     required int height,
   }) {
+    if (_disposed) throw StateError('PDF page cache is disposed');
     if (pageNumber < 1 || width < 1 || height < 1) {
       throw ArgumentError('Invalid PDF render request');
     }
     if (documentId.isEmpty) throw ArgumentError('Missing PDF document id');
-    final String key = '$documentId-p$pageNumber-${width}x$height';
-    return _inFlight.putIfAbsent(
-      key,
-      () =>
-          _loadOrRender(
-            key: key,
-            documentId: documentId,
-            sourceData: sourceData,
-            pageNumber: pageNumber,
-            width: width,
-            height: height,
-          ).whenComplete(() {
-            _inFlight.remove(key);
-          }),
-    );
-  }
+    final String key = _cacheKey(documentId, pageNumber, width, height);
+    final _PdfRenderTask? existing = _inFlight[key];
+    if (existing != null) return existing.completer.future;
 
-  Future<File> _loadOrRender({
-    required String key,
-    required String documentId,
-    required String sourceData,
-    required int pageNumber,
-    required int width,
-    required int height,
-  }) async {
-    final Directory root = await _root();
-    final File target = File(p.join(root.path, '$key.png'));
-    if (await target.exists() && await target.length() > 0) return target;
-
-    final File source = await _sources.putIfAbsent(
-      documentId,
-      () => _materializeSource(root, documentId, sourceData),
-    );
-    final Uint8List png = await _renderer.renderPage(
-      source: source,
+    final _PdfRenderTask task = _PdfRenderTask(
+      key: key,
+      requestId: 'pdf-${++_nextRequestId}',
+      documentId: documentId,
+      sourceData: sourceData,
       pageNumber: pageNumber,
       width: width,
       height: height,
     );
-    if (png.isEmpty) throw StateError('PDF renderer returned an empty page');
-    final File temporary = File('${target.path}.partial');
-    await temporary.writeAsBytes(png, flush: true);
-    if (await target.exists()) await target.delete();
-    return temporary.rename(target.path);
+    _inFlight[key] = task;
+    if (_active == null) {
+      _active = task;
+      unawaited(_run(task));
+    } else {
+      final _PdfRenderTask? dropped = _pending;
+      _pending = task;
+      if (dropped != null) _cancelPending(dropped);
+    }
+    return task.completer.future;
+  }
+
+  @override
+  void cancelPage({
+    required String documentId,
+    required int pageNumber,
+    required int width,
+    required int height,
+  }) {
+    final String key = _cacheKey(documentId, pageNumber, width, height);
+    final _PdfRenderTask? task = _inFlight[key];
+    if (task == null) return;
+    task.cancelled = true;
+    if (identical(task, _pending)) {
+      _pending = null;
+      _cancelPending(task);
+    } else if (identical(task, _active) && _renderer is PdfPageFileRenderer) {
+      unawaited((_renderer as PdfPageFileRenderer).cancelRender(task.requestId));
+    }
+  }
+
+  @override
+  Future<void> dispose() async {
+    if (_disposed) return;
+    _disposed = true;
+    final _PdfRenderTask? pending = _pending;
+    _pending = null;
+    if (pending != null) _cancelPending(pending);
+    final _PdfRenderTask? active = _active;
+    if (active != null) {
+      active.cancelled = true;
+      if (_renderer is PdfPageFileRenderer) {
+        await (_renderer as PdfPageFileRenderer).cancelRender(active.requestId);
+      }
+    }
+  }
+
+  void _cancelPending(_PdfRenderTask task) {
+    task.cancelled = true;
+    _inFlight.remove(task.key);
+    if (!task.completer.isCompleted) {
+      task.completer.completeError(const PdfRenderCancelledException());
+    }
+  }
+
+  Future<void> _run(_PdfRenderTask task) async {
+    try {
+      final File file = await _loadOrRender(task);
+      if (task.cancelled) throw const PdfRenderCancelledException();
+      if (!task.completer.isCompleted) task.completer.complete(file);
+    } catch (error, stack) {
+      if (!task.completer.isCompleted) task.completer.completeError(error, stack);
+    } finally {
+      _inFlight.remove(task.key);
+      if (identical(_active, task)) _active = null;
+      final _PdfRenderTask? next = _pending;
+      _pending = null;
+      if (!_disposed && next != null && !next.cancelled) {
+        _active = next;
+        unawaited(_run(next));
+      }
+    }
+  }
+
+  Future<File> _loadOrRender(_PdfRenderTask task) async {
+    final Directory root = await _root();
+    final File target = File(p.join(root.path, '${task.key}.png'));
+    if (await target.exists() && await target.length() > 0) return target;
+    if (task.cancelled) throw const PdfRenderCancelledException();
+
+    final File source = await _sources.putIfAbsent(
+      task.documentId,
+      () => _materializeSource(root, task.documentId, task.sourceData),
+    );
+    final File temporary = File('${target.path}.${task.requestId}.partial');
+    try {
+      if (_renderer case final PdfPageFileRenderer fileRenderer) {
+        await fileRenderer.renderPageToFile(
+          requestId: task.requestId,
+          source: source,
+          output: temporary,
+          pageNumber: task.pageNumber,
+          width: task.width,
+          height: task.height,
+        );
+      } else {
+        final Uint8List png = await _renderer.renderPage(
+          source: source,
+          pageNumber: task.pageNumber,
+          width: task.width,
+          height: task.height,
+        );
+        if (png.isEmpty) throw StateError('PDF renderer returned an empty page');
+        await temporary.writeAsBytes(png, flush: true);
+      }
+      if (task.cancelled) throw const PdfRenderCancelledException();
+      if (!await temporary.exists() || await temporary.length() <= 0) {
+        throw StateError('PDF renderer returned an empty page');
+      }
+      if (await target.exists()) await target.delete();
+      return await temporary.rename(target.path);
+    } finally {
+      if (await temporary.exists()) {
+        try {
+          await temporary.delete();
+        } on FileSystemException {
+          // Best effort after cancellation or a failed atomic adoption.
+        }
+      }
+    }
   }
 
   Future<File> _materializeSource(
@@ -541,9 +748,7 @@ class NotebookPdfPageCache implements PdfPageRasterLoader {
     String sourceData,
   ) async {
     final File source = File(p.join(root.path, '$documentId.pdf'));
-    if (await source.exists() && await source.length() > 0) {
-      return source;
-    }
+    if (await source.exists() && await source.length() > 0) return source;
     final Uint8List sourceBytes;
     try {
       sourceBytes = await _decodeSource(sourceData);
@@ -563,17 +768,44 @@ class NotebookPdfPageCache implements PdfPageRasterLoader {
       p.join((await _cacheDirectory()).path, 'notebook_pdf_pages'),
     );
     await root.create(recursive: true);
-    final DateTime cutoff = DateTime.now().subtract(const Duration(days: 7));
-    await for (final FileSystemEntity entry in root.list()) {
-      try {
-        if ((await entry.stat()).modified.isBefore(cutoff)) {
-          await entry.delete();
-        }
-      } on FileSystemException {
-        // Best-effort cache maintenance must never block page rendering.
-      }
-    }
+    await _pruneCacheDirectory(root);
     return root;
+  }
+}
+
+class _PdfRenderTask {
+  _PdfRenderTask({
+    required this.key,
+    required this.requestId,
+    required this.documentId,
+    required this.sourceData,
+    required this.pageNumber,
+    required this.width,
+    required this.height,
+  });
+
+  final String key;
+  final String requestId;
+  final String documentId;
+  final String sourceData;
+  final int pageNumber;
+  final int width;
+  final int height;
+  final Completer<File> completer = Completer<File>();
+  bool cancelled = false;
+}
+
+String _cacheKey(String documentId, int pageNumber, int width, int height) =>
+    '$documentId-p$pageNumber-${width}x$height';
+
+Future<void> _pruneCacheDirectory(Directory root) async {
+  final DateTime cutoff = DateTime.now().subtract(const Duration(days: 7));
+  await for (final FileSystemEntity entry in root.list()) {
+    try {
+      if ((await entry.stat()).modified.isBefore(cutoff)) await entry.delete();
+    } on FileSystemException {
+      // Best-effort cache maintenance must never block PDF work.
+    }
   }
 }
 

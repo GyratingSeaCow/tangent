@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -17,10 +18,15 @@ class _Inspector implements PdfDocumentInspector {
 
   final List<Size> sizes;
   int calls = 0;
+  final List<String> documentIds = <String>[];
 
   @override
-  Future<List<Size>> inspect(Uint8List bytes) async {
+  Future<List<Size>> inspect(
+    Uint8List bytes, {
+    required String documentId,
+  }) async {
     calls++;
+    documentIds.add(documentId);
     return sizes;
   }
 }
@@ -72,6 +78,73 @@ class _CountingRenderer implements PdfPagePngRenderer {
     expect(pageNumber, 2);
     expect((width, height), (200, 300));
     return Uint8List.fromList(<int>[0x89, 0x50, 0x4E, 0x47, calls]);
+  }
+}
+
+class _BlockingRenderer implements PdfPagePngRenderer {
+  final Completer<void> firstEntered = Completer<void>();
+  final Completer<void> releaseFirst = Completer<void>();
+  final List<int> pages = <int>[];
+  int active = 0;
+  int maximumActive = 0;
+
+  @override
+  Future<Uint8List> renderPage({
+    required File source,
+    required int pageNumber,
+    required int width,
+    required int height,
+  }) async {
+    pages.add(pageNumber);
+    active++;
+    maximumActive = active > maximumActive ? active : maximumActive;
+    try {
+      if (pages.length == 1) {
+        firstEntered.complete();
+        await releaseFirst.future;
+      }
+      return Uint8List.fromList(<int>[0x89, 0x50, 0x4e, 0x47, pageNumber]);
+    } finally {
+      active--;
+    }
+  }
+}
+
+class _BlockingFileRenderer
+    implements PdfPagePngRenderer, PdfPageFileRenderer {
+  final Completer<void> entered = Completer<void>();
+  final Completer<void> release = Completer<void>();
+  final List<String> cancelled = <String>[];
+  int byteRenderCalls = 0;
+
+  @override
+  Future<Uint8List> renderPage({
+    required File source,
+    required int pageNumber,
+    required int width,
+    required int height,
+  }) async {
+    byteRenderCalls++;
+    throw StateError('cache must use direct file output');
+  }
+
+  @override
+  Future<void> renderPageToFile({
+    required String requestId,
+    required File source,
+    required File output,
+    required int pageNumber,
+    required int width,
+    required int height,
+  }) async {
+    entered.complete();
+    await release.future;
+    await output.writeAsBytes(<int>[0x89, 0x50, 0x4e, 0x47], flush: true);
+  }
+
+  @override
+  Future<void> cancelRender(String requestId) async {
+    cancelled.add(requestId);
   }
 }
 
@@ -143,6 +216,7 @@ void main() {
         1,
         reason: 'import must inspect once, not render pages',
       );
+      expect(inspector.documentIds, <String>[picked.documentId]);
     },
   );
 
@@ -288,6 +362,73 @@ void main() {
     expect(await again.readAsBytes(), <int>[0x89, 0x50, 0x4E, 0x47, 1]);
   });
 
+  test('100-page fast fling keeps backend bounded and newest page wins', () async {
+    final Directory temp = await Directory.systemTemp.createTemp('pdf-fling-');
+    addTearDown(() => temp.delete(recursive: true));
+    final _BlockingRenderer renderer = _BlockingRenderer();
+    final NotebookPdfPageCache cache = NotebookPdfPageCache(
+      renderer: renderer,
+      cacheDirectory: () async => temp,
+    );
+    addTearDown(cache.dispose);
+    final String source = base64Encode(<int>[1, 2, 3, 4]);
+    final List<Future<Object>> results = <Future<Object>>[];
+
+    Future<Object> request(int page) => cache
+        .loadPage(
+          documentId: 'doc',
+          sourceData: source,
+          pageNumber: page,
+          width: 100,
+          height: 100,
+        )
+        .then<Object>((File file) => file, onError: (Object error) => error);
+
+    results.add(request(1));
+    await renderer.firstEntered.future;
+    for (int page = 2; page <= 100; page++) {
+      results.add(request(page));
+    }
+    renderer.releaseFirst.complete();
+    final List<Object> settled = await Future.wait(results);
+
+    expect(renderer.pages, <int>[1, 100]);
+    expect(renderer.maximumActive, 1);
+    expect(settled.whereType<File>(), hasLength(2));
+    expect(settled.whereType<PdfRenderCancelledException>(), hasLength(98));
+  });
+
+  test('dispose cancels native output and cleans the partial file', () async {
+    final Directory temp = await Directory.systemTemp.createTemp('pdf-cancel-');
+    addTearDown(() => temp.delete(recursive: true));
+    final _BlockingFileRenderer renderer = _BlockingFileRenderer();
+    final NotebookPdfPageCache cache = NotebookPdfPageCache(
+      renderer: renderer,
+      cacheDirectory: () async => temp,
+    );
+    final Future<Object> result = cache
+        .loadPage(
+          documentId: 'doc',
+          sourceData: base64Encode(<int>[1, 2, 3, 4]),
+          pageNumber: 7,
+          width: 100,
+          height: 100,
+        )
+        .then<Object>((File file) => file, onError: (Object error) => error);
+    await renderer.entered.future;
+
+    await cache.dispose();
+    expect(renderer.cancelled, <String>['pdf-1']);
+    renderer.release.complete();
+    expect(await result, isA<PdfRenderCancelledException>());
+    expect(renderer.byteRenderCalls, 0);
+    final Directory root = Directory('${temp.path}/notebook_pdf_pages');
+    expect(
+      await root.list().where((FileSystemEntity entry) => entry.path.endsWith('.partial')).length,
+      0,
+    );
+  });
+
   test(
     'disk cache keys by document id and decodes one source for many pages',
     () async {
@@ -338,12 +479,47 @@ void main() {
     },
   );
 
+  test('Android inspection cache prunes entries older than seven days', () async {
+    const MethodChannel channel = MethodChannel(kAndroidPdfRendererChannel);
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (_) async {
+          return <String, Object?>{
+            'pageCount': 1,
+            'pages': <Object?>[
+              <String, Object?>{'width': 100, 'height': 200},
+            ],
+          };
+        });
+    addTearDown(
+      () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null),
+    );
+    final Directory temp = await Directory.systemTemp.createTemp('pdf-inspect-');
+    addTearDown(() => temp.delete(recursive: true));
+    final Directory root = Directory('${temp.path}/notebook_pdf_inspection');
+    await root.create();
+    final File stale = File('${root.path}/stale.pdf')
+      ..writeAsBytesSync(<int>[9]);
+    await stale.setLastModified(
+      DateTime.now().subtract(const Duration(days: 8)),
+    );
+
+    final List<Size> sizes = await AndroidPdfDocumentInspector(
+      channel: const AndroidPdfRendererChannel(channel: channel),
+      cacheDirectory: () async => temp,
+    ).inspect(Uint8List.fromList(<int>[1, 2, 3]), documentId: 'known-id');
+
+    expect(sizes, <Size>[const Size(100, 200)]);
+    expect(await stale.exists(), isFalse);
+    expect(await File('${root.path}/known-id.pdf').readAsBytes(), <int>[1, 2, 3]);
+  });
+
   test(
     'desktop engine inspects and renders a real locally generated PDF',
     () async {
       final Uint8List bytes = await _twoPagePdf();
       final List<Size> sizes = await const DesktopPdfDocumentInspector()
-          .inspect(bytes);
+          .inspect(bytes, documentId: 'generated');
       expect(sizes, hasLength(2));
       expect(sizes[0].width, closeTo(200, 0.1));
       expect(sizes[0].height, closeTo(300, 0.1));

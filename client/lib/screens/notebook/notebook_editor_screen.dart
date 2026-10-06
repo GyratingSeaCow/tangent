@@ -302,6 +302,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
   final ValueNotifier<Rect> _visiblePageRect = ValueNotifier<Rect>(Rect.zero);
   late final NotebookPdfPicker _pdfPicker;
   late final PdfPageRasterLoader _pdfPageRasterLoader;
+  late final bool _ownsPdfPageRasterLoader;
   bool _erasing = false;
 
   /// Lasso mode: pointer input selects instead of drawing.
@@ -377,6 +378,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
   void initState() {
     super.initState();
     _pdfPicker = widget.pdfPicker ?? SystemNotebookPdfPicker();
+    _ownsPdfPageRasterLoader = widget.pdfPageRasterLoader == null;
     _pdfPageRasterLoader = widget.pdfPageRasterLoader ?? NotebookPdfPageCache();
     _pageScroll.addListener(_updateVisiblePageRect);
     WidgetsBinding.instance.addPostFrameCallback(
@@ -397,6 +399,12 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
     _pageScroll.removeListener(_updateVisiblePageRect);
     _pageScroll.dispose();
     _visiblePageRect.dispose();
+    if (_ownsPdfPageRasterLoader) {
+      final PdfPageRasterLoader loader = _pdfPageRasterLoader;
+      if (loader is CancellablePdfPageRasterLoader) {
+        unawaited(loader.dispose());
+      }
+    }
     _title.dispose();
     _findQuery.dispose();
     for (final TextEditingController controller in _controllers.values) {
