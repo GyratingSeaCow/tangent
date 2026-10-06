@@ -1,9 +1,11 @@
 # pdfium_dart
 
-> Tangent vendors version 0.3.1 with one deployment-only change: the native
-> asset build hook returns without downloading or emitting PDFium for Android.
-> Desktop targets retain the upstream hook unchanged. Android PDF rendering is
-> provided by `android.graphics.pdf.PdfRenderer` in the application source.
+> Tangent vendors version 0.3.1 with one deployment-only code change: the
+> native asset build hook returns without downloading or emitting PDFium for
+> Android. Desktop targets retain the upstream hook unchanged. Upstream
+> development-only `test/` and `tool/` directories are omitted. Android PDF
+> rendering is provided by `android.graphics.pdf.PdfRenderer` in the
+> application source.
 
 Dart FFI bindings for the PDFium library. This package provides low-level access to PDFium's C API from Dart.
 

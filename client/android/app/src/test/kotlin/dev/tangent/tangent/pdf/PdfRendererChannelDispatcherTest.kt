@@ -7,6 +7,7 @@ import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executor
 import java.util.concurrent.Executors
@@ -141,36 +142,136 @@ class PdfRendererChannelDispatcherTest {
     }
 
     @Test
-    fun closeShutsDownOwnedWorkerAndSuppressesDetachedReply() {
-        val worker = Executors.newSingleThreadExecutor()
-        val replyValue = AtomicReference<Any?>()
+    fun fastFlingOf100PagesKeepsOnlyActiveAndNewestPendingRequest() {
+        val firstEntered = CountDownLatch(1)
+        val releaseFirst = CountDownLatch(1)
+        val replies = CountDownLatch(100)
+        val calls = AtomicInteger()
+        val errors = AtomicInteger()
+        val pages = java.util.Collections.synchronizedList(mutableListOf<Int>())
+        val backend = object : PdfRendererBackend {
+            override fun inspect(sourcePath: String) = error("not used")
+            override fun render(
+                sourcePath: String,
+                outputPath: String,
+                pageNumber: Int,
+                width: Int,
+                height: Int,
+            ) {
+                pages.add(pageNumber)
+                if (calls.incrementAndGet() == 1) {
+                    firstEntered.countDown()
+                    check(releaseFirst.await(5, TimeUnit.SECONDS))
+                }
+            }
+        }
         val dispatcher = PdfRendererChannelDispatcher(
-            PdfRendererMethodRouter(object : PdfRendererBackend {
-                override fun inspect(sourcePath: String) = PdfDocumentInfo(emptyList())
-                override fun render(
-                    sourcePath: String,
-                    outputPath: String,
-                    pageNumber: Int,
-                    width: Int,
-                    height: Int,
-                ) = Unit
-            }),
+            PdfRendererMethodRouter(backend),
             replyExecutor = Executor { command -> command.run() },
-            worker = worker,
         )
+        val reply = object : PdfRendererReply {
+            override fun success(value: Any?) = replies.countDown()
+            override fun error(code: String, message: String?) {
+                assertEquals("render_cancelled", code)
+                errors.incrementAndGet()
+                replies.countDown()
+            }
+            override fun notImplemented() = throw AssertionError("unexpected notImplemented")
+        }
+        try {
+            fun args(page: Int) = mapOf(
+                "requestId" to "page-$page",
+                "sourcePath" to "/private/source.pdf",
+                "outputPath" to "/private/page-$page.png",
+                "pageNumber" to page,
+                "width" to 100,
+                "height" to 100,
+                "format" to "png",
+            )
+            dispatcher.dispatch("renderPage", args(1), reply)
+            assertTrue("first render did not start", firstEntered.await(5, TimeUnit.SECONDS))
+            for (page in 2..100) dispatcher.dispatch("renderPage", args(page), reply)
+            releaseFirst.countDown()
 
-        dispatcher.close()
-        dispatcher.dispatch(
-            "inspectDocument",
-            mapOf("sourcePath" to "/private/source.pdf"),
-            object : PdfRendererReply {
-                override fun success(value: Any?) = replyValue.set(value)
-                override fun error(code: String, message: String?) = replyValue.set(code)
-                override fun notImplemented() = replyValue.set("notImplemented")
-            },
+            assertTrue("render replies timed out", replies.await(5, TimeUnit.SECONDS))
+            assertEquals(listOf(1, 100), pages)
+            assertEquals(2, calls.get())
+            assertEquals(98, errors.get())
+        } finally {
+            releaseFirst.countDown()
+            dispatcher.close()
+        }
+    }
+
+    @Test
+    fun cancellingActiveRenderDeletesStaleOutputAndRepliesExactlyOnce() {
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val renderReply = CountDownLatch(1)
+        val cancelReply = CountDownLatch(1)
+        val renderReplies = AtomicInteger()
+        val output = kotlin.io.path.createTempFile("stale-pdf-", ".png").toFile()
+        output.delete()
+        val backend = object : PdfRendererBackend {
+            override fun inspect(sourcePath: String) = error("not used")
+            override fun render(
+                sourcePath: String,
+                outputPath: String,
+                pageNumber: Int,
+                width: Int,
+                height: Int,
+            ) {
+                entered.countDown()
+                check(release.await(5, TimeUnit.SECONDS))
+                File(outputPath).writeBytes(byteArrayOf(1, 2, 3))
+            }
+        }
+        val dispatcher = PdfRendererChannelDispatcher(
+            PdfRendererMethodRouter(backend),
+            replyExecutor = Executor { command -> command.run() },
         )
-
-        assertTrue(worker.isShutdown)
-        assertNull(replyValue.get())
+        try {
+            dispatcher.dispatch(
+                "renderPage",
+                mapOf(
+                    "requestId" to "stale",
+                    "sourcePath" to "/private/source.pdf",
+                    "outputPath" to output.path,
+                    "pageNumber" to 1,
+                    "width" to 100,
+                    "height" to 100,
+                    "format" to "png",
+                ),
+                object : PdfRendererReply {
+                    override fun success(value: Any?) = throw AssertionError("stale success")
+                    override fun error(code: String, message: String?) {
+                        assertEquals("render_cancelled", code)
+                        renderReplies.incrementAndGet()
+                        renderReply.countDown()
+                    }
+                    override fun notImplemented() = throw AssertionError("unexpected")
+                },
+            )
+            assertTrue(entered.await(5, TimeUnit.SECONDS))
+            dispatcher.dispatch(
+                "cancelRender",
+                mapOf("requestId" to "stale"),
+                object : PdfRendererReply {
+                    override fun success(value: Any?) = cancelReply.countDown()
+                    override fun error(code: String, message: String?) =
+                        throw AssertionError("unexpected $code")
+                    override fun notImplemented() = throw AssertionError("unexpected")
+                },
+            )
+            release.countDown()
+            assertTrue(cancelReply.await(5, TimeUnit.SECONDS))
+            assertTrue(renderReply.await(5, TimeUnit.SECONDS))
+            assertEquals(1, renderReplies.get())
+            assertFalse(output.exists())
+        } finally {
+            release.countDown()
+            output.delete()
+            dispatcher.close()
+        }
     }
 }

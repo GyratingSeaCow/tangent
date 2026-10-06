@@ -1,4 +1,5 @@
 # Preserve exact upstream vendored bytes while excluding known upstream-only
 # end-of-line whitespace from Git's patch hygiene check.
-client/third_party/pdfium_dart/lib/src/pdfium_bindings.dart whitespace=-blank-at-eol,-blank-at-eof
-client/third_party/sqlite/sqlite3.c whitespace=-blank-at-eol,-blank-at-eof
+client/third_party/pdfium_dart/lib/src/pdfium_bindings.dart -text whitespace=-blank-at-eol,-blank-at-eof
+client/third_party/sqlite/sqlite3.c -text whitespace=-blank-at-eol,-blank-at-eof
+client/third_party/pdfium_dart/README.md text eol=lf

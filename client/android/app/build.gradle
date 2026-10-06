@@ -100,17 +100,39 @@ android.applicationVariants.configureEach { variant ->
     def variantName = variant.name.capitalize()
     tasks.matching { it.name == "strip${variantName}DebugSymbols" }.configureEach { stripTask ->
         stripTask.doLast {
-            def objcopy = new File(android.ndkDirectory, "toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-objcopy")
-            if (!objcopy.exists()) {
-                objcopy = new File(android.ndkDirectory, "toolchains/llvm/prebuilt/windows-x86_64/bin/llvm-objcopy.exe")
+            def toolRoot = new File(android.ndkDirectory, "toolchains/llvm/prebuilt/linux-x86_64/bin")
+            if (!toolRoot.exists()) {
+                toolRoot = new File(android.ndkDirectory, "toolchains/llvm/prebuilt/windows-x86_64/bin")
             }
+            def objcopy = new File(toolRoot, toolRoot.name == "bin" && System.getProperty("os.name").toLowerCase().contains("windows") ? "llvm-objcopy.exe" : "llvm-objcopy")
+            if (!objcopy.exists()) objcopy = new File(toolRoot, "llvm-objcopy")
+            def readelf = new File(toolRoot, System.getProperty("os.name").toLowerCase().contains("windows") ? "llvm-readelf.exe" : "llvm-readelf")
+            if (!readelf.exists()) readelf = new File(toolRoot, "llvm-readelf")
+            int sqliteCount = 0
             stripTask.outputs.files.each { dir ->
                 if (dir.isDirectory()) {
                     fileTree(dir: dir, include: "**/*.so").each { so ->
-                        def p = [objcopy.path, "--remove-section=.note.gnu.build-id", so.path].execute()
-                        p.waitFor()
+                        if (so.name == "libsqlite3.so") sqliteCount++
+                        def stripProcess = [objcopy.path, "--remove-section=.note.gnu.build-id", so.path].execute()
+                        def stripOutput = new StringBuffer()
+                        stripProcess.consumeProcessOutput(stripOutput, stripOutput)
+                        if (stripProcess.waitFor() != 0) {
+                            throw new GradleException("Failed to strip build-id from ${so}: ${stripOutput}")
+                        }
+                        def auditProcess = [readelf.path, "--sections", so.path].execute()
+                        def sections = new StringBuffer()
+                        auditProcess.consumeProcessOutput(sections, sections)
+                        if (auditProcess.waitFor() != 0) {
+                            throw new GradleException("Failed to audit ELF sections in ${so}: ${sections}")
+                        }
+                        if (sections.toString().contains(".note.gnu.build-id")) {
+                            throw new GradleException("Build-id survived stripping in ${so}")
+                        }
                     }
                 }
+            }
+            if (variant.buildType.name == "release" && sqliteCount == 0) {
+                throw new GradleException("Source-built libsqlite3.so was not covered by build-id stripping")
             }
         }
     }

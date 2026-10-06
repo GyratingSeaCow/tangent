@@ -100,6 +100,7 @@ class _NotebookPdfPageBlockWidgetState
     if (oldWidget.block != widget.block ||
         oldWidget.sourceData != widget.sourceData ||
         oldWidget.loader != widget.loader) {
+      _cancelLoad(oldWidget.block, oldWidget.loader);
       _releaseImage();
     }
     scheduleMicrotask(_visibilityChanged);
@@ -108,6 +109,7 @@ class _NotebookPdfPageBlockWidgetState
   @override
   void dispose() {
     widget.visiblePageRect.removeListener(_visibilityChanged);
+    _cancelLoad(widget.block, widget.loader);
     _generation++;
     unawaited(_provider?.evict() ?? Future<bool>.value(false));
     super.dispose();
@@ -130,6 +132,7 @@ class _NotebookPdfPageBlockWidgetState
 
   void _releaseImage() {
     final FileImage? old = _provider;
+    _cancelLoad(widget.block, widget.loader);
     _generation++;
     if (old == null && !_loading && _error == null) return;
     if (mounted) {
@@ -140,6 +143,20 @@ class _NotebookPdfPageBlockWidgetState
       });
     }
     if (old != null) unawaited(old.evict());
+  }
+
+  void _cancelLoad(NotebookPdfPageBlock block, PdfPageRasterLoader loader) {
+    if (!_loading || loader is! CancellablePdfPageRasterLoader) return;
+    final (int width, int height) = notebookPdfRasterSize(
+      block,
+      _devicePixelRatio ?? 1,
+    );
+    loader.cancelPage(
+      documentId: block.documentId,
+      pageNumber: block.pageNumber,
+      width: width,
+      height: height,
+    );
   }
 
   Future<void> _load() async {
@@ -165,6 +182,15 @@ class _NotebookPdfPageBlockWidgetState
         _provider = FileImage(file);
         _loading = false;
       });
+    } on PdfRenderCancelledException {
+      if (!mounted || generation != _generation) return;
+      setState(() => _loading = false);
+      unawaited(
+        Future<void>.delayed(
+          const Duration(milliseconds: 16),
+          _visibilityChanged,
+        ),
+      );
     } catch (error) {
       if (!mounted || generation != _generation) return;
       setState(() {

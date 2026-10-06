@@ -4,7 +4,7 @@ Imported PDFs are notebook canvas content, not embedded viewer widgets. The Inse
 
 ## Renderer choice
 
-Windows and Linux use `pdfrx_engine` 0.6.1's low-level document/page API, backed by the source-vendored `pdfium_dart` 0.3.1 package and its PDFium native asset. The application does not mount a PDF viewer widget. Android deliberately does not build or package that asset: it uses the platform `android.graphics.pdf.PdfRenderer` through Tangent's method channel instead. The vendored `pdfium_dart` differs from upstream only in making its build hook emit no Android asset; desktop hook and loader behavior remain upstream.
+Windows and Linux use `pdfrx_engine` 0.6.1's low-level document/page API, backed by the source-vendored `pdfium_dart` 0.3.1 package and its PDFium native asset. The application does not mount a PDF viewer widget. Android deliberately does not build or package that asset: it uses the platform `android.graphics.pdf.PdfRenderer` through Tangent's method channel instead. On Android 15 (API 35) and newer the exact `Page.render(Bitmap, Rect, Matrix, RenderParams)` overload enables the platform's text-annotation and highlight-annotation flags; form appearances use `RenderParams`' target-SDK-35 default. Android 14 and older expose only the legacy render overload and therefore cannot render embedded PDF annotations or form appearances. Tangent's own notebook ink remains separate and is unaffected. The vendored `pdfium_dart` differs from upstream only in making its build hook emit no Android asset; desktop hook and loader behavior remain upstream.
 
 The Windows release workflow runs the real generated-PDF inspect/render test and then builds the Windows bundle, so `pdfium.dll` loading and packaging are both exercised. Ubuntu CI always runs the platform-independent import, geometry, cache-coalescing, Android-channel-contract, and 100-page visibility tests. Its additional real-PDFium smoke asks the vendored loader whether PDFium can actually be opened; only that smoke is skipped, with the loader error, when the Flutter test runtime genuinely has no loadable `libpdfium.so`. Linux application builds still bundle the hook-produced library.
 
@@ -24,6 +24,6 @@ Server text extraction treats `pdfPage` and image blocks as opaque. Their `data`
 
 ## Limitations
 
-- Imported and re-exported pages are rasterized. Original vector paths, searchable text, links, forms, and PDF metadata are not preserved.
+- Imported and re-exported pages are rasterized. Original vector paths, searchable text, links, interactive forms, and PDF metadata are not preserved. Android 14 and older also omit embedded PDF annotations and form appearances because their platform renderer has no annotation-aware overload.
 - PDF page blocks are intentionally fixed; page reordering, cropping, rotation, and independent dragging are not supported.
 - White notebook ink can have low contrast on light PDF pages; users can select a colored pen.
