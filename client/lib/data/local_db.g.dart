@@ -7829,7 +7829,7 @@ class $InkIndexEntriesTable extends InkIndexEntries
   }
 
   @override
-  Set<GeneratedColumn> get $primaryKey => {id};
+  Set<GeneratedColumn> get $primaryKey => {notebookId, id};
   @override
   InkIndexEntry map(Map<String, dynamic> data, {String? tablePrefix}) {
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';

@@ -1104,6 +1104,84 @@ void main() {
     );
 
     test(
+      'content-derived ids are notebook-scoped and duplicate payload rows upsert',
+      () async {
+        const String sharedId =
+            '2a52a65d3b30a84757e67b01126a85e7d2f91a8b:000';
+        await db.applyRemoteInkIndex(
+          notebookId: 'original',
+          rows: <InkIndexEntriesCompanion>[
+            InkIndexEntriesCompanion.insert(
+              id: sharedId,
+              notebookId: 'original',
+              lineId: 'line-original',
+              wordText: 'original',
+              wordTextLower: 'original',
+              bboxJson: '[0,0,10,10]',
+              strokeIdsJson: '["stroke-original"]',
+              model: 'trocr-test',
+              indexedAt: 1000,
+            ),
+            InkIndexEntriesCompanion.insert(
+              id: 'original-only:001',
+              notebookId: 'original',
+              lineId: 'line-original',
+              wordText: 'untouched',
+              wordTextLower: 'untouched',
+              bboxJson: '[11,0,20,10]',
+              strokeIdsJson: '["stroke-untouched"]',
+              model: 'trocr-test',
+              indexedAt: 1000,
+            ),
+          ],
+        );
+        client.pullPages = <SyncPullPage>[
+          SyncPullPage(
+            changes: <RemoteChange>[
+              inkIndexChange(
+                notebookId:
+                    'e08adc65-2257-4a49-8d06-10b5bbdf18ff-conflict-1924',
+                rows: <Map<String, dynamic>>[
+                  wordRow(
+                    id: sharedId,
+                    lineId: 'line-conflict',
+                    text: 'first duplicate',
+                  ),
+                  wordRow(
+                    id: sharedId,
+                    lineId: 'line-conflict',
+                    text: 'last duplicate wins',
+                  ),
+                ],
+                seq: 1924,
+              ),
+            ],
+            headSeq: 1924,
+            hasMore: false,
+          ),
+        ];
+        final DocumentSyncEngine engine = build(label: () async => 'test');
+
+        final SyncReport report = await engine.syncNow();
+
+        expect(report.outcome, SyncOutcome.success);
+        final List<InkIndexEntry> originalRows = await rowsFor('original');
+        expect(originalRows, hasLength(2));
+        expect(
+          originalRows.map((InkIndexEntry row) => row.wordText),
+          containsAll(<String>['original', 'untouched']),
+        );
+        final List<InkIndexEntry> conflictRows = await rowsFor(
+          'e08adc65-2257-4a49-8d06-10b5bbdf18ff-conflict-1924',
+        );
+        expect(conflictRows, hasLength(1));
+        expect(conflictRows.single.id, sharedId);
+        expect(conflictRows.single.wordText, 'last duplicate wins');
+        expect((await db.syncState(newDeviceId: 'unused')).lastPulledSeq, 1924);
+      },
+    );
+
+    test(
       'an index for a notebook this client has never seen inserts cleanly',
       () async {
         // The index can arrive BEFORE the notebook doc (separate change_log

@@ -35,7 +35,7 @@ void main() {
     addTearDown(db.close);
     await db.listDumps();
 
-    expect(sql.userVersion, 34);
+    expect(sql.userVersion, 35);
     for (final String table in <String>['dumps', 'notebooks', 'todos']) {
       expect(_columns(sql, table), contains('pinned'), reason: table);
     }

@@ -346,7 +346,7 @@ class InkIndexEntries extends Table {
   TextColumn get model => text()();
   IntColumn get indexedAt => integer()();
   @override
-  Set<Column> get primaryKey => {id};
+  Set<Column> get primaryKey => {notebookId, id};
 }
 
 /// To-do items (v23, Phase 1 of the To Do arc): a first-class synced
@@ -611,7 +611,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   LocalDb.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 34;
+  int get schemaVersion => 35;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -1310,6 +1310,38 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
               );
             }
           }
+          if (from < 35) {
+            // Content-derived ink row ids repeat when notebook conflict copies
+            // duplicate the same strokes. The mirror key is therefore scoped
+            // to its notebook. Rebuild just this table so every existing mirror
+            // row survives; no user-authored table participates in the copy.
+            final List<QueryRow> tableInfo = await customSelect(
+              'PRAGMA table_info(ink_index_entries)',
+            ).get();
+            if (tableInfo.isEmpty) {
+              // Defensive sideways-schema guard. A genuine v34 database has
+              // this table, but creating it is safer than bricking launch.
+              await m.createTable(inkIndexEntries);
+            } else {
+              final List<QueryRow> primaryKey = tableInfo
+                  .where((QueryRow row) => row.read<int>('pk') > 0)
+                  .toList()
+                ..sort(
+                  (QueryRow a, QueryRow b) =>
+                      a.read<int>('pk').compareTo(b.read<int>('pk')),
+                );
+              final List<String> primaryKeyNames = primaryKey
+                  .map((QueryRow row) => row.read<String>('name'))
+                  .toList();
+              final bool alreadyNotebookScoped =
+                  primaryKeyNames.length == 2 &&
+                      primaryKeyNames[0] == 'notebook_id' &&
+                      primaryKeyNames[1] == 'id';
+              if (!alreadyNotebookScoped) {
+                await m.alterTable(TableMigration(inkIndexEntries));
+              }
+            }
+          }
         },
       );
 
@@ -1563,7 +1595,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
         inkIndexEntries,
       )..where((t) => t.notebookId.equals(notebookId))).go();
       for (final InkIndexEntriesCompanion row in rows) {
-        await into(inkIndexEntries).insert(row);
+        await into(inkIndexEntries).insertOnConflictUpdate(row);
       }
     });
   }
