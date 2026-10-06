@@ -5,6 +5,30 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.50.1 — 2026-10-06
+
+### Changed
+
+- PDF pages on Android render through the platform's built-in renderer
+  instead of bundled PDFium (F-Droid inclusion requirement). On Android 15+,
+  embedded text and highlight annotations in imported PDFs are rendered;
+  on older Android versions embedded source-PDF annotations and form
+  appearances may not appear — Tangent's own ink annotations are
+  unaffected. Desktop (Windows/Linux) rendering is unchanged.
+- SQLite is compiled from vendored upstream source during the build
+  instead of downloading a prebuilt library (F-Droid inclusion
+  requirement). Release CI builds each per-ABI APK with its own
+  --target-platform for reproducible builds.
+
+### Fixed
+
+- Fast scrolling through imported PDFs no longer queues unbounded page
+  renders: stale renders are cancelled, and a page reloads correctly when
+  requested again after a cancelled render.
+- Imported-PDF inspection caches are pruned with the same seven-day policy
+  as page caches, and PDF import no longer hashes the source file twice or
+  round-trips rendered pages through an extra disk write.
+
 ## 1.50.0 — 2026-10-05
 
 ### Added

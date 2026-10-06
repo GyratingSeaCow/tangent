@@ -1,7 +1,7 @@
 name: tangent
 description: "Self-hosted voice and text brain dumps, notes, notebooks and to-dos."
 publish_to: 'none'
-version: 1.50.0+69
+version: 1.50.1+70
 
 environment:
   sdk: '>=3.10.0 <4.0.0'

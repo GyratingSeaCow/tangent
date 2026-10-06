@@ -50,9 +50,9 @@ ADH2/
 
 ## Status
 
-Shipping — **v1.50.0** (see CHANGELOG.md). Client and server are both
-implemented and tested (3040
-Flutter tests, 807 server tests, 129 Kotlin tests). Toolchain:
+Shipping — **v1.50.1** (see CHANGELOG.md). Client and server are both
+implemented and tested (3050
+Flutter tests, 807 server tests, 139 Kotlin tests). Toolchain:
 Flutter 3.47.6 / Dart 3.13, AGP 9.1 / Kotlin 2.4 / Gradle 9.3.1 /
 Java 17 (v1.48.1); APKs exclude Google's dependency-info
 signing block for F-Droid (v1.48.2). The client runs
@@ -60,6 +60,16 @@ natively on Linux AND Windows (tray icon, global record hotkey,
 close-to-tray, single instance, right-click = long-press; AppImage and
 Inno Setup installer under `packaging/`) — verified on CachyOS/KDE
 Plasma Wayland and Windows 11; see the README's Desktop sections.
+
+v1.50.1 **F-Droid review fixes**: Android PDF rendering moved from
+bundled PDFium to the platform `PdfRenderer` (API 35+ renders embedded
+text/highlight annotations via `RenderParams`; older Androids documented
+annotation-less — Tangent's own ink is unaffected); SQLite compiled from
+the vendored amalgamation (`client/third_party/sqlite/`, byte-exact
+upstream); release CI builds each split APK with its own
+`--target-platform`; render queue is bounded/cancellable (newest-wins,
+cancelled pages reload); recipe NDK pin 28.2.13676358. Desktop keeps
+`pdfrx_engine` + vendored `pdfium_dart`.
 
 v1.50.0 **PDF import, To-Do Kanban board, debug-log export**: Insert →
 PDF adds one `pdfPage` block per page (pdfrx on-demand rendering + disk

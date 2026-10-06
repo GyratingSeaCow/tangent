@@ -25,10 +25,10 @@ EXPECTED_ABIS = {
     "x86_64": {"x86_64"},
 }
 EXPECTED_VERSION_CODES = {
-    "universal": "69",
-    "armeabi-v7a": "691",
-    "arm64-v8a": "692",
-    "x86_64": "693",
+    "universal": "70",
+    "armeabi-v7a": "701",
+    "arm64-v8a": "702",
+    "x86_64": "703",
 }
 SQLITE_VERSION = b"3.50.2"
 SQLITE_SOURCE_ID = b"2025-06-28 14:00:48 2af157d7"
@@ -77,7 +77,7 @@ def audit(
     expected_package = (
         "dev.tangent.tangent",
         EXPECTED_VERSION_CODES[label],
-        "1.50.0",
+        "1.50.1",
     )
     if package is None or package.groups() != expected_package:
         raise AssertionError(

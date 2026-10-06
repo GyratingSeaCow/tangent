@@ -1,0 +1,1 @@
+PDF pages on Android now render with the system renderer (no bundled PDFium). On Android 15+, embedded text and highlight annotations in imported PDFs are shown. SQLite is now built from source. Smoother fast scrolling through imported PDFs: stale page renders are cancelled and pages reload reliably after cancellation. Imported-PDF caches are now pruned automatically.
