@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
+import 'package:pdfium_dart/pdfium_dart.dart' as pdfium;
 import 'package:tangent/models/notebook.dart';
 import 'package:tangent/services/notebook_import.dart';
 import 'package:tangent/services/notebook_pdf_import.dart';
@@ -337,48 +338,128 @@ void main() {
     },
   );
 
-  test('pdfrx inspects and renders a real locally generated PDF', () async {
-    final Uint8List bytes = await _twoPagePdf();
-    final List<Size> sizes = await const PdfrxDocumentInspector().inspect(
-      bytes,
-    );
-    expect(sizes, hasLength(2));
-    expect(sizes[0].width, closeTo(200, 0.1));
-    expect(sizes[0].height, closeTo(300, 0.1));
-    expect(sizes[1].width, closeTo(400, 0.1));
-    expect(sizes[1].height, closeTo(200, 0.1));
+  test(
+    'desktop engine inspects and renders a real locally generated PDF',
+    () async {
+      final Uint8List bytes = await _twoPagePdf();
+      final List<Size> sizes = await const DesktopPdfDocumentInspector()
+          .inspect(bytes);
+      expect(sizes, hasLength(2));
+      expect(sizes[0].width, closeTo(200, 0.1));
+      expect(sizes[0].height, closeTo(300, 0.1));
+      expect(sizes[1].width, closeTo(400, 0.1));
+      expect(sizes[1].height, closeTo(200, 0.1));
 
-    final Directory temp = await Directory.systemTemp.createTemp('pdfrx-real-');
-    addTearDown(() => temp.delete(recursive: true));
-    final File source = File('${temp.path}/source.pdf');
-    await source.writeAsBytes(bytes);
-    final Uint8List png = await const PdfrxPagePngRenderer().renderPage(
-      source: source,
-      pageNumber: 2,
-      width: 400,
-      height: 200,
+      final Directory temp = await Directory.systemTemp.createTemp(
+        'pdfrx-real-',
+      );
+      addTearDown(() => temp.delete(recursive: true));
+      final File source = File('${temp.path}/source.pdf');
+      await source.writeAsBytes(bytes);
+      final Uint8List png = await const DesktopPdfPagePngRenderer().renderPage(
+        source: source,
+        pageNumber: 2,
+        width: 400,
+        height: 200,
+      );
+      expect(png.sublist(0, 8), <int>[137, 80, 78, 71, 13, 10, 26, 10]);
+      expect(png.length, greaterThan(500));
+    },
+    skip: _pdfiumUnavailableReason(),
+  );
+
+  test(
+    'Android channel preserves page geometry and one-based render contract',
+    () async {
+      const MethodChannel channel = MethodChannel(kAndroidPdfRendererChannel);
+      final List<MethodCall> calls = <MethodCall>[];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (MethodCall call) async {
+            calls.add(call);
+            if (call.method == 'inspectDocument') {
+              return <String, Object?>{
+                'pageCount': 2,
+                'pages': <Object?>[
+                  <String, Object?>{'width': 612, 'height': 792},
+                  <String, Object?>{'width': 400, 'height': 200},
+                ],
+              };
+            }
+            final Map<Object?, Object?> args =
+                call.arguments as Map<Object?, Object?>;
+            await File(
+              args['outputPath']! as String,
+            ).writeAsBytes(<int>[137, 80, 78, 71]);
+            return <String, Object?>{'outputPath': args['outputPath']};
+          });
+      addTearDown(
+        () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, null),
+      );
+      final Directory temp = await Directory.systemTemp.createTemp(
+        'pdf-channel-',
+      );
+      addTearDown(() => temp.delete(recursive: true));
+      final File source = File('${temp.path}/source.pdf')
+        ..writeAsBytesSync(<int>[1, 2, 3, 4]);
+      const AndroidPdfRendererChannel contract = AndroidPdfRendererChannel(
+        channel: channel,
+      );
+
+      expect(await contract.inspectDocument(source.path), <Size>[
+        const Size(612, 792),
+        const Size(400, 200),
+      ]);
+      final Uint8List png = await const AndroidPdfPagePngRenderer(
+        channel: contract,
+      ).renderPage(source: source, pageNumber: 2, width: 1376, height: 688);
+
+      expect(png, <int>[137, 80, 78, 71]);
+      expect(calls.map((MethodCall call) => call.method), <String>[
+        'inspectDocument',
+        'renderPage',
+      ]);
+      final Map<Object?, Object?> render =
+          calls.last.arguments as Map<Object?, Object?>;
+      expect(render['pageNumber'], 2);
+      expect((render['width'], render['height']), (1376, 688));
+      expect(render['format'], 'png');
+    },
+  );
+
+  test('Android channel rejects malformed native page metadata', () async {
+    const MethodChannel channel = MethodChannel(kAndroidPdfRendererChannel);
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (_) async {
+          return <String, Object?>{
+            'pageCount': 2,
+            'pages': <Object?>[
+              <String, Object?>{'width': 100, 'height': 200},
+            ],
+          };
+        });
+    addTearDown(
+      () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null),
     );
-    expect(png.sublist(0, 8), <int>[137, 80, 78, 71, 13, 10, 26, 10]);
-    expect(png.length, greaterThan(500));
-  }, skip: _pdfiumUnavailableReason());
+
+    await expectLater(
+      const AndroidPdfRendererChannel(channel: channel).inspectDocument('x'),
+      throwsA(isA<FormatException>()),
+    );
+  });
 }
 
-/// pdfrx needs the native PDFium library. Flutter's Linux engine
-/// artifacts (used by CI) do not ship `libpdfium.so`, so the real-render
-/// test is skipped there with an explicit reason instead of failing; it
-/// still runs on every host where PDFium is present (Windows/macOS dev
-/// machines, devices). Returns `false` (= run the test) when available.
+/// The desktop engine needs the native PDFium library. Ask the same vendored
+/// loader that pdfrx_engine uses rather than guessing one staging path: native
+/// assets may supply PDFium even when it is absent beside flutter_tester.
+/// Returns `false` (= run the test) whenever the library genuinely loads.
 Object _pdfiumUnavailableReason() {
-  if (!Platform.isLinux) {
+  try {
+    pdfium.getPdfium();
     return false;
+  } catch (error) {
+    return 'PDFium cannot be loaded on ${Platform.operatingSystem}; '
+        'skipping only the native render smoke: $error';
   }
-  // flutter_tester lives in <engine>/linux-x64/; pdfrx loads
-  // <engine>/linux-x64/lib/libpdfium.so from the same artifact dir.
-  final Directory engineDir = File(Platform.resolvedExecutable).parent;
-  final File lib = File('${engineDir.path}/lib/libpdfium.so');
-  if (lib.existsSync()) {
-    return false;
-  }
-  return 'libpdfium.so is not shipped with the Linux Flutter engine '
-      '(${lib.path}); real pdfrx rendering is covered on PDFium hosts.';
 }

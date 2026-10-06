@@ -25,6 +25,10 @@ import dev.tangent.tangent.storage.NativeIoSupervisor
 import dev.tangent.tangent.storage.NativeStorageException
 import dev.tangent.tangent.audio.AndroidCommunicationDevices
 import dev.tangent.tangent.audio.CommunicationRouting
+import dev.tangent.tangent.pdf.AndroidPdfRendererBackend
+import dev.tangent.tangent.pdf.PdfRendererChannelDispatcher
+import dev.tangent.tangent.pdf.PdfRendererMethodRouter
+import dev.tangent.tangent.pdf.PdfRendererReply
 import dev.tangent.tangent.storage.StorageChannel
 import dev.tangent.tangent.storage.CandidatePicker
 import dev.tangent.tangent.storage.StorageMethodRouter
@@ -37,6 +41,7 @@ class MainActivity : FlutterActivity() {
     private val audioChannelName = "dev.tangent.tangent/audio"
     private val launchChannelName = "dev.tangent.tangent/launch"
     private val debugLogsChannelName = "dev.tangent.tangent/debug_logs"
+    private val pdfRendererChannelName = "dev.tangent.tangent/pdf_renderer"
 
     /** Widget-tap notebook / launch command waiting for the Dart side to
      *  ask (cold start), and the channel to push through when the app is
@@ -56,6 +61,8 @@ class MainActivity : FlutterActivity() {
     }
     private val documentsPort by lazy { AndroidDocumentsPort(applicationContext) }
     private val debugLogExporter by lazy { DebugLogExportIntents(this) }
+    private var pdfRendererChannel: MethodChannel? = null
+    private var pdfRendererDispatcher: PdfRendererChannelDispatcher? = null
     private val candidatePicker by lazy {
         CandidatePicker<Uri>(
             launch = ::pickDirectory,
@@ -222,6 +229,28 @@ class MainActivity : FlutterActivity() {
                 }
                 result.success(launched)
             }
+        shutDownPdfRenderer()
+        val pdfDispatcher = PdfRendererChannelDispatcher(
+            PdfRendererMethodRouter(AndroidPdfRendererBackend(applicationContext)),
+            replyExecutor = java.util.concurrent.Executor { command -> runOnUiThread(command) },
+        )
+        pdfRendererDispatcher = pdfDispatcher
+        pdfRendererChannel =
+            MethodChannel(flutterEngine.dartExecutor.binaryMessenger, pdfRendererChannelName)
+                .also { channel ->
+                    channel.setMethodCallHandler { call, result ->
+                        pdfDispatcher.dispatch(
+                            call.method,
+                            call.arguments,
+                            object : PdfRendererReply {
+                                override fun success(value: Any?) = result.success(value)
+                                override fun error(code: String, message: String?) =
+                                    result.error(code, message, null)
+                                override fun notImplemented() = result.notImplemented()
+                            },
+                        )
+                    }
+                }
         storageOwner?.detach()
         storageOwner = StorageChannel(NativeIoSupervisor.process, documentsPort::execute)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)
@@ -672,7 +701,15 @@ class MainActivity : FlutterActivity() {
         }.start()
     }
 
+    private fun shutDownPdfRenderer() {
+        pdfRendererChannel?.setMethodCallHandler(null)
+        pdfRendererChannel = null
+        pdfRendererDispatcher?.close()
+        pdfRendererDispatcher = null
+    }
+
     override fun onDestroy() {
+        shutDownPdfRenderer()
         storageOwner?.detach()
         storageOwner = null
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -685,6 +722,7 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+        shutDownPdfRenderer()
         storageOwner?.detach()
         storageOwner = null
         super.cleanUpFlutterEngine(flutterEngine)

@@ -146,10 +146,23 @@ jobs:
       - name: Build release APKs (universal + per-ABI)
         working-directory: /home/vagrant/build/dev.tangent.tangent/client
         run: |
+          # Keep every result outside Flutter's output directory while the next
+          # invocation runs: Flutter may replace outputs between target builds.
+          saved="$RUNNER_TEMP/tangent-release-apks"
+          out="build/app/outputs/flutter-apk"
+          mkdir -p "$saved"
           flutter build apk --release
+          cp "$out/app-release.apk" "$saved/app-release.apk"
           # F-Droid ships per-ABI APKs (smaller downloads; reviewer-required).
-          # build.gradle gives each split versionCode = base*10 + abi digit.
-          flutter build apk --release --split-per-abi
+          # Each target is a distinct invocation so no unrequested ABI native
+          # assets are resolved. build.gradle assigns base*10 + ABI digit.
+          flutter build apk --release --split-per-abi --target-platform android-arm
+          cp "$out/app-armeabi-v7a-release.apk" "$saved/app-armeabi-v7a-release.apk"
+          flutter build apk --release --split-per-abi --target-platform android-arm64
+          cp "$out/app-arm64-v8a-release.apk" "$saved/app-arm64-v8a-release.apk"
+          flutter build apk --release --split-per-abi --target-platform android-x64
+          cp "$out/app-x86_64-release.apk" "$saved/app-x86_64-release.apk"
+          cp "$saved"/*.apk "$out"/
 
       - name: Verify release signatures
         run: |

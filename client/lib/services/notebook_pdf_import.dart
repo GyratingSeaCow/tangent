@@ -2,24 +2,24 @@
 //
 // Local PDF import and on-demand page rasterisation.
 //
-// PDFium comes from pdfrx. We use only its document/page API — never its
-// viewer — because imported pages belong to the notebook canvas and the ink
-// layer must remain the topmost interaction surface. Source bytes live once in
-// notebook JSON; rendered pages live in the OS cache and are decoded only while
-// their canvas rectangles are near the viewport.
+// Android uses the framework PdfRenderer over a platform channel. Desktop uses
+// the non-plugin pdfrx_engine package; its vendored native-asset hook is disabled
+// for Android. Imported pages belong to the notebook canvas and the ink layer
+// remains the topmost interaction surface. Source bytes live once in notebook
+// JSON; rendered pages live in the OS cache and are decoded only while their
+// canvas rectangles are near the viewport.
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:crypto/crypto.dart';
 import 'package:file_selector/file_selector.dart';
-import 'package:flutter/widgets.dart';
+import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
-import 'package:pdfrx/pdfrx.dart';
+import 'package:pdfrx_engine/pdfrx_engine.dart' as pdfrx;
 
 import '../models/notebook.dart';
 import 'notebook_import.dart';
@@ -70,14 +70,121 @@ abstract interface class PdfDocumentInspector {
   Future<List<Size>> inspect(Uint8List bytes);
 }
 
-/// PDFium metadata reader. Page dimensions are loaded, page pixels are not.
-class PdfrxDocumentInspector implements PdfDocumentInspector {
-  const PdfrxDocumentInspector();
+const String kAndroidPdfRendererChannel = 'dev.tangent.tangent/pdf_renderer';
+
+/// Typed Dart side of the Android PdfRenderer channel.
+class AndroidPdfRendererChannel {
+  const AndroidPdfRendererChannel({
+    MethodChannel channel = const MethodChannel(kAndroidPdfRendererChannel),
+  }) : _channel = channel;
+
+  final MethodChannel _channel;
+
+  Future<List<Size>> inspectDocument(String sourcePath) async {
+    final Map<Object?, Object?>? response = await _channel
+        .invokeMapMethod<Object?, Object?>('inspectDocument', <String, Object?>{
+          'sourcePath': sourcePath,
+        });
+    if (response == null) {
+      throw StateError('Android PDF inspector returned no result');
+    }
+    final Object? rawPages = response['pages'];
+    final Object? rawCount = response['pageCount'];
+    if (rawPages is! List<Object?> || rawCount is! int) {
+      throw const FormatException(
+        'Android PDF inspector returned invalid data',
+      );
+    }
+    final List<Size> pages = <Size>[];
+    for (final Object? rawPage in rawPages) {
+      if (rawPage is! Map<Object?, Object?> ||
+          rawPage['width'] is! num ||
+          rawPage['height'] is! num) {
+        throw const FormatException(
+          'Android PDF inspector returned an invalid page',
+        );
+      }
+      final double width = (rawPage['width']! as num).toDouble();
+      final double height = (rawPage['height']! as num).toDouble();
+      if (width <= 0 || height <= 0) {
+        throw const FormatException(
+          'Android PDF inspector returned invalid dimensions',
+        );
+      }
+      pages.add(Size(width, height));
+    }
+    if (pages.isEmpty || pages.length != rawCount) {
+      throw const FormatException(
+        'Android PDF inspector returned an invalid page count',
+      );
+    }
+    return List<Size>.unmodifiable(pages);
+  }
+
+  Future<void> renderPage({
+    required String sourcePath,
+    required String outputPath,
+    required int pageNumber,
+    required int width,
+    required int height,
+  }) => _channel.invokeMethod<void>('renderPage', <String, Object?>{
+    'sourcePath': sourcePath,
+    'outputPath': outputPath,
+    'pageNumber': pageNumber,
+    'width': width,
+    'height': height,
+    'format': 'png',
+  });
+}
+
+/// Android metadata reader. The framework only accepts seekable file
+/// descriptors, so bytes are materialized under the app's private cache.
+class AndroidPdfDocumentInspector implements PdfDocumentInspector {
+  const AndroidPdfDocumentInspector({
+    AndroidPdfRendererChannel channel = const AndroidPdfRendererChannel(),
+    Future<Directory> Function()? cacheDirectory,
+  }) : _channel = channel,
+       _cacheDirectory = cacheDirectory ?? getTemporaryDirectory;
+
+  final AndroidPdfRendererChannel _channel;
+  final Future<Directory> Function() _cacheDirectory;
 
   @override
   Future<List<Size>> inspect(Uint8List bytes) async {
-    await pdfrxFlutterInitialize();
-    final PdfDocument document = await PdfDocument.openData(
+    if (bytes.isEmpty) throw const FormatException('The PDF is empty');
+    final Directory root = Directory(
+      p.join((await _cacheDirectory()).path, 'notebook_pdf_inspection'),
+    );
+    await root.create(recursive: true);
+    final File source = File(p.join(root.path, '${sha256.convert(bytes)}.pdf'));
+    if (!await source.exists() || await source.length() != bytes.length) {
+      final File partial = File('${source.path}.partial');
+      await partial.writeAsBytes(bytes, flush: true);
+      if (await source.exists()) await source.delete();
+      await partial.rename(source.path);
+    }
+    return _channel.inspectDocument(source.path);
+  }
+}
+
+/// Selects the framework renderer on Android and desktop PDFium elsewhere.
+class PlatformPdfDocumentInspector implements PdfDocumentInspector {
+  const PlatformPdfDocumentInspector();
+
+  @override
+  Future<List<Size>> inspect(Uint8List bytes) => Platform.isAndroid
+      ? const AndroidPdfDocumentInspector().inspect(bytes)
+      : const DesktopPdfDocumentInspector().inspect(bytes);
+}
+
+/// Desktop-only PDFium metadata reader. Page pixels are not loaded.
+class DesktopPdfDocumentInspector implements PdfDocumentInspector {
+  const DesktopPdfDocumentInspector();
+
+  @override
+  Future<List<Size>> inspect(Uint8List bytes) async {
+    await pdfrx.pdfrxInitialize();
+    final pdfrx.PdfDocument document = await pdfrx.PdfDocument.openData(
       bytes,
       sourceName: 'notebook-import.pdf',
       maxSizeToCacheOnMemory: 16 * 1024 * 1024,
@@ -87,7 +194,7 @@ class PdfrxDocumentInspector implements PdfDocumentInspector {
         throw const FormatException('The PDF has no pages');
       }
       return List<Size>.unmodifiable(<Size>[
-        for (final PdfPage page in document.pages)
+        for (final pdfrx.PdfPage page in document.pages)
           Size(page.width, page.height),
       ]);
     } finally {
@@ -99,7 +206,7 @@ class PdfrxDocumentInspector implements PdfDocumentInspector {
 /// System file chooser plus local PDF metadata inspection.
 class SystemNotebookPdfPicker implements NotebookPdfPicker {
   SystemNotebookPdfPicker({
-    PdfDocumentInspector inspector = const PdfrxDocumentInspector(),
+    PdfDocumentInspector inspector = const PlatformPdfDocumentInspector(),
     Future<XFile?> Function()? chooseFile,
   }) : _inspector = inspector,
        _chooseFile = chooseFile ?? _pickSystemFile;
@@ -202,7 +309,8 @@ abstract interface class PdfPageRasterLoader {
   });
 }
 
-/// Low-level renderer seam: production uses PDFium; cache tests count calls.
+/// Low-level renderer seam: production selects the platform implementation;
+/// cache tests count calls.
 abstract interface class PdfPagePngRenderer {
   Future<Uint8List> renderPage({
     required File source,
@@ -212,8 +320,39 @@ abstract interface class PdfPagePngRenderer {
   });
 }
 
-class PdfrxPagePngRenderer implements PdfPagePngRenderer {
-  const PdfrxPagePngRenderer();
+class PlatformPdfPagePngRenderer implements PdfPagePngRenderer {
+  const PlatformPdfPagePngRenderer();
+
+  @override
+  Future<Uint8List> renderPage({
+    required File source,
+    required int pageNumber,
+    required int width,
+    required int height,
+  }) => Platform.isAndroid
+      ? const AndroidPdfPagePngRenderer().renderPage(
+          source: source,
+          pageNumber: pageNumber,
+          width: width,
+          height: height,
+        )
+      : const DesktopPdfPagePngRenderer().renderPage(
+          source: source,
+          pageNumber: pageNumber,
+          width: width,
+          height: height,
+        );
+}
+
+/// Android framework renderer. Kotlin writes the PNG below the same private
+/// cache root as [source], then Dart returns its bytes to the existing cache
+/// transaction so callers keep the same API and atomic-file semantics.
+class AndroidPdfPagePngRenderer implements PdfPagePngRenderer {
+  const AndroidPdfPagePngRenderer({
+    AndroidPdfRendererChannel channel = const AndroidPdfRendererChannel(),
+  }) : _channel = channel;
+
+  final AndroidPdfRendererChannel _channel;
 
   @override
   Future<Uint8List> renderPage({
@@ -222,9 +361,50 @@ class PdfrxPagePngRenderer implements PdfPagePngRenderer {
     required int width,
     required int height,
   }) async {
-    await pdfrxFlutterInitialize();
-    final PdfDocument document = await PdfDocument.openFile(source.path);
-    PdfImage? rendered;
+    final File output = File(
+      p.join(
+        source.parent.path,
+        '.android-p$pageNumber-${width}x$height-'
+        '${DateTime.now().microsecondsSinceEpoch}.png',
+      ),
+    );
+    try {
+      await _channel.renderPage(
+        sourcePath: source.path,
+        outputPath: output.path,
+        pageNumber: pageNumber,
+        width: width,
+        height: height,
+      );
+      if (!await output.exists() || await output.length() <= 0) {
+        throw StateError('Android PDF renderer returned an empty page');
+      }
+      return await output.readAsBytes();
+    } finally {
+      try {
+        if (await output.exists()) await output.delete();
+      } on FileSystemException {
+        // Best effort: the app cache is pruned by the OS.
+      }
+    }
+  }
+}
+
+class DesktopPdfPagePngRenderer implements PdfPagePngRenderer {
+  const DesktopPdfPagePngRenderer();
+
+  @override
+  Future<Uint8List> renderPage({
+    required File source,
+    required int pageNumber,
+    required int width,
+    required int height,
+  }) async {
+    await pdfrx.pdfrxInitialize();
+    final pdfrx.PdfDocument document = await pdfrx.PdfDocument.openFile(
+      source.path,
+    );
+    pdfrx.PdfImage? rendered;
     ui.ImmutableBuffer? buffer;
     ui.ImageDescriptor? descriptor;
     ui.Codec? codec;
@@ -283,7 +463,7 @@ class PdfrxPagePngRenderer implements PdfPagePngRenderer {
 /// visible FileImages; off-screen pages remain compressed PNG files on disk.
 class NotebookPdfPageCache implements PdfPageRasterLoader {
   NotebookPdfPageCache({
-    PdfPagePngRenderer renderer = const PdfrxPagePngRenderer(),
+    PdfPagePngRenderer renderer = const PlatformPdfPagePngRenderer(),
     Future<Directory> Function()? cacheDirectory,
     FutureOr<Uint8List> Function(String)? decodeSource,
   }) : _renderer = renderer,
