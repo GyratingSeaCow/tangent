@@ -25,6 +25,10 @@ import dev.tangent.tangent.storage.NativeIoSupervisor
 import dev.tangent.tangent.storage.NativeStorageException
 import dev.tangent.tangent.audio.AndroidCommunicationDevices
 import dev.tangent.tangent.audio.CommunicationRouting
+import dev.tangent.tangent.pdf.AndroidPdfRendererBackend
+import dev.tangent.tangent.pdf.PdfRendererFailure
+import dev.tangent.tangent.pdf.PdfRendererMethodRouter
+import dev.tangent.tangent.pdf.PdfRendererNotImplemented
 import dev.tangent.tangent.storage.StorageChannel
 import dev.tangent.tangent.storage.CandidatePicker
 import dev.tangent.tangent.storage.StorageMethodRouter
@@ -37,6 +41,7 @@ class MainActivity : FlutterActivity() {
     private val audioChannelName = "dev.tangent.tangent/audio"
     private val launchChannelName = "dev.tangent.tangent/launch"
     private val debugLogsChannelName = "dev.tangent.tangent/debug_logs"
+    private val pdfRendererChannelName = "dev.tangent.tangent/pdf_renderer"
 
     /** Widget-tap notebook / launch command waiting for the Dart side to
      *  ask (cold start), and the channel to push through when the app is
@@ -56,6 +61,9 @@ class MainActivity : FlutterActivity() {
     }
     private val documentsPort by lazy { AndroidDocumentsPort(applicationContext) }
     private val debugLogExporter by lazy { DebugLogExportIntents(this) }
+    private val pdfRendererRouter by lazy {
+        PdfRendererMethodRouter(AndroidPdfRendererBackend(applicationContext))
+    }
     private val candidatePicker by lazy {
         CandidatePicker<Uri>(
             launch = ::pickDirectory,
@@ -221,6 +229,27 @@ class MainActivity : FlutterActivity() {
                     }
                 }
                 result.success(launched)
+            }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, pdfRendererChannelName)
+            .setMethodCallHandler { call, result ->
+                Thread {
+                    try {
+                        val value = pdfRendererRouter.handle(call.method, call.arguments)
+                        runOnUiThread { result.success(value) }
+                    } catch (_: PdfRendererNotImplemented) {
+                        runOnUiThread { result.notImplemented() }
+                    } catch (error: PdfRendererFailure) {
+                        runOnUiThread { result.error(error.code, error.message, null) }
+                    } catch (error: Exception) {
+                        runOnUiThread {
+                            result.error(
+                                "pdf_renderer",
+                                error.message ?: "Android PDF renderer failed",
+                                null,
+                            )
+                        }
+                    }
+                }.start()
             }
         storageOwner?.detach()
         storageOwner = StorageChannel(NativeIoSupervisor.process, documentsPort::execute)
