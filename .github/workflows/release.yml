@@ -113,22 +113,27 @@ jobs:
           channel: stable
           cache: true
 
-      # sqlite3's native-assets hook discovers its Android compiler independently
-      # of Gradle. hooks_runner forwards these variables and native_toolchain_c
-      # resolves them as NDK homes, so pin every supported spelling to the same
-      # side-by-side install. The post-build audit below proves the resulting
-      # libsqlite3.so files carry this NDK's Clang identity.
+      # Flutter 3.47.6's cCompilerConfigAndroid asks AndroidSdk for NDKs in this
+      # order: `flutter config --android-ndk`, ANDROID_NDK_HOME,
+      # ANDROID_NDK_PATH, ANDROID_NDK_ROOT, then the newest side-by-side install.
+      # It passes that compiler in BuildInput's c_compiler; native_toolchain_c's
+      # _tryLoadCompilerFromInput uses it before trying its own resolver. With no
+      # flutter config override in CI, pin all three environment inputs below.
+      # The post-build audit proves libsqlite3.so kept this Clang/LLD identity.
       - name: Install pinned Android NDK
         run: |
           ndk_version=28.2.13676358
           sdkmanager "ndk;$ndk_version"
           ndk="$ANDROID_HOME/ndk/$ndk_version"
-          clang="$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/clang"
-          test -x "$clang"
+          toolchain="$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          for tool in clang llvm-ar ld.lld; do
+            test -x "$toolchain/$tool"
+          done
           grep -q '^Pkg.Revision = 28.2.13676358$' "$ndk/source.properties"
-          "$clang" --version | grep -F 'clang version 19.0.1'
-          "$clang" --version | grep -F 'based on r530567e'
-          for variable in ANDROID_NDK ANDROID_NDK_HOME ANDROID_NDK_LATEST_HOME ANDROID_NDK_ROOT; do
+          "$toolchain/clang" --version | grep -F 'clang version 19.0.1'
+          "$toolchain/clang" --version | grep -F 'based on r530567e'
+          "$toolchain/ld.lld" --version | grep -F 'LLD 19.0.1'
+          for variable in ANDROID_NDK_HOME ANDROID_NDK_PATH ANDROID_NDK_ROOT; do
             echo "$variable=$ndk" >> "$GITHUB_ENV"
           done
 
@@ -185,6 +190,7 @@ jobs:
 
       - name: Audit release APKs
         working-directory: /home/vagrant/build/dev.tangent.tangent/client
+        shell: bash
         run: |
           python tool/audit_android_release.py \
             universal=build/app/outputs/flutter-apk/app-release.apk \

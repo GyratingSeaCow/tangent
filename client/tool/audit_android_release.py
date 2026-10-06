@@ -32,6 +32,7 @@ ABI_VERSION_CODE_DIGITS = {
 EXPECTED_NDK_VERSION = "28.2.13676358"
 EXPECTED_CLANG_VERSION = "19.0.1"
 EXPECTED_NDK_REVISION = "r530567e"
+EXPECTED_LINKER_IDENTITY = "Linker: LLD 19.0.1"
 SQLITE_VERSION = b"3.50.2"
 SQLITE_SOURCE_ID = b"2025-06-28 14:00:48 2af157d7"
 FORBIDDEN_PATHS = (b".worktrees", b"ADH2", b"fdroid-review-followups")
@@ -60,30 +61,40 @@ def expected_version_codes(base_code: int) -> dict[str, str]:
     }
 
 
-def compiler_identities(binary: bytes) -> list[str]:
-    return sorted(
-        {
-            value.decode("ascii")
-            for value in ASCII_STRING.findall(binary)
-            if b"clang version " in value
-        }
-    )
+def toolchain_identities(binary: bytes) -> dict[str, list[str]]:
+    strings = [value.decode("ascii") for value in ASCII_STRING.findall(binary)]
+    return {
+        "compiler": sorted({value for value in strings if "clang version " in value}),
+        "linker": sorted({value for value in strings if value.startswith("Linker: ")}),
+    }
 
 
-def require_expected_compiler(binary: bytes, source: str) -> list[str]:
-    identities = compiler_identities(binary)
-    if not identities:
+def require_expected_toolchain(binary: bytes, source: str) -> dict[str, list[str]]:
+    identities = toolchain_identities(binary)
+    compilers = identities["compiler"]
+    linkers = identities["linker"]
+    if not compilers:
         raise AssertionError(f"{source}: compiler identity unavailable")
     expected_clang = f"clang version {EXPECTED_CLANG_VERSION}"
     unexpected = [
         identity
-        for identity in identities
+        for identity in compilers
         if expected_clang not in identity or EXPECTED_NDK_REVISION not in identity
     ]
     if unexpected:
         raise AssertionError(
             f"{source}: expected NDK {EXPECTED_NDK_VERSION} "
             f"({expected_clang}, {EXPECTED_NDK_REVISION}); found {unexpected}"
+        )
+    if not linkers:
+        raise AssertionError(f"{source}: linker identity unavailable")
+    unexpected_linkers = [
+        identity for identity in linkers if identity != EXPECTED_LINKER_IDENTITY
+    ]
+    if unexpected_linkers:
+        raise AssertionError(
+            f"{source}: expected {EXPECTED_LINKER_IDENTITY}; "
+            f"found {unexpected_linkers}"
         )
     return identities
 
@@ -145,7 +156,7 @@ def audit(
         )
 
     sqlite_entries: dict[str, bytes] = {}
-    sqlite_compilers: dict[str, list[str]] = {}
+    sqlite_toolchains: dict[str, dict[str, list[str]]] = {}
     with zipfile.ZipFile(apk) as archive:
         names = archive.namelist()
         forbidden_assets = [
@@ -191,7 +202,7 @@ def audit(
                         f"{apk}:lib/{abi}/libsqlite3.so: FTS5 is not enabled"
                     )
                 source = f"{apk}:lib/{abi}/libsqlite3.so"
-                sqlite_compilers[abi] = require_expected_compiler(data, source)
+                sqlite_toolchains[abi] = require_expected_toolchain(data, source)
                 target = root / f"sqlite-{abi}.so"
                 target.write_bytes(data)
                 symbols = run(str(readelf), "--dyn-syms", "--wide", str(target))
@@ -213,7 +224,7 @@ def audit(
         "build_id_sections": 0,
         "path_leaks": path_leaks,
         "sqlite": "3.50.2 / FTS5",
-        "sqlite_compilers": sqlite_compilers,
+        "sqlite_toolchains": sqlite_toolchains,
         "sqlite_ndk": EXPECTED_NDK_VERSION,
     }
 

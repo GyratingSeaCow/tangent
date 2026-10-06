@@ -102,4 +102,56 @@ void main() {
       ),
     );
   });
+
+  test('release workflow pins native-assets NDK and blocks on audit failure', () {
+    final String workflow = File(
+      '../.github/workflows/release.yml',
+    ).readAsStringSync();
+    final int installStart = workflow.indexOf(
+      '      - name: Install pinned Android NDK',
+    );
+    final int buildStart = workflow.indexOf(
+      '      - name: Build release APKs (universal + per-ABI)',
+    );
+    final int auditStart = workflow.indexOf(
+      '      - name: Audit release APKs',
+    );
+    final int auditEnd = workflow.indexOf(
+      '      - name: Verify release signatures',
+      auditStart,
+    );
+
+    expect(installStart, greaterThan(0));
+    expect(buildStart, greaterThan(installStart));
+    expect(auditStart, greaterThan(buildStart));
+    expect(auditEnd, greaterThan(auditStart));
+
+    final String installStep = workflow.substring(installStart, buildStart);
+    expect(installStep, contains('ndk_version=28.2.13676358'));
+    expect(installStep, contains('sdkmanager "ndk;\$ndk_version"'));
+    expect(installStep, contains('for tool in clang llvm-ar ld.lld; do'));
+    expect(installStep, contains('test -x "\$toolchain/\$tool"'));
+    expect(
+      installStep,
+      contains(
+        'for variable in ANDROID_NDK_HOME ANDROID_NDK_PATH '
+        'ANDROID_NDK_ROOT; do',
+      ),
+    );
+    expect(
+      installStep,
+      contains('echo "\$variable=\$ndk" >> "\$GITHUB_ENV"'),
+    );
+
+    final String auditStep = workflow.substring(auditStart, auditEnd);
+    expect(
+      RegExp(r'^        shell: bash\s*$', multiLine: true).hasMatch(auditStep),
+      isTrue,
+      reason: 'GitHub explicit bash supplies -eo pipefail for the audit pipeline',
+    );
+    expect(
+      auditStep.indexOf('python tool/audit_android_release.py'),
+      lessThan(auditStep.indexOf('| tee "\$RUNNER_TEMP/android-release-audit.json"')),
+    );
+  });
 }
