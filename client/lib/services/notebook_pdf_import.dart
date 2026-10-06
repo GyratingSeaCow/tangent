@@ -458,14 +458,21 @@ class AndroidPdfPagePngRenderer
     required int width,
     required int height,
   }) async {
-    await _channel.renderPage(
-      requestId: requestId,
-      sourcePath: source.path,
-      outputPath: output.path,
-      pageNumber: pageNumber,
-      width: width,
-      height: height,
-    );
+    try {
+      await _channel.renderPage(
+        requestId: requestId,
+        sourcePath: source.path,
+        outputPath: output.path,
+        pageNumber: pageNumber,
+        width: width,
+        height: height,
+      );
+    } on PlatformException catch (error) {
+      if (error.code == 'render_cancelled') {
+        throw const PdfRenderCancelledException();
+      }
+      rethrow;
+    }
     if (!await output.exists() || await output.length() <= 0) {
       throw StateError('Android PDF renderer returned an empty page');
     }
@@ -609,7 +616,9 @@ class NotebookPdfPageCache implements CancellablePdfPageRasterLoader {
     if (documentId.isEmpty) throw ArgumentError('Missing PDF document id');
     final String key = _cacheKey(documentId, pageNumber, width, height);
     final _PdfRenderTask? existing = _inFlight[key];
-    if (existing != null) return existing.completer.future;
+    if (existing != null && !existing.cancelled) {
+      return existing.completer.future;
+    }
 
     final _PdfRenderTask task = _PdfRenderTask(
       key: key,
@@ -683,7 +692,9 @@ class NotebookPdfPageCache implements CancellablePdfPageRasterLoader {
     } catch (error, stack) {
       if (!task.completer.isCompleted) task.completer.completeError(error, stack);
     } finally {
-      _inFlight.remove(task.key);
+      if (identical(_inFlight[task.key], task)) {
+        _inFlight.remove(task.key);
+      }
       if (identical(_active, task)) _active = null;
       final _PdfRenderTask? next = _pending;
       _pending = null;

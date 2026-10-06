@@ -429,6 +429,111 @@ void main() {
     );
   });
 
+  test('Android cancellation permits an immediate same-page reload', () async {
+    const MethodChannel channel = MethodChannel(kAndroidPdfRendererChannel);
+    final Completer<void> firstRenderEntered = Completer<void>();
+    final Completer<void> firstRenderCancelled = Completer<void>();
+    final Completer<void> secondRenderEntered = Completer<void>();
+    final Completer<void> releaseSecondRender = Completer<void>();
+    final List<String> cancelledRequestIds = <String>[];
+    var renderCalls = 0;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (MethodCall call) async {
+          final Map<Object?, Object?> arguments =
+              call.arguments as Map<Object?, Object?>;
+          if (call.method == 'cancelRender') {
+            cancelledRequestIds.add(arguments['requestId']! as String);
+            if (!firstRenderCancelled.isCompleted) {
+              firstRenderCancelled.complete();
+            }
+            return <String, Object?>{'cancelled': true};
+          }
+          expect(call.method, 'renderPage');
+          renderCalls++;
+          if (renderCalls == 1) {
+            firstRenderEntered.complete();
+            await firstRenderCancelled.future;
+            throw PlatformException(
+              code: 'render_cancelled',
+              message: 'PDF page render was superseded',
+            );
+          }
+          secondRenderEntered.complete();
+          await releaseSecondRender.future;
+          await File(
+            arguments['outputPath']! as String,
+          ).writeAsBytes(<int>[137, 80, 78, 71], flush: true);
+          return <String, Object?>{'outputPath': arguments['outputPath']};
+        });
+    addTearDown(
+      () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null),
+    );
+    final Directory temp = await Directory.systemTemp.createTemp(
+      'pdf-cancel-reload-',
+    );
+    addTearDown(() => temp.delete(recursive: true));
+    final NotebookPdfPageCache cache = NotebookPdfPageCache(
+      renderer: const AndroidPdfPagePngRenderer(
+        channel: AndroidPdfRendererChannel(channel: channel),
+      ),
+      cacheDirectory: () async => temp,
+    );
+    addTearDown(cache.dispose);
+    final String source = base64Encode(<int>[1, 2, 3, 4]);
+
+    final Future<File> first = cache.loadPage(
+      documentId: 'doc',
+      sourceData: source,
+      pageNumber: 7,
+      width: 100,
+      height: 100,
+    );
+    final Future<Object> cancelled = first.then<Object>(
+      (File file) => file,
+      onError: (Object error) => error,
+    );
+    await firstRenderEntered.future;
+    cache.cancelPage(documentId: 'doc', pageNumber: 7, width: 100, height: 100);
+    final Future<File> reload = cache.loadPage(
+      documentId: 'doc',
+      sourceData: source,
+      pageNumber: 7,
+      width: 100,
+      height: 100,
+    );
+    expect(reload, isNot(same(first)));
+
+    expect(await cancelled, isA<PdfRenderCancelledException>());
+    await secondRenderEntered.future;
+    final Future<File> deduplicatedReload = cache.loadPage(
+      documentId: 'doc',
+      sourceData: source,
+      pageNumber: 7,
+      width: 100,
+      height: 100,
+    );
+    expect(deduplicatedReload, same(reload));
+    releaseSecondRender.complete();
+
+    final File file = await reload;
+    expect(await deduplicatedReload, same(file));
+    expect(await file.readAsBytes(), <int>[137, 80, 78, 71]);
+    expect(cancelledRequestIds, <String>['pdf-1']);
+    expect(renderCalls, 2);
+    expect(
+      (await cache.loadPage(
+        documentId: 'doc',
+        sourceData: source,
+        pageNumber: 7,
+        width: 100,
+        height: 100,
+      )).path,
+      file.path,
+    );
+    expect(renderCalls, 2, reason: 'successful reload must remain cached');
+  });
+
   test(
     'disk cache keys by document id and decodes one source for many pages',
     () async {
