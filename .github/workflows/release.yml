@@ -113,6 +113,25 @@ jobs:
           channel: stable
           cache: true
 
+      # sqlite3's native-assets hook discovers its Android compiler independently
+      # of Gradle. hooks_runner forwards these variables and native_toolchain_c
+      # resolves them as NDK homes, so pin every supported spelling to the same
+      # side-by-side install. The post-build audit below proves the resulting
+      # libsqlite3.so files carry this NDK's Clang identity.
+      - name: Install pinned Android NDK
+        run: |
+          ndk_version=28.2.13676358
+          sdkmanager "ndk;$ndk_version"
+          ndk="$ANDROID_HOME/ndk/$ndk_version"
+          clang="$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/clang"
+          test -x "$clang"
+          grep -q '^Pkg.Revision = 28.2.13676358$' "$ndk/source.properties"
+          "$clang" --version | grep -F 'clang version 19.0.1'
+          "$clang" --version | grep -F 'based on r530567e'
+          for variable in ANDROID_NDK ANDROID_NDK_HOME ANDROID_NDK_LATEST_HOME ANDROID_NDK_ROOT; do
+            echo "$variable=$ndk" >> "$GITHUB_ENV"
+          done
+
       - name: Restore signing keystore
         env:
           KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -163,6 +182,16 @@ jobs:
           flutter build apk --release --split-per-abi --target-platform android-x64
           cp "$out/app-x86_64-release.apk" "$saved/app-x86_64-release.apk"
           cp "$saved"/*.apk "$out"/
+
+      - name: Audit release APKs
+        working-directory: /home/vagrant/build/dev.tangent.tangent/client
+        run: |
+          python tool/audit_android_release.py \
+            universal=build/app/outputs/flutter-apk/app-release.apk \
+            armeabi-v7a=build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk \
+            arm64-v8a=build/app/outputs/flutter-apk/app-arm64-v8a-release.apk \
+            x86_64=build/app/outputs/flutter-apk/app-x86_64-release.apk \
+            | tee "$RUNNER_TEMP/android-release-audit.json"
 
       - name: Verify release signatures
         run: |

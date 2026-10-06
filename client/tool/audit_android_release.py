@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Audit Tangent's four F-Droid release APKs.
+"""Audit Tangent Android release APKs.
 
 Usage:
+  python tool/audit_android_release.py universal=app-release.apk
   python tool/audit_android_release.py \
-    universal=build/app/outputs/flutter-apk/app-release.apk \
     armeabi-v7a=... arm64-v8a=... x86_64=...
 """
 from __future__ import annotations
@@ -24,15 +24,68 @@ EXPECTED_ABIS = {
     "arm64-v8a": {"arm64-v8a"},
     "x86_64": {"x86_64"},
 }
-EXPECTED_VERSION_CODES = {
-    "universal": "70",
-    "armeabi-v7a": "701",
-    "arm64-v8a": "702",
-    "x86_64": "703",
+ABI_VERSION_CODE_DIGITS = {
+    "armeabi-v7a": 1,
+    "arm64-v8a": 2,
+    "x86_64": 3,
 }
+EXPECTED_NDK_VERSION = "28.2.13676358"
+EXPECTED_CLANG_VERSION = "19.0.1"
+EXPECTED_NDK_REVISION = "r530567e"
 SQLITE_VERSION = b"3.50.2"
 SQLITE_SOURCE_ID = b"2025-06-28 14:00:48 2af157d7"
 FORBIDDEN_PATHS = (b".worktrees", b"ADH2", b"fdroid-review-followups")
+ASCII_STRING = re.compile(rb"[ -~]{8,}")
+
+
+def release_version(pubspec: Path) -> tuple[str, int]:
+    matches = re.findall(
+        r"^version:\s*([^+\s#]+)\+([0-9]+)\s*(?:#.*)?$",
+        pubspec.read_text(encoding="utf-8"),
+        flags=re.MULTILINE,
+    )
+    if len(matches) != 1:
+        raise ValueError(f"{pubspec}: expected one version: <name>+<integer> entry")
+    version_name, base_code = matches[0]
+    return version_name, int(base_code)
+
+
+def expected_version_codes(base_code: int) -> dict[str, str]:
+    return {
+        "universal": str(base_code),
+        **{
+            abi: str(base_code * 10 + digit)
+            for abi, digit in ABI_VERSION_CODE_DIGITS.items()
+        },
+    }
+
+
+def compiler_identities(binary: bytes) -> list[str]:
+    return sorted(
+        {
+            value.decode("ascii")
+            for value in ASCII_STRING.findall(binary)
+            if b"clang version " in value
+        }
+    )
+
+
+def require_expected_compiler(binary: bytes, source: str) -> list[str]:
+    identities = compiler_identities(binary)
+    if not identities:
+        raise AssertionError(f"{source}: compiler identity unavailable")
+    expected_clang = f"clang version {EXPECTED_CLANG_VERSION}"
+    unexpected = [
+        identity
+        for identity in identities
+        if expected_clang not in identity or EXPECTED_NDK_REVISION not in identity
+    ]
+    if unexpected:
+        raise AssertionError(
+            f"{source}: expected NDK {EXPECTED_NDK_VERSION} "
+            f"({expected_clang}, {EXPECTED_NDK_REVISION}); found {unexpected}"
+        )
+    return identities
 
 
 def run(*args: str) -> str:
@@ -44,7 +97,11 @@ def run(*args: str) -> str:
 
 def find_tool(sdk: Path, ndk: str, name: str) -> Path:
     suffix = ".exe" if os.name == "nt" else ""
-    candidates = list((sdk / "ndk" / ndk / "toolchains" / "llvm" / "prebuilt").glob(f"*/bin/{name}{suffix}"))
+    candidates = list(
+        (sdk / "ndk" / ndk / "toolchains" / "llvm" / "prebuilt").glob(
+            f"*/bin/{name}{suffix}"
+        )
+    )
     if not candidates:
         raise FileNotFoundError(f"{name} not found under NDK {ndk}")
     return candidates[0]
@@ -57,6 +114,8 @@ def audit(
     readelf: Path,
     apksigner: Path,
     aapt: Path,
+    version_name: str,
+    version_codes: dict[str, str],
 ) -> dict[str, object]:
     expected = EXPECTED_ABIS[label]
     raw = apk.read_bytes()
@@ -76,20 +135,22 @@ def audit(
     )
     expected_package = (
         "dev.tangent.tangent",
-        EXPECTED_VERSION_CODES[label],
-        "1.50.1",
+        version_codes[label],
+        version_name,
     )
     if package is None or package.groups() != expected_package:
         raise AssertionError(
             f"{apk}: unexpected package metadata "
-            f"{None if package is None else package.groups()}"
+            f"{None if package is None else package.groups()}, expected {expected_package}"
         )
 
     sqlite_entries: dict[str, bytes] = {}
+    sqlite_compilers: dict[str, list[str]] = {}
     with zipfile.ZipFile(apk) as archive:
         names = archive.namelist()
         forbidden_assets = [
-            name for name in names
+            name
+            for name in names
             if "pdfium" in name.lower()
             or "pdfrx_engine" in name.lower()
             or name.lower().endswith(".wasm")
@@ -102,7 +163,9 @@ def audit(
                 sqlite_entries[match.group(1)] = archive.read(name)
         actual = set(sqlite_entries)
         if actual != expected:
-            raise AssertionError(f"{apk}: SQLite ABIs {sorted(actual)}, expected {sorted(expected)}")
+            raise AssertionError(
+                f"{apk}: SQLite ABIs {sorted(actual)}, expected {sorted(expected)}"
+            )
 
         native_names = [name for name in names if name.endswith(".so")]
         path_leaks: list[str] = []
@@ -120,15 +183,21 @@ def audit(
 
             for abi, data in sqlite_entries.items():
                 if SQLITE_VERSION not in data or SQLITE_SOURCE_ID not in data:
-                    raise AssertionError(f"{apk}:lib/{abi}/libsqlite3.so: wrong SQLite source/version")
+                    raise AssertionError(
+                        f"{apk}:lib/{abi}/libsqlite3.so: wrong SQLite source/version"
+                    )
                 if b"ENABLE_FTS5" not in data:
-                    raise AssertionError(f"{apk}:lib/{abi}/libsqlite3.so: FTS5 is not enabled")
+                    raise AssertionError(
+                        f"{apk}:lib/{abi}/libsqlite3.so: FTS5 is not enabled"
+                    )
+                source = f"{apk}:lib/{abi}/libsqlite3.so"
+                sqlite_compilers[abi] = require_expected_compiler(data, source)
                 target = root / f"sqlite-{abi}.so"
                 target.write_bytes(data)
                 symbols = run(str(readelf), "--dyn-syms", "--wide", str(target))
                 for symbol in ("sqlite3_open", "sqlite3_compileoption_used"):
                     if symbol not in symbols:
-                        raise AssertionError(f"{apk}:lib/{abi}/libsqlite3.so: missing {symbol}")
+                        raise AssertionError(f"{source}: missing {symbol}")
 
     return {
         "label": label,
@@ -144,22 +213,53 @@ def audit(
         "build_id_sections": 0,
         "path_leaks": path_leaks,
         "sqlite": "3.50.2 / FTS5",
+        "sqlite_compilers": sqlite_compilers,
+        "sqlite_ndk": EXPECTED_NDK_VERSION,
     }
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("artifacts", nargs=4, metavar="LABEL=APK")
-    parser.add_argument("--sdk", type=Path, default=Path(os.environ.get("ANDROID_HOME", Path.home() / "AppData/Local/Android/Sdk")))
-    parser.add_argument("--ndk", default="28.2.13676358")
+    parser.add_argument("artifacts", nargs="+", metavar="LABEL=APK")
+    parser.add_argument(
+        "--sdk",
+        type=Path,
+        default=Path(
+            os.environ.get("ANDROID_HOME", Path.home() / "AppData/Local/Android/Sdk")
+        ),
+    )
+    parser.add_argument("--ndk", default=EXPECTED_NDK_VERSION)
+    parser.add_argument(
+        "--pubspec",
+        type=Path,
+        default=Path(__file__).resolve().parents[1] / "pubspec.yaml",
+    )
     args = parser.parse_args()
-    pairs = dict(item.split("=", 1) for item in args.artifacts)
-    if set(pairs) != set(EXPECTED_ABIS):
-        parser.error(f"labels must be: {', '.join(EXPECTED_ABIS)}")
+    if args.ndk != EXPECTED_NDK_VERSION:
+        parser.error(f"--ndk must be {EXPECTED_NDK_VERSION}")
+    parsed = [item.split("=", 1) for item in args.artifacts]
+    if any(len(item) != 2 or not item[0] or not item[1] for item in parsed):
+        parser.error("artifacts must use LABEL=APK")
+    labels = [item[0] for item in parsed]
+    if len(labels) != len(set(labels)):
+        parser.error("artifact labels must be unique")
+    unknown = set(labels) - set(EXPECTED_ABIS)
+    if unknown:
+        parser.error(f"unknown labels: {', '.join(sorted(unknown))}")
+    pairs = dict(parsed)
+
+    version_name, base_code = release_version(args.pubspec)
+    version_codes = expected_version_codes(base_code)
     readelf = find_tool(args.sdk, args.ndk, "llvm-readelf")
-    apksigner = args.sdk / "build-tools" / "36.0.0" / ("apksigner.bat" if os.name == "nt" else "apksigner")
+    apksigner = args.sdk / "build-tools" / "36.0.0" / (
+        "apksigner.bat" if os.name == "nt" else "apksigner"
+    )
     if not apksigner.exists():
-        matches = sorted((args.sdk / "build-tools").glob("*/apksigner.bat" if os.name == "nt" else "*/apksigner"))
+        matches = sorted(
+            (args.sdk / "build-tools").glob(
+                "*/apksigner.bat" if os.name == "nt" else "*/apksigner"
+            )
+        )
         if not matches:
             raise FileNotFoundError("apksigner not found")
         apksigner = matches[-1]
@@ -171,10 +271,23 @@ def main() -> None:
             readelf=readelf,
             apksigner=apksigner,
             aapt=aapt,
+            version_name=version_name,
+            version_codes=version_codes,
         )
         for label in EXPECTED_ABIS
+        if label in pairs
     ]
-    print(json.dumps({"ndk": args.ndk, "artifacts": report}, indent=2))
+    print(
+        json.dumps(
+            {
+                "ndk": args.ndk,
+                "version_name": version_name,
+                "base_version_code": base_code,
+                "artifacts": report,
+            },
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":
