@@ -50,7 +50,7 @@ ADH2/
 
 ## Status
 
-Shipping — **v1.51.0** (see CHANGELOG.md). Client and server are both
+Shipping — **v1.51.1** (see CHANGELOG.md). Client and server are both
 implemented and tested (3068
 Flutter tests, 807 server tests, 139 Kotlin tests).
 Flutter 3.47.6 / Dart 3.13, AGP 9.1 / Kotlin 2.4 / Gradle 9.3.1 /

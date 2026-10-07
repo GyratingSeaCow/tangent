@@ -1,0 +1,3 @@
+Kanban board columns now accept card drops anywhere in the column, not just on existing cards.
+
+PDF export produces clean pages: no border, no title line - just the page content.
