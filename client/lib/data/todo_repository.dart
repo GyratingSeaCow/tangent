@@ -29,9 +29,9 @@ class TodoRepository {
     required LocalDb db,
     String Function()? idFactory,
     DateTime Function()? now,
-  })  : _db = db,
-        _idFactory = idFactory ?? (() => const Uuid().v4()),
-        _now = now ?? DateTime.now;
+  }) : _db = db,
+       _idFactory = idFactory ?? (() => const Uuid().v4()),
+       _now = now ?? DateTime.now;
 
   final LocalDb _db;
   final String Function() _idFactory;
@@ -97,10 +97,10 @@ class TodoRepository {
                   sortOrder: 0,
                   createdAt: stamp,
                   updatedAt: stamp,
-            ),
-          );
-        live = await listColumns();
-      }
+                ),
+              );
+          live = await listColumns();
+        }
       }
       final String first = live.first.id;
       final List<TodoRow> rows = await _db.select(_db.todos).get();
@@ -108,6 +108,7 @@ class TodoRepository {
         // A non-null unknown id may resolve on a later pull. Rehoming it now
         // would overwrite that placement, including on newer deleted rows.
         if (row.deletedAt != null || row.columnId != null) continue;
+        // Intentional: live.first differs from restorePendingTodoBoardPlacement's fixed lane.
         await _write(row.id, TodosCompanion(columnId: Value(first)));
       }
     });
@@ -201,7 +202,7 @@ class TodoRepository {
         await (_db.select(_db.todos)..where(
               (t) => t.sourceRef.equals(sourceRef) & t.deletedAt.isNull(),
             ))
-        .get();
+            .get();
     for (final TodoRow row in rows) {
       await softDelete(row.id);
     }
@@ -334,12 +335,12 @@ class TodoRepository {
         await (_db.update(
           _db.todoColumns,
         )..where((c) => c.id.equals(id) & c.deletedAt.isNull())).write(
-      TodoColumnsCompanion(
-        name: Value(name),
-        updatedAt: Value(_stamp()),
-        syncDirty: const Value(true),
-      ),
-    );
+          TodoColumnsCompanion(
+            name: Value(name),
+            updatedAt: Value(_stamp()),
+            syncDirty: const Value(true),
+          ),
+        );
     if (changed != 1) throw StateError('Column is not live: $id');
   }
 
@@ -465,10 +466,7 @@ class TodoRepository {
   /// Persists a user-authored board position and retires any one-shot
   /// migration marker. Callers wrap multi-row operations in a transaction so
   /// the placement and marker deletion commit or roll back together.
-  Future<void> _writeBoardPlacement(
-    String id,
-    TodosCompanion changes,
-  ) async {
+  Future<void> _writeBoardPlacement(String id, TodosCompanion changes) async {
     await _write(id, changes);
     await _db.completeTodoBoardBackfill(id);
   }

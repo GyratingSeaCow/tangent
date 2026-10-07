@@ -56,6 +56,12 @@ other device's payload, swapping the contents and leaving a stable split until
 the next edit. The former fork behavior had the same crossover hole; the
 2026-10-07 decision does not fix it.
 
+Todo rows also merge last-write-wins at row granularity. A newer text edit from
+a Kanban-aware peer therefore carries its placement snapshot: a present null or
+stale `column_id` authoritatively replaces the local placement, while an absent
+key preserves it. A future field-level merge for `column_id` and `board_order`
+could remove that coupling.
+
 ### Rejected alternatives
 
 **Vector clocks.** Correct and genuinely captures causality, but every device
