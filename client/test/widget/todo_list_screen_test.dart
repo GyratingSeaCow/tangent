@@ -6,6 +6,7 @@ import 'package:tangent/services/document_sync_engine.dart';
 import 'package:tangent/services/transcription_client.dart';
 import 'package:tangent/screens/home/home_providers.dart'
     show documentSyncEngineProvider;
+import 'package:drift/drift.dart' show Batch, Value;
 import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -21,6 +22,21 @@ import 'package:tangent/services/summaries_client.dart';
 import 'package:tangent/services/todo_sections.dart';
 import 'package:tangent/widgets/folder_picker.dart';
 import 'package:tangent/widgets/item_action_sheet.dart';
+
+class _DelayedFirstMoveTodoRepository extends TodoRepository {
+  _DelayedFirstMoveTodoRepository({required super.db});
+
+  int _moveCount = 0;
+
+  @override
+  Future<void> moveOnBoard(String todoId, String columnId, int index) async {
+    _moveCount++;
+    if (_moveCount == 1) {
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+    }
+    await super.moveOnBoard(todoId, columnId, index);
+  }
+}
 
 /// The To Do screen against a real in-memory database — quick-add chained
 /// entry, toggle moving rows, undo restore, collapsed Done, and (v1.24.0)
@@ -794,6 +810,146 @@ void main() {
       await unmount(tester);
     });
 
+    testWidgets(
+      'two cards sequentially enter one initially empty lane through live keys',
+      (tester) async {
+        final TodoRepository repo = await mount(tester);
+        final TodoRow first = await repo.add('first empty-lane card');
+        final TodoRow second = await repo.add('second empty-lane card');
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(TodoListScreen.viewToggleKey));
+        await tester.pumpAndSettle();
+        final String progress = (await repo.listColumns())[1].id;
+
+        Future<void> dragAfterHold(Finder source, Finder target) async {
+          final TestGesture gesture = await tester.startGesture(
+            tester.getCenter(source),
+          );
+          await tester.pump(const Duration(milliseconds: 250));
+          await gesture.moveTo(tester.getCenter(target));
+          await tester.pump();
+          await gesture.up();
+          await tester.pumpAndSettle();
+        }
+
+        await dragAfterHold(
+          find.byKey(TodoListScreen.cardKey(first.id)),
+          find.byKey(TodoListScreen.emptyLaneDropKey(progress)),
+        );
+        expect(
+          find.byKey(TodoListScreen.laneScrollKey(progress)),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(TodoListScreen.cardDropKey(progress, first.id)),
+          findsOneWidget,
+        );
+        await dragAfterHold(
+          find.byKey(TodoListScreen.cardKey(second.id)),
+          find.byKey(TodoListScreen.dropKey(progress, 1)),
+        );
+
+        final List<TodoRow> lane =
+            (await repo.listTodos())
+                .where((TodoRow row) => row.columnId == progress)
+                .toList()
+              ..sort((TodoRow a, TodoRow b) =>
+                  a.boardOrder.compareTo(b.boardOrder));
+        expect(lane.map((TodoRow row) => row.id), <String>[
+          first.id,
+          second.id,
+        ]);
+        expect(lane.map((TodoRow row) => row.boardOrder), <int>[0, 1]);
+        await unmount(tester);
+      },
+    );
+
+    testWidgets(
+      'queued drops apply their drop-time indices after a delayed first write',
+      (tester) async {
+        final TodoRepository seedRepo = TodoRepository(db: db);
+        final TodoRow first = await seedRepo.add('first sequential card');
+        final TodoRow second = await seedRepo.add('second sequential card');
+        final TodoRow anchor = await seedRepo.add('existing target card');
+        final String progress = (await seedRepo.listColumns())[1].id;
+        await seedRepo.moveOnBoard(anchor.id, progress, 0);
+        final _DelayedFirstMoveTodoRepository repo =
+            _DelayedFirstMoveTodoRepository(db: db);
+        SharedPreferences.setMockInitialValues(<String, Object>{
+          'todo_board_view': true,
+        });
+        sizeView(tester);
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: <Override>[
+              localDbProvider.overrideWithValue(db),
+              todoRepositoryProvider.overrideWithValue(repo),
+            ],
+            child: const MaterialApp(home: TodoListScreen()),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        Future<void> dragAfterHold(
+          Finder source,
+          Finder target, {
+          required bool settleAfter,
+        }) async {
+          final TestGesture gesture = await tester.startGesture(
+            tester.getCenter(source),
+          );
+          await tester.pump(const Duration(milliseconds: 250));
+          await gesture.moveTo(tester.getCenter(target));
+          await tester.pump();
+          await gesture.up();
+          if (settleAfter) await tester.pumpAndSettle();
+        }
+
+        expect(
+          find.byKey(TodoListScreen.laneScrollKey(progress)),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(TodoListScreen.cardDropKey(progress, anchor.id)),
+          findsOneWidget,
+        );
+        expect(find.byKey(TodoListScreen.dropKey(progress, 0)), findsOneWidget);
+        expect(
+          find.byKey(TodoListScreen.emptyLaneDropKey(progress)),
+          findsNothing,
+        );
+        await dragAfterHold(
+          find.byKey(TodoListScreen.cardKey(first.id)),
+          find.byKey(TodoListScreen.cardDropKey(progress, anchor.id)),
+          settleAfter: false,
+        );
+        await dragAfterHold(
+          find.byKey(TodoListScreen.cardKey(second.id)),
+          find.byKey(TodoListScreen.cardDropKey(progress, anchor.id)),
+          settleAfter: false,
+        );
+        // pumpAndSettle stops before this fake repository's timer. Advance the
+        // injected delay explicitly, then let both queued transactions rebuild.
+        await tester.pump(const Duration(milliseconds: 400));
+        await tester.pumpAndSettle();
+
+        final List<TodoRow> lane =
+            (await repo.listTodos())
+                .where((TodoRow row) => row.columnId == progress)
+                .toList()
+              ..sort(
+                (TodoRow a, TodoRow b) => a.boardOrder.compareTo(b.boardOrder),
+              );
+        expect(lane.map((TodoRow row) => row.id), <String>[
+          second.id,
+          first.id,
+          anchor.id,
+        ]);
+        expect(lane.take(2).map((TodoRow row) => row.boardOrder), <int>[0, 1]);
+        await unmount(tester);
+      },
+    );
+
     testWidgets('card bodies and empty lane bodies are full DragTargets', (
       tester,
     ) async {
@@ -913,6 +1069,121 @@ void main() {
       expect(tester.takeException(), isNull, reason: 'no vertical overflow');
       await unmount(tester);
     });
+
+    testWidgets(
+      '500-card lane stays virtualized and persists a 501st real drop',
+      (tester) async {
+        final TodoRepository repo = TodoRepository(db: db);
+        final List<TodoColumnRow> columns = await repo.ensureColumns();
+        final String progress = columns[1].id;
+        const String stamp = '2026-09-26T15:30:00.000Z';
+        await db.batch((Batch batch) {
+          batch.insertAll(db.todos, <TodosCompanion>[
+            for (int i = 0; i < 500; i++)
+              TodosCompanion.insert(
+                id: 'capacity-card-$i',
+                body: 'capacity card $i',
+                createdAt: stamp,
+                updatedAt: stamp,
+                syncDirty: const Value<bool>(false),
+                columnId: const Value<String?>(defaultTodoColumnId),
+                boardOrder: Value<int>(i),
+              ),
+            TodosCompanion.insert(
+              id: 'capacity-card-500',
+              body: 'capacity card 500',
+              createdAt: stamp,
+              updatedAt: stamp,
+              syncDirty: const Value<bool>(false),
+              columnId: Value<String?>(progress),
+            ),
+          ]);
+        });
+        SharedPreferences.setMockInitialValues(<String, Object>{
+          'todo_board_view': true,
+        });
+        sizeView(tester);
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: <Override>[
+              localDbProvider.overrideWithValue(db),
+              todoRepositoryProvider.overrideWithValue(repo),
+            ],
+            child: const MaterialApp(home: TodoListScreen()),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        final Finder lane = find.byKey(
+          TodoListScreen.laneScrollKey(defaultTodoColumnId),
+        );
+        final Finder laneScrollable = find.descendant(
+          of: lane,
+          matching: find.byType(Scrollable),
+        );
+        final Finder firstCard = find.byKey(
+          TodoListScreen.cardKey('capacity-card-0'),
+        );
+        final Finder lastCard = find.byKey(
+          TodoListScreen.cardKey('capacity-card-499'),
+        );
+        expect(lane, findsOneWidget);
+        expect(laneScrollable, findsOneWidget);
+        expect(firstCard.hitTestable(), findsOneWidget);
+        expect(lastCard, findsNothing);
+        final int renderedAtTop =
+            find.byType(LongPressDraggable<TodoRow>).evaluate().length;
+        expect(renderedAtTop, lessThan(50), reason: 'the lane must be lazy');
+
+        await tester.scrollUntilVisible(
+          lastCard,
+          1000,
+          scrollable: laneScrollable,
+          maxScrolls: 100,
+        );
+        await tester.pumpAndSettle();
+        expect(lastCard.hitTestable(), findsOneWidget);
+
+        final TestGesture gesture = await tester.startGesture(
+          tester.getCenter(
+            find.byKey(TodoListScreen.cardKey('capacity-card-500')),
+          ),
+        );
+        await tester.pump(const Duration(milliseconds: 250));
+        await gesture.moveTo(
+          tester.getCenter(
+            find.byKey(
+              TodoListScreen.cardDropKey(
+                defaultTodoColumnId,
+                'capacity-card-499',
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+        await gesture.up();
+        await tester.pumpAndSettle();
+        final List<TodoRow> targetLane =
+            (await repo.listTodos())
+                .where((TodoRow row) => row.columnId == defaultTodoColumnId)
+                .toList()
+              ..sort((TodoRow a, TodoRow b) =>
+                  a.boardOrder.compareTo(b.boardOrder));
+        expect(targetLane, hasLength(501));
+        expect(targetLane[499].id, 'capacity-card-500');
+        expect(targetLane[499].boardOrder, 499);
+        expect(targetLane[500].id, 'capacity-card-499');
+        expect(targetLane[500].boardOrder, 500);
+        final List<TodoRow> dirtied = (await repo.listTodos())
+            .where((TodoRow row) => row.syncDirty)
+            .toList();
+        expect(dirtied.map((TodoRow row) => row.id).toSet(), <String>{
+          'capacity-card-499',
+          'capacity-card-500',
+        });
+        await unmount(tester);
+      },
+    );
 
     testWidgets('delete count excludes fallback-only unresolved references', (
       tester,
