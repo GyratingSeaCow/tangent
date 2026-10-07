@@ -38,6 +38,21 @@ class _DelayedFirstMoveTodoRepository extends TodoRepository {
   }
 }
 
+class _FailingFirstMoveTodoRepository extends TodoRepository {
+  _FailingFirstMoveTodoRepository({required super.db});
+
+  bool _failedOnce = false;
+
+  @override
+  Future<void> moveOnBoard(String todoId, String columnId, int index) async {
+    if (!_failedOnce) {
+      _failedOnce = true;
+      throw StateError('injected first-move failure');
+    }
+    await super.moveOnBoard(todoId, columnId, index);
+  }
+}
+
 /// The To Do screen against a real in-memory database — quick-add chained
 /// entry, toggle moving rows, undo restore, collapsed Done, and (v1.24.0)
 /// shared folders: sections, ⋮ → Move, multi-select, header actions.
@@ -946,6 +961,79 @@ void main() {
           anchor.id,
         ]);
         expect(lane.take(2).map((TodoRow row) => row.boardOrder), <int>[0, 1]);
+        await unmount(tester);
+      },
+    );
+
+    testWidgets(
+      'a failed drop surfaces an error but does not jam later drops',
+      (tester) async {
+        final TodoRepository seedRepo = TodoRepository(db: db);
+        final TodoRow first = await seedRepo.add('doomed card');
+        final TodoRow second = await seedRepo.add('surviving card');
+        final TodoRow anchor = await seedRepo.add('existing target card');
+        final String progress = (await seedRepo.listColumns())[1].id;
+        await seedRepo.moveOnBoard(anchor.id, progress, 0);
+        final _FailingFirstMoveTodoRepository repo =
+            _FailingFirstMoveTodoRepository(db: db);
+        SharedPreferences.setMockInitialValues(<String, Object>{
+          'todo_board_view': true,
+        });
+        sizeView(tester);
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: <Override>[
+              localDbProvider.overrideWithValue(db),
+              todoRepositoryProvider.overrideWithValue(repo),
+            ],
+            child: const MaterialApp(home: TodoListScreen()),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        Future<void> dragAfterHold(Finder source, Finder target) async {
+          final TestGesture gesture = await tester.startGesture(
+            tester.getCenter(source),
+          );
+          await tester.pump(const Duration(milliseconds: 250));
+          await gesture.moveTo(tester.getCenter(target));
+          await tester.pump();
+          await gesture.up();
+          await tester.pumpAndSettle();
+        }
+
+        await dragAfterHold(
+          find.byKey(TodoListScreen.cardKey(first.id)),
+          find.byKey(TodoListScreen.cardDropKey(progress, anchor.id)),
+        );
+        final Object? reported = tester.takeException();
+        expect(
+          reported,
+          isA<StateError>(),
+          reason:
+              'the failed move must surface through FlutterError.reportError',
+        );
+
+        await dragAfterHold(
+          find.byKey(TodoListScreen.cardKey(second.id)),
+          find.byKey(TodoListScreen.cardDropKey(progress, anchor.id)),
+        );
+        expect(
+          tester.takeException(),
+          isNull,
+          reason: 'the queued second move must run cleanly after a failure',
+        );
+
+        final List<TodoRow> lane =
+            (await repo.listTodos())
+                .where((TodoRow row) => row.columnId == progress)
+                .toList()
+              ..sort((TodoRow a, TodoRow b) =>
+                  a.boardOrder.compareTo(b.boardOrder));
+        expect(lane.map((TodoRow row) => row.id), <String>[
+          second.id,
+          anchor.id,
+        ], reason: 'a failed first move must not block the next drop');
         await unmount(tester);
       },
     );
