@@ -1,0 +1,1 @@
+Fixes a sync bug where deleting a notebook's sync-conflict copy could permanently wedge syncing on one page; stuck devices recover automatically on their first sync after updating. Also hardens release-build verification so published APKs are built with the exact pinned toolchain, keeping F-Droid builds reproducible.

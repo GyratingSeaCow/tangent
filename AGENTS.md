@@ -50,8 +50,8 @@ ADH2/
 
 ## Status
 
-Shipping — **v1.50.1** (see CHANGELOG.md). Client and server are both
-implemented and tested (3050
+Shipping — **v1.50.2** (see CHANGELOG.md). Client and server are both
+implemented and tested (3053
 Flutter tests, 807 server tests, 139 Kotlin tests). Toolchain:
 Flutter 3.47.6 / Dart 3.13, AGP 9.1 / Kotlin 2.4 / Gradle 9.3.1 /
 Java 17 (v1.48.1); APKs exclude Google's dependency-info
@@ -60,6 +60,16 @@ natively on Linux AND Windows (tray icon, global record hotkey,
 close-to-tray, single instance, right-click = long-press; AppImage and
 Inno Setup installer under `packaging/`) — verified on CachyOS/KDE
 Plasma Wayland and Windows 11; see the README's Desktop sections.
+
+v1.50.2 **sync wedge fix + pinned-toolchain enforcement**: ink-index
+rows are scoped per notebook (schema v35, composite PK
+{notebook_id, id}), so a sync-conflict notebook copy sharing page ids
+with its original can no longer wedge sync with a UNIQUE collision —
+wedged devices recover automatically on first post-upgrade sync.
+Release CI's APK audit is now a blocking gate (`shell: bash` +
+pipefail) and requires both compiler and linker identities
+(clang 19.0.1/r530567e, LLD 19.0.1) in every libsqlite3.so, locked by
+a Dart workflow-contract test.
 
 v1.50.1 **F-Droid review fixes**: Android PDF rendering moved from
 bundled PDFium to the platform `PdfRenderer` (API 35+ renders embedded

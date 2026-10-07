@@ -5,6 +5,21 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.50.2 — 2026-10-06
+
+### Fixed
+
+- Deleting a notebook's sync-conflict copy no longer permanently wedges
+  sync: ink-index entries are now keyed per notebook (schema v35), so a
+  conflict copy sharing page ids with its original can't collide with it.
+  Devices already stuck on such a page recover automatically on their
+  first sync after updating.
+- Release CI now fails the release if the audited native SQLite library
+  was not built by the pinned NDK toolchain (clang 19.0.1/r530567e,
+  LLD 19.0.1). Audit failures could previously be masked by the log
+  pipeline; the audit step is now a genuinely blocking gate, keeping
+  published APKs reproducible for F-Droid verification.
+
 ## 1.50.1 — 2026-10-06
 
 ### Changed
