@@ -59,12 +59,13 @@ class SyncReport {
 /// [requestedAt] is the row's `summary_requested_at` at the moment the
 /// answer landed (unix seconds) — always non-null here, because a summary
 /// nobody on this device asked for is never reported. Must never throw.
-typedef SummaryLandedHook = void Function({
-  required String dumpId,
-  required String title,
-  required String? template,
-  required int requestedAt,
-});
+typedef SummaryLandedHook =
+    void Function({
+      required String dumpId,
+      required String title,
+      required String? template,
+      required int requestedAt,
+    });
 
 class DocumentSyncEngine extends ChangeNotifier {
   DocumentSyncEngine({
@@ -365,12 +366,12 @@ class DocumentSyncEngine extends ChangeNotifier {
 
   /// Applies one incoming recording change.
   ///
-  /// Recordings keep their existing merge policy. A recording's synced fields
-  /// are short metadata (title, transcript, notes), and the audio itself never
-  /// travels this path. Duplicating rows here would litter
-  /// the list with duplicate entries for a renamed recording. A local edit
-  /// still pending push therefore WINS and stays dirty, which is the same
-  /// "never silently discard the user's edit" rule expressed for flat data.
+  /// Recordings never fork, and an incoming change never overwrites
+  /// device-owned local fields while a local edit is still pending push. Their
+  /// synced fields are short metadata (title, transcript, notes), while audio
+  /// never travels this path; duplicating rows would only litter the list with
+  /// entries for a renamed recording. The dirty local row therefore wins and
+  /// stays dirty.
   Future<void> _applyRemoteDump(RemoteChange change) async {
     if (change.op == SyncOp.delete) {
       await _db.applyRemoteDumpDeletion(change.entityId);

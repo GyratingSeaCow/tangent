@@ -95,12 +95,14 @@ CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at DESC);
 --
 -- The server owns one monotonically increasing sequence. Every mutation it
 -- accepts is stamped with the next value, and a client asks "what changed
--- after N?". This is a CHECKPOINT, not a clock: it is assigned by a single
--- authority, so a device whose wall-clock is ten minutes fast is irrelevant.
+-- after N?". This is a CHECKPOINT, not the clock used to resolve concurrent
+-- notebook edits.
 --
--- Last-write-wins on updated_at was rejected on data-loss grounds — at
--- whole-notebook granularity it silently destroys a page of handwriting when
--- another device saves a title edit a second later.
+-- Superseded 2026-10-07: notebooks use client-side last-write-wins on the
+-- client updated_at carried in the payload, deliberately replacing the losing
+-- edit (including ink) instead of creating a conflict copy. The server
+-- unconditionally upserts and stamps its row time, while the published payload
+-- retains that client timestamp, so peer wall-clock skew can decide the winner.
 
 CREATE TABLE IF NOT EXISTS change_log (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,

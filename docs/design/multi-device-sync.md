@@ -1,11 +1,13 @@
 # Multi-device sync — design
 
-Status: proposed. Nothing here is implemented yet.
+Status: historical design. Multi-device sync now ships; the current
+whole-notebook exception is recorded below, while later sections retain the
+original proposal for context.
 
-Tangent today syncs one way: `SyncEngine` uploads dumps to the owner's server
-as opt-in backup. There is no pull, no device identity, and no conflict
-handling. This document designs the two-way case for **every** self-hosted
-user, not one person's hardware.
+The original proposal began when Tangent synced one way: `SyncEngine` uploaded
+dumps to the owner's server as opt-in backup, with no pull, device identity, or
+conflict handling. It designed the two-way case for **every** self-hosted user,
+not one person's hardware.
 
 ---
 
@@ -36,13 +38,25 @@ it accepts is stamped with the next value. A client remembers the highest
 This is a **checkpoint**, not a clock. It is assigned by one authority, so it
 does not care whether a tablet's clock is ten minutes fast.
 
-### Rejected alternatives
+### Current whole-notebook rule (supersedes the original design)
 
-**Last-write-wins on `updatedAt`.** Simplest, and wrong here. It makes
-correctness depend on device wall-clocks, which are routinely skewed and
-occasionally reset by the user. Worse, at whole-notebook granularity it means
-the loser's handwriting silently vanishes — a page of ink destroyed because
-another device saved a title edit a second later. Rejected on data loss.
+On 2026-10-07 Jeff explicitly chose last-write-wins after conflict copies
+caused mass duplication. The client compares the `updated_at` carried in peer
+payloads: a strictly newer remote notebook replaces a dirty local notebook
+instead of creating a fork. This deliberately discards the losing device's
+entire edit, including ink. Legacy conflict copies remain ordinary notebooks
+that the user may clean up manually. The server unconditionally upserts a push
+and stamps its row with server time, but the published payload retains the
+client's `updated_at`; this rule therefore compares peer wall-clocks, and clock
+skew can decide the winner rather than the server's `change_seq` checkpoint.
+
+Known limitation: if two dirty devices both pull before either pushes, their
+sequential pushes make both local rows clean. Each device can then accept the
+other device's payload, swapping the contents and leaving a stable split until
+the next edit. The former fork behavior had the same crossover hole; the
+2026-10-07 decision does not fix it.
+
+### Rejected alternatives
 
 **Vector clocks.** Correct and genuinely captures causality, but every device
 must carry a vector of every other device it has ever seen, entries must be

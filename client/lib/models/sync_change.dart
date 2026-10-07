@@ -124,9 +124,18 @@ enum MergeDecision {
 /// Decides how one incoming change meets the local row.
 ///
 /// A clean local row has no unsynced work, so the server's copy is accepted.
-/// When both copies changed, `updatedAt` is the deterministic authority: a
-/// strictly newer remote version replaces the local edit, while an older or
-/// equal remote version leaves the dirty local copy untouched for its push.
+/// On 2026-10-07 Jeff explicitly chose whole-notebook last-write-wins after
+/// conflict copies caused mass duplication: the client payload's `updated_at`
+/// replaces forking. A strictly newer remote notebook deliberately discards
+/// the losing device edit, including ink; legacy conflict copies remain
+/// ordinary notebooks for manual cleanup. The server stamps its own row time,
+/// but republishes the client's `updated_at`, so this compares peer wall clocks
+/// and clock skew can decide the winner.
+///
+/// Known limitation (pre-existing with forks): if two dirty devices both pull
+/// before either pushes, their sequential pushes make both local rows clean;
+/// each can then accept the other's payload, swapping contents into a stable
+/// split until the next edit. This decision does not fix that crossover.
 MergeDecision decideMerge({
   required bool localExists,
   required bool localDirty,

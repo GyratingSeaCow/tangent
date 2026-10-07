@@ -5,11 +5,12 @@ Every accepted mutation appends exactly one row here and is stamped with the
 next `seq`. A client remembers the highest `seq` it has seen and asks "what
 changed after N?".
 
-This is a CHECKPOINT, not a clock. It is assigned by a single authority, so
-device clock skew is irrelevant by design — which is the whole reason
-last-write-wins on `updated_at` was rejected: at whole-notebook granularity it
-silently destroys a page of handwriting when another device saves a title edit
-a second later.
+This is a CHECKPOINT, not the clock used to resolve concurrent notebook edits.
+Superseded 2026-10-07: notebook clients use last-write-wins on the client
+`updated_at` carried in the payload, deliberately replacing the losing edit
+(including ink) instead of forking. The server unconditionally upserts and
+stamps its row time, while the published payload retains that client timestamp,
+so peer wall-clock skew can decide the winner.
 """
 
 from __future__ import annotations
