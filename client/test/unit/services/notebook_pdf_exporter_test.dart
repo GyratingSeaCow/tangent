@@ -410,6 +410,20 @@ void main() {
         if (index < boxes.length - 1) {
           expect(contentHeights[index], closeTo(contentHeights.first, 0.01));
         }
+        if (index > 0 && index < boxes.length - 1) {
+          // Middle tiles must carry their OWN canvas slice: an offset bug
+          // that re-renders the canvas top (Vera sabotage S5) puts the blue
+          // y=0 stroke at row (0 - boundsTop) * scale = 40 of the duplicate,
+          // while a correct middle tile of this fixture is empty there.
+          _expectPixel(
+            raster.at(
+              ((canvasWidth / 2 - boundsLeft) * rasterScale).round(),
+              40,
+            ),
+            _bgRgb(),
+            reason: 'middle tile $index must not duplicate the canvas top',
+          );
+        }
       }
       expect(
         contentHeights.last,
