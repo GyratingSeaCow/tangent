@@ -826,6 +826,148 @@ void main() {
     });
 
     testWidgets(
+      'natural drops below the last card repeatedly append to a nonempty lane',
+      (tester) async {
+        final TodoRepository repo = await mount(tester);
+        final TodoRow first = await repo.add('first natural append');
+        final TodoRow second = await repo.add('second natural append');
+        final TodoRow anchor = await repo.add('existing destination card');
+        final String progress = (await repo.listColumns())[1].id;
+        await repo.moveOnBoard(anchor.id, progress, 0);
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(TodoListScreen.viewToggleKey));
+        await tester.pumpAndSettle();
+
+        Future<void> dragToOpenLaneSpace(
+          TodoRow source,
+          TodoRow lastCard,
+          int destinationLength,
+        ) async {
+          final Rect laneRect = tester.getRect(
+            find.byKey(TodoListScreen.laneScrollKey(progress)),
+          );
+          final Rect lastCardRect = tester.getRect(
+            find.byKey(TodoListScreen.cardKey(lastCard.id)),
+          );
+          final Offset openPoint = Offset(
+            laneRect.center.dx,
+            lastCardRect.bottom + 80,
+          );
+          expect(openPoint.dy, greaterThan(lastCardRect.bottom));
+          expect(openPoint.dy, lessThan(laneRect.bottom));
+          expect(laneRect.contains(openPoint), isTrue);
+          for (int index = 0; index <= destinationLength; index++) {
+            expect(
+              tester
+                  .getRect(find.byKey(TodoListScreen.dropKey(progress, index)))
+                  .contains(openPoint),
+              isFalse,
+              reason: 'the natural drop point must not use a keyed gap target',
+            );
+          }
+          for (final TodoRow card in <TodoRow>[anchor, first, second]) {
+            final Finder target = find.byKey(
+              TodoListScreen.cardDropKey(progress, card.id),
+            );
+            if (target.evaluate().isNotEmpty) {
+              expect(
+                tester.getRect(target).contains(openPoint),
+                isFalse,
+                reason:
+                    'the natural drop point must not use a keyed card target',
+              );
+            }
+          }
+
+          final TestGesture gesture = await tester.startGesture(
+            tester.getCenter(find.byKey(TodoListScreen.cardKey(source.id))),
+          );
+          await tester.pump(const Duration(milliseconds: 200));
+          await gesture.moveTo(openPoint);
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 100));
+          final Color hoverColor = Theme.of(
+            tester.element(
+              find.byKey(TodoListScreen.laneAppendDropKey(progress)),
+            ),
+          ).colorScheme.primaryContainer;
+          expect(
+            find.descendant(
+              of: find.byKey(TodoListScreen.laneAppendDropKey(progress)),
+              matching: find.byWidgetPredicate(
+                (Widget widget) =>
+                    widget is AnimatedContainer &&
+                    (widget.decoration as BoxDecoration?)?.color == hoverColor,
+              ),
+            ),
+            findsOneWidget,
+            reason: 'open lane space shows the same hover color as a gap',
+          );
+          await gesture.up();
+          await tester.pumpAndSettle();
+        }
+
+        await dragToOpenLaneSpace(first, anchor, 1);
+        expect((await db.getTodoRow(first.id))!.columnId, progress);
+        await dragToOpenLaneSpace(second, first, 2);
+
+        final List<TodoRow> lane =
+            (await repo.listTodos())
+                .where((TodoRow row) => row.columnId == progress)
+                .toList()
+              ..sort(
+                (TodoRow a, TodoRow b) => a.boardOrder.compareTo(b.boardOrder),
+              );
+        expect(lane.map((TodoRow row) => row.id), <String>[
+          anchor.id,
+          first.id,
+          second.id,
+        ]);
+        await unmount(tester);
+      },
+    );
+
+    testWidgets('a precise gap drop inserts there instead of appending', (
+      tester,
+    ) async {
+      final TodoRepository repo = await mount(tester);
+      final TodoRow source = await repo.add('precise gap source');
+      final TodoRow first = await repo.add('first destination card');
+      final TodoRow second = await repo.add('second destination card');
+      final String progress = (await repo.listColumns())[1].id;
+      await repo.moveOnBoard(first.id, progress, 0);
+      await repo.moveOnBoard(second.id, progress, 1);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(TodoListScreen.viewToggleKey));
+      await tester.pumpAndSettle();
+
+      final TestGesture gesture = await tester.startGesture(
+        tester.getCenter(find.byKey(TodoListScreen.cardKey(source.id))),
+      );
+      await tester.pump(const Duration(milliseconds: 200));
+      await gesture.moveTo(
+        tester.getCenter(find.byKey(TodoListScreen.dropKey(progress, 1))),
+      );
+      await tester.pump();
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      final List<TodoRow> lane =
+          (await repo.listTodos())
+              .where((TodoRow row) => row.columnId == progress)
+              .toList()
+            ..sort(
+              (TodoRow a, TodoRow b) => a.boardOrder.compareTo(b.boardOrder),
+            );
+      expect(lane.map((TodoRow row) => row.id), <String>[
+        first.id,
+        source.id,
+        second.id,
+      ]);
+      await unmount(tester);
+    });
+
+    testWidgets(
       'two cards sequentially enter one initially empty lane through live keys',
       (tester) async {
         final TodoRepository repo = await mount(tester);
@@ -868,8 +1010,9 @@ void main() {
             (await repo.listTodos())
                 .where((TodoRow row) => row.columnId == progress)
                 .toList()
-              ..sort((TodoRow a, TodoRow b) =>
-                  a.boardOrder.compareTo(b.boardOrder));
+              ..sort(
+                (TodoRow a, TodoRow b) => a.boardOrder.compareTo(b.boardOrder),
+              );
         expect(lane.map((TodoRow row) => row.id), <String>[
           first.id,
           second.id,
@@ -1028,8 +1171,9 @@ void main() {
             (await repo.listTodos())
                 .where((TodoRow row) => row.columnId == progress)
                 .toList()
-              ..sort((TodoRow a, TodoRow b) =>
-                  a.boardOrder.compareTo(b.boardOrder));
+              ..sort(
+                (TodoRow a, TodoRow b) => a.boardOrder.compareTo(b.boardOrder),
+              );
         expect(lane.map((TodoRow row) => row.id), <String>[
           second.id,
           anchor.id,
@@ -1038,7 +1182,7 @@ void main() {
       },
     );
 
-    testWidgets('card bodies and empty lane bodies are full DragTargets', (
+    testWidgets('card and full lane bodies expose layered DragTargets', (
       tester,
     ) async {
       final TodoRepository repo = await mount(tester);
@@ -1053,6 +1197,21 @@ void main() {
           find.byKey(TodoListScreen.cardDropKey(defaultTodoColumnId, card.id)),
         ),
         isA<DragTarget<TodoRow>>(),
+      );
+      expect(
+        tester.widget<DragTarget<TodoRow>>(
+          find.byKey(TodoListScreen.laneAppendDropKey(defaultTodoColumnId)),
+        ),
+        isA<DragTarget<TodoRow>>(),
+      );
+      expect(
+        tester.getSize(
+          find.byKey(TodoListScreen.laneAppendDropKey(defaultTodoColumnId)),
+        ),
+        tester.getSize(
+          find.byKey(TodoListScreen.laneScrollKey(defaultTodoColumnId)),
+        ),
+        reason: 'the append target covers the full nonempty lane body',
       );
       expect(
         tester.widget<DragTarget<TodoRow>>(
@@ -1106,7 +1265,9 @@ void main() {
         laneScrollable,
       );
       expect(laneState.position.maxScrollExtent, greaterThan(0));
-      final Finder firstCard = find.byKey(TodoListScreen.cardKey(rows.first.id));
+      final Finder firstCard = find.byKey(
+        TodoListScreen.cardKey(rows.first.id),
+      );
       await tester.flingFrom(
         tester.getCenter(firstCard),
         const Offset(0, -500),
@@ -1116,12 +1277,16 @@ void main() {
       expect(laneState.position.pixels, greaterThan(0));
 
       final Finder lastCard = find.byKey(TodoListScreen.cardKey(rows.last.id));
-      for (int attempt = 0;
-          attempt < 12 && lastCard.hitTestable().evaluate().isEmpty;
-          attempt++) {
+      for (
+        int attempt = 0;
+        attempt < 12 && lastCard.hitTestable().evaluate().isEmpty;
+        attempt++
+      ) {
         final Finder visibleCard = rows
-            .map((TodoRow row) =>
-                find.byKey(TodoListScreen.cardKey(row.id)).hitTestable())
+            .map(
+              (TodoRow row) =>
+                  find.byKey(TodoListScreen.cardKey(row.id)).hitTestable(),
+            )
             .lastWhere((Finder card) => card.evaluate().isNotEmpty);
         await tester.flingFrom(
           tester.getCenter(visibleCard),
@@ -1139,7 +1304,8 @@ void main() {
         of: find.byKey(const Key('todo-board-scroll')),
         matching: find.byWidgetPredicate(
           (Widget widget) =>
-              widget is Scrollable && widget.axisDirection == AxisDirection.right,
+              widget is Scrollable &&
+              widget.axisDirection == AxisDirection.right,
         ),
       );
       expect(boardScrollable, findsOneWidget);
@@ -1159,7 +1325,7 @@ void main() {
     });
 
     testWidgets(
-      '500-card lane stays virtualized and persists a 501st real drop',
+      '500-card lane stays virtualized and appends through natural open space',
       (tester) async {
         final TodoRepository repo = TodoRepository(db: db);
         final List<TodoColumnRow> columns = await repo.ensureColumns();
@@ -1219,8 +1385,10 @@ void main() {
         expect(laneScrollable, findsOneWidget);
         expect(firstCard.hitTestable(), findsOneWidget);
         expect(lastCard, findsNothing);
-        final int renderedAtTop =
-            find.byType(LongPressDraggable<TodoRow>).evaluate().length;
+        final int renderedAtTop = find
+            .byType(LongPressDraggable<TodoRow>)
+            .evaluate()
+            .length;
         expect(renderedAtTop, lessThan(50), reason: 'the lane must be lazy');
 
         await tester.scrollUntilVisible(
@@ -1232,22 +1400,50 @@ void main() {
         await tester.pumpAndSettle();
         expect(lastCard.hitTestable(), findsOneWidget);
 
+        final ScrollableState laneState = tester.state<ScrollableState>(
+          laneScrollable,
+        );
+        laneState.position.jumpTo(laneState.position.maxScrollExtent);
+        await tester.pumpAndSettle();
+        final Rect laneRect = tester.getRect(lane);
+        final Rect lastCardRect = tester.getRect(lastCard);
+        final Offset openPoint = Offset(
+          laneRect.center.dx,
+          lastCardRect.bottom + 56,
+        );
+        expect(openPoint.dy, lessThan(laneRect.bottom));
+        expect(laneRect.contains(openPoint), isTrue);
+        expect(
+          tester
+              .getRect(
+                find.byKey(TodoListScreen.dropKey(defaultTodoColumnId, 500)),
+              )
+              .contains(openPoint),
+          isFalse,
+          reason: 'the capacity drop must use open lane space, not its end gap',
+        );
+        expect(
+          tester
+              .getRect(
+                find.byKey(
+                  TodoListScreen.cardDropKey(
+                    defaultTodoColumnId,
+                    'capacity-card-499',
+                  ),
+                ),
+              )
+              .contains(openPoint),
+          isFalse,
+          reason: 'the capacity drop must not use the last card target',
+        );
+
         final TestGesture gesture = await tester.startGesture(
           tester.getCenter(
             find.byKey(TodoListScreen.cardKey('capacity-card-500')),
           ),
         );
-        await tester.pump(const Duration(milliseconds: 250));
-        await gesture.moveTo(
-          tester.getCenter(
-            find.byKey(
-              TodoListScreen.cardDropKey(
-                defaultTodoColumnId,
-                'capacity-card-499',
-              ),
-            ),
-          ),
-        );
+        await tester.pump(const Duration(milliseconds: 200));
+        await gesture.moveTo(openPoint);
         await tester.pump();
         await gesture.up();
         await tester.pumpAndSettle();
@@ -1255,18 +1451,18 @@ void main() {
             (await repo.listTodos())
                 .where((TodoRow row) => row.columnId == defaultTodoColumnId)
                 .toList()
-              ..sort((TodoRow a, TodoRow b) =>
-                  a.boardOrder.compareTo(b.boardOrder));
+              ..sort(
+                (TodoRow a, TodoRow b) => a.boardOrder.compareTo(b.boardOrder),
+              );
         expect(targetLane, hasLength(501));
-        expect(targetLane[499].id, 'capacity-card-500');
+        expect(targetLane[499].id, 'capacity-card-499');
         expect(targetLane[499].boardOrder, 499);
-        expect(targetLane[500].id, 'capacity-card-499');
+        expect(targetLane[500].id, 'capacity-card-500');
         expect(targetLane[500].boardOrder, 500);
         final List<TodoRow> dirtied = (await repo.listTodos())
             .where((TodoRow row) => row.syncDirty)
             .toList();
         expect(dirtied.map((TodoRow row) => row.id).toSet(), <String>{
-          'capacity-card-499',
           'capacity-card-500',
         });
         await unmount(tester);
@@ -1310,7 +1506,7 @@ void main() {
 
     testWidgets(
       'non-empty delete prompts for destination and keeps every card',
-        (tester) async {
+      (tester) async {
         final TodoRepository repo = await mount(tester);
         final TodoRow card = await repo.add('must survive');
         final List<TodoColumnRow> columns = await repo.listColumns();
@@ -1625,7 +1821,7 @@ void syncButtonTests() {
     }
 
     testWidgets(
-        'connected: one Google cycle runs AFTER the device push and the '
+      'connected: one Google cycle runs AFTER the device push and the '
       'snackbar says so',
       (tester) async {
         final (
@@ -1636,10 +1832,10 @@ void syncButtonTests() {
           google: _FakeGoogleClient(status: 'connected'),
         );
 
-      expect(client.pulls, 1);
-      expect(google.syncNowCalls, 1, reason: 'exactly one Google cycle');
-      // The whole point of L4: Google must receive the state the server has
-      // AFTER this press. A hook that ran first would forward the stale row.
+        expect(client.pulls, 1);
+        expect(google.syncNowCalls, 1, reason: 'exactly one Google cycle');
+        // The whole point of L4: Google must receive the state the server has
+        // AFTER this press. A hook that ran first would forward the stale row.
         expect(_callLog, <String>[
           'device-pull',
           'device-push',
@@ -1647,7 +1843,7 @@ void syncButtonTests() {
           'google-sync-now',
         ], reason: 'device sync completes before any Google call');
         expect(find.text('Synced: sent 4 · Google updated'), findsOneWidget);
-      await unmount(tester);
+        await unmount(tester);
       },
     );
 
