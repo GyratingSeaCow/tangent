@@ -374,6 +374,88 @@ void main() {
     );
   });
 
+  test('a wide canvas honours the tile raster ceiling', () async {
+    // A canvas wider than ceiling/sqrt(2) logical px makes the A-series
+    // nominal tile height (width * sqrt(2)) exceed the raster ceiling; the
+    // exporter must fall back to the capped tile height or Picture.toImage
+    // is asked for a raster above Skia's limit — the exact mechanism behind
+    // the original "only the first page exports" crop. The assertions read
+    // the OBSERVED page geometry out of the produced PDF rather than
+    // re-deriving the tile formula.
+    const double canvasWidth = 2700;
+    const double canvasHeight = 4500;
+    const double contentPadding = 20;
+    const double rasterScale = 2;
+    const double maxTileRasterHeight = 7600;
+    const double pagePad = 24;
+    const double titleBand = 30;
+
+    final Uint8List bytes = await renderNotebookPdf(
+      const NotebookExportSource(
+        title: 'wide canvas',
+        document: NotebookDocument.empty(),
+        strokes: <InkStroke>[
+          InkStroke(
+            id: 'top-edge',
+            width: 8,
+            colour: InkColor.blue,
+            points: <InkPoint>[
+              InkPoint(x: 0, y: 0),
+              InkPoint(x: canvasWidth, y: 0),
+            ],
+          ),
+          InkStroke(
+            id: 'bottom-edge',
+            width: 8,
+            colour: InkColor.red,
+            points: <InkPoint>[
+              InkPoint(x: 0, y: canvasHeight),
+              InkPoint(x: canvasWidth, y: canvasHeight),
+            ],
+          ),
+        ],
+      ),
+    );
+
+    final String wire = latin1.decode(bytes, allowInvalid: true);
+    final List<RegExpMatch> boxes = RegExp(
+      r'/MediaBox\s*\[\s*0\s+0\s+([\d.]+)\s+([\d.]+)\s*\]',
+    ).allMatches(wire).toList();
+    expect(boxes, isNotEmpty, reason: 'the PDF must declare page geometry');
+    // Tallest legal page: a capped tile plus padding plus the title band.
+    const double maxPageHeight =
+        maxTileRasterHeight / rasterScale + 2 * pagePad + titleBand;
+    for (final RegExpMatch box in boxes) {
+      expect(
+        double.parse(box.group(2)!),
+        lessThanOrEqualTo(maxPageHeight + 1),
+        reason:
+            'no page may exceed the capped tile height — an uncapped '
+            'nominal tile silently overruns the raster ceiling',
+      );
+    }
+    final int pageCount = RegExp(r'/Type\s*/Page(?!s)').allMatches(wire).length;
+    expect(
+      pageCount,
+      greaterThan(1),
+      reason: 'a 4500-high capped canvas cannot fit one tile',
+    );
+
+    // The content below the first capped tile must still be in the output.
+    const double boundsLeft = -contentPadding;
+    const double boundsTop = -contentPadding;
+    const double cappedTileHeight = maxTileRasterHeight / rasterScale;
+    final double lastTileTop = boundsTop + (pageCount - 1) * cappedTileHeight;
+    final _PageRaster last = _pageRasterOf(bytes, index: pageCount - 1);
+    final int bottomX = ((canvasWidth / 2 - boundsLeft) * rasterScale).round();
+    final int bottomY = ((canvasHeight - lastTileTop) * rasterScale).round();
+    _expectPixel(
+      last.at(bottomX, bottomY),
+      _opaqueRgb(InkColor.red),
+      reason: 'the bottom stroke must survive past the capped first tile',
+    );
+  });
+
   test('a small canvas stays exactly one page', () async {
     final Uint8List bytes = await renderNotebookPdf(
       NotebookExportSource(
