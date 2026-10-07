@@ -686,6 +686,10 @@ class DocumentSyncEngine extends ChangeNotifier {
       pinned: payload.containsKey('pinned')
           ? payload['pinned']
           : LocalDb.absentPinnedField,
+      // Todo merge is row-level LWW: on a clean row, a Kanban-aware peer's
+      // newer text edit may carry a present null/stale column_id and move the
+      // placement with it. The dirty guard above is not involved; a future
+      // field-level merge could separate column_id/board_order from the row.
       columnId: payload.containsKey('column_id')
           ? payload['column_id'] as String?
           : LocalDb.absentTodoField,
