@@ -2,11 +2,13 @@
 //
 // Notebook -> PDF.
 //
-// Canvas pages are paginated rasters of exactly what the editor shows — ink
-// drawn by the SAME NotebookInkPainter the canvas uses (so pen styles,
-// fountain taper and the italic nib export pixel-true), text and dump blocks
-// drawn at their canvas positions. Vectorising the strokes separately would
-// inevitably drift from the on-screen renderer; fidelity beats file size here.
+// Canvas pages are exact rasters of what the editor shows. Canvases that fit
+// below the engine ceiling retain the historical one-page layout; only taller
+// canvases paginate. Ink is drawn by the SAME NotebookInkPainter the canvas
+// uses (so pen styles, fountain taper and the italic nib export pixel-true),
+// with text and dump blocks at their canvas positions. Vectorising strokes
+// separately would inevitably drift from the on-screen renderer; fidelity
+// beats file size here.
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
@@ -76,14 +78,23 @@ Future<void> _addCanvasOverviewPage(
   // a block whose bytes fail to decode simply has no entry here and keeps
   // the text placeholder instead of killing the whole export.
   final Map<String, ui.Image> images = await _decodeImages(source.document);
-  // Prefer A-series portrait proportions, but keep the 2x raster comfortably
-  // below Picture.toImage's 8,000-pixel ceiling. Only the last tile is shorter.
-  final double tileHeight = math.min(
-    bounds.width * math.sqrt(2),
-    _kMaxCanvasTileRasterHeight / _kCanvasRasterScale,
-  );
+  final double maxTileHeight =
+      _kMaxCanvasTileRasterHeight / _kCanvasRasterScale;
+  // Preserve the exact pre-pagination layout whenever one bounded raster can
+  // hold it. Taller canvases prefer A-series portrait proportions, while the
+  // floor prevents skinny notes from exploding into dozens of tiny pages.
+  final double tileHeight =
+      bounds.height * _kCanvasRasterScale <= _kMaxCanvasTileRasterHeight
+      ? bounds.height
+      : (bounds.width * math.sqrt(2))
+            .clamp(_kMinCanvasTileLogicalHeight, maxTileHeight)
+            .toDouble();
   final int tileCount = (bounds.height / tileHeight).ceil().clamp(1, 1 << 31);
   try {
+    // Exact shared-painter fidelity requires replaying all strokes and blocks
+    // for every tile: O(tiles * content). The one-page fast path and minimum
+    // tile height keep that cost bounded in practice. Blocks crossing a tile
+    // seam are intentionally clipped and split between the adjacent pages.
     for (int index = 0; index < tileCount; index++) {
       final double offset = index * tileHeight;
       final double height = math.min(tileHeight, bounds.height - offset);
@@ -95,7 +106,7 @@ Future<void> _addCanvasOverviewPage(
         images: images,
       );
       final pw.MemoryImage pageImage = pw.MemoryImage(png);
-      if (tileCount == 1 || index == 0) {
+      if (index == 0) {
         _addTitledCanvasPage(
           pdf,
           source: source,
@@ -127,6 +138,9 @@ Future<void> _addCanvasOverviewPage(
 
 const double _kCanvasRasterScale = 2;
 
+/// Avoids business-card pages for very narrow, very tall canvas content.
+const double _kMinCanvasTileLogicalHeight = 1000;
+
 /// Leaves headroom below Skia's 8,000-pixel raster ceiling.
 const double _kMaxCanvasTileRasterHeight = 7600;
 
@@ -157,16 +171,28 @@ Future<Uint8List> _rasterizeCanvasTile({
   _paintBlocks(canvas, source.document, images);
 
   final ui.Picture picture = recorder.endRecording();
-  final ui.Image image = await picture.toImage(
-    (bounds.width * _kCanvasRasterScale).ceil().clamp(1, 8000),
-    (height * _kCanvasRasterScale).ceil().clamp(1, 8000),
-  );
-  final ByteData? png = await image.toByteData(format: ui.ImageByteFormat.png);
-  image.dispose();
-  if (png == null) {
-    throw StateError('Could not encode the notebook image');
+  try {
+    final ui.Image image = await picture.toImage(
+      // Width is still capped and would crop content wider than 4,000 logical
+      // pixels. The editor is a vertical roll that scales to its content-right
+      // edge, so such a canvas cannot currently be produced in-app.
+      (bounds.width * _kCanvasRasterScale).ceil().clamp(1, 8000),
+      (height * _kCanvasRasterScale).ceil().clamp(1, 8000),
+    );
+    try {
+      final ByteData? png = await image.toByteData(
+        format: ui.ImageByteFormat.png,
+      );
+      if (png == null) {
+        throw StateError('Could not encode the notebook image');
+      }
+      return png.buffer.asUint8List(png.offsetInBytes, png.lengthInBytes);
+    } finally {
+      image.dispose();
+    }
+  } finally {
+    picture.dispose();
   }
-  return png.buffer.asUint8List(png.offsetInBytes, png.lengthInBytes);
 }
 
 void _addTitledCanvasPage(
