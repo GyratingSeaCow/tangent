@@ -26,13 +26,16 @@ typedef AfterSyncHook = Future<String?> Function();
 String afterSyncErrorSuffix(Object error) {
   final String text = switch (error) {
     ApiException(:final String message) => message,
-    final Exception e =>
-      e.toString().replaceFirst(RegExp(r'^\w*Exception:\s*'), ''),
+    final Exception e => e.toString().replaceFirst(
+      RegExp(r'^\w*Exception:\s*'),
+      '',
+    ),
     _ => error.toString(),
   };
   final String firstLine = text.split('\n').first.trim();
-  final String short =
-      firstLine.length > 80 ? '${firstLine.substring(0, 77)}…' : firstLine;
+  final String short = firstLine.length > 80
+      ? '${firstLine.substring(0, 77)}…'
+      : firstLine;
   return ' · Google: ${short.isEmpty ? 'unknown error' : short}';
 }
 
@@ -40,9 +43,8 @@ String afterSyncErrorSuffix(Object error) {
 ///
 /// Pure and separately tested: this is the only thing most syncs ever say, so
 /// a wrong word here is the whole feature as far as the user is concerned.
-/// In particular a no-op sync must not claim success it cannot back up — and
-/// conflicts must be named, because a forked notebook the user never hears
-/// about looks exactly like a bug.
+/// In particular a no-op sync must not claim success it cannot back up, and a
+/// local edit replaced by a newer other-device version must be named plainly.
 String syncMessageFor(SyncReport report) {
   switch (report.outcome) {
     case SyncOutcome.offline:
@@ -53,10 +55,12 @@ String syncMessageFor(SyncReport report) {
       return 'Sync failed: ${report.error ?? 'unknown error'}';
     case SyncOutcome.success:
       if (report.conflicts > 0) {
-        final String copies =
-            report.conflicts == 1 ? 'a copy' : '${report.conflicts} copies';
-        return 'Synced, but $copies were edited on two devices — '
-            'both versions kept';
+        if (report.conflicts == 1) {
+          return 'Synced, but a local edit was replaced by a newer version '
+              'from another device';
+        }
+        return 'Synced, but ${report.conflicts} local edits were replaced by '
+            'newer versions from other devices';
       }
       if (report.pulled == 0 && report.pushed == 0) {
         return 'Already up to date';
@@ -71,11 +75,7 @@ String syncMessageFor(SyncReport report) {
 
 /// An app-bar action that runs a sync and reports what happened.
 class SyncButton extends ConsumerWidget {
-  const SyncButton({
-    required this.engineProvider,
-    this.afterSync,
-    super.key,
-  });
+  const SyncButton({required this.engineProvider, this.afterSync, super.key});
 
   final ProviderListenable<DocumentSyncEngine> engineProvider;
 
@@ -107,8 +107,9 @@ class SyncButton extends ConsumerWidget {
           onPressed: busy
               ? null
               : () async {
-                  final ScaffoldMessengerState messenger =
-                      ScaffoldMessenger.of(context);
+                  final ScaffoldMessengerState messenger = ScaffoldMessenger.of(
+                    context,
+                  );
                   final SyncReport report = await engine.syncNow();
                   String message = syncMessageFor(report);
                   // Ordering is the contract: the hook must see the world
