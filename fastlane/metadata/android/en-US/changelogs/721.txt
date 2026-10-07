@@ -1,0 +1,5 @@
+Notebook sync now keeps the most recently updated version of a notebook instead of creating "Conflict for ..." copies; existing conflict copies stay as ordinary notebooks.
+
+Fixed: long notebooks no longer truncate when exported to PDF.
+
+Fixed: Kanban board drops stick reliably - cards no longer bounce back to the To-Do column after syncing with older devices.

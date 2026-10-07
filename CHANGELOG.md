@@ -5,7 +5,7 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## 1.51.0 — 2026-10-07
 
 ### Changed
 
@@ -13,6 +13,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `updated_at` instead of creating Conflict copies. The losing device's entire
   edit, including ink, is replaced; legacy Conflict copies remain ordinary
   notebooks that can be cleaned up manually.
+
+### Fixed
+
+- Exporting a long notebook to PDF no longer truncates content: pages are
+  paginated correctly across the full notebook.
+- Kanban board drops now stick. Cards migrated onto the board kept a one-shot
+  placement marker that sync echoes from older devices could use to bounce a
+  user-placed card back to the To‑Do column; explicit placement now spends the
+  marker atomically. Failed drop persistence surfaces an error instead of
+  being silently lost, and board columns are exercised up to 500 cards.
 
 ## 1.50.2 — 2026-10-06
 
