@@ -623,8 +623,10 @@ class DocumentSyncEngine extends ChangeNotifier {
       change.entityId,
     );
     if (local != null && local.syncDirty && pendingBoardOrder == null) {
-      // This device has a real unpushed edit. Migration-only placement dirt is
-      // different: accept the canonical body, then restore only its placement.
+      // A marker is the sole license to bypass dirty-local protection. Every
+      // user-authored placement spends it in the same transaction as the
+      // move, so a legacy null/absent column echo can only enter the restore
+      // path for migration-only dirt, never for an explicit board choice.
       return;
     }
     if (change.op == SyncOp.delete) {
@@ -699,6 +701,8 @@ class DocumentSyncEngine extends ChangeNotifier {
         // migration default and the one-shot marker is spent.
         await _db.completeTodoBoardBackfill(change.entityId);
       } else {
+        // Still migration-only: no explicit placement could leave this marker
+        // armed. Re-apply the one-shot default until the server accepts it.
         await _db.restorePendingTodoBoardPlacement(
           change.entityId,
           updatedAt: _stampStrictlyAfter(remoteUpdatedAt),

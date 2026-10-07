@@ -292,12 +292,16 @@ class TodoRepository {
         }
         for (int i = 0; i < lane.length; i++) {
           if (lane[i].columnId == laneId && lane[i].boardOrder == i) continue;
-          await _write(
+          await _writeBoardPlacement(
             lane[i].id,
             TodosCompanion(columnId: Value(laneId), boardOrder: Value(i)),
           );
         }
       }
+      // Even a drop back onto the same slot is an explicit placement. Spend
+      // the migration marker atomically so a legacy null/absent sync echo can
+      // never reinterpret this user's choice as migration-only dirt.
+      await _db.completeTodoBoardBackfill(todoId);
     });
   }
 
@@ -381,7 +385,9 @@ class TodoRepository {
               .get();
       int order = await _nextBoardOrder(destinationId);
       for (final TodoRow card in cards) {
-        await _write(
+        // Choosing a destination in the delete-column sheet is also an
+        // explicit placement, not migration fallback.
+        await _writeBoardPlacement(
           card.id,
           TodosCompanion(
             columnId: Value(destinationId),
@@ -454,6 +460,17 @@ class TodoRepository {
         syncDirty: const Value(true),
       ),
     );
+  }
+
+  /// Persists a user-authored board position and retires any one-shot
+  /// migration marker. Callers wrap multi-row operations in a transaction so
+  /// the placement and marker deletion commit or roll back together.
+  Future<void> _writeBoardPlacement(
+    String id,
+    TodosCompanion changes,
+  ) async {
+    await _write(id, changes);
+    await _db.completeTodoBoardBackfill(id);
   }
 }
 
