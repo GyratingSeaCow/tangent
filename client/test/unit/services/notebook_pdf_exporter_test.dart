@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // The PDF exporter is a pure function from notebook content to bytes; these
-// tests assert on the REAL bytes (magic number, non-trivial size, title in
-// the document) rather than mocking the pdf package away. The colour tests
-// go further: they decode the page's embedded raster (raw RGB behind
-// FlateDecode — the shape `pdf`'s PdfImage always writes) and assert on the
-// PIXELS, because "the shared painter is used" does not by itself prove a
-// coloured mark survives to the exported page.
+// tests assert on the REAL bytes rather than mocking the pdf package away.
+// Geometry tests parse every emitted MediaBox, while colour tests decode each
+// embedded raster (raw RGB behind FlateDecode — the shape `pdf`'s PdfImage
+// writes) and assert on PIXELS. Together they prove that pagination preserves
+// both the page contract and content beyond the engine's raster ceiling.
 import 'dart:convert';
 import 'dart:io' show Directory, File, zlib;
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'dart:ui' show Color;
@@ -45,6 +45,31 @@ class _PageRaster {
   }
 }
 
+class _MediaBox {
+  const _MediaBox(this.width, this.height);
+
+  final double width;
+  final double height;
+}
+
+List<_MediaBox> _mediaBoxesOf(Uint8List pdf) {
+  final String wire = latin1.decode(pdf, allowInvalid: true);
+  return RegExp(r'/MediaBox\s*\[\s*0\s+0\s+([\d.]+)\s+([\d.]+)\s*\]')
+      .allMatches(wire)
+      .map((RegExpMatch match) {
+        return _MediaBox(
+          double.parse(match.group(1)!),
+          double.parse(match.group(2)!),
+        );
+      })
+      .toList(growable: false);
+}
+
+List<double> _canvasContentHeights(List<_MediaBox> boxes) => <double>[
+  for (int index = 0; index < boxes.length; index++)
+    boxes[index].height - 48 - (index == 0 ? 30 : 0),
+];
+
 int _indexOf(Uint8List haystack, List<int> needle, int from) {
   outer:
   for (int i = from; i <= haystack.length - needle.length; i++) {
@@ -69,18 +94,24 @@ int _lastIndexOf(Uint8List haystack, List<int> needle, int before) {
 
 /// Pulls the page image back out of [pdf].
 ///
-/// The exporter embeds exactly one DeviceRGB image (the rasterised page), so
-/// its object is found by its `/DeviceRGB` colour space; `/Width`, `/Height`
-/// and `/Length` come from the same dictionary (delimited by the `<<`
-/// nearest before its `stream` keyword) and the stream payload is
-/// zlib-deflated raw RGB. Decoding it here — rather than trusting a bounds
-/// calculation — is what makes these tests observe the real exported page.
-_PageRaster _pageRasterOf(Uint8List pdf) {
-  final int colourSpace = _indexOf(pdf, ascii.encode('/DeviceRGB'), 0);
+/// Each canvas page embeds one DeviceRGB image, so the page at [index] is found
+/// by its `/DeviceRGB` colour space; `/Width`, `/Height` and `/Length` come from
+/// the same dictionary (delimited by the `<<` nearest before its `stream`
+/// keyword) and the stream payload is zlib-deflated raw RGB. Decoding it here —
+/// rather than trusting a bounds calculation — is what makes these tests
+/// observe the real exported page.
+_PageRaster _pageRasterOf(Uint8List pdf, {int index = 0}) {
+  var from = 0;
+  var colourSpace = -1;
+  for (int current = 0; current <= index; current++) {
+    colourSpace = _indexOf(pdf, ascii.encode('/DeviceRGB'), from);
+    if (colourSpace < 0) break;
+    from = colourSpace + '/DeviceRGB'.length;
+  }
   expect(
     colourSpace,
     greaterThanOrEqualTo(0),
-    reason: 'no DeviceRGB image object in the PDF',
+    reason: 'no DeviceRGB image object at index $index in the PDF',
   );
   final int streamStart = _indexOf(pdf, ascii.encode('stream\n'), colourSpace);
   expect(
@@ -293,6 +324,283 @@ void main() {
       ),
     );
     expect(utf8.decode(bytes.sublist(0, 5)), '%PDF-');
+  });
+
+  test(
+    'a tall canvas has exact observed tile geometry and bottom ink',
+    () async {
+      const double canvasWidth = 700;
+      const double canvasHeight = 5000;
+      const double contentPadding = 20;
+      const double rasterScale = 2;
+      const double maxTileRasterHeight = 7600;
+      const double pagePad = 24;
+      const double titleBand = 30;
+      const double boundsLeft = -contentPadding;
+      const double boundsTop = -contentPadding;
+      const double boundsWidth = canvasWidth + 2 * contentPadding;
+      const double boundsHeight = canvasHeight + 2 * contentPadding;
+
+      final Uint8List bytes = await renderNotebookPdf(
+        const NotebookExportSource(
+          title: 'tall canvas',
+          document: NotebookDocument.empty(),
+          strokes: <InkStroke>[
+            InkStroke(
+              id: 'top-edge',
+              width: 8,
+              colour: InkColor.blue,
+              points: <InkPoint>[
+                InkPoint(x: 0, y: 0),
+                InkPoint(x: canvasWidth, y: 0),
+              ],
+            ),
+            InkStroke(
+              id: 'bottom-edge',
+              width: 8,
+              colour: InkColor.red,
+              points: <InkPoint>[
+                InkPoint(x: 0, y: canvasHeight),
+                InkPoint(x: canvasWidth, y: canvasHeight),
+              ],
+            ),
+          ],
+        ),
+      );
+
+      final String wire = latin1.decode(bytes, allowInvalid: true);
+      final List<_MediaBox> boxes = _mediaBoxesOf(bytes);
+      expect(boxes.length, greaterThan(1));
+      expect(
+        RegExp(r'/Type\s*/Page(?!s)').allMatches(wire),
+        hasLength(boxes.length),
+        reason: 'each observed content tile must become one PDF page',
+      );
+      expect(
+        RegExp(r'/DeviceRGB').allMatches(wire),
+        hasLength(boxes.length),
+        reason: 'every PDF page must retain its separately rasterised tile',
+      );
+
+      final List<double> contentHeights = _canvasContentHeights(boxes);
+      expect(
+        contentHeights.reduce((double a, double b) => a + b),
+        closeTo(boundsHeight, 1),
+        reason: 'observed page content heights must cover the bounds exactly',
+      );
+      expect(
+        contentHeights.first / boundsWidth,
+        closeTo(math.sqrt(2), 0.01),
+        reason: 'this fixture exercises the nominal A-series tile branch',
+      );
+      for (int index = 0; index < boxes.length; index++) {
+        final _MediaBox box = boxes[index];
+        final _PageRaster raster = _pageRasterOf(bytes, index: index);
+        expect(box.width, closeTo(boundsWidth + 2 * pagePad, 0.01));
+        expect(
+          box.height,
+          closeTo(
+            raster.height / rasterScale +
+                2 * pagePad +
+                (index == 0 ? titleBand : 0),
+            0.51,
+          ),
+          reason: 'MediaBox $index must wrap its observed raster without drift',
+        );
+        if (index < boxes.length - 1) {
+          expect(contentHeights[index], closeTo(contentHeights.first, 0.01));
+        }
+        if (index > 0 && index < boxes.length - 1) {
+          // Middle tiles must carry their OWN canvas slice: an offset bug
+          // that re-renders the canvas top (Vera sabotage S5) puts the blue
+          // y=0 stroke at row (0 - boundsTop) * scale = 40 of the duplicate,
+          // while a correct middle tile of this fixture is empty there.
+          _expectPixel(
+            raster.at(
+              ((canvasWidth / 2 - boundsLeft) * rasterScale).round(),
+              40,
+            ),
+            _bgRgb(),
+            reason: 'middle tile $index must not duplicate the canvas top',
+          );
+        }
+      }
+      expect(
+        contentHeights.last,
+        closeTo(boundsHeight - contentHeights.first * (boxes.length - 1), 0.01),
+        reason: 'the last continuation must use only the observed remainder',
+      );
+
+      final int lastIndex = boxes.length - 1;
+      final _PageRaster last = _pageRasterOf(bytes, index: lastIndex);
+      final double lastTileTop =
+          boundsTop +
+          contentHeights
+              .take(lastIndex)
+              .fold<double>(0.0, (double sum, double height) => sum + height);
+      final int bottomX = ((canvasWidth / 2 - boundsLeft) * rasterScale)
+          .round();
+      final int bottomY = ((canvasHeight - lastTileTop) * rasterScale).round();
+      expect(last.height, lessThanOrEqualTo(maxTileRasterHeight));
+      _expectPixel(
+        last.at(bottomX, bottomY),
+        _opaqueRgb(InkColor.red),
+        reason: 'the bottom stroke must survive in the last tile',
+      );
+      _expectPixel(
+        last.at(bottomX, bottomY - 24),
+        _bgRgb(),
+        reason: 'the last tile control pixel must remain background',
+      );
+    },
+  );
+
+  test('a wide canvas honours the tile raster ceiling', () async {
+    // A canvas wider than ceiling/sqrt(2) logical px makes the A-series
+    // nominal tile height (width * sqrt(2)) exceed the raster ceiling; the
+    // exporter must fall back to the capped tile height or its clamped raster
+    // captures only the first 8,000 rows — the exact mechanism behind the
+    // original "only the first page exports" crop. The assertions read
+    // the OBSERVED page geometry out of the produced PDF rather than
+    // re-deriving the tile formula.
+    const double canvasWidth = 2700;
+    const double canvasHeight = 4500;
+    const double contentPadding = 20;
+    const double rasterScale = 2;
+    const double maxTileRasterHeight = 7600;
+    const double pagePad = 24;
+    const double titleBand = 30;
+
+    final Uint8List bytes = await renderNotebookPdf(
+      const NotebookExportSource(
+        title: 'wide canvas',
+        document: NotebookDocument.empty(),
+        strokes: <InkStroke>[
+          InkStroke(
+            id: 'top-edge',
+            width: 8,
+            colour: InkColor.blue,
+            points: <InkPoint>[
+              InkPoint(x: 0, y: 0),
+              InkPoint(x: canvasWidth, y: 0),
+            ],
+          ),
+          InkStroke(
+            id: 'bottom-edge',
+            width: 8,
+            colour: InkColor.red,
+            points: <InkPoint>[
+              InkPoint(x: 0, y: canvasHeight),
+              InkPoint(x: canvasWidth, y: canvasHeight),
+            ],
+          ),
+        ],
+      ),
+    );
+
+    final List<_MediaBox> boxes = _mediaBoxesOf(bytes);
+    expect(boxes, isNotEmpty, reason: 'the PDF must declare page geometry');
+    // Tallest legal page: a capped tile plus padding plus the title band.
+    const double maxPageHeight =
+        maxTileRasterHeight / rasterScale + 2 * pagePad + titleBand;
+    for (final _MediaBox box in boxes) {
+      expect(
+        box.height,
+        lessThanOrEqualTo(maxPageHeight + 1),
+        reason:
+            'no page may exceed the capped tile height — an uncapped '
+            'nominal tile silently overruns the raster ceiling',
+      );
+    }
+    final int pageCount = boxes.length;
+    expect(
+      pageCount,
+      greaterThan(1),
+      reason: 'a 4500-high capped canvas cannot fit one tile',
+    );
+
+    // The content below the first capped tile must still be in the output.
+    const double boundsLeft = -contentPadding;
+    const double boundsTop = -contentPadding;
+    final List<double> contentHeights = _canvasContentHeights(boxes);
+    final double lastTileTop =
+        boundsTop +
+        contentHeights
+            .take(pageCount - 1)
+            .fold<double>(0.0, (double sum, double height) => sum + height);
+    final _PageRaster last = _pageRasterOf(bytes, index: pageCount - 1);
+    final int bottomX = ((canvasWidth / 2 - boundsLeft) * rasterScale).round();
+    final int bottomY = ((canvasHeight - lastTileTop) * rasterScale).round();
+    _expectPixel(
+      last.at(bottomX, bottomY),
+      _opaqueRgb(InkColor.red),
+      reason: 'the bottom stroke must survive past the capped first tile',
+    );
+  });
+
+  test('a 400x1200 canvas below the raster ceiling stays one page', () async {
+    final Uint8List bytes = await renderNotebookPdf(
+      const NotebookExportSource(
+        title: 'phone note',
+        document: NotebookDocument.empty(),
+        strokes: <InkStroke>[
+          InkStroke(
+            id: 'bounds',
+            width: 3,
+            points: <InkPoint>[InkPoint(x: 0, y: 0), InkPoint(x: 360, y: 1160)],
+          ),
+        ],
+      ),
+    );
+
+    final String wire = latin1.decode(bytes, allowInvalid: true);
+    expect(RegExp(r'/Type\s*/Page(?!s)').allMatches(wire), hasLength(1));
+    expect(RegExp(r'/DeviceRGB').allMatches(wire), hasLength(1));
+    final List<_MediaBox> boxes = _mediaBoxesOf(bytes);
+    expect(boxes, hasLength(1));
+    expect(boxes.single.width, closeTo(448, 0.01));
+    expect(boxes.single.height, closeTo(1278, 0.01));
+  });
+
+  test('a skinny 88x5000 canvas uses the logical tile-height floor', () async {
+    final Uint8List bytes = await renderNotebookPdf(
+      const NotebookExportSource(
+        title: 'skinny note',
+        document: NotebookDocument.empty(),
+        strokes: <InkStroke>[
+          InkStroke(
+            id: 'skinny-bounds',
+            width: 3,
+            points: <InkPoint>[InkPoint(x: 0, y: 0), InkPoint(x: 48, y: 4960)],
+          ),
+        ],
+      ),
+    );
+
+    final List<_MediaBox> boxes = _mediaBoxesOf(bytes);
+    final List<double> contentHeights = _canvasContentHeights(boxes);
+    expect(boxes.length, greaterThan(1));
+    expect(
+      boxes.length,
+      lessThan(10),
+      reason: 'the 1,000px floor must avoid the former roughly 90 pages',
+    );
+    for (final _MediaBox box in boxes) {
+      expect(box.width, closeTo(88 + 48, 0.01));
+    }
+    // The last page may be a shorter remainder; every other MediaBox must
+    // contain at least the 1,000px floor plus padding (and page-zero title).
+    for (int index = 0; index < boxes.length - 1; index++) {
+      expect(
+        boxes[index].height,
+        greaterThanOrEqualTo(1000 + 48 + (index == 0 ? 30 : 0) - 0.01),
+        reason: 'every non-last tile must respect the logical-height floor',
+      );
+    }
+    expect(
+      contentHeights.reduce((double a, double b) => a + b),
+      closeTo(5000, 1),
+    );
   });
 
   test('legacy blocks with no position never collide at the origin', () async {
@@ -605,6 +913,106 @@ void main() {
       );
     },
   );
+
+  test('an imported PDF keeps every overview tile and bottom ink', () async {
+    final Directory temp = Directory.systemTemp.createTempSync(
+      'pdf-tall-overview-',
+    );
+    addTearDown(() => temp.deleteSync(recursive: true));
+    final String white = await _solidPngBase64(const Color(0xFFFFFFFF), 2, 2);
+    final _RecordingPdfLoader loader = _RecordingPdfLoader(
+      temp,
+      base64Decode(white),
+    );
+    const double boundsTop = 280;
+    const double boundsHeight = 9040;
+    const double rasterScale = 2;
+    final Uint8List bytes = await renderNotebookPdf(
+      const NotebookExportSource(
+        title: 'tall mixed import',
+        document: NotebookDocument(<NotebookBlock>[
+          NotebookPdfPageBlock(
+            id: 'pdf-1',
+            documentId: 'tall-mixed-doc',
+            pageNumber: 1,
+            pageCount: 1,
+            data: 'cGRm',
+            x: 0,
+            y: 0,
+            width: 200,
+            height: 200,
+          ),
+        ]),
+        strokes: <InkStroke>[
+          InkStroke(
+            id: 'overview-top',
+            width: 8,
+            colour: InkColor.blue,
+            points: <InkPoint>[
+              InkPoint(x: 0, y: 300),
+              InkPoint(x: 310, y: 300),
+            ],
+          ),
+          InkStroke(
+            id: 'overview-bottom',
+            width: 8,
+            colour: InkColor.red,
+            points: <InkPoint>[
+              InkPoint(x: 0, y: 9300),
+              InkPoint(x: 310, y: 9300),
+            ],
+          ),
+        ],
+      ),
+      pdfPageLoader: loader,
+    );
+
+    final List<_MediaBox> boxes = _mediaBoxesOf(bytes);
+    final int overviewCount = boxes
+        .where((_MediaBox box) => (box.width - 398).abs() < 0.01)
+        .length;
+    final String wire = latin1.decode(bytes, allowInvalid: true);
+    expect(loader.pages, <int>[1]);
+    expect(overviewCount, greaterThan(1));
+    expect(boxes, hasLength(overviewCount + 1));
+    expect(boxes.last.width, closeTo(200, 0.01));
+    expect(boxes.last.height, closeTo(200, 0.01));
+    expect(
+      RegExp(r'/DeviceRGB').allMatches(wire),
+      hasLength(overviewCount + 1),
+      reason: 'every overview tile plus the imported page needs one raster',
+    );
+
+    final List<double> contentHeights = _canvasContentHeights(
+      boxes.take(overviewCount).toList(growable: false),
+    );
+    expect(
+      contentHeights.reduce((double a, double b) => a + b),
+      closeTo(boundsHeight, 1),
+    );
+    final int lastOverviewIndex = overviewCount - 1;
+    final double lastTileTop =
+        boundsTop +
+        contentHeights
+            .take(lastOverviewIndex)
+            .fold<double>(0.0, (double sum, double height) => sum + height);
+    final _PageRaster lastOverview = _pageRasterOf(
+      bytes,
+      index: lastOverviewIndex,
+    );
+    final int bottomX = ((155 + 20) * rasterScale).round();
+    final int bottomY = ((9300 - lastTileTop) * rasterScale).round();
+    _expectPixel(
+      lastOverview.at(bottomX, bottomY),
+      _opaqueRgb(InkColor.red),
+      reason: 'ink beyond the raster ceiling must reach the last overview',
+    );
+    _expectPixel(
+      lastOverview.at(bottomX, bottomY - 24),
+      _bgRgb(),
+      reason: 'the nearby control pixel must remain background',
+    );
+  });
 
   test(
     '100 imported pages use the real disk loader and retain JPEG, not raw RGB',
