@@ -33,7 +33,7 @@ dependencies:
   permission_handler: ^11.3.1
   shared_preferences: ^2.5.3
   workmanager: ^0.10.10
-  device_info_plus: ^11.3.0
+  device_info_plus: ^12.4.0
   pdf: ^3.11.1
   image: ^4.5.4
   share_plus: ^10.1.2
