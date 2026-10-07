@@ -147,7 +147,9 @@ void main() {
   test(
     'notebook verifier sync authenticates clear and carries tombstone',
     () async {
-      await db.into(db.notebooks).insert(
+      await db
+          .into(db.notebooks)
+          .insert(
             NotebooksCompanion.insert(
               id: 'protected-local',
               title: 'Private',
@@ -225,15 +227,13 @@ void main() {
 
       NotebookRow local = await (db.select(
         db.notebooks,
-      )..where((row) => row.id.equals('protected-local')))
-          .getSingle();
+      )..where((row) => row.id.equals('protected-local'))).getSingle();
       expect(local.passwordHash, 'hash-local');
       expect(local.passwordSalt, 'salt-local');
       expect(local.passwordIterations, 210000);
       final NotebookRow remote = await (db.select(
         db.notebooks,
-      )..where((row) => row.id.equals('protected-remote')))
-          .getSingle();
+      )..where((row) => row.id.equals('protected-remote'))).getSingle();
       expect(remote.passwordHash, 'hash-remote');
       expect(remote.passwordSalt, 'salt-remote');
       expect(remote.passwordIterations, 220000);
@@ -266,8 +266,7 @@ void main() {
       await engine.syncNow();
       local = await (db.select(
         db.notebooks,
-      )..where((row) => row.id.equals('protected-local')))
-          .getSingle();
+      )..where((row) => row.id.equals('protected-local'))).getSingle();
       expect(local.passwordHash, 'hash-local');
       expect(local.passwordSalt, 'salt-local');
       expect(local.passwordIterations, 210000);
@@ -301,8 +300,7 @@ void main() {
       await engine.syncNow();
       local = await (db.select(
         db.notebooks,
-      )..where((row) => row.id.equals('protected-local')))
-          .getSingle();
+      )..where((row) => row.id.equals('protected-local'))).getSingle();
       expect(local.passwordHash, isNull);
       expect(local.passwordSalt, isNull);
       expect(local.passwordIterations, isNull);
@@ -312,8 +310,7 @@ void main() {
       // server and every other current peer clear their held verifier.
       await (db.update(
         db.notebooks,
-      )..where((row) => row.id.equals('protected-local')))
-          .write(
+      )..where((row) => row.id.equals('protected-local'))).write(
         const NotebooksCompanion(
           passwordHash: Value<String?>(null),
           passwordSalt: Value<String?>(null),
@@ -332,10 +329,10 @@ void main() {
           ),
         ];
       await engine.syncNow();
-      final Map<String, dynamic> unprotectedPush =
-          client.pushedChanges!.singleWhere(
-        (Map<String, dynamic> row) => row['entity_id'] == 'protected-local',
-      );
+      final Map<String, dynamic> unprotectedPush = client.pushedChanges!
+          .singleWhere(
+            (Map<String, dynamic> row) => row['entity_id'] == 'protected-local',
+          );
       expect(unprotectedPush['payload']['password_hash'], isNull);
       expect(unprotectedPush['payload']['password_salt'], isNull);
       expect(unprotectedPush['payload']['password_iterations'], isNull);
@@ -345,8 +342,7 @@ void main() {
       // remote clear; the new bounded tuple is sent in full.
       await (db.update(
         db.notebooks,
-      )..where((row) => row.id.equals('protected-local')))
-          .write(
+      )..where((row) => row.id.equals('protected-local'))).write(
         const NotebooksCompanion(
           passwordHash: Value<String?>('hash-relocked'),
           passwordSalt: Value<String?>('salt-relocked'),
@@ -363,10 +359,10 @@ void main() {
         ),
       ];
       await engine.syncNow();
-      final Map<String, dynamic> relockedPush =
-          client.pushedChanges!.singleWhere(
-        (Map<String, dynamic> row) => row['entity_id'] == 'protected-local',
-      );
+      final Map<String, dynamic> relockedPush = client.pushedChanges!
+          .singleWhere(
+            (Map<String, dynamic> row) => row['entity_id'] == 'protected-local',
+          );
       expect(relockedPush['payload']['password_hash'], 'hash-relocked');
       expect(relockedPush['payload']['password_salt'], 'salt-relocked');
       expect(relockedPush['payload']['password_iterations'], 230000);
@@ -449,75 +445,200 @@ void main() {
     },
   );
 
-  test('protected conflict fork stays protected and clean', () async {
-    await db.into(db.notebooks).insert(
-          NotebooksCompanion.insert(
-            id: 'fork-source',
-            title: 'Private',
-            createdAt: 1,
-            updatedAt: 5,
-            docJson: '{"blocks":[]}',
-            inkJson: '{"strokes":[]}',
-            passwordHash: const Value<String?>('hash-old'),
-            passwordSalt: const Value<String?>('salt-old'),
-            passwordIterations: const Value<int?>(210000),
-            syncDirty: const Value<bool>(true),
-          ),
-        );
-    client.pullPages = <SyncPullPage>[
-      const SyncPullPage(
-        changes: <RemoteChange>[
-          RemoteChange(
-            entityType: 'notebook',
-            entityId: 'fork-source',
-            op: SyncOp.upsert,
-            payload: <String, dynamic>{
-              'title': 'Private',
-              'created_at': 1,
-              'updated_at': 9,
-              'doc': '{"blocks":[{"kind":"text","text":"SECRET CONTENT"}]}',
-              'ink': '{"strokes":[]}',
-              'password_hash': 'hash-rotated',
-              'password_salt': 'salt-rotated',
-              'password_iterations': 210000,
-              'password_hash_prev': 'hash-old',
-            },
-            seq: 7,
-            deviceId: 'peer-device',
-          ),
-        ],
-        headSeq: 7,
-        hasMore: false,
-      ),
-    ];
+  test(
+    'newer remote notebook replaces dirty local row without a conflict copy',
+    () async {
+      await db
+          .into(db.notebooks)
+          .insert(
+            NotebooksCompanion.insert(
+              id: 'remote-newer',
+              title: 'Local private',
+              createdAt: 1,
+              updatedAt: 5,
+              docJson: '{"blocks":[{"text":"LOCAL CONTENT"}]}',
+              inkJson: '{"strokes":["local"]}',
+              passwordHash: const Value<String?>('hash-old'),
+              passwordSalt: const Value<String?>('salt-old'),
+              passwordIterations: const Value<int?>(210000),
+              syncDirty: const Value<bool>(true),
+              syncedSeq: const Value<int>(3),
+            ),
+          );
+      client.pullPages = <SyncPullPage>[
+        const SyncPullPage(
+          changes: <RemoteChange>[
+            RemoteChange(
+              entityType: 'notebook',
+              entityId: 'remote-newer',
+              op: SyncOp.upsert,
+              payload: <String, dynamic>{
+                'title': 'Remote private',
+                'created_at': 1,
+                'updated_at': 9,
+                'doc': '{"blocks":[{"kind":"text","text":"REMOTE CONTENT"}]}',
+                'ink': '{"strokes":["remote"]}',
+                'password_hash': 'hash-rotated',
+                'password_salt': 'salt-rotated',
+                'password_iterations': 210000,
+                'password_hash_prev': 'hash-old',
+              },
+              seq: 7,
+              deviceId: 'peer-device',
+            ),
+          ],
+          headSeq: 7,
+          hasMore: false,
+        ),
+      ];
+      final DocumentSyncEngine engine = build(label: () async => 'test');
 
-    final SyncReport report =
-        await build(label: () async => 'test').syncNow();
+      final SyncReport report = await engine.syncNow();
 
-    final NotebookRow fork =
-        await db.getNotebookRow('fork-source-conflict-7') as NotebookRow;
-    expect(fork.docJson, contains('SECRET CONTENT'));
-    expect(fork.passwordHash, 'hash-rotated');
-    expect(fork.passwordSalt, 'salt-rotated');
-    expect(fork.passwordIterations, 210000);
-    expect(fork.passwordHashPrev, 'hash-old');
-    expect(
-      fork.syncDirty,
-      isFalse,
-      reason:
-          'a protected conflict copy must not be pushed into server indexes',
-    );
-    expect(
-      (await db.notebooksNeedingPush()).map((NotebookRow row) => row.id),
-      isNot(contains('fork-source-conflict-7')),
-    );
-    expect(report.conflicts, 1);
-  });
+      final NotebookRow winner =
+          await db.getNotebookRow('remote-newer') as NotebookRow;
+      expect(winner.title, 'Remote private');
+      expect(winner.docJson, contains('REMOTE CONTENT'));
+      expect(winner.inkJson, '{"strokes":["remote"]}');
+      expect(winner.updatedAt, 9);
+      expect(winner.syncedSeq, 7);
+      expect(winner.syncDirty, isFalse);
+      expect(winner.passwordHash, 'hash-rotated');
+      expect(winner.passwordSalt, 'salt-rotated');
+      expect(winner.passwordIterations, 210000);
+      expect(winner.passwordHashPrev, 'hash-old');
+      final List<NotebookRow> allRows = await db.select(db.notebooks).get();
+      expect(allRows, hasLength(1));
+      expect(
+        allRows.map((NotebookRow row) => row.id),
+        everyElement(isNot(contains('-conflict-'))),
+      );
+      expect(await db.notebooksNeedingPush(), isEmpty);
+      expect(report.conflicts, 1);
+      expect(engine.lastConflicts, 1);
+    },
+  );
+
+  test(
+    'newer dirty local notebook stays byte-identical with no new row',
+    () async {
+      await db
+          .into(db.notebooks)
+          .insert(
+            NotebooksCompanion.insert(
+              id: 'local-newer',
+              title: 'Local winner',
+              createdAt: 1,
+              updatedAt: 9,
+              docJson: '{"blocks":[{"text":"LOCAL BYTES"}]}',
+              inkJson: '{"strokes":["local-bytes"]}',
+              syncDirty: const Value<bool>(true),
+              syncedSeq: const Value<int>(3),
+            ),
+          );
+      final String before = jsonEncode(
+        (await db.getNotebookRow('local-newer') as NotebookRow).toJson(),
+      );
+      client.pullPages = <SyncPullPage>[
+        const SyncPullPage(
+          changes: <RemoteChange>[
+            RemoteChange(
+              entityType: 'notebook',
+              entityId: 'local-newer',
+              op: SyncOp.upsert,
+              payload: <String, dynamic>{
+                'title': 'Older remote',
+                'created_at': 1,
+                'updated_at': 5,
+                'doc': '{"blocks":[{"text":"REMOTE BYTES"}]}',
+                'ink': '{"strokes":["remote-bytes"]}',
+              },
+              seq: 7,
+              deviceId: 'peer-device',
+            ),
+          ],
+          headSeq: 7,
+          hasMore: false,
+        ),
+      ];
+
+      final SyncReport report = await build(label: () async => 'test')
+          .syncNow();
+
+      final NotebookRow winner =
+          await db.getNotebookRow('local-newer') as NotebookRow;
+      expect(jsonEncode(winner.toJson()), before);
+      expect(winner.syncDirty, isTrue);
+      final List<NotebookRow> allRows = await db.select(db.notebooks).get();
+      expect(allRows, hasLength(1));
+      expect(allRows.single.id, 'local-newer');
+      expect(report.conflicts, 0);
+    },
+  );
+
+  test(
+    'equal timestamp keeps dirty local notebook and creates no row',
+    () async {
+      await db
+          .into(db.notebooks)
+          .insert(
+            NotebooksCompanion.insert(
+              id: 'equal-write',
+              title: 'Local equal',
+              createdAt: 1,
+              updatedAt: 9,
+              docJson: '{"blocks":[{"text":"LOCAL EQUAL"}]}',
+              inkJson: '{"strokes":["local-equal"]}',
+              syncDirty: const Value<bool>(true),
+              syncedSeq: const Value<int>(3),
+            ),
+          );
+      final String before = jsonEncode(
+        (await db.getNotebookRow('equal-write') as NotebookRow).toJson(),
+      );
+      client.pullPages = <SyncPullPage>[
+        const SyncPullPage(
+          changes: <RemoteChange>[
+            RemoteChange(
+              entityType: 'notebook',
+              entityId: 'equal-write',
+              op: SyncOp.upsert,
+              payload: <String, dynamic>{
+                'title': 'Remote equal',
+                'created_at': 1,
+                'updated_at': 9,
+                'doc': '{"blocks":[{"text":"REMOTE EQUAL"}]}',
+                'ink': '{"strokes":["remote-equal"]}',
+              },
+              seq: 7,
+              deviceId: 'peer-device',
+            ),
+          ],
+          headSeq: 7,
+          hasMore: false,
+        ),
+      ];
+
+      final SyncReport report = await build(label: () async => 'test')
+          .syncNow();
+
+      final NotebookRow winner =
+          await db.getNotebookRow('equal-write') as NotebookRow;
+      expect(jsonEncode(winner.toJson()), before);
+      expect(winner.syncDirty, isTrue);
+      final List<NotebookRow> allRows = await db.select(db.notebooks).get();
+      expect(allRows, hasLength(1));
+      expect(allRows.single.id, 'equal-write');
+      expect(report.conflicts, 0);
+    },
+  );
 
   test(
     'malformed verifier rejection surfaces error, rebases, and retries once',
     () async {
-      await db.into(db.notebooks).insert(
+      await db
+          .into(db.notebooks)
+          .insert(
             NotebooksCompanion.insert(
               id: 'stale-after-clear',
               title: 'Dirty local edit',
@@ -584,7 +705,9 @@ void main() {
   test(
     'malformed verifier is skipped and pull checkpoint still advances',
     () async {
-      await db.into(db.notebooks).insert(
+      await db
+          .into(db.notebooks)
+          .insert(
             NotebooksCompanion.insert(
               id: 'hostile-password-metadata',
               title: 'Held private',
@@ -624,9 +747,8 @@ void main() {
         ),
       ];
 
-      final SyncReport report = await build(
-        label: () async => 'test',
-      ).syncNow();
+      final SyncReport report = await build(label: () async => 'test')
+          .syncNow();
 
       expect(report.outcome, SyncOutcome.success);
       final NotebookRow row = (await db.getNotebookRow(
@@ -645,7 +767,9 @@ void main() {
       'a local folder pushes (before its notebooks) and marks synced',
       () async {
         final String folderId = await db.createFolder(name: 'Field Notes');
-        await db.into(db.notebooks).insert(
+        await db
+            .into(db.notebooks)
+            .insert(
               NotebooksCompanion.insert(
                 id: 'nb-1',
                 title: 'Filed',
@@ -726,8 +850,7 @@ void main() {
 
       final Folder? arrived = await (db.select(
         db.folders,
-      )..where((t) => t.id.equals('folder-remote')))
-          .getSingleOrNull();
+      )..where((t) => t.id.equals('folder-remote'))).getSingleOrNull();
       expect(arrived, isNotNull);
       expect(arrived!.name, 'From the tablet');
       expect(
@@ -737,7 +860,9 @@ void main() {
       );
 
       // Now its deletion arrives. Contents must unfile, not vanish.
-      await db.into(db.notebooks).insert(
+      await db
+          .into(db.notebooks)
+          .insert(
             NotebooksCompanion.insert(
               id: 'nb-filed',
               title: 'Inside',
@@ -770,19 +895,18 @@ void main() {
       expect(
         await (db.select(
           db.folders,
-        )..where((t) => t.id.equals('folder-remote')))
-            .getSingleOrNull(),
+        )..where((t) => t.id.equals('folder-remote'))).getSingleOrNull(),
         isNull,
       );
       final NotebookRow inside = await (db.select(
         db.notebooks,
-      )..where((t) => t.id.equals('nb-filed')))
-          .getSingle();
+      )..where((t) => t.id.equals('nb-filed'))).getSingle();
       expect(inside.folderId, isNull, reason: 'unfiled, never deleted');
       expect(
         inside.syncDirty,
         isFalse,
-        reason: 'the deleting peer already pushed the unfilings — '
+        reason:
+            'the deleting peer already pushed the unfilings — '
             're-pushing ours would echo',
       );
     });
@@ -817,8 +941,7 @@ void main() {
         await engine.syncNow();
         NotebookRow row = await (db.select(
           db.notebooks,
-        )..where((t) => t.id.equals('nb-x')))
-            .getSingle();
+        )..where((t) => t.id.equals('nb-x'))).getSingle();
         expect(row.folderId, 'folder-abc');
 
         // An older peer edits the same notebook: payload has NO folder_id key.
@@ -848,8 +971,7 @@ void main() {
         await engine.syncNow();
         row = await (db.select(
           db.notebooks,
-        )..where((t) => t.id.equals('nb-x')))
-            .getSingle();
+        )..where((t) => t.id.equals('nb-x'))).getSingle();
         expect(row.title, 'Edited on an old build');
         expect(
           row.folderId,
@@ -875,7 +997,9 @@ void main() {
         seq: 1,
       );
       await db.setDumpPinned('dump-pin', true, now: DateTime.utc(2026, 1, 2));
-      await db.into(db.notebooks).insert(
+      await db
+          .into(db.notebooks)
+          .insert(
             NotebooksCompanion.insert(
               id: 'notebook-pin',
               title: 'Notebook',
@@ -886,7 +1010,9 @@ void main() {
               pinned: const Value<bool?>(true),
             ),
           );
-      await db.into(db.todos).insert(
+      await db
+          .into(db.todos)
+          .insert(
             TodosCompanion.insert(
               id: 'todo-pin',
               body: 'Todo',
@@ -984,9 +1110,8 @@ void main() {
       expect((await db.getDumpRow('dump-pin'))!.pinned, isFalse);
       expect(
         (await (db.select(
-          db.notebooks,
-        )..where((table) => table.id.equals('notebook-pin')))
-                .getSingle())
+              db.notebooks,
+            )..where((table) => table.id.equals('notebook-pin'))).getSingle())
             .pinned,
         isFalse,
       );
@@ -1001,15 +1126,14 @@ void main() {
       required String notebookId,
       required List<Map<String, dynamic>> rows,
       int seq = 20,
-    }) =>
-        RemoteChange(
-          entityType: 'ink_index',
-          entityId: notebookId,
-          op: SyncOp.upsert,
-          payload: <String, dynamic>{'notebook_id': notebookId, 'rows': rows},
-          seq: seq,
-          deviceId: 'server',
-        );
+    }) => RemoteChange(
+      entityType: 'ink_index',
+      entityId: notebookId,
+      op: SyncOp.upsert,
+      payload: <String, dynamic>{'notebook_id': notebookId, 'rows': rows},
+      seq: seq,
+      deviceId: 'server',
+    );
 
     Map<String, dynamic> wordRow({
       required String id,
@@ -1017,21 +1141,19 @@ void main() {
       required String text,
       List<num> bbox = const <num>[0, 0, 10, 10],
       List<String> strokeIds = const <String>['s1'],
-    }) =>
-        <String, dynamic>{
-          'id': id,
-          'line_id': lineId,
-          'word_text': text,
-          'bbox': bbox,
-          'stroke_ids': strokeIds,
-          'model': 'trocr-test',
-          'indexed_at': 1000,
-        };
+    }) => <String, dynamic>{
+      'id': id,
+      'line_id': lineId,
+      'word_text': text,
+      'bbox': bbox,
+      'stroke_ids': strokeIds,
+      'model': 'trocr-test',
+      'indexed_at': 1000,
+    };
 
     Future<List<InkIndexEntry>> rowsFor(String notebookId) => (db.select(
-          db.inkIndexEntries,
-        )..where((t) => t.notebookId.equals(notebookId)))
-            .get();
+      db.inkIndexEntries,
+    )..where((t) => t.notebookId.equals(notebookId))).get();
 
     test(
       'a pull replaces exactly that notebook\'s rows; others untouched',
@@ -1103,83 +1225,78 @@ void main() {
       },
     );
 
-    test(
-      'content-derived ids are notebook-scoped and duplicate payload rows upsert',
-      () async {
-        const String sharedId =
-            '2a52a65d3b30a84757e67b01126a85e7d2f91a8b:000';
-        await db.applyRemoteInkIndex(
-          notebookId: 'original',
-          rows: <InkIndexEntriesCompanion>[
-            InkIndexEntriesCompanion.insert(
-              id: sharedId,
-              notebookId: 'original',
-              lineId: 'line-original',
-              wordText: 'original',
-              wordTextLower: 'original',
-              bboxJson: '[0,0,10,10]',
-              strokeIdsJson: '["stroke-original"]',
-              model: 'trocr-test',
-              indexedAt: 1000,
-            ),
-            InkIndexEntriesCompanion.insert(
-              id: 'original-only:001',
-              notebookId: 'original',
-              lineId: 'line-original',
-              wordText: 'untouched',
-              wordTextLower: 'untouched',
-              bboxJson: '[11,0,20,10]',
-              strokeIdsJson: '["stroke-untouched"]',
-              model: 'trocr-test',
-              indexedAt: 1000,
+    test('content-derived ids are notebook-scoped and duplicate payload rows upsert', () async {
+      const String sharedId = '2a52a65d3b30a84757e67b01126a85e7d2f91a8b:000';
+      await db.applyRemoteInkIndex(
+        notebookId: 'original',
+        rows: <InkIndexEntriesCompanion>[
+          InkIndexEntriesCompanion.insert(
+            id: sharedId,
+            notebookId: 'original',
+            lineId: 'line-original',
+            wordText: 'original',
+            wordTextLower: 'original',
+            bboxJson: '[0,0,10,10]',
+            strokeIdsJson: '["stroke-original"]',
+            model: 'trocr-test',
+            indexedAt: 1000,
+          ),
+          InkIndexEntriesCompanion.insert(
+            id: 'original-only:001',
+            notebookId: 'original',
+            lineId: 'line-original',
+            wordText: 'untouched',
+            wordTextLower: 'untouched',
+            bboxJson: '[11,0,20,10]',
+            strokeIdsJson: '["stroke-untouched"]',
+            model: 'trocr-test',
+            indexedAt: 1000,
+          ),
+        ],
+      );
+      client.pullPages = <SyncPullPage>[
+        SyncPullPage(
+          changes: <RemoteChange>[
+            inkIndexChange(
+              notebookId: 'e08adc65-2257-4a49-8d06-10b5bbdf18ff-conflict-1924',
+              rows: <Map<String, dynamic>>[
+                wordRow(
+                  id: sharedId,
+                  lineId: 'line-conflict',
+                  text: 'first duplicate',
+                ),
+                wordRow(
+                  id: sharedId,
+                  lineId: 'line-conflict',
+                  text: 'last duplicate wins',
+                ),
+              ],
+              seq: 1924,
             ),
           ],
-        );
-        client.pullPages = <SyncPullPage>[
-          SyncPullPage(
-            changes: <RemoteChange>[
-              inkIndexChange(
-                notebookId:
-                    'e08adc65-2257-4a49-8d06-10b5bbdf18ff-conflict-1924',
-                rows: <Map<String, dynamic>>[
-                  wordRow(
-                    id: sharedId,
-                    lineId: 'line-conflict',
-                    text: 'first duplicate',
-                  ),
-                  wordRow(
-                    id: sharedId,
-                    lineId: 'line-conflict',
-                    text: 'last duplicate wins',
-                  ),
-                ],
-                seq: 1924,
-              ),
-            ],
-            headSeq: 1924,
-            hasMore: false,
-          ),
-        ];
-        final DocumentSyncEngine engine = build(label: () async => 'test');
+          headSeq: 1924,
+          hasMore: false,
+        ),
+      ];
+      final DocumentSyncEngine engine = build(label: () async => 'test');
 
-        final SyncReport report = await engine.syncNow();
+      final SyncReport report = await engine.syncNow();
 
-        expect(report.outcome, SyncOutcome.success);
-        final List<InkIndexEntry> originalRows = await rowsFor('original');
-        expect(originalRows, hasLength(2));
-        expect(
-          originalRows.map((InkIndexEntry row) => row.wordText),
-          containsAll(<String>['original', 'untouched']),
-        );
-        final List<InkIndexEntry> conflictRows = await rowsFor(
-          'e08adc65-2257-4a49-8d06-10b5bbdf18ff-conflict-1924',
-        );
-        expect(conflictRows, hasLength(1));
-        expect(conflictRows.single.id, sharedId);
-        expect(conflictRows.single.wordText, 'last duplicate wins');
-        expect((await db.syncState(newDeviceId: 'unused')).lastPulledSeq, 1924);
-      },
-    );
+      expect(report.outcome, SyncOutcome.success);
+      final List<InkIndexEntry> originalRows = await rowsFor('original');
+      expect(originalRows, hasLength(2));
+      expect(
+        originalRows.map((InkIndexEntry row) => row.wordText),
+        containsAll(<String>['original', 'untouched']),
+      );
+      final List<InkIndexEntry> conflictRows = await rowsFor(
+        'e08adc65-2257-4a49-8d06-10b5bbdf18ff-conflict-1924',
+      );
+      expect(conflictRows, hasLength(1));
+      expect(conflictRows.single.id, sharedId);
+      expect(conflictRows.single.wordText, 'last duplicate wins');
+      expect((await db.syncState(newDeviceId: 'unused')).lastPulledSeq, 1924);
+    });
 
     test(
       'an index for a notebook this client has never seen inserts cleanly',
@@ -1240,7 +1357,8 @@ void main() {
         expect(
           row.wordTextLower,
           'brake',
-          reason: 'the search key is derived client-side, not taken off the '
+          reason:
+              'the search key is derived client-side, not taken off the '
               'wire — a case-sensitive column would hide every capitalized '
               'word from search',
         );

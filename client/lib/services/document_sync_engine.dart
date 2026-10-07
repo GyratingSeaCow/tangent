@@ -41,6 +41,10 @@ class SyncReport {
   final SyncOutcome outcome;
   final int pulled;
   final int pushed;
+
+  /// Dirty local notebook edits replaced by newer other-device versions.
+  ///
+  /// The field name is retained for API compatibility with existing UI code.
   final int conflicts;
   final String? error;
 
@@ -49,15 +53,13 @@ class SyncReport {
 
 /// Pulls remote changes, merges them, then pushes local ones.
 ///
-/// Pull BEFORE push, always. Pushing first would send a local edit that the
-/// merge step might have forked, so the server would record a change the user
-/// never actually resolved.
+/// Pull BEFORE push, always. Pushing first could publish a local edit that a
+/// newer other-device version should replace during the merge step.
 /// A summary this device requested has synced down onto [dumpId].
 /// [requestedAt] is the row's `summary_requested_at` at the moment the
 /// answer landed (unix seconds) — always non-null here, because a summary
 /// nobody on this device asked for is never reported. Must never throw.
-typedef SummaryLandedHook =
-    void Function({
+typedef SummaryLandedHook = void Function({
   required String dumpId,
   required String title,
   required String? template,
@@ -72,12 +74,12 @@ class DocumentSyncEngine extends ChangeNotifier {
     required Future<String> Function() deviceLabel,
     required String newDeviceId,
     SummaryLandedHook? onSummaryLanded,
-  })  : _dbFactory = db,
-        _client = client,
-        _connectivity = connectivity,
-        _deviceLabel = deviceLabel,
-        _newDeviceId = newDeviceId,
-        _onSummaryLanded = onSummaryLanded;
+  }) : _dbFactory = db,
+       _client = client,
+       _connectivity = connectivity,
+       _deviceLabel = deviceLabel,
+       _newDeviceId = newDeviceId,
+       _onSummaryLanded = onSummaryLanded;
 
   /// Spec 2026-09-28 N4: told when a pull lands a summary THIS device asked
   /// for. Null when nobody listens (tests, background isolate).
@@ -113,8 +115,8 @@ class DocumentSyncEngine extends ChangeNotifier {
   DateTime? get lastSync => _lastSync;
   String? get lastError => _lastError;
 
-  /// Conflicts from the most recent sync, so the UI can say so plainly rather
-  /// than leaving forked notebooks to be discovered by accident.
+  /// Local notebook edits replaced by newer other-device versions during the
+  /// most recent sync, retained under this compatibility name for the UI.
   int get lastConflicts => _lastConflicts;
 
   @override
@@ -181,8 +183,8 @@ class DocumentSyncEngine extends ChangeNotifier {
           sinceSeq: since,
         );
         for (final RemoteChange change in page.changes) {
-          final bool forked = await _applyRemote(change);
-          if (forked) conflicts++;
+          final bool localEditReplaced = await _applyRemote(change);
+          if (localEditReplaced) conflicts++;
           pulled++;
         }
         // Advance only after the whole page landed: a crash mid-page must
@@ -225,7 +227,8 @@ class DocumentSyncEngine extends ChangeNotifier {
     }
   }
 
-  /// Applies one incoming change. Returns true when it forked a conflict.
+  /// Applies one incoming change. Returns true when a newer notebook version
+  /// from another device replaced a dirty local edit.
   Future<bool> _applyRemote(RemoteChange change) async {
     if (change.entityType == 'ink_index') {
       await _applyRemoteInkIndex(change);
@@ -309,22 +312,7 @@ class DocumentSyncEngine extends ChangeNotifier {
         return false;
       case MergeDecision.accept:
         await _writeRemote(change.entityId, payload, change.seq);
-        return false;
-      case MergeDecision.fork:
-        // Both sides edited. The incoming copy lands beside the local one
-        // under a conflict name; nothing is overwritten and nothing is lost.
-        await _writeRemote(
-          '${change.entityId}-conflict-${change.seq}',
-          <String, dynamic>{
-            ...payload,
-            'title': forkedTitle(
-              payload['title'] as String? ?? 'Notebook',
-              change.deviceId ?? 'another device',
-            ),
-          },
-          change.seq,
-        );
-        return true;
+        return local?.syncDirty ?? false;
     }
   }
 
@@ -368,7 +356,8 @@ class DocumentSyncEngine extends ChangeNotifier {
       tagId: tagId,
       targetType: targetType,
       targetId: targetId,
-      createdAt: (p['created_at'] as num?)?.toInt() ??
+      createdAt:
+          (p['created_at'] as num?)?.toInt() ??
           DateTime.now().millisecondsSinceEpoch,
       seq: change.seq,
     );
@@ -376,10 +365,9 @@ class DocumentSyncEngine extends ChangeNotifier {
 
   /// Applies one incoming recording change.
   ///
-  /// Recordings do NOT fork on conflict the way notebooks do. A notebook
-  /// carries handwriting that cannot be merged, so a fork protects it; a
-  /// recording's synced fields are short metadata (title, transcript, notes)
-  /// and the audio itself never travels this path. Forking here would litter
+  /// Recordings keep their existing merge policy. A recording's synced fields
+  /// are short metadata (title, transcript, notes), and the audio itself never
+  /// travels this path. Duplicating rows here would litter
   /// the list with duplicate entries for a renamed recording. A local edit
   /// still pending push therefore WINS and stays dirty, which is the same
   /// "never silently discard the user's edit" rule expressed for flat data.
@@ -554,8 +542,7 @@ class DocumentSyncEngine extends ChangeNotifier {
 
   /// Applies one incoming todo change.
   ///
-  /// Todos follow the DUMP rules, not the notebook ones: the synced fields
-  /// are short flat data, so a conflict never forks. A local edit still
+  /// Todos keep their existing flat-data merge rule. A local edit still
   /// pending push WINS and stays dirty (own-echo protection — our push
   /// carries it up and the peer converges next cycle); otherwise newer
   /// `updated_at` wins, compared as ISO instant strings, which collate
@@ -621,12 +608,12 @@ class DocumentSyncEngine extends ChangeNotifier {
 
   /// sqlite sends 0/1, a JSON-native peer may send true/false.
   static bool _truthy(Object? v, bool held) => switch (v) {
-        null => held,
-        bool b => b,
-        num n => n != 0,
-        String s => s == '1' || s == 'true',
-        _ => held,
-      };
+    null => held,
+    bool b => b,
+    num n => n != 0,
+    String s => s == '1' || s == 'true',
+    _ => held,
+  };
 
   Future<void> _applyRemoteTodo(RemoteChange change) async {
     final Map<String, dynamic> payload = change.payload ?? const {};
@@ -772,14 +759,14 @@ class DocumentSyncEngine extends ChangeNotifier {
     }
     final List<TodoRow> twins =
         await (_db.select(_db.todos)..where(
-            (t) =>
-                t.sourceRef.equals(applied.sourceRef!) &
-                t.body.equals(applied.body) &
-                t.source.equals(voiceTodoSource) &
-                t.deletedAt.isNull() &
-                t.id.equals(id).not(),
-          ))
-        .get();
+              (t) =>
+                  t.sourceRef.equals(applied.sourceRef!) &
+                  t.body.equals(applied.body) &
+                  t.source.equals(voiceTodoSource) &
+                  t.deletedAt.isNull() &
+                  t.id.equals(id).not(),
+            ))
+            .get();
     if (twins.isEmpty) return;
     await _resolveTwins(<TodoRow>[applied, ...twins]);
   }
@@ -791,12 +778,12 @@ class DocumentSyncEngine extends ChangeNotifier {
   Future<int> _sweepVoiceTodoDuplicates() async {
     final List<TodoRow> live =
         await (_db.select(_db.todos)..where(
-            (t) =>
-                t.source.equals(voiceTodoSource) &
-                t.sourceRef.isNotNull() &
-                t.deletedAt.isNull(),
-          ))
-        .get();
+              (t) =>
+                  t.source.equals(voiceTodoSource) &
+                  t.sourceRef.isNotNull() &
+                  t.deletedAt.isNull(),
+            ))
+            .get();
     final Map<String, List<TodoRow>> groups = <String, List<TodoRow>>{};
     for (final TodoRow row in live) {
       groups
@@ -942,8 +929,8 @@ class DocumentSyncEngine extends ChangeNotifier {
             (heldHash != null
                 ? incomingPrev == heldHash
                 : heldPrev == null
-                    ? incomingPrev == null
-                    : incomingPrev == heldPrev && incomingHash != heldPrev);
+                ? incomingPrev == null
+                : incomingPrev == heldPrev && incomingHash != heldPrev);
         if (authorized) {
           passwordHash = incomingHash;
           passwordSalt = incomingSalt;
@@ -1012,12 +999,12 @@ class DocumentSyncEngine extends ChangeNotifier {
         (hash == null
             ? salt == null && iterations == null
             : hash is String &&
-                hash.isNotEmpty &&
-                salt is String &&
-                salt.isNotEmpty &&
-                iterations is int &&
-                iterations >= notebookPasswordMinIterations &&
-                iterations <= notebookPasswordMaxIterations);
+                  hash.isNotEmpty &&
+                  salt is String &&
+                  salt.isNotEmpty &&
+                  iterations is int &&
+                  iterations >= notebookPasswordMinIterations &&
+                  iterations <= notebookPasswordMaxIterations);
     if (!valid) return;
 
     await _db.rebaseNotebookPasswordState(
@@ -1112,8 +1099,8 @@ class DocumentSyncEngine extends ChangeNotifier {
     final List<DumpRow> dirtyDumps = await _db.dumpsNeedingMetadataPush();
     final List<Folder> dirtyFolders = await _db.foldersNeedingPush();
     final List<TagRow> dirtyTags = await _db.tagsNeedingPush();
-    final List<TagAssignmentRow> dirtyAssignments =
-        await _db.tagAssignmentsNeedingPush();
+    final List<TagAssignmentRow> dirtyAssignments = await _db
+        .tagAssignmentsNeedingPush();
     final List<TodoColumnRow> dirtyTodoColumns = await _db
         .todoColumnsNeedingPush();
     final List<TodoRow> dirtyTodos = await _db.todosNeedingPush();

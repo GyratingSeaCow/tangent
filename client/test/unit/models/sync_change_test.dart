@@ -49,9 +49,7 @@ void main() {
       );
     });
 
-    test('a genuine two-sided conflict forks instead of overwriting', () {
-      // THE RULE THAT MATTERS. Last-write-wins here would silently destroy a
-      // page of ink when the other device saved a title edit a second later.
+    test('a newer remote copy wins when both sides edited', () {
       expect(
         decideMerge(
           localExists: true,
@@ -59,14 +57,12 @@ void main() {
           localUpdatedAt: 400,
           remoteUpdatedAt: 500,
         ),
-        MergeDecision.fork,
-        reason: 'both sides edited; neither may be discarded',
+        MergeDecision.accept,
+        reason: 'the strictly newer write is authoritative',
       );
     });
 
-    test('a dirty local copy still forks when it is NEWER than the remote',
-        () {
-      // Being newer is not ownership: the remote edit is somebody's work too.
+    test('a newer dirty local copy wins when both sides edited', () {
       expect(
         decideMerge(
           localExists: true,
@@ -74,13 +70,11 @@ void main() {
           localUpdatedAt: 900,
           remoteUpdatedAt: 500,
         ),
-        MergeDecision.fork,
+        MergeDecision.keepLocal,
       );
     });
 
-    test('our own push echoing back is not a conflict', () {
-      // Identical timestamps mean the same save arriving back, which must not
-      // fork the notebook in two.
+    test('equal timestamps keep the dirty local copy', () {
       expect(
         decideMerge(
           localExists: true,
@@ -89,15 +83,6 @@ void main() {
           remoteUpdatedAt: 500,
         ),
         MergeDecision.keepLocal,
-      );
-    });
-  });
-
-  group('forkedTitle', () {
-    test('names the source so the conflict is visible in the list', () {
-      expect(
-        forkedTitle('Groceries', 'SM-X520'),
-        'Groceries (conflict from SM-X520)',
       );
     });
   });

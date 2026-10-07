@@ -53,8 +53,7 @@ class _GatedClient implements TranscriptionClient {
   Future<List<PushResult>> pushChanges({
     required String deviceId,
     required List<Map<String, dynamic>> changes,
-  }) async =>
-      const <PushResult>[];
+  }) async => const <PushResult>[];
 
   @override
   dynamic noSuchMethod(Invocation invocation) =>
@@ -81,8 +80,7 @@ class _IdleClient implements TranscriptionClient {
   Future<List<PushResult>> pushChanges({
     required String deviceId,
     required List<Map<String, dynamic>> changes,
-  }) async =>
-      const <PushResult>[];
+  }) async => const <PushResult>[];
 
   @override
   dynamic noSuchMethod(Invocation invocation) =>
@@ -104,7 +102,8 @@ class _ForbiddenGoogleClient extends SummariesClient {
 
 class _OfflineConnectivity implements ConnectivityService {
   @override
-  Future<ConnectivityStatus> currentStatus() async => ConnectivityStatus.offline;
+  Future<ConnectivityStatus> currentStatus() async =>
+      ConnectivityStatus.offline;
 
   @override
   dynamic noSuchMethod(Invocation invocation) =>
@@ -221,15 +220,17 @@ void main() {
       await tester.pump(const Duration(milliseconds: 1));
     }
 
-    testWidgets('no hook: the message is exactly what syncMessageFor says',
-        (tester) async {
+    testWidgets('no hook: the message is exactly what syncMessageFor says', (
+      tester,
+    ) async {
       await mountAndTap(tester, afterSync: null);
       expect(find.text('Already up to date'), findsOneWidget);
       await unmount(tester);
     });
 
-    testWidgets('a hook returning null leaves the message untouched',
-        (tester) async {
+    testWidgets('a hook returning null leaves the message untouched', (
+      tester,
+    ) async {
       int calls = 0;
       await mountAndTap(
         tester,
@@ -249,8 +250,9 @@ void main() {
       await unmount(tester);
     });
 
-    testWidgets('a hook that throws does not break the snackbar',
-        (tester) async {
+    testWidgets('a hook that throws does not break the snackbar', (
+      tester,
+    ) async {
       await mountAndTap(
         tester,
         afterSync: () async => throw const ApiException(
@@ -267,8 +269,9 @@ void main() {
       await unmount(tester);
     });
 
-    testWidgets('the hook is skipped when the device sync did not run',
-        (tester) async {
+    testWidgets('the hook is skipped when the device sync did not run', (
+      tester,
+    ) async {
       // Offline: there is nothing fresh to forward, and "Google updated"
       // after "No connection" would be a lie.
       int calls = 0;
@@ -319,8 +322,9 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 100));
 
-      final SyncButton button =
-          tester.widget<SyncButton>(find.byType(SyncButton));
+      final SyncButton button = tester.widget<SyncButton>(
+        find.byType(SyncButton),
+      );
       expect(button.afterSync, isNull, reason: 'only To Do forwards to Google');
 
       await tester.tap(find.byKey(const ValueKey<String>('sync-button')));
@@ -392,31 +396,21 @@ void main() {
       );
     });
 
-    test('a conflict is surfaced, never buried under a success message', () {
-      // A forked notebook the user is not told about looks exactly like a bug
-      // — and the fork exists precisely so nothing was silently overwritten.
+    test('a replaced local edit is surfaced plainly', () {
       final String message = syncMessageFor(
-        const SyncReport(
-          outcome: SyncOutcome.success,
-          pulled: 1,
-          conflicts: 1,
-        ),
+        const SyncReport(outcome: SyncOutcome.success, pulled: 1, conflicts: 1),
       );
 
-      expect(message, contains('two devices'));
-      expect(
-        message,
-        contains('both versions kept'),
-        reason: 'the user must know nothing was thrown away',
-      );
+      expect(message, contains('a local edit was replaced'));
+      expect(message, contains('newer version from another device'));
     });
 
-    test('several conflicts are counted', () {
+    test('several replaced local edits are counted', () {
       expect(
         syncMessageFor(
           const SyncReport(outcome: SyncOutcome.success, conflicts: 3),
         ),
-        contains('3 copies'),
+        contains('3 local edits were replaced'),
       );
     });
 
