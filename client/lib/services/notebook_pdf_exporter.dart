@@ -2,13 +2,14 @@
 //
 // Notebook -> PDF.
 //
-// The page is a raster of exactly what the editor shows — ink drawn by the
-// SAME NotebookInkPainter the canvas uses (so pen styles, fountain taper and
-// the italic nib export pixel-true), text and dump blocks drawn at their
-// canvas positions. Vectorising the strokes separately would inevitably
-// drift from the on-screen renderer; fidelity beats file size here.
+// Canvas pages are paginated rasters of exactly what the editor shows — ink
+// drawn by the SAME NotebookInkPainter the canvas uses (so pen styles,
+// fountain taper and the italic nib export pixel-true), text and dump blocks
+// drawn at their canvas positions. Vectorising the strokes separately would
+// inevitably drift from the on-screen renderer; fidelity beats file size here.
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -42,11 +43,11 @@ const Size _kBlockFallbackSize = Size(300, 90);
 /// JPEG bytes through instead of retaining a raw RGB copy for every page.
 const int kNotebookPdfJpegQuality = 85;
 
-/// Renders [source] to a single-page PDF and returns its bytes.
+/// Renders [source] to a PDF and returns its bytes.
 ///
-/// The content bounding box (ink + blocks, plus padding) decides the page
-/// size, so a small sketch exports small and a sprawling canvas exports
-/// whole — nothing is cropped to a viewport the exporter cannot see.
+/// The content bounding box (ink + blocks, plus padding) decides the page size.
+/// A small sketch keeps the original single-page layout; a tall canvas is
+/// split into bounded portrait tiles so no engine raster limit crops it.
 Future<Uint8List> renderNotebookPdf(
   NotebookExportSource source, {
   PdfPageRasterLoader? pdfPageLoader,
@@ -75,12 +76,71 @@ Future<void> _addCanvasOverviewPage(
   // a block whose bytes fail to decode simply has no entry here and keeps
   // the text placeholder instead of killing the whole export.
   final Map<String, ui.Image> images = await _decodeImages(source.document);
-  // Rasterise at 2x for crisp print; PDF page keeps logical size.
-  const double scale = 2;
+  // Prefer A-series portrait proportions, but keep the 2x raster comfortably
+  // below Picture.toImage's 8,000-pixel ceiling. Only the last tile is shorter.
+  final double tileHeight = math.min(
+    bounds.width * math.sqrt(2),
+    _kMaxCanvasTileRasterHeight / _kCanvasRasterScale,
+  );
+  final int tileCount = (bounds.height / tileHeight).ceil().clamp(1, 1 << 31);
+  try {
+    for (int index = 0; index < tileCount; index++) {
+      final double offset = index * tileHeight;
+      final double height = math.min(tileHeight, bounds.height - offset);
+      final Uint8List png = await _rasterizeCanvasTile(
+        source: source,
+        bounds: bounds,
+        offset: offset,
+        height: height,
+        images: images,
+      );
+      final pw.MemoryImage pageImage = pw.MemoryImage(png);
+      if (tileCount == 1 || index == 0) {
+        _addTitledCanvasPage(
+          pdf,
+          source: source,
+          image: pageImage,
+          width: bounds.width,
+          height: height,
+        );
+      } else {
+        pdf.addPage(
+          pw.Page(
+            pageFormat: PdfPageFormat(
+              bounds.width + 2 * _kPagePad,
+              height + 2 * _kPagePad,
+            ),
+            build: (_) => pw.Padding(
+              padding: const pw.EdgeInsets.all(_kPagePad),
+              child: pw.Image(pageImage, fit: pw.BoxFit.contain),
+            ),
+          ),
+        );
+      }
+    }
+  } finally {
+    for (final ui.Image decoded in images.values) {
+      decoded.dispose();
+    }
+  }
+}
+
+const double _kCanvasRasterScale = 2;
+
+/// Leaves headroom below Skia's 8,000-pixel raster ceiling.
+const double _kMaxCanvasTileRasterHeight = 7600;
+
+Future<Uint8List> _rasterizeCanvasTile({
+  required NotebookExportSource source,
+  required ui.Rect bounds,
+  required double offset,
+  required double height,
+  required Map<String, ui.Image> images,
+}) async {
   final ui.PictureRecorder recorder = ui.PictureRecorder();
   final ui.Canvas canvas = ui.Canvas(recorder);
-  canvas.scale(scale);
-  canvas.translate(-bounds.left, -bounds.top);
+  canvas.scale(_kCanvasRasterScale);
+  canvas.translate(-bounds.left, -(bounds.top + offset));
 
   // The editor's background: the notebook look IS white ink on black.
   canvas.drawRect(
@@ -98,24 +158,29 @@ Future<void> _addCanvasOverviewPage(
 
   final ui.Picture picture = recorder.endRecording();
   final ui.Image image = await picture.toImage(
-    (bounds.width * scale).ceil().clamp(1, 8000),
-    (bounds.height * scale).ceil().clamp(1, 8000),
+    (bounds.width * _kCanvasRasterScale).ceil().clamp(1, 8000),
+    (height * _kCanvasRasterScale).ceil().clamp(1, 8000),
   );
-  for (final ui.Image decoded in images.values) {
-    decoded.dispose();
-  }
   final ByteData? png = await image.toByteData(format: ui.ImageByteFormat.png);
   image.dispose();
   if (png == null) {
     throw StateError('Could not encode the notebook image');
   }
+  return png.buffer.asUint8List(png.offsetInBytes, png.lengthInBytes);
+}
 
-  final pw.MemoryImage pageImage = pw.MemoryImage(png.buffer.asUint8List());
+void _addTitledCanvasPage(
+  pw.Document pdf, {
+  required NotebookExportSource source,
+  required pw.MemoryImage image,
+  required double width,
+  required double height,
+}) {
   pdf.addPage(
     pw.Page(
       pageFormat: PdfPageFormat(
-        bounds.width + 2 * _kPagePad,
-        bounds.height + 2 * _kPagePad + _kTitleBand,
+        width + 2 * _kPagePad,
+        height + 2 * _kPagePad + _kTitleBand,
       ),
       build: (pw.Context context) => pw.Padding(
         padding: const pw.EdgeInsets.all(_kPagePad),
@@ -127,7 +192,7 @@ Future<void> _addCanvasOverviewPage(
               style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold),
             ),
             pw.SizedBox(height: 8),
-            pw.Expanded(child: pw.Image(pageImage, fit: pw.BoxFit.contain)),
+            pw.Expanded(child: pw.Image(image, fit: pw.BoxFit.contain)),
           ],
         ),
       ),

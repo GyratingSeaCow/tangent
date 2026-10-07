@@ -9,6 +9,7 @@
 // coloured mark survives to the exported page.
 import 'dart:convert';
 import 'dart:io' show Directory, File, zlib;
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'dart:ui' show Color;
@@ -69,18 +70,24 @@ int _lastIndexOf(Uint8List haystack, List<int> needle, int before) {
 
 /// Pulls the page image back out of [pdf].
 ///
-/// The exporter embeds exactly one DeviceRGB image (the rasterised page), so
-/// its object is found by its `/DeviceRGB` colour space; `/Width`, `/Height`
-/// and `/Length` come from the same dictionary (delimited by the `<<`
-/// nearest before its `stream` keyword) and the stream payload is
-/// zlib-deflated raw RGB. Decoding it here — rather than trusting a bounds
-/// calculation — is what makes these tests observe the real exported page.
-_PageRaster _pageRasterOf(Uint8List pdf) {
-  final int colourSpace = _indexOf(pdf, ascii.encode('/DeviceRGB'), 0);
+/// Each canvas page embeds one DeviceRGB image, so the page at [index] is found
+/// by its `/DeviceRGB` colour space; `/Width`, `/Height` and `/Length` come from
+/// the same dictionary (delimited by the `<<` nearest before its `stream`
+/// keyword) and the stream payload is zlib-deflated raw RGB. Decoding it here —
+/// rather than trusting a bounds calculation — is what makes these tests
+/// observe the real exported page.
+_PageRaster _pageRasterOf(Uint8List pdf, {int index = 0}) {
+  var from = 0;
+  var colourSpace = -1;
+  for (int current = 0; current <= index; current++) {
+    colourSpace = _indexOf(pdf, ascii.encode('/DeviceRGB'), from);
+    if (colourSpace < 0) break;
+    from = colourSpace + '/DeviceRGB'.length;
+  }
   expect(
     colourSpace,
     greaterThanOrEqualTo(0),
-    reason: 'no DeviceRGB image object in the PDF',
+    reason: 'no DeviceRGB image object at index $index in the PDF',
   );
   final int streamStart = _indexOf(pdf, ascii.encode('stream\n'), colourSpace);
   expect(
@@ -293,6 +300,94 @@ void main() {
       ),
     );
     expect(utf8.decode(bytes.sublist(0, 5)), '%PDF-');
+  });
+
+  test('a 12000-high canvas is paginated and keeps its bottom ink', () async {
+    const double canvasWidth = 310;
+    const double canvasHeight = 12000;
+    const double contentPadding = 20;
+    const double rasterScale = 2;
+    const double maxTileRasterHeight = 7600;
+    const double boundsLeft = -contentPadding;
+    const double boundsTop = -contentPadding;
+    const double boundsWidth = canvasWidth + 2 * contentPadding;
+    const double boundsHeight = canvasHeight + 2 * contentPadding;
+    final double tileHeight = math.min(
+      boundsWidth * math.sqrt(2),
+      maxTileRasterHeight / rasterScale,
+    );
+    final int expectedPages = (boundsHeight / tileHeight).ceil();
+
+    final Uint8List bytes = await renderNotebookPdf(
+      const NotebookExportSource(
+        title: 'tall canvas',
+        document: NotebookDocument.empty(),
+        strokes: <InkStroke>[
+          InkStroke(
+            id: 'top-edge',
+            width: 8,
+            colour: InkColor.blue,
+            points: <InkPoint>[
+              InkPoint(x: 0, y: 0),
+              InkPoint(x: canvasWidth, y: 0),
+            ],
+          ),
+          InkStroke(
+            id: 'bottom-edge',
+            width: 8,
+            colour: InkColor.red,
+            points: <InkPoint>[
+              InkPoint(x: 0, y: canvasHeight),
+              InkPoint(x: canvasWidth, y: canvasHeight),
+            ],
+          ),
+        ],
+      ),
+    );
+
+    final String wire = latin1.decode(bytes, allowInvalid: true);
+    expect(
+      RegExp(r'/Type\s*/Page(?!s)').allMatches(wire),
+      hasLength(expectedPages),
+      reason: 'each portrait-height content tile must become one PDF page',
+    );
+    expect(
+      RegExp(r'/DeviceRGB').allMatches(wire),
+      hasLength(expectedPages),
+      reason: 'every PDF page must retain its separately rasterised tile',
+    );
+
+    final _PageRaster last = _pageRasterOf(bytes, index: expectedPages - 1);
+    final double lastTileTop = boundsTop + (expectedPages - 1) * tileHeight;
+    final int bottomX = ((canvasWidth / 2 - boundsLeft) * rasterScale).round();
+    final int bottomY = ((canvasHeight - lastTileTop) * rasterScale).round();
+    expect(last.height, lessThanOrEqualTo(maxTileRasterHeight));
+    _expectPixel(
+      last.at(bottomX, bottomY),
+      _opaqueRgb(InkColor.red),
+      reason: 'the bottom stroke must survive in the last tile',
+    );
+    _expectPixel(
+      last.at(bottomX, bottomY - 24),
+      _bgRgb(),
+      reason: 'the last tile control pixel must remain background',
+    );
+  });
+
+  test('a small canvas stays exactly one page', () async {
+    final Uint8List bytes = await renderNotebookPdf(
+      NotebookExportSource(
+        title: 'small canvas',
+        document: const NotebookDocument.empty(),
+        strokes: <InkStroke>[
+          stroke('short', <(double, double)>[(0, 0), (100, 100)]),
+        ],
+      ),
+    );
+
+    final String wire = latin1.decode(bytes, allowInvalid: true);
+    expect(RegExp(r'/Type\s*/Page(?!s)').allMatches(wire), hasLength(1));
+    expect(RegExp(r'/DeviceRGB').allMatches(wire), hasLength(1));
   });
 
   test('legacy blocks with no position never collide at the origin', () async {
