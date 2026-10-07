@@ -115,6 +115,29 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
   static const String _boardPreferenceKey = 'todo_board_view';
   bool _board = false;
 
+  // DragTarget callbacks do not await repository futures. Chain them so drop
+  // indices persist in callback order, and report a failed write without
+  // jamming later drops. Drift already serializes its transactions; this is
+  // UI ordering and error surfacing, not a database-race fix.
+  Future<void> _boardMoveTail = Future<void>.value();
+
+  void _queueBoardMove(String todoId, String columnId, int index) {
+    final TodoRepository repo = ref.read(todoRepositoryProvider);
+    final Future<void> move = _boardMoveTail.then(
+      (_) => repo.moveOnBoard(todoId, columnId, index),
+    );
+    _boardMoveTail = move.catchError((Object error, StackTrace stackTrace) {
+      FlutterError.reportError(
+        FlutterErrorDetails(
+          exception: error,
+          stack: stackTrace,
+          library: 'todo board',
+          context: ErrorDescription('while persisting a queued card drop'),
+        ),
+      );
+    });
+  }
+
   /// Multi-select state. [_selecting] is the mode flag (the toolbar and
   /// PopScope key off it); [_selected] is the set, pruned every build so a
   /// row that vanished under a sync can never be acted on.
@@ -816,9 +839,8 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
     return DragTarget<TodoRow>(
       key: TodoListScreen.dropKey(columnId, index),
       onWillAcceptWithDetails: (_) => true,
-      onAcceptWithDetails: (details) => ref
-          .read(todoRepositoryProvider)
-          .moveOnBoard(details.data.id, columnId, index),
+      onAcceptWithDetails: (details) =>
+          _queueBoardMove(details.data.id, columnId, index),
       builder: (context, candidates, rejected) => AnimatedContainer(
         duration: const Duration(milliseconds: 100),
         height: candidates.isEmpty ? 10 : 36,
@@ -837,9 +859,8 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
     return DragTarget<TodoRow>(
       key: TodoListScreen.emptyLaneDropKey(columnId),
       onWillAcceptWithDetails: (_) => true,
-      onAcceptWithDetails: (details) => ref
-          .read(todoRepositoryProvider)
-          .moveOnBoard(details.data.id, columnId, 0),
+      onAcceptWithDetails: (details) =>
+          _queueBoardMove(details.data.id, columnId, 0),
       builder: (context, candidates, rejected) => AnimatedContainer(
         key: TodoListScreen.dropKey(columnId, 0),
         duration: const Duration(milliseconds: 100),
@@ -864,9 +885,8 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
     return DragTarget<TodoRow>(
       key: TodoListScreen.cardDropKey(columnId, todo.id),
       onWillAcceptWithDetails: (_) => true,
-      onAcceptWithDetails: (details) => ref
-          .read(todoRepositoryProvider)
-          .moveOnBoard(details.data.id, columnId, index),
+      onAcceptWithDetails: (details) =>
+          _queueBoardMove(details.data.id, columnId, index),
       builder: (context, candidates, rejected) => AnimatedContainer(
         duration: const Duration(milliseconds: 100),
         decoration: BoxDecoration(

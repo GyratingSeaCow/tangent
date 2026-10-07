@@ -244,6 +244,153 @@ void main() {
       expect(todo.syncDirty, isFalse);
     });
 
+    for (final ({String label, bool includesNullColumn}) variant in <
+      ({String label, bool includesNullColumn})
+    >[
+      (label: 'present null column_id', includesNullColumn: true),
+      (label: 'absent column_id', includesNullColumn: false),
+    ]) {
+      test(
+        'explicit board placement survives an old-device ${variant.label} echo',
+        () async {
+          final List<TodoColumnRow> columns = await repo.ensureColumns();
+          const String todoId = 'migrated-explicit-move';
+          const String originalStamp = '2026-09-01T00:00:00.000Z';
+          await db.applyRemoteTodo(
+            id: todoId,
+            text: 'migrated card',
+            createdAt: originalStamp,
+            updatedAt: originalStamp,
+            columnId: defaultTodoColumnId,
+            boardOrder: 7,
+            seq: 4,
+          );
+          await db.customStatement(
+            'INSERT INTO settings(key,value) VALUES(?,?)',
+            <Object?>['todo_kanban_backfill:$todoId', '7'],
+          );
+
+          final String explicitColumn = columns[1].id;
+          await repo.moveOnBoard(todoId, explicitColumn, 0);
+
+          final Map<String, dynamic> oldDeviceEcho = fullPayload(
+            text: 'body echoed by old device',
+            updatedAt: '2126-10-07T10:00:00.000Z',
+          )..['board_order'] = 7;
+          if (variant.includesNullColumn) {
+            oldDeviceEcho['column_id'] = null;
+          }
+          client.pullPages = <SyncPullPage>[
+            SyncPullPage(
+              changes: <RemoteChange>[
+                todoChange(id: todoId, seq: 90, payload: oldDeviceEcho),
+              ],
+              headSeq: 90,
+              hasMore: false,
+            ),
+          ];
+
+          await build().syncNow();
+
+          final TodoRow row = (await db.getTodoRow(todoId))!;
+          expect(
+            row.columnId,
+            explicitColumn,
+            reason: 'an old-device echo cannot rehome an explicit placement',
+          );
+          expect(
+            await db.pendingTodoBoardOrder(todoId),
+            isNull,
+            reason: 'explicit placement spends the one-shot migration marker',
+          );
+        },
+      );
+    }
+
+    test('two cycles converge after one old-device null placement echo', () async {
+      final List<TodoColumnRow> columns = await repo.ensureColumns();
+      const String todoId = 'two-cycle-explicit-move';
+      const String originalStamp = '2026-09-01T00:00:00.000Z';
+      await db.applyRemoteTodo(
+        id: todoId,
+        text: 'migrated card',
+        createdAt: originalStamp,
+        updatedAt: originalStamp,
+        columnId: defaultTodoColumnId,
+        boardOrder: 7,
+        seq: 4,
+      );
+      await db.customStatement(
+        'INSERT INTO settings(key,value) VALUES(?,?)',
+        <Object?>['todo_kanban_backfill:$todoId', '7'],
+      );
+      final TodoRepository movingRepo = TodoRepository(
+        db: db,
+        now: () => DateTime.utc(2026, 10, 7, 12),
+      );
+      final String explicitColumn = columns[1].id;
+      await movingRepo.moveOnBoard(todoId, explicitColumn, 0);
+
+      RemoteChange nullEcho(int seq) => todoChange(
+        id: todoId,
+        seq: seq,
+        payload: <String, dynamic>{
+          ...fullPayload(
+            text: 'body echoed by old device',
+            updatedAt: '2026-10-06T10:00:00.000Z',
+          ),
+          'column_id': null,
+          'board_order': 7,
+        },
+      );
+      client
+        ..pullPages = <SyncPullPage>[
+          SyncPullPage(
+            changes: <RemoteChange>[nullEcho(90)],
+            headSeq: 90,
+            hasMore: false,
+          ),
+        ]
+        ..pushResults = const <PushResult>[
+          PushResult(
+            entityId: todoId,
+            entityType: 'todo',
+            seq: 91,
+            applied: true,
+          ),
+        ];
+      final DocumentSyncEngine engine = build();
+
+      await engine.syncNow();
+
+      TodoRow row = (await db.getTodoRow(todoId))!;
+      expect(row.columnId, explicitColumn);
+      expect(row.syncDirty, isFalse, reason: 'the explicit move was accepted');
+      expect(await db.pendingTodoBoardOrder(todoId), isNull);
+      expect(
+        client.pushedChanges!.singleWhere(
+          (Map<String, dynamic> change) => change['entity_id'] == todoId,
+        )['payload']['column_id'],
+        explicitColumn,
+      );
+
+      client
+        ..pushResults = const <PushResult>[]
+        ..pullPages = <SyncPullPage>[
+          SyncPullPage(
+            changes: <RemoteChange>[nullEcho(92)],
+            headSeq: 92,
+            hasMore: false,
+          ),
+        ];
+      await engine.syncNow();
+
+      row = (await db.getTodoRow(todoId))!;
+      expect(row.columnId, explicitColumn);
+      expect(row.syncDirty, isFalse);
+      expect(await db.pendingTodoBoardOrder(todoId), isNull);
+    });
+
     test('a newer remote body merges into a migration-dirtied todo before '
         'its placement pushes', () async {
       await db.customStatement(
