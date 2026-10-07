@@ -164,37 +164,46 @@ void main() {
     },
   );
 
-  test('explicit board placements spend migration markers atomically', () async {
-    final TodoRow dragged = await repo.add('dragged');
-    final TodoRow rehomedByDelete = await repo.add('rehomed by delete');
-    final List<TodoColumnRow> columns = await repo.listColumns();
-    final String progress = columns[1].id;
-    final String done = columns[2].id;
-    await db.customStatement(
-      'INSERT INTO settings(key,value) VALUES(?,?),(?,?)',
-      <Object?>[
-        'todo_kanban_backfill:${dragged.id}',
-        '0',
-        'todo_kanban_backfill:${rehomedByDelete.id}',
-        '1',
-      ],
-    );
+  test(
+    'explicit board placements spend migration markers atomically',
+    () async {
+      final TodoRow dragged = await repo.add('dragged');
+      final TodoRow rehomedByDelete = await repo.add('rehomed by delete');
+      final TodoRow sameSlot = await repo.add('dropped onto its own slot');
+      final List<TodoColumnRow> columns = await repo.listColumns();
+      final String progress = columns[1].id;
+      final String done = columns[2].id;
+      await db.customStatement(
+        'INSERT INTO settings(key,value) VALUES(?,?),(?,?),(?,?)',
+        <Object?>[
+          'todo_kanban_backfill:${dragged.id}',
+          '0',
+          'todo_kanban_backfill:${rehomedByDelete.id}',
+          '1',
+          'todo_kanban_backfill:${sameSlot.id}',
+          '2',
+        ],
+      );
 
-    await repo.moveOnBoard(dragged.id, progress, 0);
-    expect(await db.pendingTodoBoardOrder(dragged.id), isNull);
+      await repo.moveOnBoard(sameSlot.id, defaultTodoColumnId, 2);
+      expect(await db.pendingTodoBoardOrder(sameSlot.id), isNull);
 
-    await repo.moveOnBoard(rehomedByDelete.id, progress, 1);
-    // Re-arm only this row to model a migrated card in a column the user then
-    // explicitly deletes through the destination picker.
-    await db.customStatement(
-      'INSERT INTO settings(key,value) VALUES(?,?)',
-      <Object?>['todo_kanban_backfill:${rehomedByDelete.id}', '1'],
-    );
-    await repo.deleteColumn(progress, done);
+      await repo.moveOnBoard(dragged.id, progress, 0);
+      expect(await db.pendingTodoBoardOrder(dragged.id), isNull);
 
-    expect((await rowOf(rehomedByDelete.id)).columnId, done);
-    expect(await db.pendingTodoBoardOrder(rehomedByDelete.id), isNull);
-  });
+      await repo.moveOnBoard(rehomedByDelete.id, progress, 1);
+      // Re-arm only this row to model a migrated card in a column the user then
+      // explicitly deletes through the destination picker.
+      await db.customStatement(
+        'INSERT INTO settings(key,value) VALUES(?,?)',
+        <Object?>['todo_kanban_backfill:${rehomedByDelete.id}', '1'],
+      );
+      await repo.deleteColumn(progress, done);
+
+      expect((await rowOf(rehomedByDelete.id)).columnId, done);
+      expect(await db.pendingTodoBoardOrder(rehomedByDelete.id), isNull);
+    },
+  );
 
   test(
     'deleting a non-empty column moves cards transactionally, never todos',
