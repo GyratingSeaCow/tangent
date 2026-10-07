@@ -66,8 +66,7 @@ List<_MediaBox> _mediaBoxesOf(Uint8List pdf) {
 }
 
 List<double> _canvasContentHeights(List<_MediaBox> boxes) => <double>[
-  for (int index = 0; index < boxes.length; index++)
-    boxes[index].height - 48 - (index == 0 ? 30 : 0),
+  for (final _MediaBox box in boxes) box.height,
 ];
 
 int _indexOf(Uint8List haystack, List<int> needle, int from) {
@@ -90,6 +89,43 @@ int _lastIndexOf(Uint8List haystack, List<int> needle, int before) {
     return i;
   }
   return -1;
+}
+
+bool _pageStreamsContainText(Uint8List pdf, String text) {
+  final String hexText = ascii
+      .encode(text)
+      .map((int byte) => byte.toRadixString(16).padLeft(2, '0'))
+      .join();
+  var from = 0;
+  while (true) {
+    final int filter = _indexOf(pdf, ascii.encode('/FlateDecode'), from);
+    if (filter < 0) return false;
+    final int streamStart = _indexOf(pdf, ascii.encode('stream\n'), filter);
+    if (streamStart < 0) return false;
+    final int dictStart = _lastIndexOf(pdf, ascii.encode('<<'), streamStart);
+    if (dictStart < 0) return false;
+    final String dict = latin1.decode(
+      pdf.sublist(dictStart, streamStart),
+      allowInvalid: true,
+    );
+    final RegExpMatch? lengthMatch = RegExp(
+      r'/Length\s*(\d+)',
+    ).firstMatch(dict);
+    if (lengthMatch == null) return false;
+    final int length = int.parse(lengthMatch[1]!);
+    final int dataStart = streamStart + 'stream\n'.length;
+    final String content = latin1.decode(
+      zlib.decode(pdf.sublist(dataStart, dataStart + length)),
+      allowInvalid: true,
+    );
+    if (!dict.contains('/Subtype /Image') &&
+        (content.contains(text) ||
+            content.toLowerCase().contains(hexText) ||
+            RegExp(r'\bBT\b[\s\S]*\bET\b').hasMatch(content))) {
+      return true;
+    }
+    from = dataStart + length;
+  }
 }
 
 /// Pulls the page image back out of [pdf].
@@ -311,8 +347,10 @@ void main() {
     // cannot be a few hundred bytes.
     expect(utf8.decode(bytes.sublist(0, 5)), '%PDF-');
     expect(bytes.length, greaterThan(5000));
-    // The title travels in the PDF's metadata, uncompressed.
+    // The title may remain as document metadata, but must not be painted above
+    // the notebook raster in any page content stream.
     expect(latin1.decode(bytes, allowInvalid: true), contains('Sprint ideas'));
+    expect(_pageStreamsContainText(bytes, 'Sprint ideas'), isFalse);
   });
 
   test('an empty notebook still exports a page', () async {
@@ -334,8 +372,6 @@ void main() {
       const double contentPadding = 20;
       const double rasterScale = 2;
       const double maxTileRasterHeight = 7600;
-      const double pagePad = 24;
-      const double titleBand = 30;
       const double boundsLeft = -contentPadding;
       const double boundsTop = -contentPadding;
       const double boundsWidth = canvasWidth + 2 * contentPadding;
@@ -396,16 +432,12 @@ void main() {
       for (int index = 0; index < boxes.length; index++) {
         final _MediaBox box = boxes[index];
         final _PageRaster raster = _pageRasterOf(bytes, index: index);
-        expect(box.width, closeTo(boundsWidth + 2 * pagePad, 0.01));
+        expect(box.width, closeTo(boundsWidth, 0.01));
         expect(
           box.height,
-          closeTo(
-            raster.height / rasterScale +
-                2 * pagePad +
-                (index == 0 ? titleBand : 0),
-            0.51,
-          ),
-          reason: 'MediaBox $index must wrap its observed raster without drift',
+          closeTo(raster.height / rasterScale, 0.51),
+          reason:
+              'MediaBox $index must equal its observed raster without drift',
         );
         if (index < boxes.length - 1) {
           expect(contentHeights[index], closeTo(contentHeights.first, 0.01));
@@ -468,8 +500,6 @@ void main() {
     const double contentPadding = 20;
     const double rasterScale = 2;
     const double maxTileRasterHeight = 7600;
-    const double pagePad = 24;
-    const double titleBand = 30;
 
     final Uint8List bytes = await renderNotebookPdf(
       const NotebookExportSource(
@@ -500,9 +530,8 @@ void main() {
 
     final List<_MediaBox> boxes = _mediaBoxesOf(bytes);
     expect(boxes, isNotEmpty, reason: 'the PDF must declare page geometry');
-    // Tallest legal page: a capped tile plus padding plus the title band.
-    const double maxPageHeight =
-        maxTileRasterHeight / rasterScale + 2 * pagePad + titleBand;
+    // Tallest legal page: exactly one capped tile, with no PDF chrome.
+    const double maxPageHeight = maxTileRasterHeight / rasterScale;
     for (final _MediaBox box in boxes) {
       expect(
         box.height,
@@ -558,8 +587,8 @@ void main() {
     expect(RegExp(r'/DeviceRGB').allMatches(wire), hasLength(1));
     final List<_MediaBox> boxes = _mediaBoxesOf(bytes);
     expect(boxes, hasLength(1));
-    expect(boxes.single.width, closeTo(448, 0.01));
-    expect(boxes.single.height, closeTo(1278, 0.01));
+    expect(boxes.single.width, closeTo(400, 0.01));
+    expect(boxes.single.height, closeTo(1200, 0.01));
   });
 
   test('a skinny 88x5000 canvas uses the logical tile-height floor', () async {
@@ -586,14 +615,14 @@ void main() {
       reason: 'the 1,000px floor must avoid the former roughly 90 pages',
     );
     for (final _MediaBox box in boxes) {
-      expect(box.width, closeTo(88 + 48, 0.01));
+      expect(box.width, closeTo(88, 0.01));
     }
     // The last page may be a shorter remainder; every other MediaBox must
-    // contain at least the 1,000px floor plus padding (and page-zero title).
+    // contain at least the 1,000px floor with no PDF padding or title band.
     for (int index = 0; index < boxes.length - 1; index++) {
       expect(
         boxes[index].height,
-        greaterThanOrEqualTo(1000 + 48 + (index == 0 ? 30 : 0) - 0.01),
+        greaterThanOrEqualTo(1000 - 0.01),
         reason: 'every non-last tile must respect the logical-height floor',
       );
     }
@@ -897,6 +926,13 @@ void main() {
       expect(loader.sources, <String>[sourceData, sourceData]);
       final String pdfText = latin1.decode(bytes, allowInvalid: true);
       expect(RegExp(r'/Type\s*/Page(?!s)').allMatches(pdfText), hasLength(2));
+      final List<_MediaBox> boxes = _mediaBoxesOf(bytes);
+      expect(boxes, hasLength(2));
+      for (final _MediaBox box in boxes) {
+        expect(box.width, closeTo(100, 0.01));
+        expect(box.height, closeTo(100, 0.01));
+      }
+      expect(_pageStreamsContainText(bytes, 'annotated import'), isFalse);
       final _PageRaster firstPage = _pageRasterOf(bytes);
       expect(firstPage.width, 200);
       expect(firstPage.height, 200);
@@ -969,7 +1005,7 @@ void main() {
 
     final List<_MediaBox> boxes = _mediaBoxesOf(bytes);
     final int overviewCount = boxes
-        .where((_MediaBox box) => (box.width - 398).abs() < 0.01)
+        .where((_MediaBox box) => (box.width - 350).abs() < 0.01)
         .length;
     final String wire = latin1.decode(bytes, allowInvalid: true);
     expect(loader.pages, <int>[1]);
