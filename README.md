@@ -1,7 +1,7 @@
 # Tangent — Voice/Text Brain Dumps
 
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](./LICENSE)
-[![Version: 1.50.2](https://img.shields.io/badge/version-1.51.0-blue.svg)](./CHANGELOG.md)
+[![Version: 1.50.2](https://img.shields.io/badge/version-1.51.1-blue.svg)](./CHANGELOG.md)
 [![Client tests: 3053 passing](https://img.shields.io/badge/client_tests-3053%20passing-brightgreen.svg)]()
 [![Server tests: 807 passing](https://img.shields.io/badge/server_tests-807%20passing-brightgreen.svg)]()
 

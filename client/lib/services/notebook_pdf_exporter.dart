@@ -47,7 +47,8 @@ const int kNotebookPdfJpegQuality = 85;
 
 /// Renders [source] to a PDF and returns its bytes.
 ///
-/// The content bounding box (ink + blocks, plus padding) decides the page size.
+/// The content bounding box (ink + blocks, plus painter-safe bounds padding)
+/// decides the exact page size. No PDF-only title, border, or padding is added.
 /// A small sketch keeps the original single-page layout; a tall canvas is
 /// split into bounded portrait tiles so no engine raster limit crops it.
 Future<Uint8List> renderNotebookPdf(
@@ -106,28 +107,12 @@ Future<void> _addCanvasOverviewPage(
         images: images,
       );
       final pw.MemoryImage pageImage = pw.MemoryImage(png);
-      if (index == 0) {
-        _addTitledCanvasPage(
-          pdf,
-          source: source,
-          image: pageImage,
-          width: bounds.width,
-          height: height,
-        );
-      } else {
-        pdf.addPage(
-          pw.Page(
-            pageFormat: PdfPageFormat(
-              bounds.width + 2 * _kPagePad,
-              height + 2 * _kPagePad,
-            ),
-            build: (_) => pw.Padding(
-              padding: const pw.EdgeInsets.all(_kPagePad),
-              child: pw.Image(pageImage, fit: pw.BoxFit.contain),
-            ),
-          ),
-        );
-      }
+      _addCanvasPage(
+        pdf,
+        image: pageImage,
+        width: bounds.width,
+        height: height,
+      );
     }
   } finally {
     for (final ui.Image decoded in images.values) {
@@ -195,33 +180,17 @@ Future<Uint8List> _rasterizeCanvasTile({
   }
 }
 
-void _addTitledCanvasPage(
+void _addCanvasPage(
   pw.Document pdf, {
-  required NotebookExportSource source,
   required pw.MemoryImage image,
   required double width,
   required double height,
 }) {
   pdf.addPage(
     pw.Page(
-      pageFormat: PdfPageFormat(
-        width + 2 * _kPagePad,
-        height + 2 * _kPagePad + _kTitleBand,
-      ),
-      build: (pw.Context context) => pw.Padding(
-        padding: const pw.EdgeInsets.all(_kPagePad),
-        child: pw.Column(
-          crossAxisAlignment: pw.CrossAxisAlignment.start,
-          children: <pw.Widget>[
-            pw.Text(
-              source.title.isEmpty ? '(untitled)' : source.title,
-              style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold),
-            ),
-            pw.SizedBox(height: 8),
-            pw.Expanded(child: pw.Image(image, fit: pw.BoxFit.contain)),
-          ],
-        ),
-      ),
+      pageFormat: PdfPageFormat(width, height, marginAll: 0),
+      build: (_) =>
+          pw.Image(image, width: width, height: height, fit: pw.BoxFit.fill),
     ),
   );
 }
@@ -382,9 +351,6 @@ Future<Uint8List> _annotatePdfPage({
     img.encodeJpg(jpegSource, quality: kNotebookPdfJpegQuality),
   );
 }
-
-const double _kPagePad = 24;
-const double _kTitleBand = 30;
 
 /// Decodes every image block's bytes to a [ui.Image], keyed by block id.
 ///

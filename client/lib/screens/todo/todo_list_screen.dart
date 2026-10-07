@@ -60,6 +60,8 @@ class TodoListScreen extends ConsumerStatefulWidget {
   static Key cardKey(String id) => Key('todo-board-card-$id');
   static Key laneScrollKey(String columnId) =>
       Key('todo-lane-scroll-$columnId');
+  static Key laneAppendDropKey(String columnId) =>
+      Key('todo-lane-append-drop-$columnId');
   static Key cardDropKey(String columnId, String todoId) =>
       Key('todo-card-drop-$columnId-$todoId');
   static Key emptyLaneDropKey(String columnId) =>
@@ -648,32 +650,32 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
       children.add(
         SectionHeaderCard(
           child: ListTile(
-          key: section.isDone
-              ? TodoListScreen.doneHeaderKey
-              : section.folderId == null
-                  ? TodoListScreen.unfiledHeaderKey
-                  : TodoListScreen.folderHeaderKey(section.folderId!),
-          leading: Icon(
-            section.isDone
-                ? Icons.check_circle_outline
+            key: section.isDone
+                ? TodoListScreen.doneHeaderKey
                 : section.folderId == null
-                    ? Icons.folder_off_outlined
-                    : Icons.folder_outlined,
+                ? TodoListScreen.unfiledHeaderKey
+                : TodoListScreen.folderHeaderKey(section.folderId!),
+            leading: Icon(
+              section.isDone
+                  ? Icons.check_circle_outline
+                  : section.folderId == null
+                  ? Icons.folder_off_outlined
+                  : Icons.folder_outlined,
+            ),
+            title: Text(
+              '${section.title} (${section.todos.length})',
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+            trailing: Icon(collapsed ? Icons.expand_more : Icons.expand_less),
+            onTap: () => setState(() {
+              if (!_collapsed.remove(key)) _collapsed.add(key);
+            }),
+            // Folder headers long-press into the shared rename/delete sheet —
+            // NEVER selection. `No folder` and `Done` have no actions.
+            onLongPress: section.folderId == null
+                ? null
+                : () => _folderHeaderActions(section),
           ),
-          title: Text(
-            '${section.title} (${section.todos.length})',
-            style: Theme.of(context).textTheme.titleSmall,
-          ),
-          trailing: Icon(collapsed ? Icons.expand_more : Icons.expand_less),
-          onTap: () => setState(() {
-            if (!_collapsed.remove(key)) _collapsed.add(key);
-          }),
-          // Folder headers long-press into the shared rename/delete sheet —
-          // NEVER selection. `No folder` and `Done` have no actions.
-          onLongPress: section.folderId == null
-              ? null
-              : () => _folderHeaderActions(section),
-        ),
         ),
       );
       if (!collapsed) {
@@ -718,36 +720,36 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
       builder: (BuildContext context, BoxConstraints constraints) {
         final double laneHeight = (constraints.maxHeight - padding.vertical)
             .clamp(180.0, double.infinity);
-    return SingleChildScrollView(
-      key: const Key('todo-board-scroll'),
-      scrollDirection: Axis.horizontal,
+        return SingleChildScrollView(
+          key: const Key('todo-board-scroll'),
+          scrollDirection: Axis.horizontal,
           padding: padding,
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          for (int i = 0; i < columns.length; i++) ...<Widget>[
-            _buildBoardColumn(
-              context,
-              columns[i],
-              lanes[columns[i].id]!,
-              i,
-              columns,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              for (int i = 0; i < columns.length; i++) ...<Widget>[
+                _buildBoardColumn(
+                  context,
+                  columns[i],
+                  lanes[columns[i].id]!,
+                  i,
+                  columns,
                   laneHeight,
-            ),
-            const SizedBox(width: 12),
-          ],
-          SizedBox(
-            width: 240,
-            child: OutlinedButton.icon(
-              key: TodoListScreen.addColumnKey,
-              onPressed: () => _editColumnName(),
-              icon: const Icon(Icons.add),
-              label: const Text('Add column'),
-            ),
+                ),
+                const SizedBox(width: 12),
+              ],
+              SizedBox(
+                width: 240,
+                child: OutlinedButton.icon(
+                  key: TodoListScreen.addColumnKey,
+                  onPressed: () => _editColumnName(),
+                  icon: const Icon(Icons.add),
+                  label: const Text('Add column'),
+                ),
+              ),
+            ],
           ),
-        ],
-      ),
-    );
+        );
       },
     );
   }
@@ -812,22 +814,28 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
           Expanded(
             child: cards.isEmpty
                 ? _emptyLaneDropTarget(column.id)
-                : ListView.builder(
-                    key: TodoListScreen.laneScrollKey(column.id),
-                    padding: const EdgeInsets.only(bottom: 8),
-                    itemCount: cards.length * 2 + 1,
-                    itemBuilder: (BuildContext context, int itemIndex) {
-                      if (itemIndex.isEven) {
-                        return _boardDropTarget(column.id, itemIndex ~/ 2);
-                      }
-                      final int cardIndex = itemIndex ~/ 2;
-                      return _boardCardDropTarget(
-                        column.id,
-                        cardIndex,
-                        cards[cardIndex],
-                        _buildBoardCard(context, cards[cardIndex]),
-                      );
-                    },
+                : _laneAppendDropTarget(
+                    column.id,
+                    cards.length,
+                    ListView.builder(
+                      key: TodoListScreen.laneScrollKey(column.id),
+                      // Leaves a natural append zone after long lanes scroll
+                      // to the end; the lane target below owns this padding.
+                      padding: const EdgeInsets.only(bottom: 96),
+                      itemCount: cards.length * 2 + 1,
+                      itemBuilder: (BuildContext context, int itemIndex) {
+                        if (itemIndex.isEven) {
+                          return _boardDropTarget(column.id, itemIndex ~/ 2);
+                        }
+                        final int cardIndex = itemIndex ~/ 2;
+                        return _boardCardDropTarget(
+                          column.id,
+                          cardIndex,
+                          cards[cardIndex],
+                          _buildBoardCard(context, cards[cardIndex]),
+                        );
+                      },
+                    ),
                   ),
           ),
         ],
@@ -851,6 +859,25 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
               : Theme.of(context).colorScheme.primaryContainer,
           borderRadius: BorderRadius.circular(8),
         ),
+      ),
+    );
+  }
+
+  Widget _laneAppendDropTarget(String columnId, int appendIndex, Widget child) {
+    return DragTarget<TodoRow>(
+      key: TodoListScreen.laneAppendDropKey(columnId),
+      onWillAcceptWithDetails: (_) => true,
+      onAcceptWithDetails: (details) =>
+          _queueBoardMove(details.data.id, columnId, appendIndex),
+      builder: (context, candidates, rejected) => AnimatedContainer(
+        duration: const Duration(milliseconds: 100),
+        decoration: BoxDecoration(
+          color: candidates.isEmpty
+              ? Colors.transparent
+              : Theme.of(context).colorScheme.primaryContainer,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: child,
       ),
     );
   }
@@ -1097,8 +1124,8 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
               onTapOutside: (_) => _commitEdit(),
             )
           : _selecting
-              ? text
-              : GestureDetector(onTap: () => _startEdit(todo), child: text),
+          ? text
+          : GestureDetector(onTap: () => _startEdit(todo), child: text),
       subtitle: chip == null || _selecting
           ? (chip == null ? null : Text(chip.label))
           : GestureDetector(
