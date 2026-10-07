@@ -51,7 +51,7 @@ ADH2/
 ## Status
 
 Shipping — **v1.51.1** (see CHANGELOG.md). Client and server are both
-implemented and tested (3068
+implemented and tested (3070
 Flutter tests, 807 server tests, 139 Kotlin tests).
 Flutter 3.47.6 / Dart 3.13, AGP 9.1 / Kotlin 2.4 / Gradle 9.3.1 /
 Java 17 (v1.48.1); APKs exclude Google's dependency-info
@@ -60,6 +60,13 @@ natively on Linux AND Windows (tray icon, global record hotkey,
 close-to-tray, single instance, right-click = long-press; AppImage and
 Inno Setup installer under `packaging/`) — verified on CachyOS/KDE
 Plasma Wayland and Windows 11; see the README's Desktop sections.
+
+v1.51.1 **board drop zones + bare PDF pages**: nonempty kanban lanes
+accept drops across their whole body (lane-level append target; cards and
+the thin gaps between them were previously the only targets, so a column
+took one card then refused the natural gesture). Notebook PDF export
+emits pages at exactly the content's dimensions — padding border and
+visible title band removed (document metadata keeps the title).
 
 v1.51.0 **conflict-free notebook sync + board/export fixes**: notebook
 sync resolves concurrent edits by last-write-wins on the client
