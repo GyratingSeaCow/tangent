@@ -128,7 +128,11 @@ void main() {
 
     final String installStep = workflow.substring(installStart, buildStart);
     expect(installStep, contains('ndk_version=28.2.13676358'));
-    expect(installStep, contains('sdkmanager "ndk;\$ndk_version"'));
+    expect(
+      installStep,
+      contains(
+          '"\$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;\$ndk_version"'),
+    );
     expect(installStep, contains('for tool in clang llvm-ar ld.lld; do'));
     expect(installStep, contains('test -x "\$toolchain/\$tool"'));
     expect(

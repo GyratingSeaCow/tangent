@@ -123,7 +123,7 @@ jobs:
       - name: Install pinned Android NDK
         run: |
           ndk_version=28.2.13676358
-          sdkmanager "ndk;$ndk_version"
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$ndk_version"
           ndk="$ANDROID_HOME/ndk/$ndk_version"
           toolchain="$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin"
           for tool in clang llvm-ar ld.lld; do
