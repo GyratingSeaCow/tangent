@@ -10,6 +10,7 @@ import 'sync_status_presentation.dart';
 
 import '../../data/local_db.dart';
 import '../../data/tag_repository.dart';
+import '../../data/todo_repository.dart';
 import '../../data/storage/storage_contract.dart';
 import 'dump_grouping.dart';
 import 'dump_selection_controller.dart';
@@ -45,6 +46,7 @@ import '../../widgets/instrument_scaffold.dart';
 import '../../widgets/press_actions.dart';
 import '../../widgets/tag_widgets.dart';
 import '../../widgets/top_nav_rail.dart';
+import '../../widgets/todo_column_picker_sheet.dart';
 import '../notebook/notebook_grouping.dart' show FolderSummary;
 import '../notebook/send_to_notebook.dart';
 import '../../data/notebook_repository.dart' show foldersProvider;
@@ -54,6 +56,11 @@ import '../home/home_screen.dart' show localDbProvider;
 /// The list pops itself with one of these; home switches mode and either
 /// opens note compose or starts recording immediately.
 enum DumpsCreateAction { textNote, brainDump, meeting }
+
+/// The recording-to-card eligibility seam. Whitespace-only text is not a
+/// transcript, but eligible transcript content is never trimmed before save.
+bool _hasTodoTranscript(DumpRow dump) =>
+    dump.transcript?.trim().isNotEmpty ?? false;
 
 class DumpsListScreen extends ConsumerStatefulWidget {
   const DumpsListScreen({super.key, this.onOpenDump, this.filterIds});
@@ -100,7 +107,7 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
       ref.read(searchQueryProvider),
       ref.read(dumpModeFilterProvider),
       ref.read(transcriptFilterProvider),
-      ref.read(tagFilterProvider(TagTarget.dump))
+      ref.read(tagFilterProvider(TagTarget.dump)),
     );
   }
 
@@ -133,9 +140,10 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
       if (!await confirmLocalDeletion(context, targets.length) || !mounted) {
         return;
       }
-      final result = switch (await service.deleteConfirmed(
-        (operationId: const Uuid().v4(), targets: targets),
-      )) {
+      final result = switch (await service.deleteConfirmed((
+        operationId: const Uuid().v4(),
+        targets: targets,
+      ))) {
         Ok<BulkDeletionResult>(:final value) => value,
         Fail<BulkDeletionResult>(:final problem) => throw StorageFault(problem),
       };
@@ -164,8 +172,10 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
           !mounted) {
         return;
       }
-      final result = switch (await service
-          .retryConfirmed((operationId: const Uuid().v4(), ticketIds: ids))) {
+      final result = switch (await service.retryConfirmed((
+        operationId: const Uuid().v4(),
+        ticketIds: ids,
+      ))) {
         Ok<BulkDeletionResult>(:final value) => value,
         Fail<BulkDeletionResult>(:final problem) => throw StorageFault(problem),
       };
@@ -196,7 +206,8 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
       DumpModeFilter.meeting => DumpsCreateAction.meeting,
       DumpModeFilter.all => null,
     };
-    final action = direct ??
+    final action =
+        direct ??
         await showModalBottomSheet<DumpsCreateAction>(
           context: context,
           builder: (sheetContext) => SafeArea(
@@ -207,15 +218,17 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
                   key: const ValueKey('create-option-textNote'),
                   leading: const Icon(Icons.sticky_note_2),
                   title: const Text('Text Note'),
-                  onTap: () => Navigator.of(sheetContext)
-                      .pop(DumpsCreateAction.textNote),
+                  onTap: () => Navigator.of(
+                    sheetContext,
+                  ).pop(DumpsCreateAction.textNote),
                 ),
                 ListTile(
                   key: const ValueKey('create-option-brainDump'),
                   leading: const Icon(Icons.psychology),
                   title: const Text('Brain Dump'),
-                  onTap: () => Navigator.of(sheetContext)
-                      .pop(DumpsCreateAction.brainDump),
+                  onTap: () => Navigator.of(
+                    sheetContext,
+                  ).pop(DumpsCreateAction.brainDump),
                 ),
                 ListTile(
                   key: const ValueKey('create-option-meeting'),
@@ -258,7 +271,7 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
           (DumpRow row) => links[row.id]?.contains(tagId) ?? false,
         ),
       ),
-      limit: results.limit
+      limit: results.limit,
     );
   }
 
@@ -273,7 +286,7 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
       rows: List<DumpRow>.unmodifiable(
         results.rows.where((DumpRow row) => ids.contains(row.id)),
       ),
-      limit: results.limit
+      limit: results.limit,
     );
   }
 
@@ -283,8 +296,8 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
     final eligibilityAsync = ref.watch(deletionEligibilityProvider);
     final eligibility =
         !eligibilityAsync.isLoading && !eligibilityAsync.hasError
-            ? eligibilityAsync.valueOrNull ?? <String, Eligibility>{}
-            : <String, Eligibility>{};
+        ? eligibilityAsync.valueOrNull ?? <String, Eligibility>{}
+        : <String, Eligibility>{};
     final query = ref.watch(searchQueryProvider);
     final modeFilter = ref.watch(dumpModeFilterProvider);
     final transcriptFilter = ref.watch(transcriptFilterProvider);
@@ -301,7 +314,7 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
         ref.watch(tagsProvider).valueOrNull ?? const <TagSummary>[];
     final Map<String, Set<String>> tagLinks =
         ref.watch(tagLinksProvider(TagTarget.dump)).valueOrNull ??
-            const <String, Set<String>>{};
+        const <String, Set<String>>{};
     final String? tagFilter = effectiveTagFilter(
       ref.watch(tagFilterProvider(TagTarget.dump)),
       tags,
@@ -312,24 +325,23 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
       tagLinks,
     );
     if (results != null) {
-      _selection.apply(
-        (
-          scopeKey: results.scopeKey,
-          generation: results.generation,
-          settled: results.settled &&
-              !presented.isLoading &&
-              !presented.hasError &&
-              !eligibilityAsync.isLoading &&
-              !eligibilityAsync.hasError,
-          rows: results.rows,
-          limit: results.limit
-        ),
-        eligibility,
-      );
+      _selection.apply((
+        scopeKey: results.scopeKey,
+        generation: results.generation,
+        settled:
+            results.settled &&
+            !presented.isLoading &&
+            !presented.hasError &&
+            !eligibilityAsync.isLoading &&
+            !eligibilityAsync.hasError,
+        rows: results.rows,
+        limit: results.limit,
+      ), eligibility);
     }
     final selection = _selection.selection;
     final stale = results != null && results.generation < selection.generation;
-    final ready = !stale &&
+    final ready =
+        !stale &&
         results?.settled == true &&
         !presented.isLoading &&
         !presented.hasError &&
@@ -338,6 +350,12 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
     // Everything presented is selectable; the select-all indicator compares
     // against the full result set, not the delete-eligible subset.
     final selectableIds = results?.rows.map((r) => r.id).toSet() ?? <String>{};
+    final bool selectedHasTranscript =
+        results?.rows.any(
+          (DumpRow row) =>
+              selection.selectedIds.contains(row.id) && _hasTodoTranscript(row),
+        ) ??
+        false;
 
     return PopScope(
       canPop: !selection.active,
@@ -431,12 +449,16 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
                               onTap: ready && !_batchBusy
                                   ? () => _change(_selection.toggleAll)
                                   : null,
-                              checked: selection.selectedIds.isNotEmpty &&
-                                  selection.selectedIds
-                                      .containsAll(selectableIds),
-                              mixed: selection.selectedIds.isNotEmpty &&
-                                  !selection.selectedIds
-                                      .containsAll(selectableIds),
+                              checked:
+                                  selection.selectedIds.isNotEmpty &&
+                                  selection.selectedIds.containsAll(
+                                    selectableIds,
+                                  ),
+                              mixed:
+                                  selection.selectedIds.isNotEmpty &&
+                                  !selection.selectedIds.containsAll(
+                                    selectableIds,
+                                  ),
                               child: IconButton(
                                 key: const ValueKey('selection-all'),
                                 tooltip: 'Select all returned results',
@@ -449,7 +471,8 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
                             IconButton(
                               key: const ValueKey('selection-download'),
                               tooltip: 'Download audio for selected',
-                              onPressed: ready &&
+                              onPressed:
+                                  ready &&
                                       !_batchBusy &&
                                       selection.selectedIds.isNotEmpty
                                   ? _downloadSelected
@@ -461,7 +484,8 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
                             IconButton(
                               key: const ValueKey('selection-transcribe'),
                               tooltip: 'Transcribe selected',
-                              onPressed: ready &&
+                              onPressed:
+                                  ready &&
                                       !_batchBusy &&
                                       selection.selectedIds.isNotEmpty
                                   ? _transcribeSelected
@@ -471,7 +495,8 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
                             IconButton(
                               key: const ValueKey('selection-send-to-notebook'),
                               tooltip: 'Send selected to notebook',
-                              onPressed: ready &&
+                              onPressed:
+                                  ready &&
                                       !_batchBusy &&
                                       selection.selectedIds.isNotEmpty
                                   ? _sendSelectedToNotebook
@@ -479,9 +504,19 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
                               icon: const Icon(Icons.menu_book_outlined),
                             ),
                             IconButton(
+                              key: const ValueKey('selection-send-to-todo'),
+                              tooltip: 'Add selected to To-Do',
+                              onPressed:
+                                  ready && !_batchBusy && selectedHasTranscript
+                                  ? _sendSelectedToTodo
+                                  : null,
+                              icon: const Icon(Icons.playlist_add_outlined),
+                            ),
+                            IconButton(
                               key: const ValueKey('selection-delete'),
                               tooltip: 'Delete selected local recordings',
-                              onPressed: ready &&
+                              onPressed:
+                                  ready &&
                                       !_batchBusy &&
                                       selection.selectedIds.isNotEmpty
                                   ? _deleteSelected
@@ -513,9 +548,9 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
                       keyFor: (choice) =>
                           ValueKey('mode-filter-${choice.name}'),
                       labelFor: (choice) => choice.label,
-                      onSelected: (choice) => ref
-                          .read(dumpModeFilterProvider.notifier)
-                          .state = choice,
+                      onSelected: (choice) =>
+                          ref.read(dumpModeFilterProvider.notifier).state =
+                              choice,
                     ),
                   ),
                   const SizedBox(width: 8),
@@ -528,9 +563,9 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
                       keyFor: (choice) =>
                           ValueKey('transcript-filter-${choice.name}'),
                       labelFor: (choice) => choice.label,
-                      onSelected: (choice) => ref
-                          .read(transcriptFilterProvider.notifier)
-                          .state = choice,
+                      onSelected: (choice) =>
+                          ref.read(transcriptFilterProvider.notifier).state =
+                              choice,
                     ),
                   ),
                 ],
@@ -551,81 +586,72 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
               child: stale
                   ? const Center(child: Text('Waiting for current results'))
                   : presented.hasError
-                      ? Center(
-                          child:
-                              Text('Results unavailable: ${presented.error}'),
-                        )
-                      : results == null ||
-                              !results.settled ||
-                              presented.isLoading
-                          ? const Center(child: CircularProgressIndicator())
-                          : _DumpList(
-                              dumps: results.rows,
-                              empty: showingSearch
-                                  ? 'No matches'
-                                  : widget.filterIds != null
-                                      ? 'Those recordings are no longer here'
-                                      : tagFilter != null
-                                          ? 'No recordings with this tag'
-                                          : 'No recordings yet — record one!',
-                              tagNames: <String, List<String>>{
-                                for (final MapEntry<String, Set<String>> e
-                                    in tagLinks.entries)
-                                  e.key: tagNamesFor(e.value, tags),
-                              },
-                              searchQuery: showingSearch ? query.trim() : '',
-                              searchMatches: showingSearch
-                                  ? ref
-                                          .watch(searchMatchesProvider)
-                                          .valueOrNull ??
-                                      const <String, DumpSearchMatch>{}
-                                  : const <String, DumpSearchMatch>{},
-                              onOpen: widget.onOpenDump,
-                              selection: selection,
-                              eligibility: eligibility,
-                              downloading: _downloading,
-                              enabled: ready && !_batchBusy,
-                              // Folders mirror the notebooks list; search
-                              // results stay flat — a search is already a
-                              // selection, and slicing it by folder would
-                              // hide hits in collapsed sections.
-                              folders: showingSearch
-                                  ? const <FolderSummary>[]
-                                  : ref.watch(foldersProvider).maybeWhen(
-                                        data: (List<Folder> rows) => rows
-                                            .map(
-                                              (Folder f) => FolderSummary(
-                                                id: f.id,
-                                                name: f.name,
-                                              ),
-                                            )
-                                            .toList(growable: false),
-                                        orElse: () => const <FolderSummary>[],
-                                      ),
-                              onHeaderLongPress: (
-                                String folderId,
-                                String name,
-                              ) =>
-                                  showFolderHeaderActions(
-                                context,
-                                folderId: folderId,
-                                name: name,
-                                db: ref.read(localDbProvider),
-                              ),
-                              // Undo is deliberately quiet: the row moving
-                              // back and the chip vanishing ARE the
-                              // feedback, and the reverted filing pushes on
-                              // the next sync cycle like any other edit.
-                              onUndoAutoFile: (DumpRow dump) => ref
-                                  .read(localDbProvider)
-                                  .undoAutoFile(dump.id),
-                              onEnter: (id) =>
-                                  _change(() => _selection.enter(id)),
-                              onToggle: (id) =>
-                                  _change(() => _selection.toggle(id)),
-                              onLongPressItem: (context, dump) =>
-                                  _showItemActions(context, dump, eligibility),
-                            ),
+                  ? Center(
+                      child: Text('Results unavailable: ${presented.error}'),
+                    )
+                  : results == null || !results.settled || presented.isLoading
+                  ? const Center(child: CircularProgressIndicator())
+                  : _DumpList(
+                      dumps: results.rows,
+                      empty: showingSearch
+                          ? 'No matches'
+                          : widget.filterIds != null
+                          ? 'Those recordings are no longer here'
+                          : tagFilter != null
+                          ? 'No recordings with this tag'
+                          : 'No recordings yet — record one!',
+                      tagNames: <String, List<String>>{
+                        for (final MapEntry<String, Set<String>> e
+                            in tagLinks.entries)
+                          e.key: tagNamesFor(e.value, tags),
+                      },
+                      searchQuery: showingSearch ? query.trim() : '',
+                      searchMatches: showingSearch
+                          ? ref.watch(searchMatchesProvider).valueOrNull ??
+                                const <String, DumpSearchMatch>{}
+                          : const <String, DumpSearchMatch>{},
+                      onOpen: widget.onOpenDump,
+                      selection: selection,
+                      eligibility: eligibility,
+                      downloading: _downloading,
+                      enabled: ready && !_batchBusy,
+                      // Folders mirror the notebooks list; search
+                      // results stay flat — a search is already a
+                      // selection, and slicing it by folder would
+                      // hide hits in collapsed sections.
+                      folders: showingSearch
+                          ? const <FolderSummary>[]
+                          : ref
+                                .watch(foldersProvider)
+                                .maybeWhen(
+                                  data: (List<Folder> rows) => rows
+                                      .map(
+                                        (Folder f) => FolderSummary(
+                                          id: f.id,
+                                          name: f.name,
+                                        ),
+                                      )
+                                      .toList(growable: false),
+                                  orElse: () => const <FolderSummary>[],
+                                ),
+                      onHeaderLongPress: (String folderId, String name) =>
+                          showFolderHeaderActions(
+                            context,
+                            folderId: folderId,
+                            name: name,
+                            db: ref.read(localDbProvider),
+                          ),
+                      // Undo is deliberately quiet: the row moving
+                      // back and the chip vanishing ARE the
+                      // feedback, and the reverted filing pushes on
+                      // the next sync cycle like any other edit.
+                      onUndoAutoFile: (DumpRow dump) =>
+                          ref.read(localDbProvider).undoAutoFile(dump.id),
+                      onEnter: (id) => _change(() => _selection.enter(id)),
+                      onToggle: (id) => _change(() => _selection.toggle(id)),
+                      onLongPressItem: (context, dump) =>
+                          _showItemActions(context, dump, eligibility),
+                    ),
             ),
           ],
         ),
@@ -640,8 +666,9 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
   /// and its TextField is still building, which throws "A TextEditingController
   /// was used after being disposed".
   Future<void> _renameDump(DumpRow dump) async {
-    final TextEditingController controller =
-        TextEditingController(text: dump.title);
+    final TextEditingController controller = TextEditingController(
+      text: dump.title,
+    );
     final String? name = await showDialog<String>(
       context: context,
       builder: (BuildContext dialogContext) => AlertDialog(
@@ -734,7 +761,8 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
     // v1.18.0: absent while the server is already writing this row's
     // summary — the queue dedupes by dump id, so a second request is a no-op
     // the user would only misread as "it didn't take".
-    final bool summarizable = (dump.transcript?.trim().isNotEmpty ?? false) &&
+    final bool summarizable =
+        (dump.transcript?.trim().isNotEmpty ?? false) &&
         ref.read(summariesEnabledProvider) &&
         !summaryPending(dump, now: summaryPendingNow());
     // Speaker naming (v1.15.0 §4.1): absent, not disabled, when the transcript
@@ -746,6 +774,9 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
     // Send to notebook (v1.20.0 §A): absent when there is neither a
     // transcript nor a summary to send.
     final bool sendable = canSendToNotebook(dump);
+    // To-Do differs from the notebook action: it stays visible for every row
+    // and explains why it cannot run until transcript text exists.
+    final bool todoEligible = _hasTodoTranscript(dump);
     final ItemAction? action = await showItemActionSheet(
       context,
       title: dump.title.isEmpty ? '(untitled)' : dump.title,
@@ -761,6 +792,7 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
         dump.pinned == true ? ItemAction.unpin : ItemAction.pin,
         if (exportable) ItemAction.exportMarkdown,
         if (sendable) ItemAction.sendToNotebook,
+        ItemAction.sendToTodo,
         ItemAction.select,
         ItemAction.delete,
       ],
@@ -771,6 +803,7 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
         // the app.
         if (downloadable && !canDownload)
           ItemAction.download: 'Choose a storage folder first',
+        if (!todoEligible) ItemAction.sendToTodo: 'No transcript yet',
       },
     );
     if (!mounted || action == null) return;
@@ -827,6 +860,8 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
       case ItemAction.sendToNotebook:
         if (!context.mounted) return;
         await sendDumpsToNotebook(context, ref, <DumpRow>[dump]);
+      case ItemAction.sendToTodo:
+        await _sendDumpToTodo(dump);
       case ItemAction.duplicate:
       case ItemAction.share:
       case ItemAction.exportPdf:
@@ -843,8 +878,9 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
   Future<void> _exportMarkdown(DumpRow dump) async {
     final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
     try {
-      final MarkdownExportOutcome outcome =
-          await ref.read(exportMarkdownProvider)(dump);
+      final MarkdownExportOutcome outcome = await ref.read(
+        exportMarkdownProvider,
+      )(dump);
       final String? message = outcome.message;
       if (!mounted || message == null) return;
       messenger.showSnackBar(SnackBar(content: Text(message)));
@@ -879,14 +915,13 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
   /// this against delete and transcribe — two bulk runs interleaving over
   /// one selection would produce a receipt neither run can explain.
   Future<void> _downloadSelected() async {
-    final SyncedAudioDownloader? downloader =
-        ref.read(syncedAudioDownloaderProvider);
+    final SyncedAudioDownloader? downloader = ref.read(
+      syncedAudioDownloaderProvider,
+    );
     final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
     if (downloader == null) {
       messenger.showSnackBar(
-        const SnackBar(
-          content: Text('Choose a storage folder first'),
-        ),
+        const SnackBar(content: Text('Choose a storage folder first')),
       );
       return;
     }
@@ -925,8 +960,9 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
   /// overwriting and a bulk loop cannot ask, so it must not overwrite.
   Future<void> _transcribeSelected() async {
     final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
-    final ServerTranscriptionService service =
-        ref.read(serverTranscriptionServiceProvider);
+    final ServerTranscriptionService service = ref.read(
+      serverTranscriptionServiceProvider,
+    );
     final List<DumpRow> rows = _selectedRows();
     setState(() => _batchBusy = true);
     // Announce the run BEFORE any work: each transcription is a real
@@ -940,9 +976,9 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
         content: Text(
           candidates == 0
               ? 'Nothing eligible to transcribe — completed and '
-                  'remote-only recordings are skipped'
+                    'remote-only recordings are skipped'
               : 'Transcribing $candidates recording'
-                  '${candidates == 1 ? '' : 's'}…',
+                    '${candidates == 1 ? '' : 's'}…',
         ),
         duration: const Duration(minutes: 30),
       ),
@@ -1045,8 +1081,9 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
   /// out loud rather than silently shrinking the batch.
   Future<void> _sendSelectedToNotebook() async {
     final List<DumpRow> rows = _selectedRows();
-    final List<DumpRow> sendable =
-        rows.where(canSendToNotebook).toList(growable: false);
+    final List<DumpRow> sendable = rows
+        .where(canSendToNotebook)
+        .toList(growable: false);
     if (sendable.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -1068,13 +1105,106 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
     if (mounted) _change(_selection.cancel);
   }
 
+  /// Creates one editable card from a recording transcript after choosing its
+  /// live lane. Dismissing either sheet is a true cancel: no repository write.
+  Future<void> _sendDumpToTodo(DumpRow dump) async {
+    final String? transcript = dump.transcript;
+    if (transcript == null || !_hasTodoTranscript(dump) || !mounted) return;
+    final TodoRepository repository = ref.read(todoRepositoryProvider);
+    final String? columnId = await showTodoColumnPickerSheet(
+      context,
+      repository: repository,
+    );
+    if (columnId == null || !mounted) return;
+    final String? edited = await showTodoTranscriptEditor(
+      context,
+      transcript: transcript,
+    );
+    if (edited == null || !mounted) return;
+    try {
+      await repository.addToColumn(edited, columnId, sourceRef: dump.id);
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Added to To-Do')));
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Could not add to To-Do: $error')));
+    }
+  }
+
+  /// Adds every eligible selection to one lane in selection iteration order.
+  /// Transcript bytes are passed through unchanged and the repository commits
+  /// the complete append as one transaction.
+  Future<void> _sendSelectedToTodo() async {
+    final List<DumpRow> rows = _selectedRowsInSelectionOrder();
+    final List<DumpRow> eligible = rows
+        .where(_hasTodoTranscript)
+        .toList(growable: false);
+    if (eligible.isEmpty || !mounted) return;
+    final TodoRepository repository = ref.read(todoRepositoryProvider);
+    final String? columnId = await showTodoColumnPickerSheet(
+      context,
+      repository: repository,
+    );
+    if (columnId == null || !mounted) return;
+    setState(() => _batchBusy = true);
+    try {
+      await repository.addManyToColumn(
+        columnId,
+        <({String text, String sourceRef})>[
+          for (final DumpRow row in eligible)
+            (text: row.transcript!, sourceRef: row.id),
+        ],
+      );
+      if (!mounted) return;
+      final int skipped = rows.length - eligible.length;
+      _change(_selection.cancel);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          key: const ValueKey<String>('send-to-todo-bulk-done'),
+          content: Text(
+            skipped == 0
+                ? 'Added ${eligible.length} to To-Do'
+                : 'Added ${eligible.length} to To-Do — $skipped skipped '
+                      '(no transcript)',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Could not add to To-Do: $error')));
+    } finally {
+      if (mounted) setState(() => _batchBusy = false);
+    }
+  }
+
+  List<DumpRow> _selectedRowsInSelectionOrder() {
+    final Set<String> selected = _selection.selection.selectedIds;
+    final Map<String, DumpRow> byId = <String, DumpRow>{
+      for (final DumpRow row
+          in ref.read(presentedDumpsProvider).valueOrNull?.rows ??
+              const <DumpRow>[])
+        row.id: row,
+    };
+    return <DumpRow>[
+      for (final String id in selected)
+        if (byId[id] case final DumpRow row) row,
+    ];
+  }
+
   /// The selected rows in list order, resolved from the presented results —
   /// the same rows the user is looking at, not a fresh query that might
   /// have shifted under them.
   List<DumpRow> _selectedRows() {
     final Set<String> ids = _selection.selection.selectedIds;
-    final PresentedDumpResults? results =
-        ref.read(presentedDumpsProvider).valueOrNull;
+    final PresentedDumpResults? results = ref
+        .read(presentedDumpsProvider)
+        .valueOrNull;
     return <DumpRow>[
       for (final DumpRow row in results?.rows ?? const <DumpRow>[])
         if (ids.contains(row.id)) row,
@@ -1087,8 +1217,9 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
   /// stalled fetch, a refused one and a dead button all look identical, so
   /// the busy state is an instrument rather than decoration.
   Future<void> _downloadAudio(DumpRow dump) async {
-    final SyncedAudioDownloader? downloader =
-        ref.read(syncedAudioDownloaderProvider);
+    final SyncedAudioDownloader? downloader = ref.read(
+      syncedAudioDownloaderProvider,
+    );
     final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
     if (downloader == null) {
       // Never fail silently: a tapped control that does nothing reads as a
@@ -1111,14 +1242,12 @@ class _DumpsListScreenState extends ConsumerState<DumpsListScreen> {
     messenger.showSnackBar(
       SnackBar(
         key: const ValueKey<String>('download-audio-result'),
-        content: Text(
-          switch (result) {
-            Ok<String>() => 'Audio downloaded',
-            // The service's wording is written for the user; show it as-is
-            // rather than flattening every failure to "download failed".
-            Fail<String>(:final StorageProblem problem) => problem.message,
-          },
-        ),
+        content: Text(switch (result) {
+          Ok<String>() => 'Audio downloaded',
+          // The service's wording is written for the user; show it as-is
+          // rather than flattening every failure to "download failed".
+          Fail<String>(:final StorageProblem problem) => problem.message,
+        }),
       ),
     );
   }
@@ -1242,12 +1371,8 @@ class _DumpList extends StatefulWidget {
   final bool enabled;
   final ValueChanged<String> onEnter, onToggle;
 
-  /// Opens the shared long-press menu for one row.
-  ///
-  /// Long-press here used to jump straight into multi-select. It still does
-  /// once a selection is active — that is the audited bulk-delete path — but
-  /// with no selection it opens the same sheet as every other list, which
-  /// offers Select as one of its actions.
+  /// Opens the shared action sheet for one row from either long-press or ⋮.
+  /// Multi-select is entered through the sheet's stable Select action.
   final Future<void> Function(BuildContext, DumpRow)? onLongPressItem;
 
   final List<DumpRow> dumps;
@@ -1293,11 +1418,8 @@ class _DumpListState extends State<_DumpList> {
       // is not a folder and cannot be renamed or deleted.
       final VoidCallback? headerActions =
           section.folderId == null || widget.onHeaderLongPress == null
-              ? null
-              : () => widget.onHeaderLongPress!(
-                    section.folderId!,
-                    section.title!,
-                  );
+          ? null
+          : () => widget.onHeaderLongPress!(section.folderId!, section.title!);
       children.add(
         SectionHeaderCard(
           child: InkWell(
@@ -1365,11 +1487,13 @@ class _DumpListState extends State<_DumpList> {
     return Builder(
       builder: (context) {
         final sync = SyncStatusX.fromWire(dump.syncStatus);
-        final transcription =
-            TranscriptionStatus.fromWire(dump.transcriptionStatus);
+        final transcription = TranscriptionStatus.fromWire(
+          dump.transcriptionStatus,
+        );
         return LayoutBuilder(
           builder: (context, constraints) {
-            final compact = constraints.maxWidth < 500 ||
+            final compact =
+                constraints.maxWidth < 500 ||
                 MediaQuery.textScalerOf(context).scale(14) > 21;
             final reason = eligibilityReason(widget.eligibility[dump.id]);
             final isNote = dump.mode == 'text_note';
@@ -1383,26 +1507,28 @@ class _DumpListState extends State<_DumpList> {
             // a failure (until dismissed), and the language tag for
             // non-English recordings ('ES' / 'ES → EN').
             final bool hasLanguageTag = LanguageTag.labelFor(dump) != null;
-            final bool showSummaryPill =
-                summaryPending(dump, now: summaryPendingNow());
+            final bool showSummaryPill = summaryPending(
+              dump,
+              now: summaryPendingNow(),
+            );
             // A Retry in flight outranks the failure it retries.
             final bool showFailedPill = !showSummaryPill && summaryFailed(dump);
             final Widget pill =
                 showSummaryPill || showFailedPill || hasLanguageTag
-                    ? Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (hasLanguageTag)
-                            Padding(
-                              padding: const EdgeInsets.only(right: 6),
-                              child: LanguageTag(dump),
-                            ),
-                          if (showSummaryPill) _SummaryPendingPill(dump: dump),
-                          if (showFailedPill) _SummaryFailedPill(dump: dump),
-                          transcriptionPill,
-                        ],
-                      )
-                    : transcriptionPill;
+                ? Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (hasLanguageTag)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 6),
+                          child: LanguageTag(dump),
+                        ),
+                      if (showSummaryPill) _SummaryPendingPill(dump: dump),
+                      if (showFailedPill) _SummaryFailedPill(dump: dump),
+                      transcriptionPill,
+                    ],
+                  )
+                : transcriptionPill;
             final DumpSearchMatch? match = widget.searchQuery.isEmpty
                 ? null
                 : widget.searchMatches[dump.id];
@@ -1464,10 +1590,10 @@ class _DumpListState extends State<_DumpList> {
                                 children: [
                                   for (final SnippetRun run
                                       in searchSnippetRuns(
-                                    dump,
-                                    match,
-                                    widget.searchQuery,
-                                  ))
+                                        dump,
+                                        match,
+                                        widget.searchQuery,
+                                      ))
                                     TextSpan(
                                       text: run.text,
                                       style: run.bold
@@ -1512,10 +1638,9 @@ class _DumpListState extends State<_DumpList> {
                       _AutoFiledChip(
                         dump: dump,
                         folderName: autoFiledFolder,
-                        onUndo:
-                            widget.enabled && widget.onUndoAutoFile != null
-                                ? () => widget.onUndoAutoFile!(dump)
-                                : null,
+                        onUndo: widget.enabled && widget.onUndoAutoFile != null
+                            ? () => widget.onUndoAutoFile!(dump)
+                            : null,
                       ),
                     ],
                   );
@@ -1537,8 +1662,9 @@ class _DumpListState extends State<_DumpList> {
                             key: ValueKey('dump-select-${dump.id}'),
                             shape: const CircleBorder(),
                             semanticLabel: 'Select ${dump.title}; $reason',
-                            value:
-                                widget.selection.selectedIds.contains(dump.id),
+                            value: widget.selection.selectedIds.contains(
+                              dump.id,
+                            ),
                             // Selection is action-agnostic: any presented row
                             // may be selected. Delete/download/transcribe each
                             // decide widget.eligibility at execution and report skips.
@@ -1592,37 +1718,38 @@ class _DumpListState extends State<_DumpList> {
                             key: ValueKey<String>('dump-more-${dump.id}'),
                             icon: const Icon(Icons.more_vert),
                             tooltip: 'More actions',
-                            onPressed: !widget.enabled ||
+                            onPressed:
+                                !widget.enabled ||
                                     widget.onLongPressItem == null
                                 ? null
                                 : () => widget.onLongPressItem!(context, dump),
                           ),
                         ],
                       ),
-                // Long-press stays multi-select here. It is the entry point to
-                // the audited bulk local-deletion flow, and 28 tests encode that
-                // contract deliberately ("long press selects; row and circular
-                // control never navigate"). Per-item actions get their own ⋮
-                // button instead — the same split Drive, Files and Samsung's
-                // own apps use, so the gesture is not overloaded.
+                // Long-press and ⋮ intentionally share this exact action sheet.
+                // Multi-select remains available through its stable Select row.
                 onLongPress:
-                    widget.enabled ? () => widget.onEnter(dump.id) : null,
+                    widget.enabled &&
+                        widget.onLongPressItem != null &&
+                        !widget.selection.active
+                    ? () => widget.onLongPressItem!(context, dump)
+                    : null,
                 onTap: widget.selection.active
                     ? (widget.enabled ? () => widget.onToggle(dump.id) : null)
                     : () => widget.onOpen != null
-                        ? widget.onOpen!(context, dump)
-                        : Navigator.of(context).push<void>(
-                            MaterialPageRoute<void>(
-                              builder: (_) => DumpDetailScreen(
-                                dumpId: dump.id,
-                                audioPath: dump.audioPath,
-                                durationSeconds: dump.durationSeconds,
-                                initialSearchQuery: widget.searchQuery.isEmpty
-                                    ? null
-                                    : widget.searchQuery,
+                          ? widget.onOpen!(context, dump)
+                          : Navigator.of(context).push<void>(
+                              MaterialPageRoute<void>(
+                                builder: (_) => DumpDetailScreen(
+                                  dumpId: dump.id,
+                                  audioPath: dump.audioPath,
+                                  durationSeconds: dump.durationSeconds,
+                                  initialSearchQuery: widget.searchQuery.isEmpty
+                                      ? null
+                                      : widget.searchQuery,
+                                ),
                               ),
                             ),
-                          ),
               ),
             );
           },
@@ -1689,10 +1816,7 @@ String dumpSubtitle(DumpRow dump) {
 }
 
 class _TranscriptionStatusPill extends StatelessWidget {
-  const _TranscriptionStatusPill({
-    required this.dumpId,
-    required this.status,
-  });
+  const _TranscriptionStatusPill({required this.dumpId, required this.status});
 
   final String dumpId;
   final TranscriptionStatus status;
@@ -1703,54 +1827,54 @@ class _TranscriptionStatusPill extends StatelessWidget {
     final slug = status.wireValue.replaceAll('_', '-');
     final (label, icon, foreground, background, border) = switch (status) {
       TranscriptionStatus.notTranscribed => (
-          'Not transcribed',
-          Icons.radio_button_unchecked,
-          colors.onSurfaceVariant,
-          colors.surfaceContainerHighest,
-          colors.outline,
-        ),
+        'Not transcribed',
+        Icons.radio_button_unchecked,
+        colors.onSurfaceVariant,
+        colors.surfaceContainerHighest,
+        colors.outline,
+      ),
       TranscriptionStatus.uploading => (
-          'Uploading',
-          Icons.cloud_upload_outlined,
-          colors.onPrimaryContainer,
-          colors.primaryContainer,
-          colors.primary,
-        ),
+        'Uploading',
+        Icons.cloud_upload_outlined,
+        colors.onPrimaryContainer,
+        colors.primaryContainer,
+        colors.primary,
+      ),
       TranscriptionStatus.queued => (
-          'Queued',
-          Icons.schedule,
-          colors.onPrimaryContainer,
-          colors.primaryContainer,
-          colors.primary,
-        ),
+        'Queued',
+        Icons.schedule,
+        colors.onPrimaryContainer,
+        colors.primaryContainer,
+        colors.primary,
+      ),
       TranscriptionStatus.running => (
-          'Transcribing',
-          null,
-          colors.onPrimaryContainer,
-          colors.primaryContainer,
-          colors.primary,
-        ),
+        'Transcribing',
+        null,
+        colors.onPrimaryContainer,
+        colors.primaryContainer,
+        colors.primary,
+      ),
       TranscriptionStatus.completed => (
-          'Transcribed',
-          Icons.check_circle_outline,
-          colors.onTertiaryContainer,
-          colors.tertiaryContainer,
-          colors.tertiary,
-        ),
+        'Transcribed',
+        Icons.check_circle_outline,
+        colors.onTertiaryContainer,
+        colors.tertiaryContainer,
+        colors.tertiary,
+      ),
       TranscriptionStatus.failed => (
-          'Failed',
-          Icons.error_outline,
-          colors.onErrorContainer,
-          colors.errorContainer,
-          colors.error,
-        ),
+        'Failed',
+        Icons.error_outline,
+        colors.onErrorContainer,
+        colors.errorContainer,
+        colors.error,
+      ),
       TranscriptionStatus.notApplicable => (
-          'Note',
-          Icons.edit_note,
-          colors.onSurfaceVariant,
-          colors.surfaceContainerHighest,
-          colors.outline,
-        ),
+        'Note',
+        Icons.edit_note,
+        colors.onSurfaceVariant,
+        colors.surfaceContainerHighest,
+        colors.outline,
+      ),
     };
     return Container(
       key: ValueKey('transcription-pill-$dumpId-$slug'),
@@ -1778,9 +1902,9 @@ class _TranscriptionStatusPill extends StatelessWidget {
             child: Text(
               label,
               style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                    color: foreground,
-                    fontWeight: FontWeight.w600,
-                  ),
+                color: foreground,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
         ],
@@ -1822,14 +1946,12 @@ class _SummaryPendingPillState extends State<_SummaryPendingPill> {
 
   void _armGiveUp() {
     _giveUp?.cancel();
-    final Duration remaining = summaryPendingTimeout -
+    final Duration remaining =
+        summaryPendingTimeout -
         summaryPendingElapsed(widget.dump, summaryPendingNow());
-    _giveUp = Timer(
-      remaining.isNegative ? Duration.zero : remaining,
-      () {
-        if (mounted) setState(() {});
-      },
-    );
+    _giveUp = Timer(remaining.isNegative ? Duration.zero : remaining, () {
+      if (mounted) setState(() {});
+    });
   }
 
   @override
@@ -1874,9 +1996,9 @@ class _SummaryPendingPillState extends State<_SummaryPendingPill> {
             child: Text(
               'Summarizing…',
               style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                    color: colors.onPrimaryContainer,
-                    fontWeight: FontWeight.w600,
-                  ),
+                color: colors.onPrimaryContainer,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
         ],
@@ -1915,9 +2037,9 @@ class _SummaryFailedPill extends StatelessWidget {
               child: Text(
                 'Summary failed',
                 style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                      color: colors.onErrorContainer,
-                      fontWeight: FontWeight.w600,
-                    ),
+                  color: colors.onErrorContainer,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ),
           ],

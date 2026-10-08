@@ -8,9 +8,8 @@ import 'package:tangent/widgets/sheet_drag_handle.dart';
 // One long-press menu for every list in the app.
 //
 // Long-press on a notebook used to delete it outright — a destructive action
-// with no menu in between, and a different gesture contract from the dumps
-// list, where long-press starts multi-select. This sheet is the shared
-// vocabulary: the same actions, in the same order, with the same wording,
+// with no menu in between. This sheet is the shared vocabulary: the same
+// actions, in the same order, with the same wording,
 // wherever a list item is long-pressed.
 
 void main() {
@@ -92,8 +91,9 @@ void main() {
       expect(chosen, ItemAction.rename);
     });
 
-    testWidgets('dismissing returns null rather than an action',
-        (tester) async {
+    testWidgets('dismissing returns null rather than an action', (
+      tester,
+    ) async {
       await open(
         tester,
         title: 'A notebook',
@@ -108,8 +108,9 @@ void main() {
       expect(chosen, isNull);
     });
 
-    testWidgets('delete is styled as destructive and ordered last',
-        (tester) async {
+    testWidgets('delete is styled as destructive and ordered last', (
+      tester,
+    ) async {
       await open(
         tester,
         title: 'A notebook',
@@ -123,12 +124,15 @@ void main() {
 
       // Regardless of the order requested, destructive actions sink to the
       // bottom so a long-press never lands on Delete by muscle memory.
-      final double renameY =
-          tester.getCenter(find.byKey(ItemActionSheet.keyFor(ItemAction.rename))).dy;
-      final double moveY =
-          tester.getCenter(find.byKey(ItemActionSheet.keyFor(ItemAction.move))).dy;
-      final double deleteY =
-          tester.getCenter(find.byKey(ItemActionSheet.keyFor(ItemAction.delete))).dy;
+      final double renameY = tester
+          .getCenter(find.byKey(ItemActionSheet.keyFor(ItemAction.rename)))
+          .dy;
+      final double moveY = tester
+          .getCenter(find.byKey(ItemActionSheet.keyFor(ItemAction.move)))
+          .dy;
+      final double deleteY = tester
+          .getCenter(find.byKey(ItemActionSheet.keyFor(ItemAction.delete)))
+          .dy;
       expect(renameY, lessThan(deleteY));
       expect(moveY, lessThan(deleteY));
 
@@ -162,11 +166,7 @@ void main() {
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.reset);
 
-      await open(
-        tester,
-        title: 'Everything',
-        actions: ItemAction.values,
-      );
+      await open(tester, title: 'Everything', actions: ItemAction.values);
       await tester.pumpAndSettle();
 
       for (final ItemAction action in ItemAction.values) {
@@ -188,8 +188,9 @@ void main() {
       expect(chosen, isNull);
     });
 
-    testWidgets('wears the house drag handle over 52px-minimum rows',
-        (tester) async {
+    testWidgets('wears the house drag handle over 52px-minimum rows', (
+      tester,
+    ) async {
       await open(
         tester,
         title: 'A notebook',

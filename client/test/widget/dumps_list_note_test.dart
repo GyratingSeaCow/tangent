@@ -18,6 +18,7 @@ import 'package:tangent/screens/home/home_screen.dart' show localDbProvider;
 import '../support/bound_row_fixture.dart';
 import '../support/bound_service_fixture.dart';
 import '../support/bound_widget_lifetime.dart';
+import '../support/dump_selection_fixture.dart' show enterDumpSelection;
 import '../support/scripted_storage_backend.dart';
 import '../support/storage_fixture.dart';
 
@@ -35,34 +36,33 @@ DumpRow _row(
   String status = 'not_transcribed',
   String? transcript,
   bool pinned = false,
-}) =>
-    DumpRow(
-      id: id,
-      createdAt: DateTime.utc(2026, 9, 17),
-      updatedAt: DateTime.utc(2026, 9, 17),
-      mode: mode,
-      durationSeconds: duration,
-      title: title,
-      transcript: transcript,
-      audioPath: mode == 'text_note'
-          ? 'content://tangent/$id.md'
-          : 'content://tangent/$id.opus',
-      audioSizeBytes: 3,
-      syncStatus: 'pending',
-      syncAttempts: 0,
-      transcriptionStatus: status,
-      transcriptionAttempt: 0,
-      pinned: pinned,
-    );
+}) => DumpRow(
+  id: id,
+  createdAt: DateTime.utc(2026, 9, 17),
+  updatedAt: DateTime.utc(2026, 9, 17),
+  mode: mode,
+  durationSeconds: duration,
+  title: title,
+  transcript: transcript,
+  audioPath: mode == 'text_note'
+      ? 'content://tangent/$id.md'
+      : 'content://tangent/$id.opus',
+  audioSizeBytes: 3,
+  syncStatus: 'pending',
+  syncAttempts: 0,
+  transcriptionStatus: status,
+  transcriptionAttempt: 0,
+  pinned: pinned,
+);
 
 DumpRow _noteRow(String id, String title, {String? body}) => _row(
-      id,
-      title,
-      mode: 'text_note',
-      duration: 0,
-      status: 'not_applicable',
-      transcript: body ?? 'note body of $title',
-    );
+  id,
+  title,
+  mode: 'text_note',
+  duration: 0,
+  status: 'not_applicable',
+  transcript: body ?? 'note body of $title',
+);
 
 /// Records every component deletion the scripted backend performs so the
 /// test can prove exactly which durable files each flow destroyed.
@@ -105,7 +105,9 @@ Future<BoundRecording> _seedNote(
     flush: true,
   );
   final now = DateTime.utc(2030, 1, 3);
-  await f.db.into(f.db.dumps).insert(
+  await f.db
+      .into(f.db.dumps)
+      .insert(
         DumpRow(
           id: id,
           createdAt: now,
@@ -145,7 +147,7 @@ Future<BoundRecording> _seedNote(
     key: (dumpId: id, incarnation: 'incarnation-$id'),
     location: location,
     audio: (kind: 'file', value: md.path),
-    metadataName: '$id.meta.json'
+    metadataName: '$id.meta.json',
   );
 }
 
@@ -161,10 +163,7 @@ Future<void> _pumpData(WidgetTester tester) async {
   await tester.pump(const Duration(milliseconds: 100));
 }
 
-Future<void> _mountPresentation(
-  WidgetTester tester,
-  List<DumpRow> rows,
-) async {
+Future<void> _mountPresentation(WidgetTester tester, List<DumpRow> rows) async {
   await tester.pumpWidget(
     ProviderScope(
       overrides: [
@@ -196,18 +195,27 @@ void main() {
     test('Text Note chip filters mode==text_note and is labeled exactly', () {
       expect(DumpModeFilter.textNote.label, 'Text Note');
       expect(
-        filterDumps(rows, DumpModeFilter.textNote, TranscriptFilter.all)
-            .map((r) => r.id),
+        filterDumps(
+          rows,
+          DumpModeFilter.textNote,
+          TranscriptFilter.all,
+        ).map((r) => r.id),
         ['note-1'],
       );
       expect(
-        filterDumps(rows, DumpModeFilter.brainDump, TranscriptFilter.all)
-            .map((r) => r.id),
+        filterDumps(
+          rows,
+          DumpModeFilter.brainDump,
+          TranscriptFilter.all,
+        ).map((r) => r.id),
         ['rec-1'],
       );
       expect(
-        filterDumps(rows, DumpModeFilter.all, TranscriptFilter.all)
-            .map((r) => r.id),
+        filterDumps(
+          rows,
+          DumpModeFilter.all,
+          TranscriptFilter.all,
+        ).map((r) => r.id),
         ['note-1', 'rec-1', 'meet-1'],
       );
     });
@@ -248,8 +256,11 @@ void main() {
       );
       await seedFileFixtureRow(
         db,
-        _row('2', 'Grocery recording', transcript: 'budget for groceries')
-            .copyWith(audioPath: '/tmp/2.opus'),
+        _row(
+          '2',
+          'Grocery recording',
+          transcript: 'budget for groceries',
+        ).copyWith(audioPath: '/tmp/2.opus'),
       );
       final container = ProviderContainer(
         overrides: [localDbProvider.overrideWithValue(db)],
@@ -271,13 +282,13 @@ void main() {
   });
 
   group('dumps list presentation', () {
-    testWidgets('a pinned recording shows the small row indicator',
-        (tester) async {
+    testWidgets('a pinned recording shows the small row indicator', (
+      tester,
+    ) async {
       _useTaskViewport(tester);
-      await _mountPresentation(
-        tester,
-        <DumpRow>[_row('rec-pinned', 'Pinned recording', pinned: true)],
-      );
+      await _mountPresentation(tester, <DumpRow>[
+        _row('rec-pinned', 'Pinned recording', pinned: true),
+      ]);
 
       expect(
         find.byKey(const ValueKey<String>('dump-pin-rec-pinned')),
@@ -285,8 +296,9 @@ void main() {
       );
     });
 
-    testWidgets('note rows show edit_note where recordings show duration',
-        (tester) async {
+    testWidgets('note rows show edit_note where recordings show duration', (
+      tester,
+    ) async {
       _useTaskViewport(tester);
       await _mountPresentation(tester, [
         _noteRow('note-1', 'Sourdough note'),
@@ -321,194 +333,197 @@ void main() {
       );
     });
 
-    testWidgets('Text Note chip filters the list; transcript filters stay sane',
-        (tester) async {
-      _useTaskViewport(tester);
-      await _mountPresentation(tester, [
-        _noteRow('note-1', 'Sourdough note'),
-        _row('rec-1', 'Long recording'),
-      ]);
+    testWidgets(
+      'Text Note chip filters the list; transcript filters stay sane',
+      (tester) async {
+        _useTaskViewport(tester);
+        await _mountPresentation(tester, [
+          _noteRow('note-1', 'Sourdough note'),
+          _row('rec-1', 'Long recording'),
+        ]);
 
-      // One bar, two dropdowns; each closed anchor names its selection.
-      expect(find.text('Mode · All'), findsOneWidget);
-      expect(find.text('Transcript · All'), findsOneWidget);
+        // One bar, two dropdowns; each closed anchor names its selection.
+        expect(find.text('Mode · All'), findsOneWidget);
+        expect(find.text('Transcript · All'), findsOneWidget);
 
-      // Filters are dropdowns now: open the menu, then tap the same key.
-      await tester.tap(find.byKey(const ValueKey('mode-filter-menu')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('mode-filter-textNote')));
-      await _pumpData(tester);
-      expect(find.text('Sourdough note'), findsOneWidget);
-      expect(find.text('Long recording'), findsNothing);
+        // Filters are dropdowns now: open the menu, then tap the same key.
+        await tester.tap(find.byKey(const ValueKey('mode-filter-menu')));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const ValueKey('mode-filter-textNote')));
+        await _pumpData(tester);
+        expect(find.text('Sourdough note'), findsOneWidget);
+        expect(find.text('Long recording'), findsNothing);
 
-      // Filters are dropdowns now: open the menu, then tap the same key.
-      await tester.tap(find.byKey(const ValueKey('transcript-filter-menu')));
-      await tester.pumpAndSettle();
-      await tester.tap(
-        find.byKey(const ValueKey('transcript-filter-needsTranscript')),
-      );
-      await _pumpData(tester);
-      expect(
-        find.text('Sourdough note'),
-        findsNothing,
-        reason: 'notes never match transcript-progress filters',
-      );
-      expect(find.text('No recordings yet — record one!'), findsOneWidget);
+        // Filters are dropdowns now: open the menu, then tap the same key.
+        await tester.tap(find.byKey(const ValueKey('transcript-filter-menu')));
+        await tester.pumpAndSettle();
+        await tester.tap(
+          find.byKey(const ValueKey('transcript-filter-needsTranscript')),
+        );
+        await _pumpData(tester);
+        expect(
+          find.text('Sourdough note'),
+          findsNothing,
+          reason: 'notes never match transcript-progress filters',
+        );
+        expect(find.text('No recordings yet — record one!'), findsOneWidget);
 
-      // Filters are dropdowns now: open the menu, then tap the same key.
-      await tester.tap(find.byKey(const ValueKey('transcript-filter-menu')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('transcript-filter-all')));
-      await _pumpData(tester);
-      expect(find.text('Sourdough note'), findsOneWidget);
+        // Filters are dropdowns now: open the menu, then tap the same key.
+        await tester.tap(find.byKey(const ValueKey('transcript-filter-menu')));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const ValueKey('transcript-filter-all')));
+        await _pumpData(tester);
+        expect(find.text('Sourdough note'), findsOneWidget);
 
-      // Filters are dropdowns now: open the menu, then tap the same key.
-      await tester.tap(find.byKey(const ValueKey('mode-filter-menu')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('mode-filter-all')));
-      await _pumpData(tester);
-      expect(find.text('Long recording'), findsOneWidget);
-    });
+        // Filters are dropdowns now: open the menu, then tap the same key.
+        await tester.tap(find.byKey(const ValueKey('mode-filter-menu')));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const ValueKey('mode-filter-all')));
+        await _pumpData(tester);
+        expect(find.text('Long recording'), findsOneWidget);
+      },
+    );
   });
 
   testWidgets(
-      'multi-select deletion removes the note row, its .md, and its sidecar; '
-      'recording deletion regression', (tester) async {
-    _useTaskViewport(tester);
-    final f = StorageFixture.create();
-    final backend = _CountingBackend();
-    BoundServiceFixture? bound;
-    addTearDown(() async {
-      if (bound != null) await disposeBoundWidget(tester, bound!);
-      await tester.runAsync(() async {
-        await backend.drain();
-        await f.close();
+    'multi-select deletion removes the note row, its .md, and its sidecar; '
+    'recording deletion regression',
+    (tester) async {
+      _useTaskViewport(tester);
+      final f = StorageFixture.create();
+      final backend = _CountingBackend();
+      BoundServiceFixture? bound;
+      addTearDown(() async {
+        if (bound != null) await disposeBoundWidget(tester, bound!);
+        await tester.runAsync(() async {
+          await backend.drain();
+          await f.close();
+        });
       });
-    });
-    late DefaultLocalDeletionService deletion;
-    const body = 'sourdough starter feeding schedule';
-    await tester.runAsync(() async {
-      bound = await createBoundServiceFixture(
-        f.db,
-        backend: backend,
-        registerDrain: false,
+      late DefaultLocalDeletionService deletion;
+      const body = 'sourdough starter feeding schedule';
+      await tester.runAsync(() async {
+        bound = await createBoundServiceFixture(
+          f.db,
+          backend: backend,
+          registerDrain: false,
+        );
+        deletion = DefaultLocalDeletionService(
+          db: f.db,
+          backend: backend,
+          mutations: bound!.mutations,
+        );
+        await _seedNote(f, 'fixture-note', body);
+        await f.seed('fixture-recording');
+      });
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            localDbProvider.overrideWithValue(f.db),
+            localDeletionServiceProvider.overrideWithValue(deletion),
+          ],
+          child: const MaterialApp(home: DumpsListScreen()),
+        ),
       );
-      deletion = DefaultLocalDeletionService(
-        db: f.db,
-        backend: backend,
-        mutations: bound!.mutations,
+
+      final noteRow = find.byKey(const ValueKey('dump-row-fixture-note'));
+      final recordingRow = find.byKey(
+        const ValueKey('dump-row-fixture-recording'),
       );
-      await _seedNote(f, 'fixture-note', body);
-      await f.seed('fixture-recording');
-    });
+      await pumpBoundUntil(tester, () => noteRow.evaluate().isNotEmpty);
+      await pumpBoundUntil(
+        tester,
+        () => tester.widget<ListTile>(noteRow).onLongPress != null,
+      );
 
-    await tester.pumpWidget(
-      ProviderScope(
-        overrides: [
-          localDbProvider.overrideWithValue(f.db),
-          localDeletionServiceProvider.overrideWithValue(deletion),
-        ],
-        child: const MaterialApp(home: DumpsListScreen()),
-      ),
-    );
-
-    final noteRow = find.byKey(const ValueKey('dump-row-fixture-note'));
-    final recordingRow =
-        find.byKey(const ValueKey('dump-row-fixture-recording'));
-    await pumpBoundUntil(tester, () => noteRow.evaluate().isNotEmpty);
-    await pumpBoundUntil(
-      tester,
-      () => tester.widget<ListTile>(noteRow).onLongPress != null,
-    );
-
-    await tester.longPress(noteRow);
-    await tester.pump();
-    expect(
-      find.byKey(const ValueKey('dump-select-fixture-note')),
-      findsOneWidget,
-    );
-    await tester.tap(find.byKey(const ValueKey('selection-delete')));
-    await pumpBoundUntil(
-      tester,
-      () => find.byType(AlertDialog).evaluate().isNotEmpty,
-    );
-    expect(
-      find.text('Delete 1 local recordings?'),
-      findsOneWidget,
-      reason: 'count-confirm dialog copy must be unchanged for notes',
-    );
-    expect(
-      find.text(
-        'Local audio, transcripts/notes, and metadata will be removed. '
-        'Server copies are not deleted and server jobs are not canceled.',
-      ),
-      findsOneWidget,
-    );
-    await tester.tap(find.byKey(const ValueKey('local-delete-confirm')));
-    await pumpBoundUntil(
-      tester,
-      () => find.text('1 deleted, 0 failed, 0 skipped').evaluate().isNotEmpty,
-    );
-    await pumpBoundUntil(tester, () => noteRow.evaluate().isEmpty);
-
-    expect(
-      backend.calls
-          .where((c) => c.binding.key.dumpId == 'fixture-note')
-          .map((c) => c.component)
-          .toList(),
-      [RecordingComponent.audio, RecordingComponent.metadata],
-      reason: 'both note components must go through the scripted backend',
-    );
-    expect(backend.calls, hasLength(2));
-    await tester.runAsync(() async {
-      expect(await f.db.getDump('fixture-note'), isNull);
-      expect(await f.db.boundRecording('fixture-note'), isNull);
+      await enterDumpSelection(tester, 'fixture-note');
       expect(
-        File(p.join(f.directory('A'), 'fixture-note.md')).existsSync(),
-        isFalse,
-        reason: 'the published .md must be removed',
+        find.byKey(const ValueKey('dump-select-fixture-note')),
+        findsOneWidget,
+      );
+      await tester.tap(find.byKey(const ValueKey('selection-delete')));
+      await pumpBoundUntil(
+        tester,
+        () => find.byType(AlertDialog).evaluate().isNotEmpty,
       );
       expect(
-        File(p.join(f.directory('A'), 'fixture-note.meta.json')).existsSync(),
-        isFalse,
-        reason: 'the sidecar must be removed',
+        find.text('Delete 1 local recordings?'),
+        findsOneWidget,
+        reason: 'count-confirm dialog copy must be unchanged for notes',
       );
-      expect(await f.audio('A', 'fixture-recording').exists(), isTrue);
-      expect(await f.metadata('A', 'fixture-recording').exists(), isTrue);
-    });
-    expect(recordingRow, findsOneWidget);
+      expect(
+        find.text(
+          'Local audio, transcripts/notes, and metadata will be removed. '
+          'Server copies are not deleted and server jobs are not canceled.',
+        ),
+        findsOneWidget,
+      );
+      await tester.tap(find.byKey(const ValueKey('local-delete-confirm')));
+      await pumpBoundUntil(
+        tester,
+        () => find.text('1 deleted, 0 failed, 0 skipped').evaluate().isNotEmpty,
+      );
+      await pumpBoundUntil(tester, () => noteRow.evaluate().isEmpty);
 
-    // Recording deletion regression through the identical flow.
-    await pumpBoundUntil(
-      tester,
-      () => tester.widget<ListTile>(recordingRow).onLongPress != null,
-    );
-    await tester.longPress(recordingRow);
-    await tester.pump();
-    await tester.tap(find.byKey(const ValueKey('selection-delete')));
-    await pumpBoundUntil(
-      tester,
-      () => find.byType(AlertDialog).evaluate().isNotEmpty,
-    );
-    expect(find.text('Delete 1 local recordings?'), findsOneWidget);
-    await tester.tap(find.byKey(const ValueKey('local-delete-confirm')));
-    await pumpBoundUntil(tester, () => recordingRow.evaluate().isEmpty);
+      expect(
+        backend.calls
+            .where((c) => c.binding.key.dumpId == 'fixture-note')
+            .map((c) => c.component)
+            .toList(),
+        [RecordingComponent.audio, RecordingComponent.metadata],
+        reason: 'both note components must go through the scripted backend',
+      );
+      expect(backend.calls, hasLength(2));
+      await tester.runAsync(() async {
+        expect(await f.db.getDump('fixture-note'), isNull);
+        expect(await f.db.boundRecording('fixture-note'), isNull);
+        expect(
+          File(p.join(f.directory('A'), 'fixture-note.md')).existsSync(),
+          isFalse,
+          reason: 'the published .md must be removed',
+        );
+        expect(
+          File(p.join(f.directory('A'), 'fixture-note.meta.json')).existsSync(),
+          isFalse,
+          reason: 'the sidecar must be removed',
+        );
+        expect(await f.audio('A', 'fixture-recording').exists(), isTrue);
+        expect(await f.metadata('A', 'fixture-recording').exists(), isTrue);
+      });
+      expect(recordingRow, findsOneWidget);
 
-    expect(
-      backend.calls
-          .where((c) => c.binding.key.dumpId == 'fixture-recording')
-          .map((c) => c.component)
-          .toList(),
-      [RecordingComponent.audio, RecordingComponent.metadata],
-    );
-    await tester.runAsync(() async {
-      expect(await f.db.getDump('fixture-recording'), isNull);
-      expect(await f.audio('A', 'fixture-recording').exists(), isFalse);
-      expect(await f.metadata('A', 'fixture-recording').exists(), isFalse);
-    });
-    expect(find.text('No recordings yet — record one!'), findsOneWidget);
-    await disposeBoundWidget(tester, bound!);
-    await tester.pump(const Duration(milliseconds: 1));
-    expect(tester.takeException(), isNull);
-  });
+      // Recording deletion regression through the identical flow.
+      await pumpBoundUntil(
+        tester,
+        () => tester.widget<ListTile>(recordingRow).onLongPress != null,
+      );
+      await enterDumpSelection(tester, 'fixture-recording');
+      await tester.tap(find.byKey(const ValueKey('selection-delete')));
+      await pumpBoundUntil(
+        tester,
+        () => find.byType(AlertDialog).evaluate().isNotEmpty,
+      );
+      expect(find.text('Delete 1 local recordings?'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('local-delete-confirm')));
+      await pumpBoundUntil(tester, () => recordingRow.evaluate().isEmpty);
+
+      expect(
+        backend.calls
+            .where((c) => c.binding.key.dumpId == 'fixture-recording')
+            .map((c) => c.component)
+            .toList(),
+        [RecordingComponent.audio, RecordingComponent.metadata],
+      );
+      await tester.runAsync(() async {
+        expect(await f.db.getDump('fixture-recording'), isNull);
+        expect(await f.audio('A', 'fixture-recording').exists(), isFalse);
+        expect(await f.metadata('A', 'fixture-recording').exists(), isFalse);
+      });
+      expect(find.text('No recordings yet — record one!'), findsOneWidget);
+      await disposeBoundWidget(tester, bound!);
+      await tester.pump(const Duration(milliseconds: 1));
+      expect(tester.takeException(), isNull);
+    },
+  );
 }

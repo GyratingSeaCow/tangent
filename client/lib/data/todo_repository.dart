@@ -180,6 +180,63 @@ class TodoRepository {
     return (await _db.getTodoRow(id))!;
   }
 
+  /// Creates one open card at the bottom of the chosen live Kanban lane.
+  /// Text is stored exactly as supplied; callers own any user-facing editing.
+  Future<TodoRow> addToColumn(
+    String text,
+    String columnId, {
+    required String sourceRef,
+  }) async {
+    return (await addManyToColumn(columnId, <({String text, String sourceRef})>[
+      (text: text, sourceRef: sourceRef),
+    ])).single;
+  }
+
+  /// Appends open cards to [columnId] in [drafts] iteration order.
+  ///
+  /// Validation, order allocation, and every insert share one transaction, so
+  /// a failed card cannot leave a partial recording batch on the board. The
+  /// insert fields intentionally mirror [add]: manual source/default folder,
+  /// open state, and dirty sync state, with only dump provenance added.
+  Future<List<TodoRow>> addManyToColumn(
+    String columnId,
+    Iterable<({String text, String sourceRef})> drafts,
+  ) async {
+    final List<({String text, String sourceRef})> ordered = drafts.toList(
+      growable: false,
+    );
+    if (ordered.isEmpty) return const <TodoRow>[];
+    await ensureColumns();
+    return _db.transaction(() async {
+      final List<TodoColumnRow> columns = await listColumns();
+      if (!columns.any((TodoColumnRow column) => column.id == columnId)) {
+        throw StateError('Column is not live: $columnId');
+      }
+      int boardOrder = await _nextBoardOrder(columnId);
+      final String timestamp = _stamp();
+      final List<TodoRow> created = <TodoRow>[];
+      for (final ({String text, String sourceRef}) draft in ordered) {
+        final String id = _idFactory();
+        await _db
+            .into(_db.todos)
+            .insert(
+              TodosCompanion.insert(
+                id: id,
+                body: draft.text,
+                createdAt: timestamp,
+                updatedAt: timestamp,
+                sourceRef: Value(draft.sourceRef),
+                columnId: Value(columnId),
+                boardOrder: Value(boardOrder++),
+                syncDirty: const Value(true),
+              ),
+            );
+        created.add((await _db.getTodoRow(id))!);
+      }
+      return List<TodoRow>.unmodifiable(created);
+    });
+  }
+
   /// Stamps the LOCAL-ONLY capture fingerprint on every row of [sourceRef]
   /// (live or soft-deleted). Deliberately NOT through [_write]: the column
   /// never syncs, so bumping `updated_at` or dirtying the rows would push

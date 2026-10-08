@@ -1050,6 +1050,34 @@ void main() {
       await unmount(tester);
     });
 
+    testWidgets(
+      'board card clamps a long body without truncating stored text',
+      (tester) async {
+        final TodoRepository repo = await mount(tester);
+        final String longText = List<String>.generate(
+          80,
+          (int index) => 'transcript segment $index',
+        ).join(' ');
+        final TodoRow todo = await repo.add(longText);
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(TodoListScreen.viewToggleKey));
+        await tester.pumpAndSettle();
+
+        final Finder preview = find.descendant(
+          of: find.byKey(TodoListScreen.cardKey(todo.id)),
+          matching: find.byWidgetPredicate(
+            (Widget widget) => widget is Text && widget.data == longText,
+          ),
+        );
+        final Text rendered = tester.widget<Text>(preview);
+        expect(rendered.maxLines, isNotNull);
+        expect(rendered.overflow, TextOverflow.ellipsis);
+        expect((await db.getTodoRow(todo.id))!.body, longText);
+        expect(tester.takeException(), isNull);
+        await unmount(tester);
+      },
+    );
+
     testWidgets('held drag moves across columns and reorders within a lane', (
       tester,
     ) async {

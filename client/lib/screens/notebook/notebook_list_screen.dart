@@ -44,11 +44,12 @@ import 'notebook_grouping.dart';
 import 'notebook_editor_screen.dart';
 
 /// Signature of the share step, injectable for tests.
-typedef NotebookPdfShare = Future<void> Function({
-  required Uint8List bytes,
-  required String filename,
-  required String subject,
-});
+typedef NotebookPdfShare =
+    Future<void> Function({
+      required Uint8List bytes,
+      required String filename,
+      required String subject,
+    });
 
 /// Production share: write the PDF to the app cache and open the system
 /// share sheet with it.
@@ -60,10 +61,9 @@ Future<void> _systemSharePdf({
   final directory = await getTemporaryDirectory();
   final File file = File('${directory.path}/$filename');
   await file.writeAsBytes(bytes, flush: true);
-  await Share.shareXFiles(
-    <XFile>[XFile(file.path, mimeType: 'application/pdf')],
-    subject: subject,
-  );
+  await Share.shareXFiles(<XFile>[
+    XFile(file.path, mimeType: 'application/pdf'),
+  ], subject: subject);
 }
 
 class NotebookListScreen extends ConsumerStatefulWidget {
@@ -144,8 +144,9 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
     if (query.trim().isEmpty) {
       results = null;
     } else {
-      final List<NotebookMatchSummary> summaries =
-          await ref.read(inkSearchProvider).searchNotebooks(query);
+      final List<NotebookMatchSummary> summaries = await ref
+          .read(inkSearchProvider)
+          .searchNotebooks(query);
       results = <String, NotebookMatchSummary>{
         for (final NotebookMatchSummary summary in summaries)
           summary.notebookId: summary,
@@ -298,9 +299,11 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
 
   /// Long-press opens the shared menu instead of deleting outright.
   Future<void> _showActions(NotebookHeader notebook) async {
-    final NotebookUnlockRegistry unlocks =
-        ref.read(notebookUnlockRegistryProvider);
-    final bool canLockNow = notebook.passwordProtected &&
+    final NotebookUnlockRegistry unlocks = ref.read(
+      notebookUnlockRegistryProvider,
+    );
+    final bool canLockNow =
+        notebook.passwordProtected &&
         unlocks.isUnlocked(notebook.id, notebook.passwordHash);
     final ItemAction? action = await showItemActionSheet(
       context,
@@ -371,6 +374,7 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
       // …nor a transcript to export as Markdown.
       case ItemAction.exportMarkdown:
       case ItemAction.sendToNotebook:
+      case ItemAction.sendToTodo:
         break;
     }
   }
@@ -383,8 +387,9 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
   Future<void> _exportPdf(NotebookHeader notebook) async {
     try {
       if (!await _requireUnlocked(notebook)) return;
-      final Notebook? full =
-          await ref.read(notebookRepositoryProvider).getNotebook(notebook.id);
+      final Notebook? full = await ref
+          .read(notebookRepositoryProvider)
+          .getNotebook(notebook.id);
       if (full == null) {
         throw StateError('Notebook is no longer available');
       }
@@ -403,9 +408,9 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
       );
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not export PDF: $error')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Could not export PDF: $error')));
     }
   }
 
@@ -448,11 +453,11 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
 
   Future<bool> _requireUnlocked(NotebookHeader notebook) async {
     if (!notebook.passwordProtected) return true;
-    final NotebookUnlockRegistry unlocks =
-        ref.read(notebookUnlockRegistryProvider);
+    final NotebookUnlockRegistry unlocks = ref.read(
+      notebookUnlockRegistryProvider,
+    );
     if (unlocks.isUnlocked(notebook.id, notebook.passwordHash)) return true;
-    final NotebookRepository repository =
-        ref.read(notebookRepositoryProvider);
+    final NotebookRepository repository = ref.read(notebookRepositoryProvider);
     final bool accepted = await showNotebookUnlockDialog(
       context,
       notebookTitle: notebook.title,
@@ -464,10 +469,12 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
   }
 
   Future<void> _togglePasswordProtection(NotebookHeader notebook) async {
-    final NotebookPersistence persistence =
-        ref.read(notebookPersistenceProvider);
-    final NotebookUnlockRegistry unlocks =
-        ref.read(notebookUnlockRegistryProvider);
+    final NotebookPersistence persistence = ref.read(
+      notebookPersistenceProvider,
+    );
+    final NotebookUnlockRegistry unlocks = ref.read(
+      notebookUnlockRegistryProvider,
+    );
     if (!notebook.passwordProtected) {
       final String? password = await showSetNotebookPasswordDialog(
         context,
@@ -544,8 +551,9 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
   Future<void> _rename(NotebookHeader notebook) async {
     if (!await _requireUnlocked(notebook)) return;
     if (!mounted) return;
-    final TextEditingController controller =
-        TextEditingController(text: notebook.title);
+    final TextEditingController controller = TextEditingController(
+      text: notebook.title,
+    );
     final String? name = await showDialog<String>(
       context: context,
       builder: (BuildContext dialogContext) => AlertDialog(
@@ -583,8 +591,9 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
       // erase the page. Persistence rewrites the durable file too; the bare
       // repository would leave the on-disk copy carrying the old title for
       // the next import.
-      final Notebook? full =
-          await ref.read(notebookRepositoryProvider).getNotebook(notebook.id);
+      final Notebook? full = await ref
+          .read(notebookRepositoryProvider)
+          .getNotebook(notebook.id);
       if (full == null) {
         throw StateError('Notebook is no longer available');
       }
@@ -710,8 +719,9 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
   }
 
   Widget _buildRows(ColorScheme colors) {
-    final AsyncValue<List<NotebookListEntry>> notebooks =
-        ref.watch(notebookHeadersProvider);
+    final AsyncValue<List<NotebookListEntry>> notebooks = ref.watch(
+      notebookHeadersProvider,
+    );
     return notebooks.when(
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (Object error, StackTrace _) => Center(
@@ -732,7 +742,7 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
             ref.watch(tagsProvider).valueOrNull ?? const <TagSummary>[];
         final Map<String, Set<String>> tagLinks =
             ref.watch(tagLinksProvider(TagTarget.notebook)).valueOrNull ??
-                const <String, Set<String>>{};
+            const <String, Set<String>>{};
         _tagNames = <String, List<String>>{
           for (final MapEntry<String, Set<String>> e in tagLinks.entries)
             e.key: tagNamesFor(e.value, tags),
@@ -744,18 +754,18 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
         final List<NotebookListEntry> tagRows = tagFilter == null
             ? allRows
             : allRows
-                .where(
-                  (NotebookListEntry n) =>
-                      tagLinks[n.id]?.contains(tagFilter) ?? false,
-                )
-                .toList(growable: false);
+                  .where(
+                    (NotebookListEntry n) =>
+                        tagLinks[n.id]?.contains(tagFilter) ?? false,
+                  )
+                  .toList(growable: false);
         final List<NotebookListEntry> rows = searchResults == null
             ? tagRows
             : tagRows
-                .where(
-                  (NotebookListEntry n) => searchResults.containsKey(n.id),
-                )
-                .toList(growable: false);
+                  .where(
+                    (NotebookListEntry n) => searchResults.containsKey(n.id),
+                  )
+                  .toList(growable: false);
         // Rows can vanish mid-selection (sync pull, another screen's
         // delete, a tag removed while filtered); a selection covering
         // ghosts would mislead the count and the bulk actions. Prune
@@ -777,8 +787,8 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
                 searchResults != null
                     ? 'No matches'
                     : tagFilter != null
-                        ? 'No notebooks with this tag'
-                        : 'No notebooks yet',
+                    ? 'No notebooks with this tag'
+                    : 'No notebooks yet',
                 textAlign: TextAlign.center,
               ),
             ),
@@ -794,9 +804,7 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
                     onPressed: _bulkBusy ? null : _cancelSelection,
                     icon: const Icon(Icons.close),
                   ),
-                  Expanded(
-                    child: Text('${_selectedIds.length} selected'),
-                  ),
+                  Expanded(child: Text('${_selectedIds.length} selected')),
                   IconButton(
                     key: const ValueKey<String>('notebook-selection-all'),
                     tooltip: 'Select all notebooks',
@@ -816,13 +824,14 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
         // Folders are watched via a provider (not the database directly) so
         // the screen stays testable, and filing shows up immediately: move a
         // notebook and the section it left collapses without a refresh.
-        final List<FolderSummary> folders =
-            ref.watch(foldersProvider).maybeWhen(
-                  data: (List<Folder> rows) => rows
-                      .map((Folder f) => FolderSummary(id: f.id, name: f.name))
-                      .toList(growable: false),
-                  orElse: () => const <FolderSummary>[],
-                );
+        final List<FolderSummary> folders = ref
+            .watch(foldersProvider)
+            .maybeWhen(
+              data: (List<Folder> rows) => rows
+                  .map((Folder f) => FolderSummary(id: f.id, name: f.name))
+                  .toList(growable: false),
+              orElse: () => const <FolderSummary>[],
+            );
         final List<NotebookSection> sections = groupNotebooks(
           notebooks: rows,
           folders: folders,
@@ -843,11 +852,11 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
             final VoidCallback? headerActions = section.folderId == null
                 ? null
                 : () => showFolderHeaderActions(
-                      context,
-                      folderId: section.folderId!,
-                      name: section.title!,
-                      db: ref.read(localDbProvider),
-                    );
+                    context,
+                    folderId: section.folderId!,
+                    name: section.title!,
+                    db: ref.read(localDbProvider),
+                  );
             children.add(
               SectionHeaderCard(
                 child: InkWell(
@@ -863,9 +872,7 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
                         Expanded(
                           child: Text(
                             section.title!,
-                            style: Theme.of(context)
-                                .textTheme
-                                .labelLarge
+                            style: Theme.of(context).textTheme.labelLarge
                                 ?.copyWith(color: colors.primary),
                           ),
                         ),
@@ -961,10 +968,7 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
       key: ValueKey<String>('notebook-cover-${notebook.id}'),
       onTap: _selecting
           ? () => _toggleSelected(notebook.id)
-          : () => _openNotebook(
-                notebook,
-                findQuery: _searchQueryForOpen(),
-              ),
+          : () => _openNotebook(notebook, findQuery: _searchQueryForOpen()),
       onLongPress: _selecting ? null : () => _enterSelection(notebook.id),
       // Desktop: right-click is this app's long-press.
       onSecondaryTap: secondaryTapFor(
@@ -991,8 +995,8 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
                       selected
                           ? Icons.check_circle
                           : notebook.passwordProtected
-                              ? Icons.lock_outline
-                              : Icons.menu_book,
+                          ? Icons.lock_outline
+                          : Icons.menu_book,
                       size: 40,
                       color: colors.primary,
                     ),
@@ -1092,77 +1096,74 @@ class _NotebookListScreenState extends ConsumerState<NotebookListScreen> {
   // Desktop: right-click is this app's long-press. GestureDetector wrapper
   // because ListTile exposes no onSecondaryTap of its own.
   Widget _notebookTile(NotebookHeader notebook) => GestureDetector(
-        onSecondaryTap: secondaryTapFor(
-          _selecting ? null : () => _enterSelection(notebook.id),
-        ),
-        child: ListTile(
-          key: ValueKey<String>('notebook-row-${notebook.id}'),
-          selected: _selectedIds.contains(notebook.id),
-          leading: _selecting
-              ? SizedBox.square(
-                  dimension: 48,
-                  child: Checkbox(
-                    key: ValueKey<String>('notebook-select-${notebook.id}'),
-                    shape: const CircleBorder(),
-                    semanticLabel: 'Select ${notebook.title}',
-                    value: _selectedIds.contains(notebook.id),
-                    onChanged:
-                        _bulkBusy ? null : (_) => _toggleSelected(notebook.id),
-                  ),
-                )
-              : Icon(
-                  notebook.passwordProtected
-                      ? Icons.lock_outline
-                      : Icons.menu_book,
-                  key: notebook.passwordProtected
-                      ? ValueKey<String>('notebook-lock-${notebook.id}')
-                      : null,
-                ),
-          title: TaggedTitleRow(
-            leading: <Widget>[
-              if (notebook.pinned) ...<Widget>[
-                Icon(
-                  Icons.push_pin,
-                  key: ValueKey<String>('notebook-pin-${notebook.id}'),
-                  size: 14,
-                ),
-                const SizedBox(width: 6),
-              ],
-            ],
-            title: Text(
-              notebook.title.isEmpty ? '(untitled)' : notebook.title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+    onSecondaryTap: secondaryTapFor(
+      _selecting ? null : () => _enterSelection(notebook.id),
+    ),
+    child: ListTile(
+      key: ValueKey<String>('notebook-row-${notebook.id}'),
+      selected: _selectedIds.contains(notebook.id),
+      leading: _selecting
+          ? SizedBox.square(
+              dimension: 48,
+              child: Checkbox(
+                key: ValueKey<String>('notebook-select-${notebook.id}'),
+                shape: const CircleBorder(),
+                semanticLabel: 'Select ${notebook.title}',
+                value: _selectedIds.contains(notebook.id),
+                onChanged: _bulkBusy
+                    ? null
+                    : (_) => _toggleSelected(notebook.id),
+              ),
+            )
+          : Icon(
+              notebook.passwordProtected ? Icons.lock_outline : Icons.menu_book,
+              key: notebook.passwordProtected
+                  ? ValueKey<String>('notebook-lock-${notebook.id}')
+                  : null,
             ),
-            tagNames: _tagNames[notebook.id] ?? const <String>[],
-            tagKey: ValueKey<String>('notebook-tags-${notebook.id}'),
-          ),
-          // While a search is live the subtitle answers the searcher's
-          // question — how many hits, and of what — instead of the resting
-          // timestamp.
-          subtitle: _matchSubtitle(notebook) ??
-              Text(formatNotebookUpdated(notebook.updatedAt)),
-          // The same split dumps uses: long-press means multi-select, tap
-          // toggles while selecting, and per-item actions live behind the ⋮
-          // button — hidden during selection, because a one-row menu is
-          // ambiguous while several rows are selected.
-          onTap: _selecting
-              ? (_bulkBusy ? null : () => _toggleSelected(notebook.id))
-              : () => _openNotebook(
-                    notebook,
-                    findQuery: _searchQueryForOpen(),
-                  ),
-          onLongPress: _selecting ? null : () => _enterSelection(notebook.id),
-          trailing: _selecting
-              ? null
-              : IconButton(
-                  key: ValueKey<String>('notebook-menu-${notebook.id}'),
-                  tooltip: 'Notebook actions',
-                  icon: const Icon(Icons.more_vert),
-                  onPressed: () => _showActions(notebook),
-                ),
+      title: TaggedTitleRow(
+        leading: <Widget>[
+          if (notebook.pinned) ...<Widget>[
+            Icon(
+              Icons.push_pin,
+              key: ValueKey<String>('notebook-pin-${notebook.id}'),
+              size: 14,
+            ),
+            const SizedBox(width: 6),
+          ],
+        ],
+        title: Text(
+          notebook.title.isEmpty ? '(untitled)' : notebook.title,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
         ),
-      );
+        tagNames: _tagNames[notebook.id] ?? const <String>[],
+        tagKey: ValueKey<String>('notebook-tags-${notebook.id}'),
+      ),
+      // While a search is live the subtitle answers the searcher's
+      // question — how many hits, and of what — instead of the resting
+      // timestamp.
+      subtitle:
+          _matchSubtitle(notebook) ??
+          Text(formatNotebookUpdated(notebook.updatedAt)),
+      // The same split dumps uses: long-press means multi-select, tap
+      // toggles while selecting, and per-item actions live behind the ⋮
+      // button — hidden during selection, because a one-row menu is
+      // ambiguous while several rows are selected.
+      onTap: _selecting
+          ? (_bulkBusy ? null : () => _toggleSelected(notebook.id))
+          : () => _openNotebook(notebook, findQuery: _searchQueryForOpen()),
+      onLongPress: _selecting ? null : () => _enterSelection(notebook.id),
+      trailing: _selecting
+          ? null
+          : IconButton(
+              key: ValueKey<String>('notebook-menu-${notebook.id}'),
+              tooltip: 'Notebook actions',
+              icon: const Icon(Icons.more_vert),
+              onPressed: () => _showActions(notebook),
+            ),
+    ),
+  );
 }
 
 /// `Updated 2026-09-17 14:05` in local time.

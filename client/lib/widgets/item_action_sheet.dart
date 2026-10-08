@@ -47,6 +47,10 @@ enum ItemAction {
   /// only when the row has a transcript or a summary to send.
   sendToNotebook,
 
+  /// Create a Kanban card from a recording transcript in a chosen lane.
+  /// Shown disabled when the recording has no transcript yet.
+  sendToTodo,
+
   /// Fetch a synced recording's audio from the server onto this device.
   /// Offered only when the server holds audio this device does not.
   download,
@@ -86,6 +90,7 @@ const List<ItemAction> _canonicalOrder = <ItemAction>[
   ItemAction.passwordProtection,
   ItemAction.lockNow,
   ItemAction.sendToNotebook,
+  ItemAction.sendToTodo,
   ItemAction.select,
   ItemAction.delete,
 ];
@@ -148,6 +153,8 @@ class ItemActionSheet extends StatelessWidget {
         return 'Lock Now';
       case ItemAction.sendToNotebook:
         return 'Send to notebook…';
+      case ItemAction.sendToTodo:
+        return 'Add to To-Do…';
       case ItemAction.download:
         return 'Download audio';
       case ItemAction.regenerateSummary:
@@ -189,6 +196,8 @@ class ItemActionSheet extends StatelessWidget {
         return Icons.lock;
       case ItemAction.sendToNotebook:
         return Icons.menu_book_outlined;
+      case ItemAction.sendToTodo:
+        return Icons.playlist_add_outlined;
       case ItemAction.download:
         return Icons.download_for_offline_outlined;
       case ItemAction.regenerateSummary:

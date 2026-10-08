@@ -4,9 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import '../support/dump_selection_fixture.dart';
 
-/// Desktop parity: a mouse right-click does what long-press does on the
-/// dumps list — enters multi-select. Same fixture as dumps_selection_test,
-/// same assertions, different input device.
+/// Desktop shortcut: right-click enters multi-select directly, while touch
+/// long-press opens the shared action sheet.
 void main() {
   Future<void> rightClick(WidgetTester tester, Finder finder) async {
     final TestGesture gesture = await tester.startGesture(
@@ -18,7 +17,9 @@ void main() {
     await pumpSelection(tester);
   }
 
-  testWidgets('right-click selects, exactly like long-press', (tester) async {
+  testWidgets('right-click enters selection without navigating', (
+    tester,
+  ) async {
     var opens = 0;
     final service = CountingDeletion();
     await mountSelection(tester, service, onOpen: (_, _) => opens++);
@@ -28,7 +29,7 @@ void main() {
     expect(
       find.byKey(const ValueKey('dump-select-fixture-a')),
       findsOneWidget,
-      reason: 'right-click must enter selection mode, as long-press does',
+      reason: 'right-click must enter selection mode',
     );
     expect(opens, 0, reason: 'right-click must never navigate');
     expect(service.deletes, isEmpty);
