@@ -5,14 +5,18 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'package:drift/native.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:tangent/data/local_db.dart';
 import 'package:tangent/data/secure_storage.dart';
 import 'package:tangent/data/settings_store.dart';
 import 'package:tangent/models/pair_pending.dart';
 import 'package:tangent/screens/server/server_connection_screen.dart'
     show secureStoreProvider, transcriptionClientProvider;
+import 'package:tangent/screens/home/home_screen.dart' show localDbProvider;
 import 'package:tangent/screens/settings/settings_screen.dart';
+import 'package:tangent/screens/settings/trash_screen.dart';
 import 'package:tangent/services/transcription_client.dart';
 import 'package:tangent/widgets/top_nav_rail.dart';
 
@@ -47,12 +51,15 @@ Future<void> _mount(WidgetTester tester) async {
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
+  final LocalDb db = LocalDb.forTesting(NativeDatabase.memory());
+  addTearDown(db.close);
   await tester.pumpWidget(
     ProviderScope(
       overrides: <Override>[
         settingsStoreProvider.overrideWithValue(SettingsStore()),
         secureStoreProvider.overrideWithValue(_FakeSecureStore()),
         transcriptionClientProvider.overrideWith((ref) => _FakeClient()),
+        localDbProvider.overrideWithValue(db),
       ],
       child: const MaterialApp(home: SettingsScreen()),
     ),
@@ -61,12 +68,14 @@ Future<void> _mount(WidgetTester tester) async {
 }
 
 void main() {
-  testWidgets('the overview lists all ten categories in fixed order',
-      (tester) async {
+  testWidgets('the overview lists all ten categories in fixed order', (
+    tester,
+  ) async {
     await _mount(tester);
 
-    final List<String> titles =
-        SettingsCategory.values.map((SettingsCategory c) => c.title).toList();
+    final List<String> titles = SettingsCategory.values
+        .map((SettingsCategory c) => c.title)
+        .toList();
     expect(titles, <String>[
       'Storage',
       'Import & export',
@@ -92,8 +101,9 @@ void main() {
     expect(find.text('Keep recordings on this device'), findsNothing);
   });
 
-  testWidgets('a category drill renders exactly its slice of the controls',
-      (tester) async {
+  testWidgets('a category drill renders exactly its slice of the controls', (
+    tester,
+  ) async {
     await _mount(tester);
 
     await openSettingsCategory(tester, SettingsCategory.storage);
@@ -123,8 +133,9 @@ void main() {
     expect(find.text('Keep recordings on this device'), findsNothing);
   });
 
-  testWidgets('an edit in one drill survives visiting another (one State)',
-      (tester) async {
+  testWidgets('an edit in one drill survives visiting another (one State)', (
+    tester,
+  ) async {
     await _mount(tester);
 
     await openSettingsCategory(tester, SettingsCategory.recording);
@@ -144,8 +155,48 @@ void main() {
     expect(triggerGroup.groupValue, TriggerMode.hold);
   });
 
-  testWidgets('Maintenance & about keeps Licenses and the version line',
-      (tester) async {
+  testWidgets('top-level Trash entry opens the seven-day notebook trash', (
+    tester,
+  ) async {
+    await _mount(tester);
+
+    final Finder trash = find.byKey(
+      const ValueKey<String>('settings-trash-top-level'),
+    );
+    await tester.scrollUntilVisible(
+      trash,
+      80,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(trash, findsOneWidget);
+    final ListTile tile = tester.widget<ListTile>(trash);
+    expect(tile.leading, isA<Icon>());
+    expect(
+      find.descendant(of: trash, matching: find.text('Trash')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: trash,
+        matching: find.text('Deleted notebooks — kept 7 days, then emptied'),
+      ),
+      findsOneWidget,
+    );
+
+    await tester.tap(trash);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(find.byType(TrashScreen), findsOneWidget);
+    expect(
+      find.textContaining('Deleted notebooks stay here for 7 days'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('Maintenance & about keeps Licenses and the version line', (
+    tester,
+  ) async {
     await _mount(tester);
 
     await openSettingsCategory(tester, SettingsCategory.maintenance);

@@ -32,10 +32,7 @@ enum ImportShape { audio, text, summary, both }
 /// What an import produced: the page it landed on and the ids of every
 /// block it added, in page order (first id = first new block, which the
 /// snackbar's *Open* action scrolls to).
-typedef NotebookImportResult = ({
-  String notebookId,
-  List<String> newBlockIds,
-});
+typedef NotebookImportResult = ({String notebookId, List<String> newBlockIds});
 
 // ── page geometry ─────────────────────────────────────────────────────
 //
@@ -117,9 +114,11 @@ List<NotebookBlock> layoutImportedBlocks({
   required List<NotebookBlock> existing,
   required List<InkStroke> strokes,
   required List<NotebookBlock> incoming,
+  double? existingContentBottom,
 }) {
   double insertY =
-      notebookContentBottom(existing, strokes) + kNotebookImportSpacing;
+      (existingContentBottom ?? notebookContentBottom(existing, strokes)) +
+      kNotebookImportSpacing;
   final List<NotebookBlock> placed = <NotebookBlock>[];
   for (final NotebookBlock block in incoming) {
     switch (block) {
@@ -208,17 +207,17 @@ List<NotebookBlock> importBlocksForDump({
   return switch (shape) {
     ImportShape.audio => <NotebookBlock>[card()],
     ImportShape.text => <NotebookBlock>[
-        if (includeAudioCard) card(),
-        transcript(),
-      ],
+      if (includeAudioCard) card(),
+      transcript(),
+    ],
     ImportShape.summary => <NotebookBlock>[summary()],
     // Summary first, transcript beneath it: the whole record lands in one
     // import, each half honest on its own.
     ImportShape.both => <NotebookBlock>[
-        if (includeAudioCard) card(),
-        summary(),
-        transcript(),
-      ],
+      if (includeAudioCard) card(),
+      summary(),
+      transcript(),
+    ],
   };
 }
 
@@ -246,9 +245,10 @@ Future<NotebookImportResult> importDumpsIntoNotebook({
 }) async {
   final Notebook? notebook = await persistence.getNotebook(notebookId);
   if (notebook == null) {
-    throw StorageFault(
-      (code: ProblemCode.absent, message: 'Notebook $notebookId not found'),
-    );
+    throw StorageFault((
+      code: ProblemCode.absent,
+      message: 'Notebook $notebookId not found',
+    ));
   }
   if (dumps.isEmpty) {
     return (notebookId: notebookId, newBlockIds: const <String>[]);
@@ -274,9 +274,10 @@ Future<NotebookImportResult> importDumpsIntoNotebook({
   );
   await persistence.saveNotebook(
     notebook.copyWith(
-      document: NotebookDocument(
-        <NotebookBlock>[...notebook.document.blocks, ...placed],
-      ),
+      document: NotebookDocument(<NotebookBlock>[
+        ...notebook.document.blocks,
+        ...placed,
+      ]),
     ),
   );
   return (

@@ -325,6 +325,13 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
   /// the page's gesture space.
   String? _selectedImageId;
 
+  /// The recording card just inserted from the picker. Its accent border is
+  /// the visual counterpart to focusing a newly inserted text field.
+  String? _highlightedInsertedBlockId;
+  Timer? _insertHighlightTimer;
+
+  static const Duration _insertHighlightDuration = Duration(seconds: 2);
+
   /// The instrument the next stroke uses.
   InkTool _tool = InkTool.pen;
 
@@ -396,6 +403,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
 
   @override
   void dispose() {
+    _insertHighlightTimer?.cancel();
     _pageScroll.removeListener(_updateVisiblePageRect);
     _pageScroll.dispose();
     _visiblePageRect.dispose();
@@ -541,10 +549,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
 
   FocusNode _focusFor(String id) => _focusNodes.putIfAbsent(id, () {
     final FocusNode node = FocusNode();
-    // Remember the last block that held the caret. Read at insert time,
-    // by which point the menu has taken focus away from the field.
     node.addListener(() {
-      if (node.hasFocus) _lastFocusedBlockId = id;
       // A stamped text block swaps between tappable spans (blurred) and
       // a plain field (focused): rebuild on every focus change, and fold
       // the edit back into the block on the way out (spec §C).
@@ -653,33 +658,6 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
   // Block editing
   // -------------------------------------------------------------------
 
-  /// The block the caret is in, or null when nothing is focused.
-  ///
-  /// Remembered on every focus change rather than read on demand: opening the
-  /// insert menu moves focus to the menu itself, so by the time an item is
-  /// selected the field has already lost it and a live read always answers
-  /// "nothing focused".
-  String? _lastFocusedBlockId;
-
-  /// Where a newly inserted block belongs.
-  ///
-  /// Directly after the block being edited, matching what Enter already does
-  /// in a checkbox list. Appending to the very end scatters a page written
-  /// top-to-bottom: the user is working mid-document and the new block appears
-  /// far below, often off screen.
-  ///
-  /// With nothing focused there is no "here" to insert at, so the end of the
-  /// page is the only answer that does not move the user somewhere they did
-  /// not ask to go.
-  int get _insertionIndex {
-    final String? focused = _lastFocusedBlockId;
-    if (focused == null) return _blocks.length;
-    final int index = _blocks.indexWhere(
-      (NotebookBlock block) => block.id == focused,
-    );
-    return index < 0 ? _blocks.length : index + 1;
-  }
-
   /// Opens the page-background picker and applies the choice.
   ///
   /// Dismissing the sheet resolves to null and changes NOTHING — the same
@@ -698,33 +676,37 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
   }
 
   void _addTextBlock() {
+    _clearInsertedHighlight();
     final String id = _uuid.v4();
     _controllerFor(id, '');
-    final int at = _insertionIndex;
+    final NotebookTextBlock block = NotebookTextBlock(
+      id: id,
+      text: '',
+      x: kNotebookImportX,
+      y: _contentBottom() + _importSpacing,
+    );
     setState(() {
-      _blocks = <NotebookBlock>[
-        ..._blocks.take(at),
-        // Unplaced (x/y null) so it flows beneath its neighbour rather than
-        // landing on top of it at identical coordinates.
-        NotebookTextBlock(id: id, text: ''),
-        ..._blocks.skip(at),
-      ];
+      _blocks = <NotebookBlock>[..._blocks, block];
       _dirty = true;
     });
+    _revealInsertedBlock(block, focusText: true);
   }
 
   void _addCheckboxBlock() {
+    _clearInsertedHighlight();
     final String id = _uuid.v4();
     _controllerFor(id, '');
-    final int at = _insertionIndex;
+    final NotebookCheckboxBlock block = NotebookCheckboxBlock(
+      id: id,
+      text: '',
+      x: kNotebookImportX,
+      y: _contentBottom() + _importSpacing,
+    );
     setState(() {
-      _blocks = <NotebookBlock>[
-        ..._blocks.take(at),
-        NotebookCheckboxBlock(id: id, text: ''),
-        ..._blocks.skip(at),
-      ];
+      _blocks = <NotebookBlock>[..._blocks, block];
       _dirty = true;
     });
+    _revealInsertedBlock(block, focusText: true);
   }
 
   Future<void> _pickTableSize() async {
@@ -739,6 +721,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
 
   /// Tables always land after the page's lowest content, including ink.
   void _addTableBlock({required int rows, required int columns}) {
+    _clearInsertedHighlight();
     final NotebookTableBlock block = NotebookTableBlock(
       id: _uuid.v4(),
       rows: rows,
@@ -750,6 +733,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
       _blocks = <NotebookBlock>[..._blocks, block];
       _dirty = true;
     });
+    _revealInsertedBlock(block);
   }
 
   void _onTableCellChanged(String blockId, int row, int column, String value) {
@@ -788,12 +772,18 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
 
     final String id = _uuid.v4();
     _controllerFor(id, '');
+    final double sourceTop = source.y ?? _flowTopOf(source.id);
+    final double sourceHeight =
+        _measuredBlockHeight(source.id) ?? kNotebookImportBlockHeight;
     setState(() {
       _blocks = <NotebookBlock>[
         ..._blocks.take(index + 1),
-        // Unplaced (x/y null) so it flows directly beneath its source rather
-        // than landing on top of it at identical coordinates.
-        NotebookCheckboxBlock(id: id, text: ''),
+        NotebookCheckboxBlock(
+          id: id,
+          text: '',
+          x: source.x ?? _pagePadding,
+          y: sourceTop + sourceHeight,
+        ),
         ..._blocks.skip(index + 1),
       ];
       _dirty = true;
@@ -824,9 +814,12 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
     });
     _controllers.remove(id)?.dispose();
     _focusNodes.remove(id)?.dispose();
-    // A deleted block must not keep steering where new blocks land; its id
-    // would never match again and the insert would silently go to the end.
-    if (_lastFocusedBlockId == id) _lastFocusedBlockId = null;
+    _blockMeasureKeys.remove(id);
+    if (_highlightedInsertedBlockId == id) {
+      _insertHighlightTimer?.cancel();
+      _insertHighlightTimer = null;
+      _highlightedInsertedBlockId = null;
+    }
   }
 
   /// The card reports interim pan positions AND the settled one through the
@@ -875,6 +868,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
     List<Dump> dumps, {
     String noun = 'recordings',
   }) async {
+    _clearInsertedHighlight();
     final Set<String> embedded = <String>{
       for (final NotebookBlock block in _blocks)
         if (block is NotebookDumpCardBlock) block.dumpId,
@@ -936,15 +930,29 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
       existing: _blocks,
       strokes: _strokes,
       incoming: incoming,
+      existingContentBottom: _contentBottom(),
     );
+    if (placed.isEmpty) return;
 
+    final NotebookBlock firstPlaced = placed.first;
+    final List<NotebookDumpCardBlock> placedCards = placed
+        .whereType<NotebookDumpCardBlock>()
+        .toList(growable: false);
+    final NotebookDumpCardBlock? highlightedCard = placedCards.isEmpty
+        ? null
+        : placedCards.first;
     setState(() {
       for (final NotebookBlock block in placed) {
         if (block is NotebookTextBlock) _controllerFor(block.id, block.text);
       }
       _blocks = <NotebookBlock>[..._blocks, ...placed];
+      _highlightedInsertedBlockId = highlightedCard?.id;
       _dirty = true;
     });
+    if (highlightedCard != null) {
+      _scheduleInsertedHighlightClear(highlightedCard.id);
+    }
+    _revealInsertedBlock(firstPlaced);
   }
 
   /// Whether the Summary shapes belong on the sheet for this batch.
@@ -963,6 +971,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
   /// fitted to the typed column's width, and arrives SELECTED so the
   /// move/resize affordances teach themselves.
   Future<void> _importImage() async {
+    _clearInsertedHighlight();
     final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
     final PickedImage? picked;
     try {
@@ -994,6 +1003,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
       _selectedImageId = block.id;
       _dirty = true;
     });
+    _revealInsertedBlock(block);
   }
 
   /// Imports a local PDF as ordered page blocks, not as a viewer.
@@ -1002,6 +1012,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
   /// later, when its block approaches the visible canvas, and the result is
   /// reused from the disk cache.
   Future<void> _importPdf() async {
+    _clearInsertedHighlight();
     final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
     final PickedPdf? picked;
     try {
@@ -1020,6 +1031,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
         existing: _blocks,
         strokes: _strokes,
         newId: _uuid.v4,
+        existingContentBottom: _contentBottom(),
       );
     } catch (error) {
       messenger.showSnackBar(
@@ -1032,6 +1044,7 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
       _blocks = <NotebookBlock>[..._blocks, ...pages];
       _dirty = true;
     });
+    _revealInsertedBlock(pages.first);
     WidgetsBinding.instance.addPostFrameCallback(
       (_) => _updateVisiblePageRect(),
     );
@@ -1124,11 +1137,115 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
     });
   }
 
-  /// The lowest edge of everything currently on the page: placed blocks
-  /// (plus a nominal footprint height), flow-laid blocks at their computed
-  /// slots, and every ink point. Delegates to the import service so the
-  /// headless import and this editor agree on where content ends.
-  double _contentBottom() => notebookContentBottom(_blocks, _strokes);
+  /// The lowest edge of everything currently on the page, in canonical page
+  /// coordinates. Mounted text, checkbox, table and recording rows use their
+  /// real RenderBox height; the nominal footprint is only a fallback before a
+  /// row has mounted (and remains the pure service's headless behaviour).
+  double _contentBottom() {
+    double lowest = 0;
+    double flowY = _pagePadding;
+    for (final NotebookBlock block in _blocks) {
+      switch (block) {
+        case NotebookTextBlock t:
+          final double top = t.y ?? flowY;
+          lowest = math.max(
+            lowest,
+            top + (_measuredBlockHeight(t.id) ?? kNotebookImportBlockHeight),
+          );
+          if (t.y == null) flowY += _unplacedBlockSpacing;
+        case NotebookCheckboxBlock c:
+          final double top = c.y ?? flowY;
+          lowest = math.max(
+            lowest,
+            top + (_measuredBlockHeight(c.id) ?? kNotebookImportBlockHeight),
+          );
+          if (c.y == null) flowY += _unplacedBlockSpacing;
+        case NotebookDumpCardBlock d:
+          lowest = math.max(
+            lowest,
+            d.y + (_measuredBlockHeight(d.id) ?? kNotebookImportBlockHeight),
+          );
+        case NotebookImageBlock i:
+          lowest = math.max(lowest, i.y + i.height);
+        case NotebookPdfPageBlock p:
+          lowest = math.max(lowest, p.y + p.height);
+        case NotebookTableBlock t:
+          lowest = math.max(
+            lowest,
+            t.y + (_measuredBlockHeight(t.id) ?? t.viewportHeight),
+          );
+        case NotebookUnknownBlock():
+          break;
+      }
+    }
+    for (final InkStroke stroke in _strokes) {
+      for (final InkPoint point in stroke.points) {
+        lowest = math.max(lowest, point.y);
+      }
+    }
+    return lowest;
+  }
+
+  double? _measuredBlockHeight(String id) {
+    final RenderObject? renderObject = _blockMeasureKeys[id]?.currentContext
+        ?.findRenderObject();
+    return renderObject is RenderBox && renderObject.hasSize
+        ? renderObject.size.height
+        : null;
+  }
+
+  void _clearInsertedHighlight() {
+    _insertHighlightTimer?.cancel();
+    _insertHighlightTimer = null;
+    if (_highlightedInsertedBlockId == null) return;
+    if (!mounted) {
+      _highlightedInsertedBlockId = null;
+      return;
+    }
+    setState(() => _highlightedInsertedBlockId = null);
+  }
+
+  void _scheduleInsertedHighlightClear(String id) {
+    _insertHighlightTimer?.cancel();
+    _insertHighlightTimer = Timer(_insertHighlightDuration, () {
+      if (!mounted || _highlightedInsertedBlockId != id) return;
+      setState(() => _highlightedInsertedBlockId = null);
+      _insertHighlightTimer = null;
+    });
+  }
+
+  /// Brings a newly appended block into the visible roll. Text-like inserts
+  /// also take the caret once the scroll settles; recording cards instead use
+  /// the accent highlight set by [_addRecordings].
+  void _revealInsertedBlock(NotebookBlock block, {bool focusText = false}) {
+    final double? top = switch (block) {
+      NotebookTextBlock b => b.y,
+      NotebookCheckboxBlock b => b.y,
+      NotebookDumpCardBlock b => b.y,
+      NotebookImageBlock b => b.y,
+      NotebookPdfPageBlock b => b.y,
+      NotebookTableBlock b => b.y,
+      NotebookUnknownBlock() => null,
+    };
+    if (top == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_pageScroll.hasClients) return;
+      final ScrollPosition position = _pageScroll.position;
+      final double target =
+          (top * _pageScale - position.viewportDimension * 0.15).clamp(
+            0.0,
+            position.maxScrollExtent,
+          );
+      unawaited(() async {
+        await _pageScroll.animateTo(
+          target,
+          duration: const Duration(milliseconds: 250),
+          curve: Curves.easeInOut,
+        );
+        if (mounted && focusText) _focusFor(block.id).requestFocus();
+      }());
+    });
+  }
 
   // -------------------------------------------------------------------
   // Saving / leaving
@@ -2345,22 +2462,27 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                     ],
                   ),
                 ),
-          body: Column(
-            children: <Widget>[
-              // The find bar rides above the page, Ctrl+F style. Mounted only
-              // while open, so the ordinary editor pays nothing for it.
-              if (_findOpen)
-                NotebookFindBar(
-                  controller: _findQuery,
-                  matchCount: _findMatches.length,
-                  currentIndex: _findIndex,
-                  onQueryChanged: (String query) => unawaited(_runFind(query)),
-                  onPrev: () => _findStep(-1),
-                  onNext: () => _findStep(1),
-                  onClose: _closeFind,
-                ),
-              Expanded(child: _buildBody(rowsById)),
-            ],
+          body: Listener(
+            behavior: HitTestBehavior.translucent,
+            onPointerDown: (_) => _clearInsertedHighlight(),
+            child: Column(
+              children: <Widget>[
+                // The find bar rides above the page, Ctrl+F style. Mounted only
+                // while open, so the ordinary editor pays nothing for it.
+                if (_findOpen)
+                  NotebookFindBar(
+                    controller: _findQuery,
+                    matchCount: _findMatches.length,
+                    currentIndex: _findIndex,
+                    onQueryChanged: (String query) =>
+                        unawaited(_runFind(query)),
+                    onPrev: () => _findStep(-1),
+                    onNext: () => _findStep(1),
+                    onClose: _closeFind,
+                  ),
+                Expanded(child: _buildBody(rowsById)),
+              ],
+            ),
           ),
         ),
       ),
@@ -2565,6 +2687,8 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
                       if (block is NotebookDumpCardBlock)
                         NotebookDumpCard(
                           key: ValueKey<String>('notebook-card-${block.id}'),
+                          measurementKey: _measureKeyFor(block.id),
+                          highlighted: _highlightedInsertedBlockId == block.id,
                           dump: rowsById[block.dumpId] == null
                               ? null
                               : dumpFromRow(rowsById[block.dumpId]!),
