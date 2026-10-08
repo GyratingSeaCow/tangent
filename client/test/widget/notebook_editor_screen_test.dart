@@ -429,7 +429,7 @@ void main() {
   });
 
   testWidgets(
-    'remove imported PDF is discoverable and undo restores the group',
+    'remove imported PDF removes only the latest same-document group',
     (tester) async {
       await mountEditor(
         tester,
@@ -439,6 +439,7 @@ void main() {
             NotebookPdfPageBlock(
               id: 'pdf-1',
               documentId: 'doc-remove',
+              importGroupId: 'first-import',
               pageNumber: 1,
               pageCount: 2,
               data: 'cGRm',
@@ -450,10 +451,22 @@ void main() {
             NotebookPdfPageBlock(
               id: 'pdf-2',
               documentId: 'doc-remove',
-              pageNumber: 2,
+              importGroupId: 'second-import',
+              pageNumber: 1,
               pageCount: 2,
               x: 16,
               y: 944,
+              width: 688,
+              height: 900,
+            ),
+            NotebookPdfPageBlock(
+              id: 'pdf-3',
+              documentId: 'doc-remove',
+              importGroupId: 'second-import',
+              pageNumber: 2,
+              pageCount: 2,
+              x: 16,
+              y: 1868,
               width: 688,
               height: 900,
             ),
@@ -461,7 +474,7 @@ void main() {
         ),
         pdfPageRasterLoader: const _FailingPdfLoader(),
       );
-      expect(find.byType(NotebookPdfPageBlockWidget), findsNWidgets(2));
+      expect(find.byType(NotebookPdfPageBlockWidget), findsNWidgets(3));
 
       await tester.tap(find.byKey(const ValueKey('notebook-insert-menu')));
       await tester.pump(const Duration(milliseconds: 200));
@@ -471,7 +484,11 @@ void main() {
       removeState.handleTap();
       await tester.pump();
 
-      expect(find.byType(NotebookPdfPageBlockWidget), findsNothing);
+      final NotebookPdfPageBlockWidget survivor = tester.widget(
+        find.byType(NotebookPdfPageBlockWidget),
+      );
+      expect(survivor.block.id, 'pdf-1');
+      expect(survivor.block.data, 'cGRm');
       expect(find.text('Removed 2-page PDF'), findsOneWidget);
       expect(find.text('Undo'), findsOneWidget);
       tester.widget<SnackBarAction>(find.byType(SnackBarAction)).onPressed();
@@ -482,10 +499,10 @@ void main() {
             find.byType(NotebookPdfPageBlockWidget),
           )
           .toList(growable: false);
-      expect(restored, hasLength(2));
+      expect(restored, hasLength(3));
       expect(
         restored.map((NotebookPdfPageBlockWidget widget) => widget.block.id),
-        <String>['pdf-1', 'pdf-2'],
+        <String>['pdf-1', 'pdf-2', 'pdf-3'],
       );
       expect(restored.first.block.data, 'cGRm');
       await unmount(tester);

@@ -84,12 +84,12 @@ void main() {
 
   late Directory temp;
   late _RecordingPreviewLoader loader;
-  late List<Set<int>?> results;
+  late List<NotebookPdfPageSelection?> results;
 
   setUp(() {
     temp = Directory.systemTemp.createTempSync('pdf-picker-preview-');
     loader = _RecordingPreviewLoader(temp);
-    results = <Set<int>?>[];
+    results = <NotebookPdfPageSelection?>[];
   });
 
   tearDown(() {
@@ -186,6 +186,45 @@ void main() {
     expect(await checkboxValue(tester, 4), isFalse);
   });
 
+  testWidgets('Import applies valid dirty range text without an Apply tap', (
+    WidgetTester tester,
+  ) async {
+    await openPicker(tester);
+
+    await tester.enterText(find.byKey(const ValueKey('pdf-page-range')), '2-3');
+    await tester.tap(find.byKey(const ValueKey('pdf-page-import')));
+    await tester.pumpAndSettle();
+
+    expect(results.single!.pages, <int>{2, 3});
+    expect(results.single!.sourceData, base64Encode(<int>[1, 2, 3, 4]));
+  });
+
+  testWidgets('empty range leaves checkbox selection in control of Import', (
+    WidgetTester tester,
+  ) async {
+    await openPicker(tester);
+
+    await tester.enterText(find.byKey(const ValueKey('pdf-page-range')), '   ');
+    await tapThumbnail(tester, 1);
+    await tester.pump();
+
+    expect(find.text('3 of 4 pages selected'), findsOneWidget);
+    expect(
+      find.text('Enter page numbers and ranges like 1-3,7.'),
+      findsNothing,
+    );
+    expect(
+      tester
+          .widget<FilledButton>(find.byKey(const ValueKey('pdf-page-import')))
+          .onPressed,
+      isNotNull,
+    );
+
+    await tester.tap(find.byKey(const ValueKey('pdf-page-import')));
+    await tester.pumpAndSettle();
+    expect(results.single!.pages, <int>{2, 3, 4});
+  });
+
   testWidgets('invalid ranges show inline errors and disable Import', (
     WidgetTester tester,
   ) async {
@@ -223,7 +262,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('pdf-page-cancel')));
     await tester.pumpAndSettle();
 
-    expect(results, <Set<int>?>[null]);
+    expect(results, <NotebookPdfPageSelection?>[null]);
   });
 
   testWidgets('closing the picker cancels in-flight thumbnail renders', (

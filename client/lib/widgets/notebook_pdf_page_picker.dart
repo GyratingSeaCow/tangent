@@ -11,6 +11,17 @@ import '../services/notebook_pdf_import.dart';
 const int _thumbnailMaxWidth = 144;
 const int _thumbnailMaxHeight = 192;
 
+/// Pages chosen for one import plus the picker's single source encoding.
+class NotebookPdfPageSelection {
+  const NotebookPdfPageSelection({
+    required this.pages,
+    required this.sourceData,
+  });
+
+  final Set<int> pages;
+  final String sourceData;
+}
+
 /// Selects source pages before a picked PDF is inserted into a notebook.
 class NotebookPdfPagePicker extends StatefulWidget {
   const NotebookPdfPagePicker({
@@ -22,11 +33,11 @@ class NotebookPdfPagePicker extends StatefulWidget {
   final PickedPdf picked;
   final PdfPageRasterLoader loader;
 
-  static Future<Set<int>?> show(
+  static Future<NotebookPdfPageSelection?> show(
     BuildContext context, {
     required PickedPdf picked,
     required PdfPageRasterLoader loader,
-  }) => showDialog<Set<int>>(
+  }) => showDialog<NotebookPdfPageSelection>(
     context: context,
     barrierDismissible: false,
     builder: (BuildContext context) =>
@@ -50,6 +61,11 @@ class _NotebookPdfPagePickerState extends State<NotebookPdfPagePicker> {
     _rangeController.text,
     pageCount: _pageCount,
   );
+  late String _lastAppliedRangeText = _rangeController.text;
+
+  bool get _hasRangeText => _rangeController.text.trim().isNotEmpty;
+
+  bool get _hasDirtyRange => _rangeController.text != _lastAppliedRangeText;
 
   @override
   void dispose() {
@@ -74,18 +90,35 @@ class _NotebookPdfPagePickerState extends State<NotebookPdfPagePicker> {
   }
 
   void _applyRange() {
-    if (!_range.isValid) return;
+    if (!_hasRangeText || !_range.isValid) return;
     setState(() {
       _selected
         ..clear()
         ..addAll(_range.pages);
+      _lastAppliedRangeText = _rangeController.text;
     });
+  }
+
+  void _import() {
+    final bool applyPendingRange = _hasRangeText && _hasDirtyRange;
+    if (applyPendingRange && !_range.isValid) return;
+    final Set<int> pages = applyPendingRange ? _range.pages : _selected;
+    if (pages.isEmpty) return;
+    Navigator.of(context).pop(
+      NotebookPdfPageSelection(
+        pages: Set<int>.unmodifiable(pages),
+        sourceData: _sourceData,
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final Size viewport = MediaQuery.sizeOf(context);
-    final bool canImport = _range.isValid && _selected.isNotEmpty;
+    final bool hasPendingRange = _hasRangeText && _hasDirtyRange;
+    final bool canImport = hasPendingRange
+        ? _range.isValid && _range.pages.isNotEmpty
+        : _selected.isNotEmpty;
     return Dialog(
       child: ConstrainedBox(
         constraints: BoxConstraints(
@@ -125,7 +158,7 @@ class _NotebookPdfPagePickerState extends State<NotebookPdfPagePicker> {
                       decoration: InputDecoration(
                         labelText: 'Pages',
                         hintText: '1-3,7,12-14',
-                        errorText: _range.error,
+                        errorText: _hasRangeText ? _range.error : null,
                         border: const OutlineInputBorder(),
                         isDense: true,
                       ),
@@ -137,7 +170,9 @@ class _NotebookPdfPagePickerState extends State<NotebookPdfPagePicker> {
                   const SizedBox(width: 12),
                   FilledButton.tonal(
                     key: const ValueKey('pdf-page-range-apply'),
-                    onPressed: _range.isValid ? _applyRange : null,
+                    onPressed: _hasRangeText && _range.isValid
+                        ? _applyRange
+                        : null,
                     child: const Text('Apply'),
                   ),
                 ],
@@ -212,11 +247,7 @@ class _NotebookPdfPagePickerState extends State<NotebookPdfPagePicker> {
                   const SizedBox(width: 8),
                   FilledButton(
                     key: const ValueKey('pdf-page-import'),
-                    onPressed: canImport
-                        ? () => Navigator.of(
-                            context,
-                          ).pop(Set<int>.unmodifiable(_selected))
-                        : null,
+                    onPressed: canImport ? _import : null,
                     child: const Text('Import'),
                   ),
                 ],

@@ -264,6 +264,7 @@ class NotebookEditorScreen extends ConsumerStatefulWidget {
 
 class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
   static const Uuid _uuid = Uuid();
+  static const Duration _pdfPickerExitDelay = Duration(milliseconds: 200);
 
   final TextEditingController _title = TextEditingController();
   final Map<String, TextEditingController> _controllers =
@@ -1019,9 +1020,9 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
     final PdfPageRasterLoader previewLoader =
         widget.pdfPreviewRasterLoader ?? NotebookPdfPageCache();
     final bool ownsPreviewLoader = widget.pdfPreviewRasterLoader == null;
-    final Set<int>? selectedPages;
+    final NotebookPdfPageSelection? selection;
     try {
-      selectedPages = await NotebookPdfPagePicker.show(
+      selection = await NotebookPdfPagePicker.show(
         context,
         picked: picked,
         loader: previewLoader,
@@ -1034,15 +1035,19 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
     } finally {
       if (ownsPreviewLoader &&
           previewLoader is CancellablePdfPageRasterLoader) {
+        // showDialog completes at didPop, while its route still paints the
+        // reverse transition. Keep thumbnails' loader alive through the fade.
+        await Future<void>.delayed(_pdfPickerExitDelay);
         await previewLoader.dispose();
       }
     }
-    if (selectedPages == null || selectedPages.isEmpty || !mounted) return;
+    if (selection == null || selection.pages.isEmpty || !mounted) return;
     final List<NotebookPdfPageBlock> pages;
     try {
       pages = buildImportedPdfPageBlocks(
         picked: picked,
-        selectedPageNumbers: selectedPages,
+        sourceData: selection.sourceData,
+        selectedPageNumbers: selection.pages,
         existing: _blocks,
         strokes: _strokes,
         newId: _uuid.v4,
@@ -1067,42 +1072,23 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
   /// The insert menu exposes the affordance beside PDF import, and the snackbar
   /// restores the exact blocks (including the sole source-bearing page).
   void _removeLastImportedPdf() {
-    final List<NotebookPdfPageBlock> imported = _blocks
-        .whereType<NotebookPdfPageBlock>()
-        .toList(growable: false);
-    if (imported.isEmpty) return;
-    final String documentId = imported.last.documentId;
-    final List<(int, NotebookBlock)> removed = <(int, NotebookBlock)>[
-      for (int index = 0; index < _blocks.length; index++)
-        if (_blocks[index] case final NotebookPdfPageBlock page
-            when page.documentId == documentId)
-          (index, page),
-    ];
+    final NotebookPdfImportRemoval? removal = removeLastImportedPdfBlocks(
+      _blocks,
+    );
+    if (removal == null) return;
     setState(() {
-      _blocks = _blocks
-          .where(
-            (NotebookBlock block) =>
-                block is! NotebookPdfPageBlock ||
-                block.documentId != documentId,
-          )
-          .toList(growable: false);
+      _blocks = removal.remaining;
       _dirty = true;
     });
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('Removed ${removed.length}-page PDF'),
+        content: Text('Removed ${removal.removed.length}-page PDF'),
         action: SnackBarAction(
           label: 'Undo',
           onPressed: () {
             if (!mounted) return;
             setState(() {
-              final List<NotebookBlock> restored = List<NotebookBlock>.of(
-                _blocks,
-              );
-              for (final (int index, NotebookBlock block) in removed) {
-                restored.insert(index.clamp(0, restored.length), block);
-              }
-              _blocks = restored;
+              _blocks = removal.restoreInto(_blocks);
               _dirty = true;
             });
             WidgetsBinding.instance.addPostFrameCallback(

@@ -325,11 +325,11 @@ class SystemNotebookPdfPicker implements NotebookPdfPicker {
 
 /// Builds ordered, content-aware page blocks for [picked].
 ///
-/// Source bytes are base64-encoded on the first imported page only. Every other
-/// selected page references them by document id, so selecting page 2 without
-/// page 1 still leaves a self-contained document without duplicating its bytes.
+/// [sourceData] is the picker's one base64 encoding. It is embedded only when
+/// no existing block already carries this document's source bytes.
 List<NotebookPdfPageBlock> buildImportedPdfPageBlocks({
   required PickedPdf picked,
+  required String sourceData,
   Set<int>? selectedPageNumbers,
   required List<NotebookBlock> existing,
   required List<InkStroke> strokes,
@@ -343,7 +343,13 @@ List<NotebookPdfPageBlock> buildImportedPdfPageBlocks({
     throw RangeError('Selected PDF page is outside the document');
   }
   if (selected.isEmpty) return const <NotebookPdfPageBlock>[];
-  final String encoded = base64Encode(picked.bytes);
+  final String importGroupId = newId();
+  final bool sourceAlreadyEmbedded = existing.any(
+    (NotebookBlock block) =>
+        block is NotebookPdfPageBlock &&
+        block.documentId == picked.documentId &&
+        block.data != null,
+  );
   double y = notebookContentBottom(existing, strokes) + kNotebookImportSpacing;
   final List<NotebookPdfPageBlock> pages = <NotebookPdfPageBlock>[];
   for (int index = 0; index < picked.pageSizes.length; index++) {
@@ -358,9 +364,10 @@ List<NotebookPdfPageBlock> buildImportedPdfPageBlocks({
       NotebookPdfPageBlock(
         id: newId(),
         documentId: picked.documentId,
+        importGroupId: importGroupId,
         pageNumber: pageNumber,
         pageCount: picked.pageSizes.length,
-        data: pages.isEmpty ? encoded : null,
+        data: !sourceAlreadyEmbedded && pages.isEmpty ? sourceData : null,
         x: kNotebookImportX,
         y: y,
         width: kNotebookPdfPageWidth,
@@ -370,6 +377,102 @@ List<NotebookPdfPageBlock> buildImportedPdfPageBlocks({
     y += height + kNotebookPdfPageSpacing;
   }
   return List<NotebookPdfPageBlock>.unmodifiable(pages);
+}
+
+/// One reversible removal of the latest PDF import action.
+class NotebookPdfImportRemoval {
+  const NotebookPdfImportRemoval._({
+    required this.remaining,
+    required this.removed,
+    this.sourceTransferTargetId,
+  });
+
+  final List<NotebookBlock> remaining;
+  final List<(int, NotebookPdfPageBlock)> removed;
+
+  /// A surviving page that temporarily received source bytes from the removed
+  /// group. Undo clears that copy before restoring the original bearer.
+  final String? sourceTransferTargetId;
+
+  List<NotebookBlock> restoreInto(Iterable<NotebookBlock> current) {
+    final List<NotebookBlock> restored = <NotebookBlock>[
+      for (final NotebookBlock block in current)
+        if (block is NotebookPdfPageBlock && block.id == sourceTransferTargetId)
+          block.copyWith(data: null)
+        else
+          block,
+    ];
+    for (final (int index, NotebookPdfPageBlock block) in removed) {
+      restored.insert(index.clamp(0, restored.length), block);
+    }
+    return restored;
+  }
+}
+
+/// Removes only the latest grouped import. Legacy null-group pages retain the
+/// old document-id grouping rule. If their source bearer is removed while a
+/// same-document group survives, the bytes are transferred transactionally.
+NotebookPdfImportRemoval? removeLastImportedPdfBlocks(
+  List<NotebookBlock> blocks,
+) {
+  final List<NotebookPdfPageBlock> imported = blocks
+      .whereType<NotebookPdfPageBlock>()
+      .toList(growable: false);
+  if (imported.isEmpty) return null;
+  final NotebookPdfPageBlock latest = imported.last;
+  final String? groupId = latest.importGroupId;
+
+  bool belongsToLatest(NotebookPdfPageBlock page) => groupId == null
+      ? page.importGroupId == null && page.documentId == latest.documentId
+      : page.importGroupId == groupId && page.documentId == latest.documentId;
+
+  final List<(int, NotebookPdfPageBlock)> removed =
+      <(int, NotebookPdfPageBlock)>[
+        for (int index = 0; index < blocks.length; index++)
+          if (blocks[index] case final NotebookPdfPageBlock page
+              when belongsToLatest(page))
+            (index, page),
+      ];
+  final List<NotebookBlock> remaining = <NotebookBlock>[
+    for (final NotebookBlock block in blocks)
+      if (block is! NotebookPdfPageBlock || !belongsToLatest(block)) block,
+  ];
+
+  String? removedSource;
+  for (final (_, NotebookPdfPageBlock page) in removed) {
+    if (page.data != null) {
+      removedSource = page.data;
+      break;
+    }
+  }
+  String? sourceTransferTargetId;
+  if (removedSource != null) {
+    final bool sourceSurvives = remaining.any(
+      (NotebookBlock block) =>
+          block is NotebookPdfPageBlock &&
+          block.documentId == latest.documentId &&
+          block.data != null,
+    );
+    if (!sourceSurvives) {
+      final int targetIndex = remaining.indexWhere(
+        (NotebookBlock block) =>
+            block is NotebookPdfPageBlock &&
+            block.documentId == latest.documentId,
+      );
+      if (targetIndex >= 0) {
+        final NotebookPdfPageBlock target =
+            remaining[targetIndex] as NotebookPdfPageBlock;
+        sourceTransferTargetId = target.id;
+        remaining[targetIndex] = target.copyWith(data: removedSource);
+      }
+    }
+  }
+
+  return NotebookPdfImportRemoval._(
+    remaining: List<NotebookBlock>.unmodifiable(remaining),
+    removed: List<(int, NotebookPdfPageBlock)>.unmodifiable(removed),
+    sourceTransferTargetId: sourceTransferTargetId,
+  );
 }
 
 /// Resolves the one source-bearing sibling for [page].

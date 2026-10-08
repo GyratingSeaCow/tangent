@@ -24,7 +24,8 @@ void main() {
 
   group('NotebookDocument codec', () {
     test('round trips text, checkbox and dumpCard blocks in order', () {
-      const source = '{"blocks":['
+      const source =
+          '{"blocks":['
           '{"kind":"text","id":"block-1","text":"hello"},'
           '{"kind":"checkbox","id":"block-2","text":"buy milk","checked":true},'
           '{"kind":"dumpCard","id":"block-3","dumpId":"dump-9",'
@@ -59,7 +60,8 @@ void main() {
     });
 
     test('round trips an image block with position, size and bytes', () {
-      const source = '{"blocks":['
+      const source =
+          '{"blocks":['
           '{"kind":"image","id":"img-1","data":"aGVsbG8=",'
           '"mime":"image/jpeg","x":40.0,"y":120.0,'
           '"width":320.0,"height":240.0}'
@@ -79,13 +81,13 @@ void main() {
     });
 
     test('round trips a sparse table and editable string cells', () {
-      const source = '{"blocks":[{"kind":"table","id":"table-1",'
+      const source =
+          '{"blocks":[{"kind":"table","id":"table-1",'
           '"rows":100,"columns":100,"x":16.0,"y":220.0,"cells":['
           '{"r":0,"c":0,"text":"Name"},'
           '{"r":99,"c":99,"text":"last"}]}]}';
-      final NotebookTableBlock table = NotebookDocument.decode(source)
-          .blocks
-          .single as NotebookTableBlock;
+      final NotebookTableBlock table =
+          NotebookDocument.decode(source).blocks.single as NotebookTableBlock;
 
       expect(table.rows, 100);
       expect(table.columns, 100);
@@ -99,40 +101,44 @@ void main() {
       expect(edited.copyWithCell(50, 50, '').cellAt(50, 50), isEmpty);
     });
 
-    test('empty table cells are omitted instead of encoding 10,000 strings',
-        () {
-      const NotebookTableBlock table = NotebookTableBlock(
-        id: 'table-empty',
-        rows: 100,
-        columns: 100,
-        x: 16,
-        y: 24,
-      );
+    test(
+      'empty table cells are omitted instead of encoding 10,000 strings',
+      () {
+        const NotebookTableBlock table = NotebookTableBlock(
+          id: 'table-empty',
+          rows: 100,
+          columns: 100,
+          x: 16,
+          y: 24,
+        );
 
-      expect(table.toJson().containsKey('cells'), isFalse);
-      expect(
-        jsonEncode(table.toJson()),
-        '{"kind":"table","id":"table-empty","rows":100,'
-        '"columns":100,"x":16.0,"y":24.0}',
-      );
-    });
+        expect(table.toJson().containsKey('cells'), isFalse);
+        expect(
+          jsonEncode(table.toJson()),
+          '{"kind":"table","id":"table-empty","rows":100,'
+          '"columns":100,"x":16.0,"y":24.0}',
+        );
+      },
+    );
 
-    test('out-of-range or malformed table dimensions preserve the raw block',
-        () {
-      for (final String source in <String>[
-        '{"blocks":[{"kind":"table","id":"t","rows":0,'
-            '"columns":2,"x":0,"y":0}]}',
-        '{"blocks":[{"kind":"table","id":"t","rows":2,'
-            '"columns":101,"x":0,"y":0}]}',
-        '{"blocks":[{"kind":"table","id":"t","rows":2,'
-            '"columns":2,"x":0,"y":0,"cells":['
-            '{"r":2,"c":0,"text":"outside"}]}]}',
-      ]) {
-        final NotebookDocument document = NotebookDocument.decode(source);
-        expect(document.blocks.single, isA<NotebookUnknownBlock>());
-        expect(_decode(document.encode()), _decode(source));
-      }
-    });
+    test(
+      'out-of-range or malformed table dimensions preserve the raw block',
+      () {
+        for (final String source in <String>[
+          '{"blocks":[{"kind":"table","id":"t","rows":0,'
+              '"columns":2,"x":0,"y":0}]}',
+          '{"blocks":[{"kind":"table","id":"t","rows":2,'
+              '"columns":101,"x":0,"y":0}]}',
+          '{"blocks":[{"kind":"table","id":"t","rows":2,'
+              '"columns":2,"x":0,"y":0,"cells":['
+              '{"r":2,"c":0,"text":"outside"}]}]}',
+        ]) {
+          final NotebookDocument document = NotebookDocument.decode(source);
+          expect(document.blocks.single, isA<NotebookUnknownBlock>());
+          expect(_decode(document.encode()), _decode(source));
+        }
+      },
+    );
 
     test('image copyWith moves and resizes without touching the bytes', () {
       const image = NotebookImageBlock(
@@ -157,7 +163,8 @@ void main() {
     test('a malformed image block is preserved verbatim, not dropped', () {
       // width missing: this build cannot render it, but the bytes and every
       // other field must survive a load/save cycle untouched.
-      const source = '{"blocks":['
+      const source =
+          '{"blocks":['
           '{"kind":"image","id":"img-3","data":"aGVsbG8=",'
           '"mime":"image/jpeg","x":1.0,"y":2.0}'
           ']}';
@@ -186,6 +193,25 @@ void main() {
       expect(pages.last.documentId, pages.first.documentId);
       expect(document.encode(), source);
     });
+
+    test(
+      'round trips PDF import groups and preserves them through copyWith',
+      () {
+        const String source =
+            '{"blocks":[{"kind":"pdfPage","id":"pdf-1",'
+            '"documentId":"sha256-a","importGroupId":"import-a",'
+            '"pageNumber":1,"pageCount":1,"data":"JVBERi0=",'
+            '"x":16.0,"y":200.0,"width":688.0,"height":900.0}]}';
+
+        final NotebookDocument document = NotebookDocument.decode(source);
+        final NotebookPdfPageBlock page =
+            document.blocks.single as NotebookPdfPageBlock;
+
+        expect(page.importGroupId, 'import-a');
+        expect(page.copyWith(y: 300).importGroupId, 'import-a');
+        expect(document.encode(), source);
+      },
+    );
 
     test('a malformed PDF page is preserved verbatim, not rewritten', () {
       const String source =
@@ -220,7 +246,8 @@ void main() {
     });
 
     test('preserves an unknown block kind verbatim across load and save', () {
-      const source = '{"blocks":['
+      const source =
+          '{"blocks":['
           '{"kind":"text","id":"block-1","text":"before"},'
           '{"kind":"futureThing","id":"block-2","payload":{"deep":[1,2,3]},'
           '"extra":"keep me"},'
@@ -246,8 +273,7 @@ void main() {
       );
     });
 
-    test('treats a malformed known block as unknown instead of dropping it',
-        () {
+    test('treats a malformed known block as unknown instead of dropping it', () {
       const source =
           '{"blocks":[{"kind":"text","id":"block-1","text":{"not":"a string"}}]}';
       final document = NotebookDocument.decode(source);
@@ -256,27 +282,29 @@ void main() {
       expect(_decode(document.encode()), _decode(source));
     });
 
-    test('degrades malformed, absent or non-object JSON to an empty document',
-        () {
-      for (final source in <String?>[
-        null,
-        '',
-        '   ',
-        'not json at all',
-        '{"blocks": ',
-        '[]',
-        '"a string"',
-        '{"blocks": "not a list"}',
-        '{}',
-      ]) {
-        final document = NotebookDocument.decode(source);
-        expect(
-          document.blocks,
-          isEmpty,
-          reason: 'Expected empty document for ${jsonEncode(source)}',
-        );
-      }
-    });
+    test(
+      'degrades malformed, absent or non-object JSON to an empty document',
+      () {
+        for (final source in <String?>[
+          null,
+          '',
+          '   ',
+          'not json at all',
+          '{"blocks": ',
+          '[]',
+          '"a string"',
+          '{"blocks": "not a list"}',
+          '{}',
+        ]) {
+          final document = NotebookDocument.decode(source);
+          expect(
+            document.blocks,
+            isEmpty,
+            reason: 'Expected empty document for ${jsonEncode(source)}',
+          );
+        }
+      },
+    );
 
     test('encodes an empty document as an empty block list', () {
       expect(const NotebookDocument.empty().encode(), '{"blocks":[]}');
@@ -317,8 +345,10 @@ void main() {
       final encoded = NotebookDocument([block]).encode();
       expect(
         encoded,
-        contains('"stamps":[{"o":0,"l":7,"s":0.0,"d":"d1"},'
-            '{"o":23,"l":7,"s":5.5,"d":"d1"}]'),
+        contains(
+          '"stamps":[{"o":0,"l":7,"s":0.0,"d":"d1"},'
+          '{"o":23,"l":7,"s":5.5,"d":"d1"}]',
+        ),
       );
       final decoded = NotebookDocument.decode(encoded).blocks.single;
       expect(decoded, isA<NotebookTextBlock>());
@@ -332,9 +362,11 @@ void main() {
 
     test('round trips without stamps', () {
       const block = NotebookTextBlock(id: 'b', text: 'plain');
-      final decoded = NotebookDocument.decode(
-        NotebookDocument([block]).encode(),
-      ).blocks.single as NotebookTextBlock;
+      final decoded =
+          NotebookDocument.decode(
+                NotebookDocument([block]).encode(),
+              ).blocks.single
+              as NotebookTextBlock;
       expect(decoded.stamps, isEmpty);
       expect(decoded.toJson().containsKey('stamps'), isFalse);
     });
@@ -359,18 +391,21 @@ void main() {
         '{"kind":"text","id":"b","text":"t","stamps":[1,"x",null,{}]}',
         '{"kind":"text","id":"b","text":"t","stamps":[{"o":"0","l":7,"s":0,"d":"d"}]}',
       ]) {
-        final block =
-            NotebookDocument.decode('{"blocks":[$raw]}').blocks.single;
+        final block = NotebookDocument.decode(
+          '{"blocks":[$raw]}',
+        ).blocks.single;
         expect(block, isA<NotebookTextBlock>(), reason: raw);
         expect((block as NotebookTextBlock).stamps, isEmpty, reason: raw);
       }
     });
 
     test('well-formed stamps survive beside garbage entries', () {
-      final block = NotebookDocument.decode(
-        '{"blocks":[{"kind":"text","id":"b","text":"t","stamps":'
-        '[{"o":0,"l":7,"s":1,"d":"d"},"junk",{"o":-1,"l":7,"s":1,"d":"d"}]}]}',
-      ).blocks.single as NotebookTextBlock;
+      final block =
+          NotebookDocument.decode(
+                '{"blocks":[{"kind":"text","id":"b","text":"t","stamps":'
+                '[{"o":0,"l":7,"s":1,"d":"d"},"junk",{"o":-1,"l":7,"s":1,"d":"d"}]}]}',
+              ).blocks.single
+              as NotebookTextBlock;
       expect(block.stamps, [
         const TextStamp(offset: 0, length: 7, seconds: 1, dumpId: 'd'),
       ]);
@@ -391,7 +426,8 @@ void main() {
 
   group('NotebookInk codec', () {
     test('round trips strokes with their width and points', () {
-      const source = '{"strokes":['
+      const source =
+          '{"strokes":['
           '{"id":"stroke-1","width":3.0,"points":[{"x":1.0,"y":2.0},'
           '{"x":3.5,"y":4.25}]}'
           ']}';
@@ -448,7 +484,8 @@ void main() {
     test('round trips per-point pressure and pen style', () {
       // Fountain strokes taper with pressure, so each point may carry `p`
       // and the stroke may carry a style. Both are optional on the wire.
-      const source = '{"strokes":['
+      const source =
+          '{"strokes":['
           '{"id":"s1","width":3.0,"style":"fountain","points":['
           '{"x":1.0,"y":2.0,"p":0.25},{"x":3.0,"y":4.0,"p":0.8}]}'
           ']}';
@@ -463,7 +500,8 @@ void main() {
       // Refusing to break existing notebook files is worth more than uniform
       // data: an old file must load, render flat, and re-encode without
       // gaining fields it never had.
-      const source = '{"strokes":['
+      const source =
+          '{"strokes":['
           '{"id":"s1","width":3.0,"points":[{"x":1.0,"y":2.0}]}'
           ']}';
       final ink = NotebookInk.decode(source);
@@ -518,8 +556,9 @@ void main() {
       // and floods sync with a spurious diff.
       const String legacy =
           '{"id":"s1","width":3.0,"points":[{"x":1.0,"y":2.0}]}';
-      final InkStroke stroke =
-          InkStroke.fromJson(jsonDecode(legacy) as Map<String, dynamic>);
+      final InkStroke stroke = InkStroke.fromJson(
+        jsonDecode(legacy) as Map<String, dynamic>,
+      );
 
       expect(stroke.tool, InkTool.pen);
       expect(stroke.colour, InkColor.white);
@@ -639,8 +678,9 @@ void main() {
         colour: InkColor.lime,
         points: <InkPoint>[InkPoint(x: 1, y: 2)],
       );
-      final InkStroke moved =
-          stroke.copyWith(points: <InkPoint>[const InkPoint(x: 9, y: 9)]);
+      final InkStroke moved = stroke.copyWith(
+        points: <InkPoint>[const InkPoint(x: 9, y: 9)],
+      );
       expect(moved.tool, InkTool.highlighter);
       expect(moved.colour, InkColor.lime);
     });
@@ -698,12 +738,12 @@ void main() {
       // illegal pairing is rejected at compile time instead, which cannot be
       // observed from a running test.
       InkStroke build(InkTool tool, InkColor colour) => InkStroke(
-            id: 'sX',
-            width: 3,
-            tool: tool,
-            colour: colour,
-            points: const <InkPoint>[InkPoint(x: 1, y: 2)],
-          );
+        id: 'sX',
+        width: 3,
+        tool: tool,
+        colour: colour,
+        points: const <InkPoint>[InkPoint(x: 1, y: 2)],
+      );
 
       // Every pairing outside the tool's own palette is rejected. Checked
       // across the whole enum so the assert expression cannot drift away
@@ -838,17 +878,14 @@ void main() {
       // Without this, the opacity invariant above could be satisfied by a
       // palette that quietly drops a colour — and an overlapping palette
       // would make a tool-only stroke difference constructable again.
+      expect(<InkColor>{
+        ...InkColor.paletteFor(InkTool.pen),
+        ...InkColor.paletteFor(InkTool.highlighter),
+      }, InkColor.values.toSet());
       expect(
-        <InkColor>{
-          ...InkColor.paletteFor(InkTool.pen),
-          ...InkColor.paletteFor(InkTool.highlighter),
-        },
-        InkColor.values.toSet(),
-      );
-      expect(
-        InkColor.paletteFor(InkTool.pen)
-            .toSet()
-            .intersection(InkColor.paletteFor(InkTool.highlighter).toSet()),
+        InkColor.paletteFor(InkTool.pen).toSet().intersection(
+          InkColor.paletteFor(InkTool.highlighter).toSet(),
+        ),
         isEmpty,
       );
     });
