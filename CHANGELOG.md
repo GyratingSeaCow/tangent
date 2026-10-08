@@ -5,6 +5,43 @@ All notable changes to Tangent.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.52.0 — 2026-10-07
+
+### Added
+- PDF import page picker: scrollable page thumbnails with checkboxes, a
+  page-range field (e.g. `1-3,7,12-14`), live selected count, and import
+  of exactly the chosen pages in document order. "Remove last imported
+  PDF" now removes only the most recent import batch.
+- Notes importers (Settings > Import notes): Google Keep (Takeout zip or
+  folder), Evernote (.enex), Notion (export zip), and Obsidian / plain
+  Markdown folders. Checklists become checkbox blocks, labels/folders and
+  timestamps are preserved, and a per-run report lists everything
+  imported or skipped with reasons. Imports are hardened against
+  oversized and malicious archives.
+- Kanban bulk actions: each column's menu gains "Select cards" for
+  multi-select delete or move-to-column.
+- To-do long-press menu: hold a card (without moving) for Delete, Move,
+  and a Kanban Board section listing columns; moving the finger still
+  drags.
+- Checked-off to-dos automatically move to the rightmost (Done) column,
+  for single checks and bulk "Mark done".
+- Jump-to-recording: adding a recording to a notebook scrolls to and
+  highlights the inserted block.
+- Settings gains a dedicated Trash entry.
+- Welcome screen redesigned as a four-page wizard with plain-language
+  explanations of the server commands and why each step is needed.
+
+### Changed
+- Inserting anything into a notebook (text, checkboxes, images, PDFs,
+  recordings) now always appends below the existing content instead of
+  landing at the top.
+
+### Fixed
+- Enter inside an inserted checkbox no longer spawns an item at the top
+  of the page.
+- Tall text blocks no longer overlap newly inserted content.
+- A second finger during a kanban drag no longer cancels the drop.
+
 ## 1.51.1 — 2026-10-07
 
 ### Fixed
