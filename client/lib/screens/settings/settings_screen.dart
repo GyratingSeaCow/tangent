@@ -14,6 +14,7 @@ import 'obsidian_export_section.dart';
 import 'reminders_section.dart';
 import 'welcome_message_section.dart';
 import 'handwriting_search_section.dart';
+import 'import_notes_screen.dart';
 import 'ai_summaries_section.dart';
 import 'auto_file_section.dart';
 import 'google_tasks_section.dart';
@@ -261,6 +262,18 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             trailing: const Icon(Icons.chevron_right),
             onTap: () => setState(() => _category = c),
           ),
+        ListTile(
+          key: const ValueKey<String>('settings-import-notes-top-level'),
+          leading: const Icon(Icons.note_add_outlined),
+          title: const Text('Import notes'),
+          subtitle: const Text('Google Keep, Evernote, Notion or Markdown'),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (BuildContext context) => const ImportNotesScreen(),
+            ),
+          ),
+        ),
         _trashTile(topLevel: true),
       ],
     );

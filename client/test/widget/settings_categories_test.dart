@@ -16,6 +16,7 @@ import 'package:tangent/screens/server/server_connection_screen.dart'
     show secureStoreProvider, transcriptionClientProvider;
 import 'package:tangent/screens/home/home_screen.dart' show localDbProvider;
 import 'package:tangent/screens/settings/settings_screen.dart';
+import 'package:tangent/screens/settings/import_notes_screen.dart';
 import 'package:tangent/screens/settings/trash_screen.dart';
 import 'package:tangent/services/transcription_client.dart';
 import 'package:tangent/widgets/top_nav_rail.dart';
@@ -192,6 +193,29 @@ void main() {
       find.textContaining('Deleted notebooks stay here for 7 days'),
       findsOneWidget,
     );
+  });
+
+  testWidgets('top-level Import notes entry opens the source chooser', (
+    tester,
+  ) async {
+    await _mount(tester);
+
+    final Finder importNotes = find.byKey(
+      const ValueKey<String>('settings-import-notes-top-level'),
+    );
+    await tester.scrollUntilVisible(
+      importNotes,
+      80,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(importNotes);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(ImportNotesScreen), findsOneWidget);
+    expect(find.text('Google Keep'), findsOneWidget);
+    expect(find.text('Evernote'), findsOneWidget);
+    expect(find.text('Notion'), findsOneWidget);
+    expect(find.text('Obsidian / Markdown'), findsOneWidget);
   });
 
   testWidgets('Maintenance & about keeps Licenses and the version line', (

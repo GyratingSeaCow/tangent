@@ -1,0 +1,12 @@
+{
+  "title": "Groceries",
+  "textContent": "Remember reusable bags",
+  "listContent": [
+    {"text": "Milk", "isChecked": false},
+    {"text": "Coffee", "isChecked": true}
+  ],
+  "labels": [{"name": "Home"}],
+  "isTrashed": false,
+  "userEditedTimestampUsec": "1780308000000000",
+  "attachments": [{"filePath": "tiny.png", "mimetype": "image/png"}]
+}
