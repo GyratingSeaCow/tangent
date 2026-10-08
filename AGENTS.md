@@ -50,8 +50,8 @@ ADH2/
 
 ## Status
 
-Shipping — **v1.51.1** (see CHANGELOG.md). Client and server are both
-implemented and tested (3070
+Shipping — **v1.52.0** (see CHANGELOG.md). Client and server are both
+implemented and tested (3132
 Flutter tests, 807 server tests, 139 Kotlin tests).
 Flutter 3.47.6 / Dart 3.13, AGP 9.1 / Kotlin 2.4 / Gradle 9.3.1 /
 Java 17 (v1.48.1); APKs exclude Google's dependency-info
@@ -60,6 +60,16 @@ natively on Linux AND Windows (tray icon, global record hotkey,
 close-to-tray, single instance, right-click = long-press; AppImage and
 Inno Setup installer under `packaging/`) — verified on CachyOS/KDE
 Plasma Wayland and Windows 11; see the README's Desktop sections.
+
+v1.52.0 **feature batch** (Jeff's 8-item fix list, five Vera-gated
+batches): PDF import page picker (thumbnail preview, checkbox + range
+selection, per-import group removal); notes importers for Google Keep /
+Evernote / Notion / Obsidian-Markdown (Settings > Import notes, per-run
+report, hardened zip handling); kanban bulk select per column,
+stationary-long-press card menu with move-to-column, and auto-move of
+checked-off to-dos to the rightmost column; all notebook inserts append
+below measured content with jump-to-recording highlight; dedicated
+Settings Trash entry; four-page welcome wizard with Jeff-approved copy.
 
 v1.51.1 **board drop zones + bare PDF pages**: nonempty kanban lanes
 accept drops across their whole body (lane-level append target; cards and
