@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // Shared tags on the recordings list: the row ⋮ sheet offers Edit tags and
-// opens the shared sheet for that recording, long-press stays multi-select,
+// opens the shared sheet for that recording, long-press opens the same sheet,
 // tags ride the title line, and the SAME tag filter control as the notebook
 // list narrows the rows (and prunes any selection it hides).
 import 'package:flutter/material.dart';
@@ -63,15 +63,16 @@ void main() {
     expect(find.byKey(const ValueKey('dump-tags-fixture-a')), findsNothing);
   });
 
-  testWidgets('long-press still selects and never opens a sheet', (
-    tester,
-  ) async {
+  testWidgets('long-press opens the shared item action sheet', (tester) async {
     store.seedTag('Work');
     await mount(tester);
     await tester.longPress(find.byKey(const ValueKey('dump-row-fixture-a')));
     await pumpSelection(tester);
-    expect(find.byKey(const ValueKey('dump-select-fixture-a')), findsOneWidget);
-    expect(find.byType(ItemActionSheet), findsNothing);
+    expect(find.byType(ItemActionSheet), findsOneWidget);
+    expect(
+      find.byKey(ItemActionSheet.keyFor(ItemAction.editTags)),
+      findsOneWidget,
+    );
     expect(find.byType(EditTagsSheet), findsNothing);
   });
 
@@ -100,8 +101,7 @@ void main() {
       store.seedLink(TagTarget.notebook, 'fixture-b', work);
       await mount(tester);
 
-      await tester.longPress(find.byKey(const ValueKey('dump-row-fixture-b')));
-      await pumpSelection(tester);
+      await enterDumpSelection(tester, 'fixture-b');
       expect(
         find.byKey(const ValueKey('dump-select-fixture-b')),
         findsOneWidget,
@@ -123,10 +123,9 @@ void main() {
 
       // Select-all while filtered covers ONLY the visible row, and the bulk
       // delete it feeds asks about that row alone.
-      // (The long-pressed row already fills the visible selection, so the
+      // (The sheet-selected row already fills the visible selection, so the
       // first tap toggles it off; the second selects every visible row.)
-      await tester.longPress(find.byKey(const ValueKey('dump-row-fixture-a')));
-      await pumpSelection(tester);
+      await enterDumpSelection(tester, 'fixture-a');
       await tester.tap(find.byKey(const ValueKey('selection-all')));
       await pumpSelection(tester);
       expect(find.text('0 selected'), findsOneWidget);

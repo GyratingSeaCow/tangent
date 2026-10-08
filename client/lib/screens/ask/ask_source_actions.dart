@@ -56,55 +56,47 @@ String askSourceEntityKey(AskSource source) =>
 /// breaking the chat.
 final StreamProvider<Map<String, AskSourceEntity>> askSourceEntitiesProvider =
     StreamProvider<Map<String, AskSourceEntity>>((ref) {
-  final LocalDb db = ref.watch(localDbProvider);
-  final StreamController<Map<String, AskSourceEntity>> out =
-      StreamController<Map<String, AskSourceEntity>>();
-  List<DumpRow>? d;
-  List<NotebookListEntry>? n;
-  List<TodoRow>? t;
-  void emit() {
-    if (d == null || n == null || t == null) return;
-    out.add(<String, AskSourceEntity>{
-      for (final DumpRow r in d!)
-        'dump:${r.id}': (title: r.title, pinned: r.pinned == true),
-      for (final NotebookListEntry r in n!)
-        'notebook:${r.id}': (title: r.title, pinned: r.pinned),
-      for (final TodoRow r in t!)
-        'todo:${r.id}': (title: r.body, pinned: r.pinned == true),
-    });
-  }
+      final LocalDb db = ref.watch(localDbProvider);
+      final StreamController<Map<String, AskSourceEntity>> out =
+          StreamController<Map<String, AskSourceEntity>>();
+      List<DumpRow>? d;
+      List<NotebookListEntry>? n;
+      List<TodoRow>? t;
+      void emit() {
+        if (d == null || n == null || t == null) return;
+        out.add(<String, AskSourceEntity>{
+          for (final DumpRow r in d!)
+            'dump:${r.id}': (title: r.title, pinned: r.pinned == true),
+          for (final NotebookListEntry r in n!)
+            'notebook:${r.id}': (title: r.title, pinned: r.pinned),
+          for (final TodoRow r in t!)
+            'todo:${r.id}': (title: r.body, pinned: r.pinned == true),
+        });
+      }
 
-  final List<StreamSubscription<Object?>> subs = <StreamSubscription<Object?>>[
-    db.watchAllDumps().listen(
-      (v) {
-        d = v;
-        emit();
-      },
-      onError: out.addError,
-    ),
-    NotebookRepository(db: db).watchNotebookHeaders().listen(
-      (v) {
-        n = v;
-        emit();
-      },
-      onError: out.addError,
-    ),
-    TodoRepository(db: db).watchTodos().listen(
-      (v) {
-        t = v;
-        emit();
-      },
-      onError: out.addError,
-    ),
-  ];
-  ref.onDispose(() {
-    for (final StreamSubscription<Object?> s in subs) {
-      s.cancel();
-    }
-    out.close();
-  });
-  return out.stream;
-});
+      final List<StreamSubscription<Object?>> subs =
+          <StreamSubscription<Object?>>[
+            db.watchAllDumps().listen((v) {
+              d = v;
+              emit();
+            }, onError: out.addError),
+            NotebookRepository(db: db).watchNotebookHeaders().listen((v) {
+              n = v;
+              emit();
+            }, onError: out.addError),
+            TodoRepository(db: db).watchTodos().listen((v) {
+              t = v;
+              emit();
+            }, onError: out.addError),
+          ];
+      ref.onDispose(() {
+        for (final StreamSubscription<Object?> s in subs) {
+          s.cancel();
+        }
+        out.close();
+      });
+      return out.stream;
+    });
 
 /// True only for a recording that never even ATTEMPTED an upload: zero
 /// sync attempts, no confirmed sync sequence, not server-sourced, no server
@@ -122,9 +114,10 @@ bool askDumpNeverSynced(DumpRow row) =>
 /// Authoritative server delete (publishes the sync tombstone). A seam so
 /// tests can record ordering; production is [ServerDumpDeletion.deleteDump].
 final Provider<Future<void> Function(String dumpId)>
-    askSourceServerDeleteProvider = Provider<Future<void> Function(String)>(
-  (ref) => (String dumpId) =>
-      ref.read(transcriptionClientProvider).deleteDump(dumpId),
+askSourceServerDeleteProvider = Provider<Future<void> Function(String)>(
+  (ref) =>
+      (String dumpId) =>
+          ref.read(transcriptionClientProvider).deleteDump(dumpId),
 );
 
 /// Deletes a recording the only safe way: local eligibility, then the
@@ -140,34 +133,35 @@ final Provider<Future<void> Function(String dumpId)>
 /// ([askDumpNeverSynced]); for a synced one it is a failure and nothing
 /// local is touched.
 final Provider<Future<void> Function(String dumpId)>
-    askSourceDeleteDumpProvider = Provider<Future<void> Function(String)>(
+askSourceDeleteDumpProvider = Provider<Future<void> Function(String)>(
   (ref) => (String dumpId) async {
     final DumpRow? row = await ref.read(localDbProvider).getDumpRow(dumpId);
-    final LocalDeletionService deletion =
-        ref.read(localDeletionServiceProvider);
+    final LocalDeletionService deletion = ref.read(
+      localDeletionServiceProvider,
+    );
     // Eligibility FIRST. The server tombstone is irreversible and the next
     // pull raw-deletes the local row (applyRemoteDumpDeletion), bypassing
     // LocalDeletionService and orphaning audio — so a row the local service
     // would refuse (mid-transcription, syncing, in use…) must never reach
     // the server delete at all.
-    final DeletionPreview preview =
-        switch (await deletion.preview(<String>{dumpId})) {
+    final DeletionPreview preview = switch (await deletion.preview(<String>{
+      dumpId,
+    })) {
       Ok<DeletionPreview>(:final value) => value,
       Fail<DeletionPreview>(:final problem) => throw StorageFault(problem),
     };
     if (preview.targets.isEmpty) {
-      throw const StorageFault(
-        (code: ProblemCode.busy, message: 'Recording unavailable'),
-      );
+      throw const StorageFault((
+        code: ProblemCode.busy,
+        message: 'Recording unavailable',
+      ));
     }
     for (final DeleteTarget target in preview.targets) {
       if (target.eligibility != Eligibility.eligible) {
-        throw StorageFault(
-          (
-            code: ProblemCode.busy,
-            message: eligibilityReason(target.eligibility),
-          ),
-        );
+        throw StorageFault((
+          code: ProblemCode.busy,
+          message: eligibilityReason(target.eligibility),
+        ));
       }
     }
     // The server tombstone runs INSIDE the local deletion lease
@@ -199,10 +193,10 @@ final Provider<Future<void> Function(String dumpId)>
       }
     }
 
-    final BulkDeletionResult result = switch (await deletion.deleteConfirmed(
-      (operationId: const Uuid().v4(), targets: preview.targets),
-      whileLeased: serverDelete,
-    )) {
+    final BulkDeletionResult result = switch (await deletion.deleteConfirmed((
+      operationId: const Uuid().v4(),
+      targets: preview.targets,
+    ), whileLeased: serverDelete)) {
       Ok<BulkDeletionResult>(:final value) => value,
       Fail<BulkDeletionResult>(:final problem) => throw StorageFault(problem),
     };
@@ -236,8 +230,9 @@ Future<void> showAskSourceActions(
   void say(String text) =>
       messenger.showSnackBar(SnackBar(content: Text(text)));
 
-  final String kind =
-      source.entityType == 'summary' ? 'dump' : source.entityType;
+  final String kind = source.entityType == 'summary'
+      ? 'dump'
+      : source.entityType;
   String title;
   bool pinned;
   bool passwordProtected = false;
@@ -249,8 +244,9 @@ Future<void> showAskSourceActions(
       if (row == null) return say('Source no longer exists: ${source.snippet}');
       (title, pinned, folderId) = (row.title, row.pinned == true, row.folderId);
     case 'notebook':
-      final Notebook? nb =
-          await NotebookRepository(db: db).getNotebook(source.entityId);
+      final Notebook? nb = await NotebookRepository(
+        db: db,
+      ).getNotebook(source.entityId);
       if (nb == null) return say('Source no longer exists: ${source.snippet}');
       (title, pinned, folderId) = (nb.title, nb.pinned, nb.folderId);
       passwordProtected = nb.passwordProtected;
@@ -279,13 +275,14 @@ Future<void> showAskSourceActions(
         .read(localDeletionServiceProvider)
         .preview(<String>{source.entityId});
     deleteBlocked = switch (preview) {
-      Ok<DeletionPreview>(:final value) => value.targets.isEmpty
-          ? eligibilityReason(Eligibility.missing)
-          : value.targets
-              .map((DeleteTarget t) => t.eligibility)
-              .where((Eligibility e) => e != Eligibility.eligible)
-              .map(eligibilityReason)
-              .firstOrNull,
+      Ok<DeletionPreview>(:final value) =>
+        value.targets.isEmpty
+            ? eligibilityReason(Eligibility.missing)
+            : value.targets
+                  .map((DeleteTarget t) => t.eligibility)
+                  .where((Eligibility e) => e != Eligibility.eligible)
+                  .map(eligibilityReason)
+                  .firstOrNull,
       Fail<DeletionPreview>(:final problem) => problem.message,
     };
     if (!context.mounted) return;
@@ -308,18 +305,20 @@ Future<void> showAskSourceActions(
     labelOverrides: kind == 'todo'
         ? const <ItemAction, String>{ItemAction.rename: 'Edit'}
         : const <ItemAction, String>{},
-    disabledActions: <ItemAction, String>{
-      ItemAction.delete: ?deleteBlocked,
-    },
+    disabledActions: <ItemAction, String>{ItemAction.delete: ?deleteBlocked},
   );
   if (action == null || !context.mounted) return;
 
   if (kind == 'notebook' &&
       passwordProtected &&
-      <ItemAction>{ItemAction.rename, ItemAction.pin, ItemAction.unpin}
-          .contains(action)) {
-    final NotebookUnlockRegistry unlocks =
-        ref.read(notebookUnlockRegistryProvider);
+      <ItemAction>{
+        ItemAction.rename,
+        ItemAction.pin,
+        ItemAction.unpin,
+      }.contains(action)) {
+    final NotebookUnlockRegistry unlocks = ref.read(
+      notebookUnlockRegistryProvider,
+    );
     if (!unlocks.isUnlocked(source.entityId, passwordHash)) {
       final bool accepted = await showNotebookUnlockDialog(
         context,
@@ -371,6 +370,7 @@ Future<void> showAskSourceActions(
       case ItemAction.passwordProtection:
       case ItemAction.lockNow:
       case ItemAction.sendToNotebook:
+      case ItemAction.sendToTodo:
       case ItemAction.download:
       case ItemAction.regenerateSummary:
       case ItemAction.nameSpeakers:
@@ -392,8 +392,9 @@ Future<void> _rename(WidgetRef ref, String kind, String id, String name) async {
     case 'notebook':
       // Never save a hollow header: fetch the FULL notebook (document + ink)
       // and rename that, through persistence so the durable file follows.
-      final Notebook? full =
-          await ref.read(notebookRepositoryProvider).getNotebook(id);
+      final Notebook? full = await ref
+          .read(notebookRepositoryProvider)
+          .getNotebook(id);
       if (full == null) throw StateError('Notebook is no longer available');
       await ref
           .read(notebookPersistenceProvider)

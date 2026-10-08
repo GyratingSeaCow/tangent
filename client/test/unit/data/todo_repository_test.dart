@@ -143,6 +143,104 @@ void main() {
   });
 
   test(
+    'addManyToColumn appends transactionally in caller order with provenance',
+    () async {
+      final TodoRow anchor = await repo.add('existing destination card');
+      final String progress = (await repo.listColumns())[1].id;
+      await repo.moveOnBoard(anchor.id, progress, 0);
+
+      final List<TodoRow> added = await repo
+          .addManyToColumn(progress, <({String text, String sourceRef})>[
+            (text: 'first transcript', sourceRef: 'dump-first'),
+            (text: 'second\ntranscript', sourceRef: 'dump-second'),
+          ]);
+
+      final List<TodoRow> lane =
+          (await repo.listTodos())
+              .where((TodoRow row) => row.columnId == progress)
+              .toList()
+            ..sort(
+              (TodoRow a, TodoRow b) => a.boardOrder.compareTo(b.boardOrder),
+            );
+      expect(lane.map((TodoRow row) => row.id), <String>[
+        anchor.id,
+        added[0].id,
+        added[1].id,
+      ]);
+      expect(lane.map((TodoRow row) => row.boardOrder), <int>[0, 1, 2]);
+      expect(added.map((TodoRow row) => row.body), <String>[
+        'first transcript',
+        'second\ntranscript',
+      ]);
+      expect(added.map((TodoRow row) => row.sourceRef), <String>[
+        'dump-first',
+        'dump-second',
+      ]);
+      expect(added.map((TodoRow row) => row.source), everyElement('manual'));
+      expect(added.map((TodoRow row) => row.syncDirty), everyElement(isTrue));
+    },
+  );
+
+  test(
+    'voice-source APIs exclude manual cards with the same sourceRef',
+    () async {
+      final TodoRow manual = await repo.add(
+        'manual card',
+        sourceRef: 'shared-dump',
+      );
+      final TodoRow voice = await repo.add(
+        'voice card',
+        source: 'voice',
+        sourceRef: 'shared-dump',
+      );
+
+      expect((await repo.todosFromSource('shared-dump')).map((r) => r.id), [
+        voice.id,
+      ]);
+      expect(
+        (await repo.watchTodosFromSource('shared-dump').first).map((r) => r.id),
+        [voice.id],
+      );
+      expect(await repo.hasTodosFromSource('shared-dump'), isTrue);
+
+      await repo.setCaptureFingerprint('shared-dump', 'voice-fingerprint');
+      expect((await rowOf(voice.id)).captureFingerprint, 'voice-fingerprint');
+      expect((await rowOf(manual.id)).captureFingerprint, isNull);
+
+      expect(await repo.softDeleteFromSource('shared-dump'), 1);
+      expect((await rowOf(voice.id)).deletedAt, isNotNull);
+      final TodoRow survivingManual = await rowOf(manual.id);
+      expect(survivingManual.deletedAt, isNull);
+      expect(survivingManual.source, 'manual');
+      expect(survivingManual.sourceRef, 'shared-dump');
+    },
+  );
+
+  test(
+    'addManyToColumn rolls the whole batch back when one insert fails',
+    () async {
+      final List<TodoColumnRow> columns = await repo.ensureColumns();
+      final TodoRepository colliding = TodoRepository(
+        db: db,
+        idFactory: () => 'duplicate-id',
+        now: () => clock,
+      );
+
+      await expectLater(
+        colliding
+            .addManyToColumn(columns[1].id, <({String text, String sourceRef})>[
+              (text: 'would otherwise commit', sourceRef: 'dump-a'),
+              (text: 'forces duplicate id', sourceRef: 'dump-b'),
+            ]),
+        throwsA(anything),
+      );
+
+      expect(await repo.todosFromSource('dump-a'), isEmpty);
+      expect(await repo.todosFromSource('dump-b'), isEmpty);
+    },
+  );
+
+  test(
     'moveOnBoard moves across columns and reorders within a column',
     () async {
       final TodoRow a = await repo.add('a');

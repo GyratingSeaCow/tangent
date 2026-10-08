@@ -30,12 +30,12 @@ import '../support/storage_fixture.dart';
 
 /// A recording whose audio is on the server but not on this device.
 DumpRow remoteRow(String id) => viewRow(id).copyWith(
-      audioPath: '',
-      audioSizeBytes: 0,
-      syncStatus: 'synced',
-      remoteOnly: const Value<bool?>(true),
-      audioOnServer: const Value<bool?>(true),
-    );
+  audioPath: '',
+  audioSizeBytes: 0,
+  syncStatus: 'synced',
+  remoteOnly: const Value<bool?>(true),
+  audioOnServer: const Value<bool?>(true),
+);
 
 void main() {
   group('dumpNeedsAudioDownload', () {
@@ -58,10 +58,9 @@ void main() {
 
       expect(
         dumpNeedsAudioDownload(
-          viewRow('d').copyWith(
-            audioPath: '',
-            remoteOnly: const Value<bool?>(true),
-          ),
+          viewRow(
+            'd',
+          ).copyWith(audioPath: '', remoteOnly: const Value<bool?>(true)),
         ),
         isFalse,
         reason: 'the server has no audio, so there is nothing to fetch',
@@ -76,19 +75,20 @@ void main() {
     });
   });
 
-  testWidgets('a remote-only recording offers Download audio',
-      (WidgetTester tester) async {
-    final ProviderContainer container =
-        await mountSelection(tester, CountingDeletion());
-    container.read(presentedFixture.notifier).state = AsyncData(
-      (
-        scopeKey: 'all',
-        generation: 2,
-        settled: true,
-        rows: <DumpRow>[remoteRow('fixture-a'), viewRow('fixture-b')],
-        limit: null,
-      ),
+  testWidgets('a remote-only recording offers Download audio', (
+    WidgetTester tester,
+  ) async {
+    final ProviderContainer container = await mountSelection(
+      tester,
+      CountingDeletion(),
     );
+    container.read(presentedFixture.notifier).state = AsyncData((
+      scopeKey: 'all',
+      generation: 2,
+      settled: true,
+      rows: <DumpRow>[remoteRow('fixture-a'), viewRow('fixture-b')],
+      limit: null,
+    ));
     await pumpSelection(tester);
 
     await tester.tap(find.byKey(const ValueKey('dump-more-fixture-a')));
@@ -101,8 +101,9 @@ void main() {
     );
   });
 
-  testWidgets('a recording that already has its audio offers no download',
-      (WidgetTester tester) async {
+  testWidgets('a recording that already has its audio offers no download', (
+    WidgetTester tester,
+  ) async {
     await mountSelection(tester, CountingDeletion());
 
     // fixture-a is an ordinary local recording.
@@ -121,93 +122,90 @@ void main() {
     );
   });
 
-  testWidgets('download does not disturb the existing menu contract',
-      (WidgetTester tester) async {
-    final ProviderContainer container =
-        await mountSelection(tester, CountingDeletion());
-    container.read(presentedFixture.notifier).state = AsyncData(
-      (
-        scopeKey: 'all',
-        generation: 2,
-        settled: true,
-        rows: <DumpRow>[remoteRow('fixture-a'), viewRow('fixture-b')],
-        limit: null,
-      ),
+  testWidgets('download does not disturb the existing menu contract', (
+    WidgetTester tester,
+  ) async {
+    final ProviderContainer container = await mountSelection(
+      tester,
+      CountingDeletion(),
     );
+    container.read(presentedFixture.notifier).state = AsyncData((
+      scopeKey: 'all',
+      generation: 2,
+      settled: true,
+      rows: <DumpRow>[remoteRow('fixture-a'), viewRow('fixture-b')],
+      limit: null,
+    ));
     await pumpSelection(tester);
 
-    // Long-press must STILL be multi-select, not the sheet. 28 tests encode
-    // that contract and the new action must not have touched it.
+    // Long-press and three-dots are the same per-row action entry point.
     await tester.longPress(find.byKey(const ValueKey('dump-row-fixture-a')));
     await pumpSelection(tester);
 
     expect(
       find.byKey(ItemActionSheet.keyFor(ItemAction.download)),
-      findsNothing,
-      reason: 'long-press is the bulk-delete entry point, not the menu',
-    );
-    expect(
-      find.byKey(const ValueKey('dump-select-fixture-a')),
       findsOneWidget,
-      reason: 'long-press must still enter selection mode',
+      reason: 'long-press must expose the same download action as three-dots',
     );
   });
 
-  testWidgets('tapping download with no usable folder says so, never silently',
-      (WidgetTester tester) async {
-    // The Fold's defect shape: the entry is ENABLED when the sheet opens
-    // (a downloader existed), but by tap time the folder state has dropped
-    // and _downloadAudio's ref.read returns null. The old code returned
-    // without a word, which is indistinguishable from a broken app.
-    final StateProvider<SyncedAudioDownloader?> downloaderFixture =
-        StateProvider<SyncedAudioDownloader?>(
-      (_) => SyncedAudioDownloader(
-        db: LocalDb.forTesting(NativeDatabase.memory()),
-        backend: FilesystemStorageBackend(),
-        location: fileLocation('fixture-folder', '/synthetic'),
-        fetch: (_) async => const <int>[],
-      ),
-    );
-    final ProviderContainer container = await mountSelection(
-      tester,
-      CountingDeletion(),
-      extraOverrides: <Override>[
-        syncedAudioDownloaderProvider
-            .overrideWith((ref) => ref.watch(downloaderFixture)),
-      ],
-    );
-    container.read(presentedFixture.notifier).state = AsyncData(
-      (
+  testWidgets(
+    'tapping download with no usable folder says so, never silently',
+    (WidgetTester tester) async {
+      // The Fold's defect shape: the entry is ENABLED when the sheet opens
+      // (a downloader existed), but by tap time the folder state has dropped
+      // and _downloadAudio's ref.read returns null. The old code returned
+      // without a word, which is indistinguishable from a broken app.
+      final StateProvider<SyncedAudioDownloader?> downloaderFixture =
+          StateProvider<SyncedAudioDownloader?>(
+            (_) => SyncedAudioDownloader(
+              db: LocalDb.forTesting(NativeDatabase.memory()),
+              backend: FilesystemStorageBackend(),
+              location: fileLocation('fixture-folder', '/synthetic'),
+              fetch: (_) async => const <int>[],
+            ),
+          );
+      final ProviderContainer container = await mountSelection(
+        tester,
+        CountingDeletion(),
+        extraOverrides: <Override>[
+          syncedAudioDownloaderProvider.overrideWith(
+            (ref) => ref.watch(downloaderFixture),
+          ),
+        ],
+      );
+      container.read(presentedFixture.notifier).state = AsyncData((
         scopeKey: 'all',
         generation: 2,
         settled: true,
         rows: <DumpRow>[remoteRow('fixture-a'), viewRow('fixture-b')],
         limit: null,
-      ),
-    );
-    await pumpSelection(tester);
+      ));
+      await pumpSelection(tester);
 
-    await tester.tap(find.byKey(const ValueKey('dump-more-fixture-a')));
-    await pumpSelection(tester);
+      await tester.tap(find.byKey(const ValueKey('dump-more-fixture-a')));
+      await pumpSelection(tester);
 
-    // The folder becomes unavailable between sheet-open and tap.
-    container.read(downloaderFixture.notifier).state = null;
+      // The folder becomes unavailable between sheet-open and tap.
+      container.read(downloaderFixture.notifier).state = null;
 
-    await tester.tap(find.byKey(ItemActionSheet.keyFor(ItemAction.download)));
-    await pumpSelection(tester);
+      await tester.tap(find.byKey(ItemActionSheet.keyFor(ItemAction.download)));
+      await pumpSelection(tester);
 
-    expect(
-      find.descendant(
-        of: find.byType(SnackBar),
-        matching: find.text('Choose a storage folder first'),
-      ),
-      findsOneWidget,
-      reason: 'a tapped control must always report what happened',
-    );
-  });
+      expect(
+        find.descendant(
+          of: find.byType(SnackBar),
+          matching: find.text('Choose a storage folder first'),
+        ),
+        findsOneWidget,
+        reason: 'a tapped control must always report what happened',
+      );
+    },
+  );
 
-  testWidgets('a downloading row shows a busy indicator until the fetch ends',
-      (WidgetTester tester) async {
+  testWidgets('a downloading row shows a busy indicator until the fetch ends', (
+    WidgetTester tester,
+  ) async {
     // _downloading was bookkeeping with no renderer: the screen tracked ids
     // mid-download but no widget read the set, so a slow fetch looked like
     // a dead tap. The row must show progress while its download runs.
@@ -216,7 +214,9 @@ void main() {
     addTearDown(db.close);
     // The downloader consults the row before fetching; without it the run
     // fails at the first step and the indicator never gets a chance to show.
-    await db.into(db.dumps).insert(
+    await db
+        .into(db.dumps)
+        .insert(
           DumpsCompanion.insert(
             id: 'fixture-a',
             createdAt: DateTime.utc(2026, 9, 18),
@@ -245,15 +245,13 @@ void main() {
         ),
       ],
     );
-    container.read(presentedFixture.notifier).state = AsyncData(
-      (
-        scopeKey: 'all',
-        generation: 2,
-        settled: true,
-        rows: <DumpRow>[remoteRow('fixture-a'), viewRow('fixture-b')],
-        limit: null,
-      ),
-    );
+    container.read(presentedFixture.notifier).state = AsyncData((
+      scopeKey: 'all',
+      generation: 2,
+      settled: true,
+      rows: <DumpRow>[remoteRow('fixture-a'), viewRow('fixture-b')],
+      limit: null,
+    ));
     await pumpSelection(tester);
 
     await tester.tap(find.byKey(const ValueKey('dump-more-fixture-a')));

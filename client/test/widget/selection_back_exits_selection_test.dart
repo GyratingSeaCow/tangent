@@ -6,8 +6,9 @@
 //    simply exit out of the selection mode rather than going back a page.
 //    Same thing with the navigation bar at the bottom of the screen"
 //
-// Both list screens enter multi-select on long-press. While selection is
-// active, EVERY back gesture — the app-bar arrow, the system/gesture back,
+// Notebooks enter multi-select on long-press; recordings use the shared
+// sheet's Select action. While selection is active, EVERY back gesture — the
+// app-bar arrow, the system/gesture back,
 // the bottom navigation bar's back — must cancel selection and stay on the
 // page. Only a second back leaves the screen. The system back and the
 // nav-bar back both arrive through the same pop machinery
@@ -24,6 +25,7 @@ import 'package:tangent/data/storage/storage_contract.dart';
 import 'package:tangent/screens/dump/dumps_list_screen.dart';
 import 'package:tangent/screens/dump/dumps_providers.dart';
 import 'package:tangent/screens/notebook/notebook_list_screen.dart';
+import 'package:tangent/widgets/item_action_sheet.dart';
 
 import '../support/fake_notebook_repository.dart';
 import 'package:tangent/data/notebook_repository.dart';
@@ -42,9 +44,9 @@ class _HostedApp extends StatelessWidget {
         builder: (BuildContext context) => Scaffold(
           body: Center(
             child: ElevatedButton(
-              onPressed: () => Navigator.of(context).push<void>(
-                MaterialPageRoute<void>(builder: (_) => child),
-              ),
+              onPressed: () => Navigator.of(
+                context,
+              ).push<void>(MaterialPageRoute<void>(builder: (_) => child)),
               child: const Text('open list'),
             ),
           ),
@@ -55,20 +57,20 @@ class _HostedApp extends StatelessWidget {
 }
 
 DumpRow _dumpRow(String id) => DumpRow(
-      id: id,
-      createdAt: DateTime.utc(2026, 9, 17),
-      updatedAt: DateTime.utc(2026, 9, 17),
-      mode: 'brain_dump',
-      durationSeconds: 9,
-      title: 'Dump $id',
-      transcript: null,
-      audioPath: 'content://tangent/$id.opus',
-      audioSizeBytes: 3,
-      syncStatus: 'pending',
-      syncAttempts: 0,
-      transcriptionStatus: 'not_transcribed',
-      transcriptionAttempt: 0,
-    );
+  id: id,
+  createdAt: DateTime.utc(2026, 9, 17),
+  updatedAt: DateTime.utc(2026, 9, 17),
+  mode: 'brain_dump',
+  durationSeconds: 9,
+  title: 'Dump $id',
+  transcript: null,
+  audioPath: 'content://tangent/$id.opus',
+  audioSizeBytes: 3,
+  syncStatus: 'pending',
+  syncAttempts: 0,
+  transcriptionStatus: 'not_transcribed',
+  transcriptionAttempt: 0,
+);
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -108,15 +110,18 @@ void main() {
       });
     }
 
-    testWidgets('back cancels selection and stays on the page',
-        (WidgetTester tester) async {
+    testWidgets('back cancels selection and stays on the page', (
+      WidgetTester tester,
+    ) async {
       await mount(tester);
       await tester.longPress(find.byKey(const ValueKey('dump-row-d1')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(ItemActionSheet.keyFor(ItemAction.select)));
       await tester.pumpAndSettle();
       expect(
         find.byKey(const ValueKey('selection-cancel')),
         findsOneWidget,
-        reason: 'long-press must enter selection',
+        reason: 'the sheet Select action must enter selection',
       );
 
       await tester.binding.handlePopRoute();
@@ -176,9 +181,7 @@ void main() {
               (_) => Stream<List<DumpRow>>.value(const <DumpRow>[]),
             ),
           ],
-          child: _HostedApp(
-            child: const NotebookListScreen(),
-          ),
+          child: _HostedApp(child: const NotebookListScreen()),
         ),
       );
       await open(tester);
@@ -188,8 +191,9 @@ void main() {
       _rowKey = ValueKey<String>('notebook-row-${notebook.id}');
     }
 
-    testWidgets('back cancels selection and stays on the page',
-        (WidgetTester tester) async {
+    testWidgets('back cancels selection and stays on the page', (
+      WidgetTester tester,
+    ) async {
       await mount(tester);
       await tester.longPress(find.byKey(_rowKey));
       await tester.pumpAndSettle();

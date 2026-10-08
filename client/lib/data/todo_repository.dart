@@ -7,6 +7,7 @@ import '../screens/home/home_screen.dart' show localDbProvider;
 import 'local_db.dart';
 
 const String defaultTodoColumnId = 'todo-column-todo';
+const String _voiceTodoSource = 'voice';
 const List<(String, String)> defaultTodoColumns = <(String, String)>[
   (defaultTodoColumnId, 'To Do'),
   ('todo-column-progress', 'In Progress'),
@@ -120,18 +121,24 @@ class TodoRepository {
         ..where((t) => t.deletedAt.isNull())
         ..orderBy([(t) => OrderingTerm.asc(t.createdAt)]);
 
-  /// Every todo carrying [sourceRef] as its provenance, live OR soft-deleted,
-  /// oldest first. Soft-deleted rows are deliberately included: this is the
-  /// idempotency oracle for voice capture, and an Undone dump must stay undone
-  /// (a re-sync that only looked at live rows would resurrect the items).
+  /// Every voice-captured todo carrying [sourceRef] as its provenance, live OR
+  /// soft-deleted, oldest first. A manual card may retain the same dump ref for
+  /// tap-through without joining this voice-capture spine. Soft-deleted voice
+  /// rows are deliberately included: this is the idempotency oracle, and an
+  /// Undone dump must stay undone (a live-only query would resurrect items).
   Future<List<TodoRow>> todosFromSource(String sourceRef) =>
       (_db.select(_db.todos)
-            ..where((t) => t.sourceRef.equals(sourceRef))
+            ..where(
+              (t) =>
+                  t.source.equals(_voiceTodoSource) &
+                  t.sourceRef.equals(sourceRef),
+            )
             ..orderBy([(t) => OrderingTerm.asc(t.createdAt)]))
           .get();
 
-  /// True when anything was ever captured for [sourceRef] — including items
-  /// the user has since Undone or deleted.
+  /// True when any voice todo was ever captured for [sourceRef] — including
+  /// items the user has since Undone or deleted. Manual cards do not suppress
+  /// voice detection even when they retain that dump as provenance.
   Future<bool> hasTodosFromSource(String sourceRef) async =>
       (await todosFromSource(sourceRef)).isNotEmpty;
 
@@ -140,7 +147,12 @@ class TodoRepository {
   /// what hides the card.
   Stream<List<TodoRow>> watchTodosFromSource(String sourceRef) =>
       (_db.select(_db.todos)
-            ..where((t) => t.sourceRef.equals(sourceRef) & t.deletedAt.isNull())
+            ..where(
+              (t) =>
+                  t.source.equals(_voiceTodoSource) &
+                  t.sourceRef.equals(sourceRef) &
+                  t.deletedAt.isNull(),
+            )
             ..orderBy([(t) => OrderingTerm.asc(t.createdAt)]))
           .watch();
 
@@ -180,27 +192,91 @@ class TodoRepository {
     return (await _db.getTodoRow(id))!;
   }
 
-  /// Stamps the LOCAL-ONLY capture fingerprint on every row of [sourceRef]
-  /// (live or soft-deleted). Deliberately NOT through [_write]: the column
-  /// never syncs, so bumping `updated_at` or dirtying the rows would push
-  /// a no-op edit to every peer.
+  /// Creates one open card at the bottom of the chosen live Kanban lane.
+  /// Text is stored exactly as supplied; callers own any user-facing editing.
+  Future<TodoRow> addToColumn(
+    String text,
+    String columnId, {
+    required String sourceRef,
+  }) async {
+    return (await addManyToColumn(columnId, <({String text, String sourceRef})>[
+      (text: text, sourceRef: sourceRef),
+    ])).single;
+  }
+
+  /// Appends open cards to [columnId] in [drafts] iteration order.
+  ///
+  /// Validation, order allocation, and every insert share one transaction, so
+  /// a failed card cannot leave a partial recording batch on the board. The
+  /// insert fields intentionally mirror [add]: manual source/default folder,
+  /// open state, and dirty sync state, with only dump provenance added.
+  Future<List<TodoRow>> addManyToColumn(
+    String columnId,
+    Iterable<({String text, String sourceRef})> drafts,
+  ) async {
+    final List<({String text, String sourceRef})> ordered = drafts.toList(
+      growable: false,
+    );
+    if (ordered.isEmpty) return const <TodoRow>[];
+    await ensureColumns();
+    return _db.transaction(() async {
+      final List<TodoColumnRow> columns = await listColumns();
+      if (!columns.any((TodoColumnRow column) => column.id == columnId)) {
+        throw StateError('Column is not live: $columnId');
+      }
+      int boardOrder = await _nextBoardOrder(columnId);
+      final String timestamp = _stamp();
+      final List<TodoRow> created = <TodoRow>[];
+      for (final ({String text, String sourceRef}) draft in ordered) {
+        final String id = _idFactory();
+        await _db
+            .into(_db.todos)
+            .insert(
+              TodosCompanion.insert(
+                id: id,
+                body: draft.text,
+                createdAt: timestamp,
+                updatedAt: timestamp,
+                sourceRef: Value(draft.sourceRef),
+                columnId: Value(columnId),
+                boardOrder: Value(boardOrder++),
+                syncDirty: const Value(true),
+              ),
+            );
+        created.add((await _db.getTodoRow(id))!);
+      }
+      return List<TodoRow>.unmodifiable(created);
+    });
+  }
+
+  /// Stamps the LOCAL-ONLY capture fingerprint on every voice row of
+  /// [sourceRef] (live or soft-deleted). Deliberately NOT through [_write]:
+  /// the column never syncs, so bumping `updated_at` or dirtying the rows would
+  /// push a no-op edit to every peer. Manual provenance is left untouched.
   Future<void> setCaptureFingerprint(
     String sourceRef,
     String fingerprint,
   ) async {
-    await (_db.update(_db.todos)..where((t) => t.sourceRef.equals(sourceRef)))
+    await (_db.update(_db.todos)..where(
+          (t) =>
+              t.source.equals(_voiceTodoSource) & t.sourceRef.equals(sourceRef),
+        ))
         .write(TodosCompanion(captureFingerprint: Value(fingerprint)));
   }
 
-  /// Soft-deletes every live todo captured from [sourceRef] (the card's Undo).
-  /// The rows stay as tombstoned provenance, so [hasTodosFromSource] keeps
-  /// answering true and detection never re-fires for that dump.
+  /// Soft-deletes every live voice todo captured from [sourceRef] (the card's
+  /// Undo). Manual cards retaining the ref survive. Voice rows stay as
+  /// tombstoned provenance, so [hasTodosFromSource] keeps answering true and
+  /// detection never re-fires for that dump.
   Future<int> softDeleteFromSource(String sourceRef) async {
     // A one-shot .get(), not the watch stream's .first: awaiting a stream
     // inside a widget-test pump serialises badly and the card never redrew.
     final List<TodoRow> rows =
         await (_db.select(_db.todos)..where(
-              (t) => t.sourceRef.equals(sourceRef) & t.deletedAt.isNull(),
+              (t) =>
+                  t.source.equals(_voiceTodoSource) &
+                  t.sourceRef.equals(sourceRef) &
+                  t.deletedAt.isNull(),
             ))
             .get();
     for (final TodoRow row in rows) {

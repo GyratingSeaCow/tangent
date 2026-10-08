@@ -55,8 +55,9 @@ class _NoopPersistence implements NotebookPersistence {
 }
 
 void main() {
-  final Finder sendTile =
-      find.byKey(ItemActionSheet.keyFor(ItemAction.sendToNotebook));
+  final Finder sendTile = find.byKey(
+    ItemActionSheet.keyFor(ItemAction.sendToNotebook),
+  );
   final Finder picker = find.byKey(const ValueKey('notebook-picker'));
   final Finder pickerNew = find.byKey(const ValueKey('notebook-picker-new'));
   final Finder doneBar = find.byKey(const ValueKey('send-to-notebook-done'));
@@ -67,33 +68,28 @@ void main() {
   late SettingsStore settings;
 
   List<Override> sendOverrides() => <Override>[
-        notebookRepositoryProvider.overrideWithValue(repository),
-        notebookPersistenceProvider.overrideWithValue(_NoopPersistence()),
-        settingsStoreProvider.overrideWithValue(settings),
-        summariesEnabledProvider.overrideWith((_) => false),
-        dumpsProvider.overrideWith(
-          (_) => Stream<List<DumpRow>>.value(const <DumpRow>[]),
-        ),
-        notebookImportProvider.overrideWithValue(({
-          required String notebookId,
-          required List<DumpRow> dumps,
-          required ImportShape shape,
-          required bool includeAudioCard,
-        }) async {
-          calls.add(
-            (
-              notebookId: notebookId,
-              dumpCount: dumps.length,
-              shape: shape,
-              includeAudioCard: includeAudioCard,
-            ),
-          );
-          return (
-            notebookId: notebookId,
-            newBlockIds: <String>['new-block-1'],
-          );
-        }),
-      ];
+    notebookRepositoryProvider.overrideWithValue(repository),
+    notebookPersistenceProvider.overrideWithValue(_NoopPersistence()),
+    settingsStoreProvider.overrideWithValue(settings),
+    summariesEnabledProvider.overrideWith((_) => false),
+    dumpsProvider.overrideWith(
+      (_) => Stream<List<DumpRow>>.value(const <DumpRow>[]),
+    ),
+    notebookImportProvider.overrideWithValue(({
+      required String notebookId,
+      required List<DumpRow> dumps,
+      required ImportShape shape,
+      required bool includeAudioCard,
+    }) async {
+      calls.add((
+        notebookId: notebookId,
+        dumpCount: dumps.length,
+        shape: shape,
+        includeAudioCard: includeAudioCard,
+      ));
+      return (notebookId: notebookId, newBlockIds: <String>['new-block-1']);
+    }),
+  ];
 
   setUp(() {
     repository = FakeNotebookRepository();
@@ -119,15 +115,13 @@ void main() {
         ...sendOverrides(),
       ],
     );
-    container.read(presentedFixture.notifier).state = AsyncData(
-      (
-        scopeKey: 'all',
-        generation: 2,
-        settled: true,
-        rows: rows,
-        limit: null,
-      ),
-    );
+    container.read(presentedFixture.notifier).state = AsyncData((
+      scopeKey: 'all',
+      generation: 2,
+      settled: true,
+      rows: rows,
+      limit: null,
+    ));
     await pumpSelection(tester);
     return container;
   }
@@ -143,8 +137,7 @@ void main() {
   }
 
   group('recordings list', () {
-    testWidgets(
-        '⋮ → Send to notebook → New notebook → Text: import recorded, '
+    testWidgets('⋮ → Send to notebook → New notebook → Text: import recorded, '
         'snackbar with Open, Open pushes the editor', (tester) async {
       await mountRows(tester, <DumpRow>[_transcribedRow('fixture-a')]);
 
@@ -195,8 +188,9 @@ void main() {
       expect(editor.scrollToBlockId, 'new-block-1');
     });
 
-    testWidgets('picking an existing notebook sends there; search filters',
-        (tester) async {
+    testWidgets('picking an existing notebook sends there; search filters', (
+      tester,
+    ) async {
       repository = FakeNotebookRepository(
         seed: <Notebook>[
           testNotebook(id: 'nb-old', title: 'Groceries'),
@@ -234,8 +228,9 @@ void main() {
       expect(find.text('Added to Sprint retro'), findsOneWidget);
     });
 
-    testWidgets('a recording with nothing to send gets no such tile',
-        (tester) async {
+    testWidgets('a recording with nothing to send gets no such tile', (
+      tester,
+    ) async {
       await mountRows(tester, <DumpRow>[viewRow('fixture-a')]);
       await openSheet(tester, 'fixture-a');
       expect(
@@ -246,23 +241,24 @@ void main() {
       expect(sendTile, findsNothing, reason: 'absent, not disabled');
     });
 
-    testWidgets('multi-select sends every selected recording in one call',
-        (tester) async {
+    testWidgets('multi-select sends every selected recording in one call', (
+      tester,
+    ) async {
       await mountRows(tester, <DumpRow>[
         _transcribedRow('fixture-a'),
         _transcribedRow('fixture-b', title: 'Second'),
         _transcribedRow('fixture-c', title: 'Third'),
       ]);
 
-      await tester.longPress(find.byKey(const ValueKey('dump-row-fixture-a')));
-      await pumpSelection(tester);
+      await enterDumpSelection(tester, 'fixture-a');
       await tester.tap(find.byKey(const ValueKey('dump-row-fixture-b')));
       await pumpSelection(tester);
       await tester.tap(find.byKey(const ValueKey('dump-row-fixture-c')));
       await pumpSelection(tester);
 
-      final Finder toolbarButton =
-          find.byKey(const ValueKey('selection-send-to-notebook'));
+      final Finder toolbarButton = find.byKey(
+        const ValueKey('selection-send-to-notebook'),
+      );
       expect(toolbarButton, findsOneWidget);
       await tester.tap(toolbarButton);
       await settle(tester);
@@ -329,11 +325,13 @@ void main() {
       await settle(tester);
     }
 
-    final Finder switchTile =
-        find.byKey(const ValueKey('import-include-audio'));
+    final Finder switchTile = find.byKey(
+      const ValueKey('import-include-audio'),
+    );
 
-    testWidgets('the switch is offered for the text shapes only',
-        (tester) async {
+    testWidgets('the switch is offered for the text shapes only', (
+      tester,
+    ) async {
       await mountSheet(tester, offerSummary: true);
       await open(tester);
       expect(switchTile, findsOneWidget);
@@ -353,10 +351,13 @@ void main() {
       expect(tester.getTopLeft(switchTile).dy, greaterThan(dividerY));
     });
 
-    testWidgets('Audio bubble always reports includeAudioCard true',
-        (tester) async {
-      final Future<ImportShapeChoice?> Function() result =
-          await mountSheet(tester, offerSummary: false);
+    testWidgets('Audio bubble always reports includeAudioCard true', (
+      tester,
+    ) async {
+      final Future<ImportShapeChoice?> Function() result = await mountSheet(
+        tester,
+        offerSummary: false,
+      );
       await open(tester);
       await tester.tap(switchTile);
       await tester.pump();
@@ -373,8 +374,10 @@ void main() {
       ('import-as-both', ImportShape.both),
     ]) {
       testWidgets('$key carries the switch state', (tester) async {
-        final Future<ImportShapeChoice?> Function() result =
-            await mountSheet(tester, offerSummary: true);
+        final Future<ImportShapeChoice?> Function() result = await mountSheet(
+          tester,
+          offerSummary: true,
+        );
         await open(tester);
         expect(tester.widget<SwitchListTile>(switchTile).value, isTrue);
         await tester.tap(switchTile);
@@ -388,41 +391,48 @@ void main() {
       });
     }
 
-    testWidgets('the remembered variant seeds from and writes to SettingsStore',
-        (tester) async {
-      expect(settings.notebookImportAudioCard, isTrue, reason: 'default on');
-      final Future<ImportShapeChoice?> Function() result =
-          await mountSheet(tester, offerSummary: false, remembered: true);
-      await open(tester);
-      await tester.tap(switchTile);
-      await tester.pump();
-      await tester.tap(find.byKey(const ValueKey('import-as-text')));
-      await settle(tester);
-      expect((await result())?.includeAudioCard, isFalse);
-      expect(settings.notebookImportAudioCard, isFalse, reason: 'persisted');
+    testWidgets(
+      'the remembered variant seeds from and writes to SettingsStore',
+      (tester) async {
+        expect(settings.notebookImportAudioCard, isTrue, reason: 'default on');
+        final Future<ImportShapeChoice?> Function() result = await mountSheet(
+          tester,
+          offerSummary: false,
+          remembered: true,
+        );
+        await open(tester);
+        await tester.tap(switchTile);
+        await tester.pump();
+        await tester.tap(find.byKey(const ValueKey('import-as-text')));
+        await settle(tester);
+        expect((await result())?.includeAudioCard, isFalse);
+        expect(settings.notebookImportAudioCard, isFalse, reason: 'persisted');
 
-      // Next time the sheet opens it starts from the stored answer.
-      await open(tester);
-      expect(tester.widget<SwitchListTile>(switchTile).value, isFalse);
-      await tester.tap(find.byKey(const ValueKey('import-as-card')));
-      await settle(tester);
-      expect(
-        settings.notebookImportAudioCard,
-        isFalse,
-        reason: 'the Audio bubble choice never rewrites the text preference',
-      );
-    });
+        // Next time the sheet opens it starts from the stored answer.
+        await open(tester);
+        expect(tester.widget<SwitchListTile>(switchTile).value, isFalse);
+        await tester.tap(find.byKey(const ValueKey('import-as-card')));
+        await settle(tester);
+        expect(
+          settings.notebookImportAudioCard,
+          isFalse,
+          reason: 'the Audio bubble choice never rewrites the text preference',
+        );
+      },
+    );
   });
 
   group('notebook picker', () {
-    testWidgets('lists newest-edited first and New creates with the title',
-        (tester) async {
+    testWidgets('lists newest-edited first and New creates with the title', (
+      tester,
+    ) async {
       repository = FakeNotebookRepository(
         seed: <Notebook>[
           testNotebook(id: 'nb-old', title: 'Older'),
-          testNotebook(id: 'nb-new', title: 'Newer').copyWith(
-            updatedAt: DateTime.utc(2027),
-          ),
+          testNotebook(
+            id: 'nb-new',
+            title: 'Newer',
+          ).copyWith(updatedAt: DateTime.utc(2027)),
         ],
       );
       Future<String?>? picked;

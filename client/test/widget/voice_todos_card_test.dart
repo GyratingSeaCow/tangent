@@ -97,18 +97,28 @@ void main() {
     await unmount(tester);
   });
 
-  testWidgets('a manual todo does not summon the card', (tester) async {
-    await repo.add('typed by hand');
+  testWidgets('a manual todo retaining dump provenance does not summon the card',
+      (tester) async {
+    final TodoRow manual = await repo.add(
+      'typed by hand',
+      sourceRef: dumpId,
+    );
     await mount(tester);
 
     expect(find.text('Added to your To Do list'), findsNothing);
     expect(find.text('typed by hand'), findsNothing);
+    expect(manual.source, 'manual');
+    expect(manual.sourceRef, dumpId, reason: 'tap-through provenance survives');
 
     await unmount(tester);
   });
 
   testWidgets('Undo soft-deletes this dump\'s items, hides the card, and '
       'confirms with a snackbar', (tester) async {
+    final TodoRow manual = await repo.add(
+      'manual card on the same dump',
+      sourceRef: dumpId,
+    );
     await capture();
     await mount(tester);
     expect(find.text('pick up thermal paste'), findsOneWidget);
@@ -130,6 +140,10 @@ void main() {
     final List<TodoRow> rows = await repo.todosFromSource(dumpId);
     expect(rows.length, 2);
     expect(rows.every((r) => r.deletedAt != null), isTrue);
+    final TodoRow survivingManual = (await db.getTodoRow(manual.id))!;
+    expect(survivingManual.deletedAt, isNull);
+    expect(survivingManual.source, 'manual');
+    expect(survivingManual.sourceRef, dumpId);
     expect(await repo.hasTodosFromSource(dumpId), isTrue);
     expect(tester.takeException(), isNull);
 

@@ -10,78 +10,83 @@ import '../support/dump_view_fixture.dart';
 
 void main() {
   testWidgets(
-      'unsettled and eligibility errors disable stale delete callback; reappearance keeps selection',
-      (t) async {
-    final d = CountingDeletion();
-    final c = await mountSelection(t, d);
-    await t.longPress(find.byKey(const ValueKey('dump-row-fixture-a')));
-    await pumpSelection(t);
-    final delete = t
-        .widget<IconButton>(find.byKey(const ValueKey('selection-delete')))
-        .onPressed!;
-    final current = c.read(presentedFixture);
-    c.read(presentedFixture.notifier).state =
-        const AsyncLoading<PresentedDumpResults>().copyWithPrevious(current);
-    await pumpSelection(t);
-    expect(
+    'unsettled and eligibility errors disable stale delete callback; reappearance keeps selection',
+    (t) async {
+      final d = CountingDeletion();
+      final c = await mountSelection(t, d);
+      await enterDumpSelection(t, 'fixture-a');
+      final delete = t
+          .widget<IconButton>(find.byKey(const ValueKey('selection-delete')))
+          .onPressed!;
+      final current = c.read(presentedFixture);
+      c.read(presentedFixture.notifier).state =
+          const AsyncLoading<PresentedDumpResults>().copyWithPrevious(current);
+      await pumpSelection(t);
+      expect(
         t
             .widget<IconButton>(find.byKey(const ValueKey('selection-delete')))
             .onPressed,
-        isNull,);
-    delete();
-    await pumpSelection(t);
-    expect(d.previews, isEmpty);
-    c.read(presentedFixture.notifier).state = current;
-    await pumpSelection(t);
-    expect(find.text('1 selected'), findsOneWidget);
-    // Selection is action-agnostic: wiping the eligibility map no longer
-    // empties the selection. The delete pipeline re-checks per target, so
-    // the preview still fires — with the selected id, whose ineligibility
-    // is the SERVICE's news to report, not the toolbar's to swallow.
-    c.read(eligibilityFixture.notifier).state = {};
-    await pumpSelection(t);
-    expect(find.text('1 selected'), findsOneWidget);
-    delete();
-    await pumpSelection(t);
-    expect(d.previews.single, contains('fixture-a'));
-    c.read(presentedFixture.notifier).state = AsyncError<PresentedDumpResults>(
-            StateError('synthetic results failed'), StackTrace.current,)
-        .copyWithPrevious(current);
-    await pumpSelection(t);
-    expect(find.textContaining('Results unavailable'), findsOneWidget);
-    expect(d.deletes, isEmpty);
-  });
+        isNull,
+      );
+      delete();
+      await pumpSelection(t);
+      expect(d.previews, isEmpty);
+      c.read(presentedFixture.notifier).state = current;
+      await pumpSelection(t);
+      expect(find.text('1 selected'), findsOneWidget);
+      // Selection is action-agnostic: wiping the eligibility map no longer
+      // empties the selection. The delete pipeline re-checks per target, so
+      // the preview still fires — with the selected id, whose ineligibility
+      // is the SERVICE's news to report, not the toolbar's to swallow.
+      c.read(eligibilityFixture.notifier).state = {};
+      await pumpSelection(t);
+      expect(find.text('1 selected'), findsOneWidget);
+      delete();
+      await pumpSelection(t);
+      expect(d.previews.single, contains('fixture-a'));
+      c
+          .read(presentedFixture.notifier)
+          .state = AsyncError<PresentedDumpResults>(
+        StateError('synthetic results failed'),
+        StackTrace.current,
+      ).copyWithPrevious(current);
+      await pumpSelection(t);
+      expect(find.textContaining('Results unavailable'), findsOneWidget);
+      expect(d.deletes, isEmpty);
+    },
+  );
   testWidgets(
-      'older presented generation cannot render old rows or submit current selection',
-      (t) async {
-    final d = CountingDeletion();
-    final c = await mountSelection(t, d);
-    c.read(presentedFixture.notifier).state = AsyncData((
-      scopeKey: 'new',
-      generation: 3,
-      settled: true,
-      rows: [viewRow('fixture-b')],
-      limit: 100
-    ),);
-    await pumpSelection(t);
-    await t.longPress(find.byKey(const ValueKey('dump-row-fixture-b')));
-    await pumpSelection(t);
-    c.read(presentedFixture.notifier).state = AsyncData((
-      scopeKey: 'old',
-      generation: 2,
-      settled: true,
-      rows: [viewRow('fixture-a')],
-      limit: 100
-    ),);
-    await pumpSelection(t);
-    expect(find.byKey(const ValueKey('dump-row-fixture-a')), findsNothing);
-    expect(
+    'older presented generation cannot render old rows or submit current selection',
+    (t) async {
+      final d = CountingDeletion();
+      final c = await mountSelection(t, d);
+      c.read(presentedFixture.notifier).state = AsyncData((
+        scopeKey: 'new',
+        generation: 3,
+        settled: true,
+        rows: [viewRow('fixture-b')],
+        limit: 100,
+      ));
+      await pumpSelection(t);
+      await enterDumpSelection(t, 'fixture-b');
+      c.read(presentedFixture.notifier).state = AsyncData((
+        scopeKey: 'old',
+        generation: 2,
+        settled: true,
+        rows: [viewRow('fixture-a')],
+        limit: 100,
+      ));
+      await pumpSelection(t);
+      expect(find.byKey(const ValueKey('dump-row-fixture-a')), findsNothing);
+      expect(
         t
             .widget<IconButton>(find.byKey(const ValueKey('selection-delete')))
             .onPressed,
-        isNull,);
-    expect(d.previews, isEmpty);
-  });
+        isNull,
+      );
+      expect(d.previews, isEmpty);
+    },
+  );
   for (final change in [
     'mode',
     'transcript',
@@ -94,8 +99,7 @@ void main() {
       final gate = Completer<Outcome<DeletionPreview>>();
       final d = CountingDeletion()..previewGate = gate;
       final c = await mountSelection(t, d);
-      await t.longPress(find.byKey(const ValueKey('dump-row-fixture-a')));
-      await pumpSelection(t);
+      await enterDumpSelection(t, 'fixture-a');
       await t.tap(find.byKey(const ValueKey('selection-delete')));
       await pumpSelection(t);
       expect(d.previews, hasLength(1));
@@ -114,8 +118,8 @@ void main() {
             generation: 2,
             settled: false,
             rows: [],
-            limit: null
-          ),);
+            limit: null,
+          ));
         case 'cancel':
           await t.tap(find.byKey(const ValueKey('selection-cancel')));
         case 'unmount':
@@ -130,35 +134,40 @@ void main() {
     });
   }
   testWidgets(
-      'confirmed batch continues on unmount and captured callback is inert after disposal',
-      (t) async {
-    final gate = Completer<Outcome<BulkDeletionResult>>();
-    final d = CountingDeletion()..deleteGate = gate;
-    await mountSelection(t, d);
-    await t.longPress(find.byKey(const ValueKey('dump-row-fixture-a')));
-    await pumpSelection(t);
-    final submit = t
-        .widget<IconButton>(find.byKey(const ValueKey('selection-delete')))
-        .onPressed!;
-    submit();
-    await pumpSelection(t);
-    final confirm = t
-        .widget<FilledButton>(
-            find.byKey(const ValueKey('local-delete-confirm')),)
-        .onPressed!;
-    confirm();
-    await pumpSelection(t);
-    submit();
-    expect(d.deletes, hasLength(1));
-    await t.pumpWidget(const SizedBox.shrink());
-    await pumpSelection(t);
-    gate.complete(Ok(
-        (items: [itemFor('fixture-a', DeleteState.deleted)], replayed: false),),);
-    await pumpSelection(t);
-    submit();
-    confirm();
-    await pumpSelection(t);
-    expect(d.deletes, hasLength(1));
-    expect(t.takeException(), isNull);
-  });
+    'confirmed batch continues on unmount and captured callback is inert after disposal',
+    (t) async {
+      final gate = Completer<Outcome<BulkDeletionResult>>();
+      final d = CountingDeletion()..deleteGate = gate;
+      await mountSelection(t, d);
+      await enterDumpSelection(t, 'fixture-a');
+      final submit = t
+          .widget<IconButton>(find.byKey(const ValueKey('selection-delete')))
+          .onPressed!;
+      submit();
+      await pumpSelection(t);
+      final confirm = t
+          .widget<FilledButton>(
+            find.byKey(const ValueKey('local-delete-confirm')),
+          )
+          .onPressed!;
+      confirm();
+      await pumpSelection(t);
+      submit();
+      expect(d.deletes, hasLength(1));
+      await t.pumpWidget(const SizedBox.shrink());
+      await pumpSelection(t);
+      gate.complete(
+        Ok((
+          items: [itemFor('fixture-a', DeleteState.deleted)],
+          replayed: false,
+        )),
+      );
+      await pumpSelection(t);
+      submit();
+      confirm();
+      await pumpSelection(t);
+      expect(d.deletes, hasLength(1));
+      expect(t.takeException(), isNull);
+    },
+  );
 }

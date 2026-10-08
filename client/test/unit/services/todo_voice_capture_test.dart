@@ -313,13 +313,15 @@ void main() {
     expect((await repo.watchTodosFromSource('dump-2').first).length, 1);
   });
 
-  test('manual todos carry the phase 1 defaults, not voice provenance',
+  test('manual-only provenance does not suppress later voice capture',
       () async {
-    final TodoRow manual = await repo.add('typed by hand');
+    final TodoRow manual = await repo.add('typed by hand', sourceRef: dumpId);
 
     expect(manual.source, 'manual');
-    expect(manual.sourceRef, isNull);
+    expect(manual.sourceRef, dumpId);
     expect(await repo.hasTodosFromSource(dumpId), isFalse);
+    expect((await arrive()).length, 2, reason: 'voice detection still fires');
+    expect((await db.getTodoRow(manual.id))!.deletedAt, isNull);
   });
   group('due dates (v1.26.0)', () {
     test('a leading date phrase puts due_date on EVERY captured row',

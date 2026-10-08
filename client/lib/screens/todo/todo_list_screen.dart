@@ -401,6 +401,7 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
       case ItemAction.passwordProtection:
       case ItemAction.lockNow:
       case ItemAction.sendToNotebook:
+      case ItemAction.sendToTodo:
       case ItemAction.download:
       case ItemAction.regenerateSummary:
       case ItemAction.nameSpeakers:
@@ -1148,6 +1149,8 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
               ),
         title: Text(
           todo.body,
+          maxLines: 4,
+          overflow: TextOverflow.ellipsis,
           style: done
               ? const TextStyle(decoration: TextDecoration.lineThrough)
               : null,

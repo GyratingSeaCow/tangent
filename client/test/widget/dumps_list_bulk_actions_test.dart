@@ -30,12 +30,12 @@ import '../support/storage_fixture.dart';
 
 /// A recording whose audio is on the server but not on this device.
 DumpRow remoteRow(String id) => viewRow(id).copyWith(
-      audioPath: '',
-      audioSizeBytes: 0,
-      syncStatus: 'synced',
-      remoteOnly: const Value<bool?>(true),
-      audioOnServer: const Value<bool?>(true),
-    );
+  audioPath: '',
+  audioSizeBytes: 0,
+  syncStatus: 'synced',
+  remoteOnly: const Value<bool?>(true),
+  audioOnServer: const Value<bool?>(true),
+);
 
 /// Holds every transcribeDump call open until [gate] completes, so a test
 /// can assert what the screen shows WHILE the bulk run is still working.
@@ -57,13 +57,13 @@ class _GatedTranscriptionService extends ServerTranscriptionService {
 }
 
 void main() {
-  testWidgets('bulk toolbar offers download and transcribe beside delete',
-      (WidgetTester tester) async {
+  testWidgets('bulk toolbar offers download and transcribe beside delete', (
+    WidgetTester tester,
+  ) async {
     await mountSelection(tester, CountingDeletion());
 
-    // Enter selection mode via long-press (the documented entry point).
-    await tester.longPress(find.byKey(const ValueKey('dump-row-fixture-a')));
-    await pumpSelection(tester);
+    // Enter selection through the shared sheet; toolbar stays active when empty.
+    await enterDumpSelection(tester, 'fixture-a');
 
     for (final String key in <String>[
       'selection-download',
@@ -78,13 +78,13 @@ void main() {
     }
   });
 
-  testWidgets('bulk buttons disable when the selection is empty',
-      (WidgetTester tester) async {
+  testWidgets('bulk buttons disable when the selection is empty', (
+    WidgetTester tester,
+  ) async {
     await mountSelection(tester, CountingDeletion());
 
-    await tester.longPress(find.byKey(const ValueKey('dump-row-fixture-a')));
-    await pumpSelection(tester);
-    // Deselect the row long-press selected: toolbar stays, selection empty.
+    await enterDumpSelection(tester, 'fixture-a');
+    // Deselect the row selected through the sheet: toolbar stays, selection empty.
     await tester.tap(find.byKey(const ValueKey('dump-select-fixture-a')));
     await pumpSelection(tester);
 
@@ -92,8 +92,9 @@ void main() {
       'selection-download',
       'selection-transcribe',
     ]) {
-      final IconButton button =
-          tester.widget<IconButton>(find.byKey(ValueKey<String>(key)));
+      final IconButton button = tester.widget<IconButton>(
+        find.byKey(ValueKey<String>(key)),
+      );
       expect(
         button.onPressed,
         isNull,
@@ -102,8 +103,9 @@ void main() {
     }
   });
 
-  testWidgets('a failed bulk download offers Details naming each failure',
-      (WidgetTester tester) async {
+  testWidgets('a failed bulk download offers Details naming each failure', (
+    WidgetTester tester,
+  ) async {
     // A downloader whose DB knows none of the fixture rows: every eligible
     // row fails with the service's own wording ('Recording is missing').
     final ProviderContainer container = await mountSelection(
@@ -120,19 +122,16 @@ void main() {
         ),
       ],
     );
-    container.read(presentedFixture.notifier).state = AsyncData(
-      (
-        scopeKey: 'all',
-        generation: 2,
-        settled: true,
-        rows: <DumpRow>[remoteRow('fixture-a'), viewRow('fixture-b')],
-        limit: null,
-      ),
-    );
+    container.read(presentedFixture.notifier).state = AsyncData((
+      scopeKey: 'all',
+      generation: 2,
+      settled: true,
+      rows: <DumpRow>[remoteRow('fixture-a'), viewRow('fixture-b')],
+      limit: null,
+    ));
     await pumpSelection(tester);
 
-    await tester.longPress(find.byKey(const ValueKey('dump-row-fixture-a')));
-    await pumpSelection(tester);
+    await enterDumpSelection(tester, 'fixture-a');
     await tester.tap(find.byKey(const ValueKey('selection-download')));
     await pumpSelection(tester);
 
@@ -149,24 +148,24 @@ void main() {
 
     // The dialog names the row by TITLE and carries the service's wording —
     // an id alone means nothing to a person scanning 43 failures.
-    expect(
-      find.byKey(const ValueKey('bulk-failure-details')),
-      findsOneWidget,
-    );
+    expect(find.byKey(const ValueKey('bulk-failure-details')), findsOneWidget);
     expect(find.textContaining('fixture-a'), findsWidgets);
     expect(find.textContaining('Recording is missing'), findsOneWidget);
   });
 
-  testWidgets('bulk transcribe announces the run while work is in flight',
-      (WidgetTester tester) async {
+  testWidgets('bulk transcribe announces the run while work is in flight', (
+    WidgetTester tester,
+  ) async {
     // The bulk run is sequential and each large-v3 job takes minutes; the
     // old flow's only feedback was the END receipt, so a long-press →
     // transcribe looked like a dead button. The announcement must appear
     // IMMEDIATELY — while transcribeDump futures are still open.
     final LocalDb db = LocalDb.forTesting(NativeDatabase.memory());
-    final BoundServiceFixture bound = await tester.runAsync(
-      () => createBoundServiceFixture(db, registerDrain: false),
-    ) as BoundServiceFixture;
+    final BoundServiceFixture bound =
+        await tester.runAsync(
+              () => createBoundServiceFixture(db, registerDrain: false),
+            )
+            as BoundServiceFixture;
     addTearDown(() async {
       await bound.mutations.drain();
       await db.close();
@@ -184,8 +183,7 @@ void main() {
       ],
     );
 
-    await tester.longPress(find.byKey(const ValueKey('dump-row-fixture-a')));
-    await pumpSelection(tester);
+    await enterDumpSelection(tester, 'fixture-a');
     await tester.tap(find.byKey(const ValueKey('dump-select-fixture-b')));
     await pumpSelection(tester);
     await tester.tap(find.byKey(const ValueKey('selection-transcribe')));
@@ -200,7 +198,8 @@ void main() {
         matching: find.textContaining('Transcribing 2'),
       ),
       findsOneWidget,
-      reason: 'starting a bulk transcribe must be announced immediately, '
+      reason:
+          'starting a bulk transcribe must be announced immediately, '
           'not only in the end receipt',
     );
 
