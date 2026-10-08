@@ -1683,7 +1683,13 @@ void main() {
     );
     imageMenuState.handleTap();
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 400));
+    // The picker/decode path completes through chained futures whose timing
+    // varies with runner load (observed flaking on CI with one fixed 400 ms
+    // pump): advance fake time generously in small steps so every chained
+    // future and timer fires regardless of runner speed.
+    for (int i = 0; i < 50; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
 
     await tester.tap(find.byIcon(Icons.save));
     await tester.pump();
