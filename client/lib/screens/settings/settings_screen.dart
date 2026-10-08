@@ -175,17 +175,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     await settings.setKeepRecordingsOnDeviceOnly(_keepOnDeviceOnly);
     await settings.setKeepScreenAwakeWhileRecording(_keepScreenAwake);
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Settings saved')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Settings saved')));
     }
   }
 
   Future<void> _changeServer() async {
     await Navigator.of(context).push<void>(
-      MaterialPageRoute<void>(
-        builder: (_) => const ServerConnectionScreen(),
-      ),
+      MaterialPageRoute<void>(builder: (_) => const ServerConnectionScreen()),
     );
     await _load();
   }
@@ -263,9 +261,25 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             trailing: const Icon(Icons.chevron_right),
             onTap: () => setState(() => _category = c),
           ),
+        _trashTile(topLevel: true),
       ],
     );
   }
+
+  Widget _trashTile({required bool topLevel}) => ListTile(
+    key: ValueKey<String>(
+      topLevel ? 'settings-trash-top-level' : 'settings-trash',
+    ),
+    leading: const Icon(Icons.delete_outline),
+    title: const Text('Trash'),
+    subtitle: const Text('Deleted notebooks — kept 7 days, then emptied'),
+    trailing: const Icon(Icons.chevron_right),
+    onTap: () => Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (BuildContext context) => const TrashScreen(),
+      ),
+    ),
+  );
 
   /// The v1.40.0 flat list, partitioned. Each widget appears in exactly one
   /// category; the order inside a category is the order it had before.
@@ -297,9 +311,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               subtitle: Text(
                 _keepOnDeviceOnly
                     ? 'No effect while recordings are kept on this device. '
-                        'Transcription is never limited to Wi-Fi.'
+                          'Transcription is never limited to Wi-Fi.'
                     : 'Wait for Wi-Fi before uploading recordings for storage. '
-                        'Transcription is exempt and still runs on mobile data.',
+                          'Transcription is exempt and still runs on mobile data.',
               ),
               value: _wifiOnly,
               onChanged: (v) => setState(() => _wifiOnly = v),
@@ -307,10 +321,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ],
         ];
       case SettingsCategory.transfer:
-        return const [
-          BulkImportSection(),
-          ObsidianExportSection(),
-        ];
+        return const [BulkImportSection(), ObsidianExportSection()];
       case SettingsCategory.recording:
         return [
           const InputDeviceSection(),
@@ -378,18 +389,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               ),
             ),
           ),
-          ListTile(
-            key: const ValueKey<String>('settings-trash'),
-            title: const Text('Trash'),
-            subtitle:
-                const Text('Deleted notebooks — kept 7 days, then emptied'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () => Navigator.of(context).push(
-              MaterialPageRoute<void>(
-                builder: (BuildContext context) => const TrashScreen(),
-              ),
-            ),
-          ),
+          _trashTile(topLevel: false),
           const WelcomeMessageSection(),
         ];
       case SettingsCategory.transcription:
@@ -458,7 +458,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               context: context,
               applicationName: 'Tangent',
               applicationVersion: _appVersion.isEmpty ? null : 'v$_appVersion',
-              applicationLegalese: 'Copyright © 2026 Tangent contributors.\n'
+              applicationLegalese:
+                  'Copyright © 2026 Tangent contributors.\n'
                   'Licensed under the GNU AGPL-3.0-or-later: you have the '
                   'right to receive the source code of this app and of the '
                   'server it talks to.',
@@ -513,8 +514,9 @@ class ServerInfoSnapshot {
     return ServerInfoSnapshot(
       setupComplete: info.setupComplete as bool,
       model: info.defaultModel as String?,
-      models:
-          (info.availableModels as List?)?.map((e) => e.toString()).toList(),
+      models: (info.availableModels as List?)
+          ?.map((e) => e.toString())
+          .toList(),
       dumpCount: info.dumpCount as int?,
       diarization: (info.diarization as bool?) ?? false,
     );

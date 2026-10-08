@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' as ui;
 
@@ -309,7 +310,18 @@ void main() {
   ) async {
     await mountEditor(
       tester,
-      notebook: testNotebook(id: 'nb-pdf', title: 'PDF notes'),
+      notebook: testNotebook(
+        id: 'nb-pdf',
+        title: 'PDF notes',
+        blocks: const <NotebookBlock>[
+          NotebookTextBlock(
+            id: 'existing',
+            text: 'existing bottom',
+            x: 16,
+            y: 600,
+          ),
+        ],
+      ),
       pdfPicker: _FixedPdfPicker(
         PickedPdf(
           bytes: Uint8List.fromList(<int>[1, 2, 3, 4]),
@@ -344,7 +356,11 @@ void main() {
       ),
       <int>[1, 2],
     );
-    expect(pageWidgets.first.block.y, kNotebookImportSpacing);
+    expect(
+      pageWidgets.first.block.y,
+      greaterThan(600 + kNotebookImportBlockHeight),
+      reason: 'the first PDF page must append below existing page content',
+    );
     expect(
       pageWidgets[1].block.y,
       pageWidgets.first.block.y +
@@ -375,6 +391,16 @@ void main() {
     expect(inkLayer, greaterThan(firstPdfLayer));
     expect(find.byType(NotebookInkCanvas), findsOneWidget);
     expect(tester.takeException(), isNull);
+
+    await tester.tap(find.byIcon(Icons.save));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(repository.saved.single.document.blocks.first.id, 'existing');
+    expect(
+      repository.saved.single.document.blocks.last,
+      isA<NotebookPdfPageBlock>(),
+      reason: 'all imported PDF pages are appended after existing blocks',
+    );
 
     await unmount(tester);
   });
@@ -872,6 +898,11 @@ void main() {
         reason: 'the table must land below the lowest ink, not over it',
       );
       expect(saved.cellAt(0, 0), 'budget');
+      expect(
+        repository.saved.single.document.blocks.last,
+        isA<NotebookTableBlock>(),
+        reason: 'table insertion appends after every existing block',
+      );
       expect(tester.takeException(), isNull);
 
       await unmount(tester);
@@ -935,6 +966,15 @@ void main() {
       'd2',
     ]);
     expect(
+      repository.saved.single.document.blocks.last,
+      isA<NotebookDumpCardBlock>().having(
+        (NotebookDumpCardBlock card) => card.dumpId,
+        'dumpId',
+        'd2',
+      ),
+      reason: 'recording insertion appends after existing blocks',
+    );
+    expect(
       Offset(cards[1].x, cards[1].y),
       isNot(Offset(cards[0].x, cards[0].y)),
       reason: 'a new card must not land exactly on an existing one',
@@ -943,6 +983,68 @@ void main() {
 
     await unmount(tester);
   });
+
+  testWidgets(
+    'recording insertion scrolls the long page to a highlighted new card',
+    (tester) async {
+      await mountEditor(
+        tester,
+        notebook: testNotebook(
+          id: 'nb-recording-scroll',
+          blocks: const <NotebookBlock>[
+            NotebookTextBlock(id: 'top', text: 'top block', x: 16, y: 20),
+            NotebookTextBlock(
+              id: 'bottom',
+              text: 'existing bottom',
+              x: 16,
+              y: 3000,
+            ),
+          ],
+        ),
+        dumps: <DumpRow>[_dumpRow('d-new', 'New bottom recording')],
+      );
+
+      await tester.tap(find.byKey(const ValueKey('notebook-insert-menu')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Recording'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('dump-pick-d-new')));
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('dump-picker-add')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('import-as-card')));
+      await tester.pumpAndSettle();
+
+      final Finder inserted = find.byWidgetPredicate(
+        (Widget widget) =>
+            widget is NotebookDumpCard && widget.dump?.id == 'd-new',
+        description: 'newly inserted d-new recording card',
+      );
+      expect(inserted, findsOneWidget);
+      expect(tester.widget<NotebookDumpCard>(inserted).highlighted, isTrue);
+      final Rect viewport = tester.getRect(
+        find.byKey(const ValueKey('notebook-canvas-scroll')),
+      );
+      final Rect insertedRect = tester.getRect(inserted);
+      expect(
+        viewport.contains(insertedRect.topLeft) &&
+            viewport.contains(insertedRect.bottomRight),
+        isTrue,
+        reason:
+            'the inserted recording rect must be fully visible: '
+            '$insertedRect in $viewport',
+      );
+      final Rect topRect = tester.getRect(
+        find.byKey(const ValueKey('notebook-block-top')),
+      );
+      expect(
+        topRect.bottom,
+        lessThan(viewport.top),
+        reason:
+            'scrolling to the inserted bottom card must move the top offscreen',
+      );
+    },
+  );
 
   testWidgets(
     'the insert menu opens from the bottom-left and offers every insert',
@@ -1318,13 +1420,9 @@ void main() {
         .toList();
   }
 
-  testWidgets('a new text block lands below the item being edited', (
+  testWidgets('a new text block appends at bottom despite focused content', (
     tester,
   ) async {
-    // Appending to the very end scatters a page being written top-to-bottom:
-    // the user is working in the middle of the document and the new block
-    // appears far below, off screen. Enter already inserts in place
-    // (_splitCheckboxBlock); the toolbar buttons must agree with it.
     await mountEditor(
       tester,
       notebook: testNotebook(
@@ -1336,12 +1434,8 @@ void main() {
       ),
     );
 
-    // Put the caret in the FIRST block, so "the end" and "below the caret"
-    // are different answers and the test can tell them apart.
     await tester.tap(find.byKey(const ValueKey('notebook-checkbox-block-b1')));
     await tester.pumpAndSettle();
-
-    // PROBE: what actually holds focus after the tap?
     await tester.tap(find.byKey(const ValueKey('notebook-insert-menu')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Text block'));
@@ -1349,21 +1443,26 @@ void main() {
 
     final List<String> order = renderedBlockOrder(tester);
     expect(order.length, 3, reason: 'exactly one block was added');
-    expect(
-      order.first,
+    expect(order.sublist(0, 2), <String>[
       'notebook-block-b1',
-      reason: 'the focused block stays put',
-    );
-    expect(
-      order.last,
       'notebook-block-b2',
+    ], reason: 'toolbar insertion must not use the remembered caret position');
+    final String insertedKey = order.last;
+    expect(insertedKey, isNot(anyOf('notebook-block-b1', 'notebook-block-b2')));
+
+    final Rect trailing = tester.getRect(
+      find.byKey(const ValueKey('notebook-block-b2')),
+    );
+    final Rect inserted = tester.getRect(find.byKey(ValueKey(insertedKey)));
+    expect(
+      inserted.top,
+      greaterThan(trailing.bottom),
       reason:
-          'the new block sits BETWEEN the focused block and what followed '
-          'it, not appended after everything',
+          'append means the bottom of the vertical roll, not just list order',
     );
   });
 
-  testWidgets('a new checkbox lands below the item being edited', (
+  testWidgets('a new checkbox appends at bottom despite focused content', (
     tester,
   ) async {
     await mountEditor(
@@ -1379,7 +1478,6 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('notebook-checkbox-block-b1')));
     await tester.pumpAndSettle();
-
     await tester.tap(find.byKey(const ValueKey('notebook-insert-menu')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Checkbox'));
@@ -1387,12 +1485,17 @@ void main() {
 
     final List<String> order = renderedBlockOrder(tester);
     expect(order.length, 3);
-    expect(order.first, 'notebook-block-b1');
-    expect(
-      order.last,
+    expect(order.sublist(0, 2), <String>[
+      'notebook-block-b1',
       'notebook-block-b2',
-      reason: 'the new checkbox goes below the caret, matching what Enter does',
+    ]);
+    final String insertedKey = order.last;
+    expect(insertedKey, isNot(anyOf('notebook-block-b1', 'notebook-block-b2')));
+    final Rect trailing = tester.getRect(
+      find.byKey(const ValueKey('notebook-block-b2')),
     );
+    final Rect inserted = tester.getRect(find.byKey(ValueKey(insertedKey)));
+    expect(inserted.top, greaterThan(trailing.bottom));
   });
 
   testWidgets('with nothing focused a new block still appends to the end', (
@@ -1422,6 +1525,62 @@ void main() {
       'notebook-block-b1',
       'notebook-block-b2',
     ], reason: 'the existing blocks keep their order and the new one is last');
+  });
+
+  testWidgets('image insertion appends below existing blocks', (tester) async {
+    const MethodChannel channel = MethodChannel('dev.tangent.tangent/audio');
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (MethodCall call) async {
+          expect(call.method, 'pickImageFile');
+          return <String, Object>{
+            'bytes': base64Decode(
+              'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk'
+              'YPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
+            ),
+            'mime': 'image/png',
+            'width': 1,
+            'height': 1,
+          };
+        });
+    addTearDown(
+      () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null),
+    );
+    await mountEditor(
+      tester,
+      notebook: testNotebook(
+        id: 'nb-image-append',
+        blocks: const <NotebookBlock>[
+          NotebookTextBlock(
+            id: 'existing',
+            text: 'existing bottom',
+            x: 16,
+            y: 900,
+          ),
+        ],
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('notebook-insert-menu')));
+    await tester.pumpAndSettle();
+    final dynamic imageMenuState = tester.state(
+      find.byKey(const ValueKey('notebook-insert-image')),
+    );
+    imageMenuState.handleTap();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    await tester.tap(find.byIcon(Icons.save));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    final List<NotebookBlock> blocks = repository.saved.single.document.blocks;
+    expect(blocks.first.id, 'existing');
+    expect(blocks.last, isA<NotebookImageBlock>());
+    expect(
+      (blocks.last as NotebookImageBlock).y,
+      greaterThan(900 + kNotebookImportBlockHeight),
+      reason: 'the image belongs below the existing bottom block',
+    );
   });
 
   /// The ruling layer's painter, or null when it is not in the tree.
