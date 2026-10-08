@@ -1683,11 +1683,14 @@ void main() {
     );
     imageMenuState.handleTap();
     await tester.pump();
-    // The picker/decode path completes through chained futures whose timing
-    // varies with runner load (observed flaking on CI with one fixed 400 ms
-    // pump): advance fake time generously in small steps so every chained
-    // future and timer fires regardless of runner speed.
-    for (int i = 0; i < 50; i++) {
+    // The picker/decode path does REAL async work (file and codec I/O) that
+    // fake-time pumps never await — fast machines finish it between pumps,
+    // loaded CI runners don't (two CI-only failures on db339ac/65d7f79).
+    // Give real async a bounded window via runAsync, then settle fake time.
+    for (int i = 0; i < 40; i++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 25)),
+      );
       await tester.pump(const Duration(milliseconds: 50));
     }
 
