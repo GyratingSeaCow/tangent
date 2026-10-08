@@ -356,10 +356,13 @@ void main() {
       ),
       <int>[1, 2],
     );
+    final double existingHeight = tester
+        .getSize(find.byKey(const ValueKey('notebook-block-existing')))
+        .height;
     expect(
       pageWidgets.first.block.y,
-      greaterThan(600 + kNotebookImportBlockHeight),
-      reason: 'the first PDF page must append below existing page content',
+      greaterThan(600 + existingHeight),
+      reason: 'the first PDF page must append below the measured existing row',
     );
     expect(
       pageWidgets[1].block.y,
@@ -1043,8 +1046,66 @@ void main() {
         reason:
             'scrolling to the inserted bottom card must move the top offscreen',
       );
+      await tester.pump(const Duration(milliseconds: 2100));
+      expect(
+        tester.widget<NotebookDumpCard>(inserted).highlighted,
+        isFalse,
+        reason: 'the insertion border is a reveal cue, not persistent state',
+      );
     },
   );
+
+  testWidgets('multi-recording import reveals and highlights the first card', (
+    tester,
+  ) async {
+    await mountEditor(
+      tester,
+      notebook: testNotebook(id: 'nb-recording-first'),
+      dumps: <DumpRow>[
+        _dumpRow('d-first', 'First recording'),
+        _dumpRow('d-second', 'Second recording'),
+      ],
+    );
+
+    await tester.tap(find.byKey(const ValueKey('notebook-insert-menu')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Recording'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('dump-pick-d-first')));
+    await tester.tap(find.byKey(const ValueKey('dump-pick-d-second')));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('dump-picker-add')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('import-as-card')));
+    await tester.pump(const Duration(milliseconds: 400));
+
+    final List<NotebookDumpCard> cards = tester
+        .widgetList<NotebookDumpCard>(find.byType(NotebookDumpCard))
+        .toList();
+    expect(cards, hasLength(2));
+    expect(cards.first.dump?.id, 'd-first');
+    expect(cards.first.highlighted, isTrue);
+    expect(cards.last.dump?.id, 'd-second');
+    expect(cards.last.highlighted, isFalse);
+
+    final Rect viewport = tester.getRect(
+      find.byKey(const ValueKey('notebook-canvas-scroll')),
+    );
+    expect(
+      viewport.overlaps(tester.getRect(find.text('First recording'))),
+      isTrue,
+    );
+
+    await tester.tapAt(viewport.center);
+    await tester.pump();
+    expect(
+      tester
+          .widgetList<NotebookDumpCard>(find.byType(NotebookDumpCard))
+          .every((NotebookDumpCard card) => !card.highlighted),
+      isTrue,
+      reason: 'the next page tap clears the transient insertion cue',
+    );
+  });
 
   testWidgets(
     'the insert menu opens from the bottom-left and offers every insert',
@@ -1346,6 +1407,15 @@ void main() {
       'milk',
       reason: 'the line being left must keep its own text',
     );
+    final List<Rect> rows = checkboxBlocks()
+        .evaluate()
+        .map((Element element) => tester.getRect(find.byWidget(element.widget)))
+        .toList();
+    expect(
+      rows[1].top,
+      greaterThanOrEqualTo(rows[0].bottom),
+      reason: 'the new checkbox must render below its measured source row',
+    );
   });
 
   testWidgets('the new checkbox item is inserted directly after its source', (
@@ -1498,6 +1568,51 @@ void main() {
     expect(inserted.top, greaterThan(trailing.bottom));
   });
 
+  testWidgets('new content starts below a tall mounted transcript rect', (
+    tester,
+  ) async {
+    final String transcript = List<String>.filled(
+      24,
+      'A forty-character transcript line wraps. ',
+    ).join();
+    await mountEditor(
+      tester,
+      notebook: testNotebook(
+        id: 'nb-tall-transcript',
+        blocks: <NotebookBlock>[
+          NotebookTextBlock(id: 'tall', text: transcript, x: 16, y: 40),
+        ],
+      ),
+    );
+
+    final Rect initialTranscriptRect = tester.getRect(
+      find.byKey(const ValueKey('notebook-block-tall')),
+    );
+    expect(
+      initialTranscriptRect.height,
+      greaterThan(kNotebookImportBlockHeight),
+      reason: 'the fixture must exceed the old nominal 90 px footprint',
+    );
+
+    await tester.tap(find.byKey(const ValueKey('notebook-insert-menu')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Checkbox'));
+    await tester.pumpAndSettle();
+
+    final String insertedKey = renderedBlockOrder(tester).last;
+    final Rect transcriptRect = tester.getRect(
+      find.byKey(const ValueKey('notebook-block-tall')),
+    );
+    final Rect insertedRect = tester.getRect(find.byKey(ValueKey(insertedKey)));
+    expect(
+      insertedRect.top,
+      greaterThan(transcriptRect.bottom),
+      reason:
+          'placement must use the mounted RenderBox bottom, not the nominal '
+          'text height',
+    );
+  });
+
   testWidgets('with nothing focused a new block still appends to the end', (
     tester,
   ) async {
@@ -1576,10 +1691,13 @@ void main() {
     final List<NotebookBlock> blocks = repository.saved.single.document.blocks;
     expect(blocks.first.id, 'existing');
     expect(blocks.last, isA<NotebookImageBlock>());
+    final double existingHeight = tester
+        .getSize(find.byKey(const ValueKey('notebook-block-existing')))
+        .height;
     expect(
       (blocks.last as NotebookImageBlock).y,
-      greaterThan(900 + kNotebookImportBlockHeight),
-      reason: 'the image belongs below the existing bottom block',
+      greaterThan(900 + existingHeight),
+      reason: 'the image belongs below the measured existing block',
     );
   });
 
@@ -1869,6 +1987,47 @@ void main() {
       reason: 'the line being left must keep its own text',
     );
   });
+
+  testWidgets(
+    'IME enter on a menu-added checkbox places the next item below it',
+    (tester) async {
+      await mountEditor(
+        tester,
+        notebook: testNotebook(
+          id: 'nb-menu-checkbox-enter',
+          blocks: const <NotebookBlock>[
+            NotebookTextBlock(
+              id: 'low',
+              text: 'existing low block',
+              x: 16,
+              y: 600,
+            ),
+          ],
+        ),
+      );
+
+      await tester.tap(find.byKey(const ValueKey('notebook-insert-menu')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Checkbox'));
+      await tester.pumpAndSettle();
+
+      final Finder source = checkboxBlocks().first;
+      await tester.enterText(source, 'milk');
+      await tester.testTextInput.receiveAction(TextInputAction.next);
+      await tester.pumpAndSettle();
+
+      expect(checkboxBlocks(), findsNWidgets(2));
+      final Rect sourceRect = tester.getRect(checkboxBlocks().first);
+      final Rect nextRect = tester.getRect(checkboxBlocks().last);
+      expect(
+        nextRect.top,
+        greaterThanOrEqualTo(sourceRect.bottom),
+        reason:
+            'a placed menu checkbox must create a placed next row below its '
+            'measured rect, never an unplaced row at the page top',
+      );
+    },
+  );
 
   testWidgets(
     'the checkbox field asks Android for an action key, not a newline',
@@ -3886,6 +4045,12 @@ void main() {
         findsOneWidget,
         reason: 'the transcript must land in an editable text box',
       );
+      expect(
+        anyFieldFocused(tester),
+        isFalse,
+        reason:
+            'import reveals the transcript without opening a caret/keyboard',
+      );
 
       await tester.tap(find.byIcon(Icons.save));
       await tester.pump();
@@ -4147,6 +4312,11 @@ void main() {
 
         expect(find.text('Summary\n- ship on Friday'), findsOneWidget);
         expect(find.text('we talked about shipping on friday'), findsOneWidget);
+        expect(
+          anyFieldFocused(tester),
+          isFalse,
+          reason: 'multi-block import reveals content without focusing text',
+        );
 
         final List<NotebookTextBlock> texts = await saveAndReadTexts(tester);
         expect(texts, hasLength(2));

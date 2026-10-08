@@ -57,6 +57,7 @@ class NotebookDumpCard extends StatefulWidget {
     required this.dump,
     required this.position,
     required this.onPositionChanged,
+    this.measurementKey,
     this.highlighted = false,
     this.onTap,
     this.onRemove,
@@ -75,6 +76,10 @@ class NotebookDumpCard extends StatefulWidget {
   /// owns the truth: whatever it stores (clamped, snapped, or verbatim) is
   /// what the card renders once the drag finishes.
   final ValueChanged<Offset> onPositionChanged;
+
+  /// Key attached to the rendered card body so an owning canvas can measure
+  /// its real height (titles and summaries make cards taller than a constant).
+  final Key? measurementKey;
 
   /// Draws an accent border around the card just inserted into the notebook.
   /// This is the non-text equivalent of moving the caret into a new field.
@@ -324,6 +329,7 @@ class _NotebookDumpCardState extends State<NotebookDumpCard>
       // behaves correctly at any speed -- and, being plain, it still yields
       // to taps so the card opens and its X fires.
       child: Listener(
+        key: widget.measurementKey,
         onPointerDown: (_) => widget.onDragActive?.call(true),
         onPointerUp: (_) => widget.onDragActive?.call(false),
         onPointerCancel: (_) => widget.onDragActive?.call(false),

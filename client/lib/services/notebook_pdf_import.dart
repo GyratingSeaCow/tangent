@@ -183,10 +183,8 @@ class PlatformPdfDocumentInspector implements PdfDocumentInspector {
   const PlatformPdfDocumentInspector();
 
   @override
-  Future<List<Size>> inspect(
-    Uint8List bytes, {
-    required String documentId,
-  }) => Platform.isAndroid
+  Future<List<Size>> inspect(Uint8List bytes, {required String documentId}) =>
+      Platform.isAndroid
       ? const AndroidPdfDocumentInspector().inspect(
           bytes,
           documentId: documentId,
@@ -280,10 +278,13 @@ List<NotebookPdfPageBlock> buildImportedPdfPageBlocks({
   required List<NotebookBlock> existing,
   required List<InkStroke> strokes,
   required String Function() newId,
+  double? existingContentBottom,
 }) {
   if (picked.pageSizes.isEmpty) return const <NotebookPdfPageBlock>[];
   final String encoded = base64Encode(picked.bytes);
-  double y = notebookContentBottom(existing, strokes) + kNotebookImportSpacing;
+  double y =
+      (existingContentBottom ?? notebookContentBottom(existing, strokes)) +
+      kNotebookImportSpacing;
   final List<NotebookPdfPageBlock> pages = <NotebookPdfPageBlock>[];
   for (int index = 0; index < picked.pageSizes.length; index++) {
     final Size source = picked.pageSizes[index];
@@ -479,7 +480,8 @@ class AndroidPdfPagePngRenderer
   }
 
   @override
-  Future<void> cancelRender(String requestId) => _channel.cancelRender(requestId);
+  Future<void> cancelRender(String requestId) =>
+      _channel.cancelRender(requestId);
 
   /// Compatibility path for direct renderer tests. Production uses the
   /// direct-file method and never reads the PNG back into Dart.
@@ -656,7 +658,9 @@ class NotebookPdfPageCache implements CancellablePdfPageRasterLoader {
       _pending = null;
       _cancelPending(task);
     } else if (identical(task, _active) && _renderer is PdfPageFileRenderer) {
-      unawaited((_renderer as PdfPageFileRenderer).cancelRender(task.requestId));
+      unawaited(
+        (_renderer as PdfPageFileRenderer).cancelRender(task.requestId),
+      );
     }
   }
 
@@ -690,7 +694,9 @@ class NotebookPdfPageCache implements CancellablePdfPageRasterLoader {
       if (task.cancelled) throw const PdfRenderCancelledException();
       if (!task.completer.isCompleted) task.completer.complete(file);
     } catch (error, stack) {
-      if (!task.completer.isCompleted) task.completer.completeError(error, stack);
+      if (!task.completer.isCompleted) {
+        task.completer.completeError(error, stack);
+      }
     } finally {
       if (identical(_inFlight[task.key], task)) {
         _inFlight.remove(task.key);
@@ -733,7 +739,9 @@ class NotebookPdfPageCache implements CancellablePdfPageRasterLoader {
           width: task.width,
           height: task.height,
         );
-        if (png.isEmpty) throw StateError('PDF renderer returned an empty page');
+        if (png.isEmpty) {
+          throw StateError('PDF renderer returned an empty page');
+        }
         await temporary.writeAsBytes(png, flush: true);
       }
       if (task.cancelled) throw const PdfRenderCancelledException();
