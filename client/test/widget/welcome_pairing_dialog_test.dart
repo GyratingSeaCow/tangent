@@ -165,6 +165,9 @@ void main() {
     ]) {
       expect(find.text(text), findsOneWidget, reason: text);
     }
+    // The approved deck gives page 1 no location context: the pill must be a
+    // bare "1 of 4" with no label beside it (Vera batch-E item 1).
+    expect(find.text('Welcome'), findsNothing);
 
     await tester.tap(find.byKey(WelcomePairingDialog.setUpServerKey));
     await tester.pumpAndSettle();

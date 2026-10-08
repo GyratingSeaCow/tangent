@@ -64,8 +64,10 @@ class _WelcomePairingDialogState extends ConsumerState<WelcomePairingDialog> {
     _ => 'Pair this device',
   };
 
-  String get _contextLabel => switch (_pageIndex) {
-    0 => 'Welcome',
+  // Page 1 has no location context: the approved deck and mockup render a
+  // bare "1 of 4" there (Vera batch-E item 1).
+  String? get _contextLabel => switch (_pageIndex) {
+    0 => null,
     1 || 2 => 'On your PC',
     _ => 'On this device',
   };
@@ -223,13 +225,15 @@ class _WizardProgress extends StatelessWidget {
   });
   final int page;
   final int pageCount;
-  final String contextLabel;
+  final String? contextLabel;
 
   @override
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
     return Semantics(
-      label: 'Page $page of $pageCount, $contextLabel',
+      label: contextLabel == null
+          ? 'Page $page of $pageCount'
+          : 'Page $page of $pageCount, $contextLabel',
       child: ExcludeSemantics(
         child: Wrap(
           alignment: WrapAlignment.spaceBetween,
@@ -273,20 +277,24 @@ class _WizardProgress extends StatelessWidget {
                       fontWeight: FontWeight.w700,
                     ),
                   ),
-                  const SizedBox(width: 6),
-                  Container(
-                    width: 1,
-                    height: 12,
-                    color: scheme.onSecondaryContainer.withValues(alpha: 0.35),
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    contextLabel,
-                    style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                      color: scheme.onSecondaryContainer,
-                      fontWeight: FontWeight.w600,
+                  if (contextLabel != null) ...<Widget>[
+                    const SizedBox(width: 6),
+                    Container(
+                      width: 1,
+                      height: 12,
+                      color: scheme.onSecondaryContainer.withValues(
+                        alpha: 0.35,
+                      ),
                     ),
-                  ),
+                    const SizedBox(width: 6),
+                    Text(
+                      contextLabel!,
+                      style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                        color: scheme.onSecondaryContainer,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),
