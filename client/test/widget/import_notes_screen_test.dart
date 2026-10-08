@@ -157,4 +157,12 @@ void main() {
       findsNothing,
     );
   });
+
+  test('cancelled report text includes skipped count and kept wording', () {
+    expect(noteImportSummaryTitle(1, 1), '1 imported · 1 skipped');
+    expect(
+      noteImportSummarySubtitle(true),
+      'Cancelled — notebooks already imported were kept.',
+    );
+  });
 }

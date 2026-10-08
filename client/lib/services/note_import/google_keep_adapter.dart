@@ -124,10 +124,20 @@ class GoogleKeepAdapter implements NoteImportAdapter {
           );
           continue;
         }
-        final String relative = _normalise(
-          directory.isEmpty ? filePath : '$directory/$filePath',
-        );
-        final NoteImportEntry? asset = byPath[relative];
+        final String? relative = _resolveAttachment(directory, filePath);
+        NoteImportEntry? asset = relative == null ? null : byPath[relative];
+        if (asset == null && relative != null) {
+          final String extension = p.posix.extension(relative).toLowerCase();
+          final String? siblingExtension = switch (extension) {
+            '.jpg' => '.jpeg',
+            '.jpeg' => '.jpg',
+            _ => null,
+          };
+          if (siblingExtension != null) {
+            asset =
+                byPath['${relative.substring(0, relative.length - extension.length)}$siblingExtension'];
+          }
+        }
         final String? mime =
             attachment is Map && attachment['mimetype'] is String
             ? attachment['mimetype'] as String
@@ -155,26 +165,15 @@ class GoogleKeepAdapter implements NoteImportAdapter {
     final String title = rawTitle.trim().isNotEmpty
         ? rawTitle.trim()
         : _fallbackTitle(blocks, entry.name);
-    DateTime? updatedAt;
-    final Object? micros = raw['userEditedTimestampUsec'];
-    if (micros is num && micros >= 0) {
-      updatedAt = DateTime.fromMicrosecondsSinceEpoch(
-        micros.toInt(),
-        isUtc: true,
-      );
-    } else if (micros is String) {
-      final int? parsed = int.tryParse(micros);
-      if (parsed != null && parsed >= 0) {
-        updatedAt = DateTime.fromMicrosecondsSinceEpoch(parsed, isUtc: true);
-      }
-    }
+    final DateTime? updatedAt = _keepTimestamp(raw['userEditedTimestampUsec']);
+    final DateTime? createdAt = _keepTimestamp(raw['createdTimestampUsec']);
     return ImportedNote(
       sourceName: entry.path,
       title: title,
       folderHint: labels.isEmpty
           ? 'Google Keep'
           : 'Google Keep / ${labels.first}',
-      createdAt: updatedAt,
+      createdAt: createdAt ?? updatedAt,
       updatedAt: updatedAt,
       blocks: blocks,
     );
@@ -197,17 +196,35 @@ String _fallbackTitle(List<ImportedNoteBlock> blocks, String fileName) {
   return base.isEmpty ? 'Untitled Keep note' : base;
 }
 
-String _normalise(String input) {
-  final List<String> parts = <String>[];
-  for (final String part in input.replaceAll('\\', '/').split('/')) {
+String? _resolveAttachment(String directory, String input) {
+  final String slashed = input.replaceAll('\\', '/');
+  if (slashed.startsWith('/') || RegExp(r'^[A-Za-z]:/').hasMatch(slashed)) {
+    return null;
+  }
+  final List<String> parts = directory.isEmpty
+      ? <String>[]
+      : directory.split('/').where((part) => part.isNotEmpty).toList();
+  final int floor = parts.length;
+  for (final String part in slashed.split('/')) {
     if (part.isEmpty || part == '.') continue;
     if (part == '..') {
-      if (parts.isNotEmpty) parts.removeLast();
+      if (parts.length == floor) return null;
+      parts.removeLast();
     } else {
       parts.add(part);
     }
   }
   return parts.join('/');
+}
+
+DateTime? _keepTimestamp(Object? micros) {
+  final int? value = switch (micros) {
+    num n => n.toInt(),
+    String text => int.tryParse(text),
+    _ => null,
+  };
+  if (value == null || value < 0) return null;
+  return DateTime.fromMicrosecondsSinceEpoch(value, isUtc: true);
 }
 
 String? _mimeFor(String name) => switch (p.extension(name).toLowerCase()) {

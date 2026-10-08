@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import 'dart:convert';
+import 'dart:isolate';
+import 'dart:typed_data';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image/image.dart' as image_lib;
@@ -142,7 +144,7 @@ class NoteImportService {
               (note.createdAt ?? note.updatedAt ?? fallback).toUtc();
           final DateTime updatedAt =
               (note.updatedAt ?? note.createdAt ?? fallback).toUtc();
-          final List<NotebookBlock> incoming = _mapBlocks(note.blocks);
+          final List<NotebookBlock> incoming = await _mapBlocks(note.blocks);
           final List<NotebookBlock> positioned = layoutImportedBlocks(
             existing: const <NotebookBlock>[],
             strokes: const <InkStroke>[],
@@ -194,7 +196,7 @@ class NoteImportService {
     );
   }
 
-  List<NotebookBlock> _mapBlocks(List<ImportedNoteBlock> source) {
+  Future<List<NotebookBlock>> _mapBlocks(List<ImportedNoteBlock> source) async {
     final List<NotebookBlock> blocks = <NotebookBlock>[];
     for (final ImportedNoteBlock block in source) {
       switch (block) {
@@ -213,8 +215,10 @@ class NoteImportService {
         case ImportedAttachmentProblem(:final message):
           blocks.add(NotebookTextBlock(id: _idFactory(), text: '[$message]'));
         case ImportedImage(:final bytes, :final mime, :final name):
-          final image_lib.Image? decoded = image_lib.decodeImage(bytes);
-          if (decoded == null || decoded.width <= 0 || decoded.height <= 0) {
+          final _PreparedImage? prepared = await Isolate.run(
+            () => _prepareImportedImage(bytes, mime),
+          );
+          if (prepared == null) {
             blocks.add(
               NotebookTextBlock(
                 id: _idFactory(),
@@ -224,15 +228,15 @@ class NoteImportService {
             continue;
           }
           const double maxWidth = 640;
-          final double width = decoded.width > maxWidth
+          final double width = prepared.width > maxWidth
               ? maxWidth
-              : decoded.width.toDouble();
-          final double height = decoded.height * (width / decoded.width);
+              : prepared.width.toDouble();
+          final double height = prepared.height * (width / prepared.width);
           blocks.add(
             NotebookImageBlock(
               id: _idFactory(),
-              data: base64Encode(bytes),
-              mime: mime,
+              data: base64Encode(prepared.bytes),
+              mime: prepared.mime,
               x: 0,
               y: 0,
               width: width,
@@ -246,6 +250,66 @@ class NoteImportService {
     }
     return blocks;
   }
+}
+
+const int maxImportedImageEdge = 2048;
+
+class _PreparedImage {
+  const _PreparedImage({
+    required this.bytes,
+    required this.mime,
+    required this.width,
+    required this.height,
+  });
+
+  final Uint8List bytes;
+  final String mime;
+  final int width;
+  final int height;
+}
+
+_PreparedImage? _prepareImportedImage(Uint8List bytes, String mime) {
+  final image_lib.Image? decoded = image_lib.decodeImage(bytes);
+  if (decoded == null || decoded.width <= 0 || decoded.height <= 0) return null;
+
+  final bool hasOrientation =
+      decoded.exif.imageIfd.hasOrientation &&
+      decoded.exif.imageIfd.orientation != 1;
+  image_lib.Image image = hasOrientation
+      ? image_lib.bakeOrientation(decoded)
+      : decoded;
+  final bool oversized =
+      image.width > maxImportedImageEdge || image.height > maxImportedImageEdge;
+  if (!hasOrientation && !oversized) {
+    return _PreparedImage(
+      bytes: bytes,
+      mime: mime,
+      width: image.width,
+      height: image.height,
+    );
+  }
+
+  if (oversized) {
+    if (image.width >= image.height) {
+      image = image_lib.copyResize(image, width: maxImportedImageEdge);
+    } else {
+      image = image_lib.copyResize(image, height: maxImportedImageEdge);
+    }
+  }
+  final (Uint8List encoded, String encodedMime) = switch (mime.toLowerCase()) {
+    'image/jpeg' ||
+    'image/jpg' => (image_lib.encodeJpg(image, quality: 90), 'image/jpeg'),
+    'image/gif' => (image_lib.encodeGif(image), 'image/gif'),
+    'image/webp' => (image_lib.encodeWebP(image), 'image/webp'),
+    'image/bmp' => (image_lib.encodeBmp(image), 'image/bmp'),
+    _ => (image_lib.encodePng(image), 'image/png'),
+  };
+  return _PreparedImage(
+    bytes: encoded,
+    mime: encodedMime,
+    width: image.width,
+    height: image.height,
+  );
 }
 
 String uniqueNotebookTitle(String requested, Set<String> used) {

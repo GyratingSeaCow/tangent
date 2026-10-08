@@ -5,8 +5,8 @@ import 'package:path/path.dart' as p;
 
 import 'note_import_model.dart';
 
-final RegExp _notionIdSuffix = RegExp(r'\s+[0-9a-fA-F]{32}$');
-final RegExp _checkbox = RegExp(r'^\s*[-*+]\s+\[([ xX])\]\s+(.*)$');
+final RegExp _notionIdSuffix = RegExp(r'\s+[0-9a-fA-F]{32}(?:_all)?$');
+final RegExp _checkbox = RegExp(r'^\s*[-*+]\s+\[([ xX])\]\s*(.*)$');
 final RegExp _unordered = RegExp(r'^\s*[-*+]\s+(.*)$');
 final RegExp _ordered = RegExp(r'^\s*\d+[.)]\s+(.*)$');
 final RegExp _standardImage = RegExp(r'^\s*!\[[^\]]*\]\(([^)]+)\)\s*$');
@@ -22,7 +22,7 @@ String _withoutExtension(String name) {
 String _stripNotionSuffix(String value) =>
     value.replaceFirst(_notionIdSuffix, '').trim();
 
-String _normaliseRelative(String value) {
+String _normaliseRelative(String value, {required bool decodePercent}) {
   final List<String> out = <String>[];
   for (final String part in value.replaceAll('\\', '/').split('/')) {
     if (part.isEmpty || part == '.') continue;
@@ -30,7 +30,16 @@ String _normaliseRelative(String value) {
       if (out.isNotEmpty) out.removeLast();
       continue;
     }
-    out.add(Uri.decodeComponent(part));
+    if (!decodePercent) {
+      out.add(part);
+      continue;
+    }
+    try {
+      out.add(Uri.decodeComponent(part));
+    } on ArgumentError {
+      // A malformed percent escape belongs to this link, not the whole note.
+      out.add(part);
+    }
   }
   return out.join('/');
 }
@@ -58,7 +67,11 @@ class MarkdownNotesAdapter implements NoteImportAdapter {
     bool found = false;
     for (final NoteImportEntry entry in entries) {
       final String lower = entry.path.toLowerCase();
-      if (!notion && entry.path.split('/').contains('.obsidian')) continue;
+      final List<String> components = entry.path.split('/');
+      if (!notion &&
+          (components.contains('.obsidian') || components.contains('.trash'))) {
+        continue;
+      }
       if (lower.endsWith('.md') || lower.endsWith('.markdown')) {
         found = true;
         try {
@@ -72,6 +85,7 @@ class MarkdownNotesAdapter implements NoteImportAdapter {
           );
         }
       } else if (notion && lower.endsWith('.csv')) {
+        if (_isNotionAllTwin(entry.path, byPath)) continue;
         found = true;
         try {
           final ImportedNote? note = await _readCsv(entry);
@@ -121,7 +135,7 @@ class MarkdownNotesAdapter implements NoteImportAdapter {
       paragraph.clear();
     }
 
-    Future<void> image(String target) async {
+    Future<void> image(String target, {required bool wiki}) async {
       flushParagraph();
       final String cleanTarget = target
           .split('#')
@@ -129,17 +143,30 @@ class MarkdownNotesAdapter implements NoteImportAdapter {
           .split('?')
           .first
           .trim();
-      final String relative = _normaliseRelative(
-        directory.isEmpty ? cleanTarget : '$directory/$cleanTarget',
+      final String rootRelative = _normaliseRelative(
+        cleanTarget,
+        decodePercent: notion,
       );
-      NoteImportEntry? asset = byPath[relative];
+      final String noteRelative = _normaliseRelative(
+        directory.isEmpty ? cleanTarget : '$directory/$cleanTarget',
+        decodePercent: notion,
+      );
+      final List<String> candidates = wiki
+          ? <String>[rootRelative, noteRelative]
+          : <String>[noteRelative];
+      NoteImportEntry? asset;
+      for (final String candidate in candidates) {
+        asset ??= byPath[candidate];
+      }
       if (asset == null && target == cleanTarget) {
         final List<NoteImportEntry> named = byPath.values
-            .where((candidate) => candidate.name == p.posix.basename(relative))
+            .where(
+              (candidate) => candidate.name == p.posix.basename(noteRelative),
+            )
             .toList(growable: false);
         if (named.length == 1) asset = named.single;
       }
-      final String? mime = _mimeFor(relative);
+      final String? mime = _mimeFor(asset?.path ?? noteRelative);
       if (asset == null || mime == null) {
         blocks.add(ImportedAttachmentProblem('Attachment skipped: $target'));
         return;
@@ -153,12 +180,29 @@ class MarkdownNotesAdapter implements NoteImportAdapter {
       );
     }
 
+    String? fence;
     for (final String rawLine in const LineSplitter().convert(text)) {
       final String line = rawLine.trimRight();
+      final RegExpMatch? fenceMatch = RegExp(r'^\s*(```|~~~)').firstMatch(line);
+      if (fence != null) {
+        if (paragraph.isNotEmpty) paragraph.writeln();
+        paragraph.write(line);
+        if (fenceMatch?.group(1) == fence) {
+          fence = null;
+          flushParagraph();
+        }
+        continue;
+      }
+      if (fenceMatch != null) {
+        flushParagraph();
+        fence = fenceMatch.group(1);
+        paragraph.write(line);
+        continue;
+      }
       final RegExpMatch? standard = _standardImage.firstMatch(line);
       final RegExpMatch? wiki = _wikiImage.firstMatch(line);
       if (standard != null || wiki != null) {
-        await image((standard ?? wiki)!.group(1)!);
+        await image((standard ?? wiki)!.group(1)!, wiki: wiki != null);
         continue;
       }
       final RegExpMatch? check = _checkbox.firstMatch(line);
@@ -250,6 +294,14 @@ class MarkdownNotesAdapter implements NoteImportAdapter {
       blocks: <ImportedNoteBlock>[ImportedText(table.toString().trimRight())],
     );
   }
+}
+
+bool _isNotionAllTwin(String path, Map<String, NoteImportEntry> byPath) {
+  final String extension = p.posix.extension(path);
+  final String stem = path.substring(0, path.length - extension.length);
+  if (!stem.toLowerCase().endsWith('_all')) return false;
+  final String plain = '${stem.substring(0, stem.length - 4)}$extension';
+  return byPath.containsKey(plain);
 }
 
 List<List<String>> _parseCsv(String source) {

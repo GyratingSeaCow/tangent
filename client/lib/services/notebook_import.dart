@@ -99,8 +99,17 @@ double notebookContentBottom(
 /// Vertical room a text box of [text] needs before the next item: the
 /// import gap plus a line-count estimate, so consecutive imports of long
 /// transcripts do not overlap each other.
-double importedTextAdvance(String text) =>
-    kNotebookImportSpacing + (text.length / 40).ceil() * 24.0;
+double importedTextAdvance(String text) {
+  final int visualLines = text
+      .split('\n')
+      .fold<int>(
+        0,
+        (total, line) => total + _maxInt(1, (line.length / 40).ceil()),
+      );
+  return kNotebookImportSpacing + visualLines * 24.0;
+}
+
+int _maxInt(int a, int b) => a > b ? a : b;
 
 /// Content-aware placement: every [incoming] block is positioned in order,
 /// starting below the lowest existing content (blocks AND ink) and

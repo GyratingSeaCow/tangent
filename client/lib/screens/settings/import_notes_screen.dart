@@ -222,12 +222,8 @@ class _ImportNotesScreenState extends ConsumerState<ImportNotesScreen> {
           else if (_entries.isNotEmpty)
             ListTile(
               key: const ValueKey<String>('note-import-summary'),
-              title: Text('$imported imported · $skipped skipped'),
-              subtitle: Text(
-                _cancelled
-                    ? 'Cancelled — notebooks already imported were kept.'
-                    : 'Import complete',
-              ),
+              title: Text(noteImportSummaryTitle(imported, skipped)),
+              subtitle: Text(noteImportSummarySubtitle(_cancelled)),
             ),
           for (final NoteImportResultEntry entry in _entries)
             ListTile(
@@ -253,6 +249,13 @@ class _ImportNotesScreenState extends ConsumerState<ImportNotesScreen> {
     ),
   );
 }
+
+String noteImportSummaryTitle(int imported, int skipped) =>
+    '$imported imported · $skipped skipped';
+
+String noteImportSummarySubtitle(bool cancelled) => cancelled
+    ? 'Cancelled — notebooks already imported were kept.'
+    : 'Import complete';
 
 class _SourceCard extends StatelessWidget {
   const _SourceCard({

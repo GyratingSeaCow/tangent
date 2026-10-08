@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:flutter_test/flutter_test.dart';
+import 'package:image/image.dart' as image_lib;
 import 'package:path/path.dart' as p;
 import 'package:tangent/models/notebook.dart';
 import 'package:tangent/services/note_import/google_keep_adapter.dart';
@@ -89,6 +93,7 @@ void main() {
       expect(notebook.title, 'Groceries');
       expect(notebook.folderId, 'folder-1');
       expect(notebook.createdAt, DateTime.utc(2026, 6, 1, 10));
+      expect(notebook.updatedAt, DateTime.utc(2026, 6, 1, 10));
       expect(
         notebook.document.blocks.whereType<NotebookTextBlock>(),
         isNotEmpty,
@@ -194,4 +199,76 @@ void main() {
         store.saved.single.document.blocks.single as NotebookTextBlock;
     expect(block.text, '[Attachment skipped: missing.png]');
   });
+
+  test('source dates, empty checklist, and newline-aware positions survive '
+      'service mapping', () async {
+    final _MemoryStore store = _MemoryStore();
+    final DateTime created = DateTime.utc(2020, 1, 2);
+    final DateTime updated = DateTime.utc(2021, 3, 4);
+    final String multiline = List<String>.generate(
+      8,
+      (index) => 'line $index',
+    ).join('\n');
+    final NoteImportReport report = await _service(store).import(
+      adapter: _NotesAdapter(<ImportedNote>[
+        ImportedNote(
+          sourceName: 'position.md',
+          title: 'Positioned',
+          createdAt: created,
+          updatedAt: updated,
+          blocks: <ImportedNoteBlock>[
+            ImportedText(multiline),
+            const ImportedChecklistItem('', checked: true),
+          ],
+        ),
+      ]),
+      source: _UnusedSource(),
+    );
+
+    expect(report.imported, 1);
+    final Notebook notebook = store.saved.single;
+    expect(notebook.createdAt, created);
+    expect(notebook.updatedAt, updated);
+    final NotebookTextBlock text =
+        notebook.document.blocks.first as NotebookTextBlock;
+    final NotebookCheckboxBlock checkbox =
+        notebook.document.blocks.last as NotebookCheckboxBlock;
+    expect(text.x, isNotNull);
+    expect(text.y, isNotNull);
+    expect(checkbox.x, isNotNull);
+    expect(checkbox.y, text.y! + 24 + 8 * 24);
+    expect(checkbox.checked, isTrue);
+    expect(checkbox.text, isEmpty);
+  });
+
+  test(
+    'oversized imported images are resized to a 2048 edge before base64',
+    () async {
+      final _MemoryStore store = _MemoryStore();
+      final image_lib.Image source = image_lib.Image(width: 2100, height: 1050);
+      final Uint8List bytes = image_lib.encodePng(source);
+      await _service(store).import(
+        adapter: _NotesAdapter(<ImportedNote>[
+          ImportedNote(
+            sourceName: 'large.png',
+            title: 'Large image',
+            blocks: <ImportedNoteBlock>[
+              ImportedImage(name: 'large.png', bytes: bytes, mime: 'image/png'),
+            ],
+          ),
+        ]),
+        source: _UnusedSource(),
+      );
+
+      final NotebookImageBlock block =
+          store.saved.single.document.blocks.single as NotebookImageBlock;
+      final image_lib.Image? decoded = image_lib.decodeImage(
+        base64Decode(block.data),
+      );
+      expect(decoded, isNotNull);
+      expect(decoded!.width, maxImportedImageEdge);
+      expect(decoded.height, 1024);
+      expect(block.mime, 'image/png');
+    },
+  );
 }
