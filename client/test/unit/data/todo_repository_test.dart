@@ -182,6 +182,41 @@ void main() {
   );
 
   test(
+    'voice-source APIs exclude manual cards with the same sourceRef',
+    () async {
+      final TodoRow manual = await repo.add(
+        'manual card',
+        sourceRef: 'shared-dump',
+      );
+      final TodoRow voice = await repo.add(
+        'voice card',
+        source: 'voice',
+        sourceRef: 'shared-dump',
+      );
+
+      expect((await repo.todosFromSource('shared-dump')).map((r) => r.id), [
+        voice.id,
+      ]);
+      expect(
+        (await repo.watchTodosFromSource('shared-dump').first).map((r) => r.id),
+        [voice.id],
+      );
+      expect(await repo.hasTodosFromSource('shared-dump'), isTrue);
+
+      await repo.setCaptureFingerprint('shared-dump', 'voice-fingerprint');
+      expect((await rowOf(voice.id)).captureFingerprint, 'voice-fingerprint');
+      expect((await rowOf(manual.id)).captureFingerprint, isNull);
+
+      expect(await repo.softDeleteFromSource('shared-dump'), 1);
+      expect((await rowOf(voice.id)).deletedAt, isNotNull);
+      final TodoRow survivingManual = await rowOf(manual.id);
+      expect(survivingManual.deletedAt, isNull);
+      expect(survivingManual.source, 'manual');
+      expect(survivingManual.sourceRef, 'shared-dump');
+    },
+  );
+
+  test(
     'addManyToColumn rolls the whole batch back when one insert fails',
     () async {
       final List<TodoColumnRow> columns = await repo.ensureColumns();

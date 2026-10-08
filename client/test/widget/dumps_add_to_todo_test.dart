@@ -125,9 +125,9 @@ void main() {
       );
       await pumpSelection(tester);
 
-      final List<TodoRow> created = await fixture.repo.todosFromSource(
-        'single',
-      );
+      final List<TodoRow> created = (await fixture.repo.listTodos())
+          .where((TodoRow row) => row.sourceRef == 'single')
+          .toList(growable: false);
       expect(created, hasLength(1));
       expect(created.single.body, edited);
       expect(created.single.columnId, columns[1].id);
@@ -160,7 +160,12 @@ void main() {
     );
     await pumpSelection(tester);
 
-    expect(await fixture.repo.todosFromSource('cancel-me'), isEmpty);
+    expect(
+      (await fixture.repo.listTodos()).where(
+        (TodoRow row) => row.sourceRef == 'cancel-me',
+      ),
+      isEmpty,
+    );
   });
 
   testWidgets(
@@ -177,8 +182,12 @@ void main() {
       final TodoRow anchor = await fixture.repo.add('existing card');
       await fixture.repo.moveOnBoard(anchor.id, columns[1].id, 0);
 
+      // Enter with `last`, then choose `first`, then `missing`: selected-set
+      // iteration is last → first → missing, deliberately unlike visible list
+      // order first → missing → last. The missing row is skipped, so insertion
+      // must still be last → first rather than silently falling back to list.
       await tester.longPress(
-        find.byKey(const ValueKey<String>('dump-row-missing')),
+        find.byKey(const ValueKey<String>('dump-row-last')),
       );
       await pumpSelection(tester);
       final Finder select = find.byKey(
@@ -187,13 +196,10 @@ void main() {
       await tester.ensureVisible(select);
       await tester.tap(select);
       await pumpSelection(tester);
-      final IconButton onlyMissing = tester.widget<IconButton>(
-        find.byKey(const ValueKey<String>('selection-send-to-todo')),
-      );
-      expect(onlyMissing.onPressed, isNull);
-
       await tester.tap(find.byKey(const ValueKey<String>('dump-select-first')));
-      await tester.tap(find.byKey(const ValueKey<String>('dump-select-last')));
+      await tester.tap(
+        find.byKey(const ValueKey<String>('dump-select-missing')),
+      );
       await pumpSelection(tester);
       await tester.tap(
         find.byKey(const ValueKey<String>('selection-send-to-todo')),
@@ -213,12 +219,12 @@ void main() {
             );
       expect(lane.map((TodoRow row) => row.body), <String>[
         'existing card',
-        ' first verbatim\n',
         'last verbatim',
+        ' first verbatim\n',
       ]);
       expect(lane.skip(1).map((TodoRow row) => row.sourceRef), <String>[
-        'first',
         'last',
+        'first',
       ]);
       expect(
         find.text('Added 2 to To-Do — 1 skipped (no transcript)'),

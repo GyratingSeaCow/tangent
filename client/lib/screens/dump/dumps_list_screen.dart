@@ -1644,12 +1644,19 @@ class _DumpListState extends State<_DumpList> {
                       ),
                     ],
                   );
-            // Desktop: right-click is this app's long-press. GestureDetector
-            // wrapper because ListTile exposes no onSecondaryTap of its own.
+            // Long-press and desktop right-click are the same context action:
+            // both invoke this exact callback and open the shared item sheet.
+            // Select inside that sheet is the entry point to multi-select.
+            final VoidCallback? itemAction =
+                widget.enabled &&
+                    widget.onLongPressItem != null &&
+                    !widget.selection.active
+                ? () => widget.onLongPressItem!(context, dump)
+                : null;
+            // GestureDetector wrapper because ListTile exposes no
+            // onSecondaryTap of its own.
             return GestureDetector(
-              onSecondaryTap: secondaryTapFor(
-                widget.enabled ? () => widget.onEnter(dump.id) : null,
-              ),
+              onSecondaryTap: secondaryTapFor(itemAction),
               child: ListTile(
                 key: ValueKey('dump-row-${dump.id}'),
                 selected: widget.selection.selectedIds.contains(dump.id),
@@ -1704,10 +1711,9 @@ class _DumpListState extends State<_DumpList> {
                         ],
                       )
                     : subtitleWithChip,
-                // The ⋮ button carries per-item actions, so long-press can stay
-                // multi-select. Hidden during selection: a menu that mutates one
-                // row while several are selected is ambiguous, and the toolbar
-                // already owns bulk actions.
+                // Hidden during selection: a menu that mutates one row while
+                // several are selected is ambiguous, and the toolbar already
+                // owns bulk actions.
                 trailing: widget.selection.active
                     ? (compact ? null : pill)
                     : Row(
@@ -1726,14 +1732,8 @@ class _DumpListState extends State<_DumpList> {
                           ),
                         ],
                       ),
-                // Long-press and ⋮ intentionally share this exact action sheet.
-                // Multi-select remains available through its stable Select row.
-                onLongPress:
-                    widget.enabled &&
-                        widget.onLongPressItem != null &&
-                        !widget.selection.active
-                    ? () => widget.onLongPressItem!(context, dump)
-                    : null,
+                // Long-press, right-click, and ⋮ open the same action sheet.
+                onLongPress: itemAction,
                 onTap: widget.selection.active
                     ? (widget.enabled ? () => widget.onToggle(dump.id) : null)
                     : () => widget.onOpen != null
