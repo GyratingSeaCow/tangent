@@ -266,7 +266,7 @@ void main() {
         base64Decode(block.data),
       );
       expect(decoded, isNotNull);
-      expect(decoded!.width, maxImportedImageEdge);
+      expect(decoded!.width, 2048);
       expect(decoded.height, 1024);
       expect(block.mime, 'image/png');
     },
