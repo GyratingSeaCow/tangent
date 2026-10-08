@@ -61,6 +61,60 @@ class PickedPdf {
   final String name;
 }
 
+/// Parsed page/range input for the PDF import picker.
+class PdfPageRangeResult {
+  const PdfPageRangeResult._({required this.pages, this.error});
+
+  const PdfPageRangeResult.valid(Set<int> pages) : this._(pages: pages);
+
+  const PdfPageRangeResult.invalid(String error)
+    : this._(pages: const <int>{}, error: error);
+
+  final Set<int> pages;
+  final String? error;
+
+  bool get isValid => error == null;
+}
+
+/// Parses forms such as `1-3,7,12-14` into one-based source page numbers.
+PdfPageRangeResult parsePdfPageRange(String input, {required int pageCount}) {
+  if (pageCount < 1) {
+    return const PdfPageRangeResult.invalid('This PDF has no pages.');
+  }
+  final String value = input.trim();
+  if (value.isEmpty) {
+    return const PdfPageRangeResult.invalid(
+      'Enter page numbers and ranges like 1-3,7.',
+    );
+  }
+  final Set<int> pages = <int>{};
+  for (final String rawPart in value.split(',')) {
+    final RegExpMatch? match = RegExp(
+      r'^(\d+)(?:\s*-\s*(\d+))?$',
+    ).firstMatch(rawPart.trim());
+    if (match == null) {
+      return const PdfPageRangeResult.invalid(
+        'Enter page numbers and ranges like 1-3,7.',
+      );
+    }
+    final int? start = int.tryParse(match.group(1)!);
+    final int? end = int.tryParse(match.group(2) ?? match.group(1)!);
+    if (start == null || end == null) {
+      return PdfPageRangeResult.invalid('Pages must be from 1 to $pageCount.');
+    }
+    if (start < 1 || end < 1 || start > pageCount || end > pageCount) {
+      return PdfPageRangeResult.invalid('Pages must be from 1 to $pageCount.');
+    }
+    if (start > end) {
+      return const PdfPageRangeResult.invalid(
+        'The first page in a range must come before the last.',
+      );
+    }
+    pages.addAll(<int>[for (int page = start; page <= end; page++) page]);
+  }
+  return PdfPageRangeResult.valid(Set<int>.unmodifiable(pages));
+}
+
 /// Testable entry point for choosing and inspecting one local PDF.
 abstract interface class NotebookPdfPicker {
   Future<PickedPdf?> pick();
@@ -183,10 +237,8 @@ class PlatformPdfDocumentInspector implements PdfDocumentInspector {
   const PlatformPdfDocumentInspector();
 
   @override
-  Future<List<Size>> inspect(
-    Uint8List bytes, {
-    required String documentId,
-  }) => Platform.isAndroid
+  Future<List<Size>> inspect(Uint8List bytes, {required String documentId}) =>
+      Platform.isAndroid
       ? const AndroidPdfDocumentInspector().inspect(
           bytes,
           documentId: documentId,
@@ -273,19 +325,30 @@ class SystemNotebookPdfPicker implements NotebookPdfPicker {
 
 /// Builds ordered, content-aware page blocks for [picked].
 ///
-/// Source bytes are base64-encoded on page 1 only. Every other page references
-/// them by document id, so a 100-page PDF does not become 100 copies in sync.
+/// Source bytes are base64-encoded on the first imported page only. Every other
+/// selected page references them by document id, so selecting page 2 without
+/// page 1 still leaves a self-contained document without duplicating its bytes.
 List<NotebookPdfPageBlock> buildImportedPdfPageBlocks({
   required PickedPdf picked,
+  Set<int>? selectedPageNumbers,
   required List<NotebookBlock> existing,
   required List<InkStroke> strokes,
   required String Function() newId,
 }) {
   if (picked.pageSizes.isEmpty) return const <NotebookPdfPageBlock>[];
+  final Set<int> selected =
+      selectedPageNumbers ??
+      <int>{for (int page = 1; page <= picked.pageSizes.length; page++) page};
+  if (selected.any((int page) => page < 1 || page > picked.pageSizes.length)) {
+    throw RangeError('Selected PDF page is outside the document');
+  }
+  if (selected.isEmpty) return const <NotebookPdfPageBlock>[];
   final String encoded = base64Encode(picked.bytes);
   double y = notebookContentBottom(existing, strokes) + kNotebookImportSpacing;
   final List<NotebookPdfPageBlock> pages = <NotebookPdfPageBlock>[];
   for (int index = 0; index < picked.pageSizes.length; index++) {
+    final int pageNumber = index + 1;
+    if (!selected.contains(pageNumber)) continue;
     final Size source = picked.pageSizes[index];
     if (source.width <= 0 || source.height <= 0) {
       throw FormatException('PDF page ${index + 1} has invalid dimensions');
@@ -295,9 +358,9 @@ List<NotebookPdfPageBlock> buildImportedPdfPageBlocks({
       NotebookPdfPageBlock(
         id: newId(),
         documentId: picked.documentId,
-        pageNumber: index + 1,
+        pageNumber: pageNumber,
         pageCount: picked.pageSizes.length,
-        data: index == 0 ? encoded : null,
+        data: pages.isEmpty ? encoded : null,
         x: kNotebookImportX,
         y: y,
         width: kNotebookPdfPageWidth,
@@ -479,7 +542,8 @@ class AndroidPdfPagePngRenderer
   }
 
   @override
-  Future<void> cancelRender(String requestId) => _channel.cancelRender(requestId);
+  Future<void> cancelRender(String requestId) =>
+      _channel.cancelRender(requestId);
 
   /// Compatibility path for direct renderer tests. Production uses the
   /// direct-file method and never reads the PNG back into Dart.
@@ -656,7 +720,9 @@ class NotebookPdfPageCache implements CancellablePdfPageRasterLoader {
       _pending = null;
       _cancelPending(task);
     } else if (identical(task, _active) && _renderer is PdfPageFileRenderer) {
-      unawaited((_renderer as PdfPageFileRenderer).cancelRender(task.requestId));
+      unawaited(
+        (_renderer as PdfPageFileRenderer).cancelRender(task.requestId),
+      );
     }
   }
 
@@ -690,7 +756,9 @@ class NotebookPdfPageCache implements CancellablePdfPageRasterLoader {
       if (task.cancelled) throw const PdfRenderCancelledException();
       if (!task.completer.isCompleted) task.completer.complete(file);
     } catch (error, stack) {
-      if (!task.completer.isCompleted) task.completer.completeError(error, stack);
+      if (!task.completer.isCompleted) {
+        task.completer.completeError(error, stack);
+      }
     } finally {
       if (identical(_inFlight[task.key], task)) {
         _inFlight.remove(task.key);
@@ -733,7 +801,9 @@ class NotebookPdfPageCache implements CancellablePdfPageRasterLoader {
           width: task.width,
           height: task.height,
         );
-        if (png.isEmpty) throw StateError('PDF renderer returned an empty page');
+        if (png.isEmpty) {
+          throw StateError('PDF renderer returned an empty page');
+        }
         await temporary.writeAsBytes(png, flush: true);
       }
       if (task.cancelled) throw const PdfRenderCancelledException();

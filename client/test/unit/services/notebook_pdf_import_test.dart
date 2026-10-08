@@ -649,6 +649,53 @@ void main() {
     skip: _pdfiumUnavailableReason(),
   );
 
+  test('page ranges accept comma-separated pages and inclusive ranges', () {
+    expect(
+      parsePdfPageRange('1-3,7,12-14', pageCount: 14).pages,
+      <int>{1, 2, 3, 7, 12, 13, 14},
+    );
+    expect(parsePdfPageRange('0', pageCount: 14).error, contains('1 to 14'));
+    expect(
+      parsePdfPageRange('abc', pageCount: 14).error,
+      contains('1-3,7'),
+    );
+  });
+
+  test('selected PDF pages import in document order with source on first', () {
+    final PickedPdf picked = PickedPdf(
+      bytes: Uint8List.fromList(<int>[1, 2, 3, 4]),
+      documentId: 'selected-doc',
+      pageSizes: const <Size>[
+        Size(100, 100),
+        Size(200, 300),
+        Size(300, 200),
+        Size(400, 500),
+      ],
+      name: 'selected.pdf',
+    );
+    int id = 0;
+
+    final List<NotebookPdfPageBlock> pages = buildImportedPdfPageBlocks(
+      picked: picked,
+      selectedPageNumbers: <int>{4, 2},
+      existing: const <NotebookBlock>[],
+      strokes: const <InkStroke>[],
+      newId: () => 'selected-${++id}',
+    );
+
+    expect(
+      pages.map((NotebookPdfPageBlock page) => page.pageNumber),
+      <int>[2, 4],
+    );
+    expect(pages.map((NotebookPdfPageBlock page) => page.pageCount), <int>[4, 4]);
+    expect(pages.first.data, base64Encode(picked.bytes));
+    expect(pages.last.data, isNull);
+    expect(
+      pages.last.y,
+      pages.first.y + pages.first.height + kNotebookPdfPageSpacing,
+    );
+  });
+
   test(
     'Android channel preserves page geometry and one-based render contract',
     () async {

@@ -52,6 +52,7 @@ import '../../widgets/notebook_image_block.dart';
 import '../../widgets/notebook_ink_canvas.dart';
 import '../../widgets/notebook_password_dialog.dart';
 import '../../widgets/notebook_pdf_page_block.dart';
+import '../../widgets/notebook_pdf_page_picker.dart';
 import '../../widgets/notebook_table_block.dart';
 import '../../widgets/page_background_sheet.dart';
 import '../../widgets/top_nav_rail.dart';
@@ -235,6 +236,7 @@ class NotebookEditorScreen extends ConsumerStatefulWidget {
     this.scrollToBlockId,
     this.pdfPicker,
     this.pdfPageRasterLoader,
+    this.pdfPreviewRasterLoader,
   });
 
   final String notebookId;
@@ -253,6 +255,7 @@ class NotebookEditorScreen extends ConsumerStatefulWidget {
   /// Test seams for the system picker and PDFium-backed disk cache.
   final NotebookPdfPicker? pdfPicker;
   final PdfPageRasterLoader? pdfPageRasterLoader;
+  final PdfPageRasterLoader? pdfPreviewRasterLoader;
 
   @override
   ConsumerState<NotebookEditorScreen> createState() =>
@@ -1013,10 +1016,33 @@ class _NotebookEditorScreenState extends ConsumerState<NotebookEditorScreen> {
       return;
     }
     if (picked == null || !mounted) return;
+    final PdfPageRasterLoader previewLoader =
+        widget.pdfPreviewRasterLoader ?? NotebookPdfPageCache();
+    final bool ownsPreviewLoader = widget.pdfPreviewRasterLoader == null;
+    final Set<int>? selectedPages;
+    try {
+      selectedPages = await NotebookPdfPagePicker.show(
+        context,
+        picked: picked,
+        loader: previewLoader,
+      );
+    } catch (error) {
+      messenger.showSnackBar(
+        SnackBar(content: Text('Could not preview the PDF: $error')),
+      );
+      return;
+    } finally {
+      if (ownsPreviewLoader &&
+          previewLoader is CancellablePdfPageRasterLoader) {
+        await previewLoader.dispose();
+      }
+    }
+    if (selectedPages == null || selectedPages.isEmpty || !mounted) return;
     final List<NotebookPdfPageBlock> pages;
     try {
       pages = buildImportedPdfPageBlocks(
         picked: picked,
+        selectedPageNumbers: selectedPages,
         existing: _blocks,
         strokes: _strokes,
         newId: _uuid.v4,
