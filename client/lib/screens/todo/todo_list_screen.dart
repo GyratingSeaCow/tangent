@@ -134,21 +134,30 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
   // UI ordering and error surfacing, not a database-race fix.
   Future<void> _boardMoveTail = Future<void>.value();
 
-  void _queueBoardMove(String todoId, String columnId, int index) {
+  Future<void> _queueBoardOperation(
+    Future<void> Function(TodoRepository repo) operation,
+    String description,
+  ) {
     final TodoRepository repo = ref.read(todoRepositoryProvider);
-    final Future<void> move = _boardMoveTail.then(
-      (_) => repo.moveOnBoard(todoId, columnId, index),
-    );
+    final Future<void> move = _boardMoveTail.then((_) => operation(repo));
     _boardMoveTail = move.catchError((Object error, StackTrace stackTrace) {
       FlutterError.reportError(
         FlutterErrorDetails(
           exception: error,
           stack: stackTrace,
           library: 'todo board',
-          context: ErrorDescription('while persisting a queued card drop'),
+          context: ErrorDescription(description),
         ),
       );
     });
+    return _boardMoveTail;
+  }
+
+  void _queueBoardMove(String todoId, String columnId, int index) {
+    _queueBoardOperation(
+      (TodoRepository repo) => repo.moveOnBoard(todoId, columnId, index),
+      'while persisting a queued card move',
+    );
   }
 
   void _acceptBoardDrop(TodoRow todo, String columnId, int index) {
@@ -157,11 +166,15 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
   }
 
   void _boardPointerStarted(PointerDownEvent event) {
+    // Listener wraps every card. A resting second finger must not replace the
+    // pointer and drag gate belonging to the card already in flight.
+    if (_boardDraggingId != null) return;
     _boardPointerId = event.pointer;
     _boardPointerDown = event.position;
     _boardPointerCurrent = event.position;
     _boardDraggingId = null;
     _boardDragMoved = false;
+    _boardDragCanceled = false;
   }
 
   void _boardPointerMoved(PointerMoveEvent event) {
@@ -178,6 +191,7 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
     _boardPointerCurrent = null;
     _boardDraggingId = null;
     _boardDragMoved = false;
+    _boardDragCanceled = false;
   }
 
   /// Multi-select state. [_selecting] is the mode flag (the toolbar and
@@ -192,6 +206,7 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
   Offset? _boardPointerCurrent;
   String? _boardDraggingId;
   bool _boardDragMoved = false;
+  bool _boardDragCanceled = false;
 
   @override
   void initState() {
@@ -509,7 +524,10 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
       ),
     );
     if (destination == null || !mounted) return;
-    await ref.read(todoRepositoryProvider).moveManyOnBoard(ids, destination);
+    await _queueBoardOperation(
+      (TodoRepository repo) => repo.moveManyOnBoard(ids, destination),
+      'while persisting a queued bulk card move',
+    );
     if (mounted) _cancelSelection();
   }
 
@@ -587,6 +605,25 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
     // Prune the selection against what is live NOW, so a row deleted or
     // synced away under us can never be bulk-acted on.
     _selected.retainAll(rows.map((TodoRow t) => t.id).toSet());
+    final List<TodoColumnRow>? liveColumns = columns.valueOrNull;
+    if (_boardSelectionColumnId != null &&
+        liveColumns != null &&
+        !liveColumns.any(
+          (TodoColumnRow column) => column.id == _boardSelectionColumnId,
+        )) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final List<TodoColumnRow>? currentColumns = ref
+            .read(todoColumnsProvider)
+            .valueOrNull;
+        if (currentColumns != null &&
+            !currentColumns.any(
+              (TodoColumnRow column) => column.id == _boardSelectionColumnId,
+            )) {
+          _cancelSelection();
+        }
+      });
+    }
     if (_selecting && _selected.isEmpty && _boardSelectionColumnId == null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted &&
@@ -1136,15 +1173,21 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
         }
       },
       onPointerCancel: (PointerCancelEvent event) {
-        if (_boardPointerId == event.pointer && _boardDraggingId == null) {
-          _clearBoardPointer();
+        if (_boardPointerId == event.pointer) {
+          if (_boardDraggingId == null) {
+            _clearBoardPointer();
+          } else {
+            _boardDragCanceled = true;
+          }
         }
       },
       child: LongPressDraggable<TodoRow>(
         delay: const Duration(milliseconds: 200),
+        maxSimultaneousDrags: 1,
         data: todo,
-        onDragStarted: () => _boardDraggingId = todo.id,
+        onDragStarted: () => _boardDraggingId ??= todo.id,
         onDragUpdate: (DragUpdateDetails details) {
+          if (_boardDraggingId != todo.id) return;
           _boardPointerCurrent = details.globalPosition;
           final Offset? origin = _boardPointerDown;
           if (origin != null &&
@@ -1153,6 +1196,7 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
           }
         },
         onDragEnd: (_) {
+          if (_boardDraggingId != todo.id) return;
           final Offset? origin = _boardPointerDown;
           final Offset? current = _boardPointerCurrent;
           final bool moved =
@@ -1160,8 +1204,9 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
               (origin != null &&
                   current != null &&
                   boardDragExceededDeadZone(origin, current));
+          final bool canceled = _boardDragCanceled;
           _clearBoardPointer();
-          if (!moved && mounted) {
+          if (!moved && !canceled && mounted) {
             WidgetsBinding.instance.addPostFrameCallback((_) {
               if (mounted) {
                 _showBoardCardMenu(todo, renderedColumnId, columns);
@@ -1262,9 +1307,14 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
       return;
     }
     if (action.startsWith('column:')) {
-      await ref
-          .read(todoRepositoryProvider)
-          .moveOnBoard(todo.id, action.substring('column:'.length), 1 << 30);
+      await _queueBoardOperation(
+        (TodoRepository repo) => repo.moveOnBoard(
+          todo.id,
+          action.substring('column:'.length),
+          1 << 30,
+        ),
+        'while persisting a queued menu card move',
+      );
     }
   }
 

@@ -646,6 +646,18 @@ void main() {
       final TodoRow a = await repo.add('alpha');
       final TodoRow b = await repo.add('beta');
       final TodoRow c = await repo.add('gamma');
+      final TodoRow anchor = await repo.add('done anchor');
+      final String done = (await repo.listColumns()).last.id;
+      await repo.moveOnBoard(anchor.id, done, 0);
+      await db.customStatement(
+        'INSERT INTO settings(key,value) VALUES(?,?),(?,?)',
+        <Object?>[
+          'todo_kanban_backfill:${a.id}',
+          '0',
+          'todo_kanban_backfill:${b.id}',
+          '1',
+        ],
+      );
       await settle(tester);
 
       await tester.longPress(find.byKey(Key('todo-row-${a.id}')));
@@ -658,6 +670,12 @@ void main() {
       expect((await db.getTodoRow(a.id))!.doneAt, isNotNull);
       expect((await db.getTodoRow(b.id))!.doneAt, isNotNull);
       expect((await db.getTodoRow(c.id))!.doneAt, isNull);
+      final List<TodoRow> doneLane =
+          (await repo.listTodos()).where((row) => row.columnId == done).toList()
+            ..sort((x, y) => x.boardOrder.compareTo(y.boardOrder));
+      expect(doneLane.map((row) => row.id), <String>[anchor.id, a.id, b.id]);
+      expect(await db.pendingTodoBoardOrder(a.id), isNull);
+      expect(await db.pendingTodoBoardOrder(b.id), isNull);
       expect(find.text('Done (2)'), findsOneWidget);
       expect(find.textContaining('selected'), findsNothing);
 
@@ -771,6 +789,35 @@ void main() {
       await unmount(tester);
     });
 
+    testWidgets('board selection exits when its column disappears', (
+      tester,
+    ) async {
+      final TodoRepository repo = await mount(tester);
+      final TodoRow card = await repo.add('moving with deleted lane');
+      final List<TodoColumnRow> columns = await repo.listColumns();
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(TodoListScreen.viewToggleKey));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(TodoListScreen.columnMenuKey(defaultTodoColumnId)),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Select cards'));
+      await tester.pumpAndSettle();
+      expect(find.text('0 selected'), findsOneWidget);
+
+      await repo.deleteColumn(defaultTodoColumnId, columns[1].id);
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('selected'), findsNothing);
+      expect(find.byKey(Key('todo-menu-${card.id}')), findsOneWidget);
+      expect(
+        find.byKey(TodoListScreen.columnKey(defaultTodoColumnId)),
+        findsNothing,
+      );
+      await unmount(tester);
+    });
+
     testWidgets('column selection deletes two chosen cards only', (
       tester,
     ) async {
@@ -816,6 +863,10 @@ void main() {
       final TodoRow anchor = await repo.add('target anchor');
       final List<TodoColumnRow> columns = await repo.listColumns();
       await repo.moveOnBoard(anchor.id, columns[1].id, 0);
+      // Source lane order is c, b, a while selection click order is a, c.
+      // The screen, not the repository, owns this lane-order normalization.
+      await repo.moveOnBoard(c.id, defaultTodoColumnId, 0);
+      await repo.moveOnBoard(b.id, defaultTodoColumnId, 1);
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(TodoListScreen.viewToggleKey));
       await tester.pumpAndSettle();
@@ -841,7 +892,7 @@ void main() {
               .where((row) => row.columnId == columns[1].id)
               .toList()
             ..sort((x, y) => x.boardOrder.compareTo(y.boardOrder));
-      expect(target.map((row) => row.id), <String>[anchor.id, a.id, c.id]);
+      expect(target.map((row) => row.id), <String>[anchor.id, c.id, a.id]);
       expect((await db.getTodoRow(b.id))!.columnId, defaultTodoColumnId);
       await unmount(tester);
     });
@@ -851,6 +902,10 @@ void main() {
     ) async {
       final TodoRepository repo = await mount(tester);
       final TodoRow card = await repo.add('held card');
+      await db.customStatement(
+        'INSERT INTO settings(key,value) VALUES(?,?)',
+        <Object?>['todo_kanban_backfill:${card.id}', '0'],
+      );
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(TodoListScreen.viewToggleKey));
       await tester.pumpAndSettle();
@@ -872,8 +927,64 @@ void main() {
       final TodoRow unmoved = (await db.getTodoRow(card.id))!;
       expect(unmoved.columnId, defaultTodoColumnId);
       expect(unmoved.boardOrder, card.boardOrder);
+      expect(
+        await db.pendingTodoBoardOrder(card.id),
+        0,
+        reason: 'a stationary hold is not an accepted same-slot board move',
+      );
       await tester.tapAt(const Offset(10, 10));
       await tester.pumpAndSettle();
+      await unmount(tester);
+    });
+
+    testWidgets('pointer cancel during a stationary hold opens no menu', (
+      tester,
+    ) async {
+      final TodoRepository repo = await mount(tester);
+      final TodoRow card = await repo.add('canceled hold');
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(TodoListScreen.viewToggleKey));
+      await tester.pumpAndSettle();
+
+      final TestGesture gesture = await tester.startGesture(
+        tester.getCenter(find.byKey(TodoListScreen.cardKey(card.id))),
+      );
+      await tester.pump(const Duration(milliseconds: 250));
+      await gesture.cancel();
+      await tester.pumpAndSettle();
+
+      expect(find.text('Kanban Board'), findsNothing);
+      expect((await db.getTodoRow(card.id))!.columnId, defaultTodoColumnId);
+      await unmount(tester);
+    });
+
+    testWidgets('selection mode blocks card dragging', (tester) async {
+      final TodoRepository repo = await mount(tester);
+      final TodoRow card = await repo.add('selected card');
+      final String progress = (await repo.listColumns())[1].id;
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(TodoListScreen.viewToggleKey));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(TodoListScreen.columnMenuKey(defaultTodoColumnId)),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Select cards'));
+      await tester.pumpAndSettle();
+
+      final TestGesture gesture = await tester.startGesture(
+        tester.getCenter(find.byKey(TodoListScreen.cardKey(card.id))),
+      );
+      await tester.pump(const Duration(milliseconds: 250));
+      await gesture.moveTo(
+        tester.getCenter(find.byKey(TodoListScreen.dropKey(progress, 0))),
+      );
+      await tester.pump();
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      expect((await db.getTodoRow(card.id))!.columnId, defaultTodoColumnId);
+      expect(find.text('Kanban Board'), findsNothing);
       await unmount(tester);
     });
 
@@ -988,6 +1099,41 @@ void main() {
               .toList()
             ..sort((x, y) => x.boardOrder.compareTo(y.boardOrder));
       expect(lane.map((row) => row.id), <String>[c.id, a.id]);
+      await unmount(tester);
+    });
+
+    testWidgets('a second touch cannot discard an active card drop', (
+      tester,
+    ) async {
+      final TodoRepository repo = await mount(tester);
+      final TodoRow a = await repo.add('drag alpha');
+      final TodoRow b = await repo.add('tap beta');
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(TodoListScreen.viewToggleKey));
+      await tester.pumpAndSettle();
+      final String progress = (await repo.listColumns())[1].id;
+
+      final TestGesture first = await tester.startGesture(
+        tester.getCenter(find.byKey(TodoListScreen.cardKey(a.id))),
+        pointer: 1,
+      );
+      await tester.pump(const Duration(milliseconds: 250));
+      await first.moveTo(
+        tester.getCenter(find.byKey(TodoListScreen.dropKey(progress, 0))),
+      );
+      await tester.pump();
+      final TestGesture second = await tester.startGesture(
+        tester.getCenter(find.byKey(TodoListScreen.cardKey(b.id))),
+        pointer: 2,
+      );
+      await tester.pump();
+      await second.up();
+      await tester.pump();
+      await first.up();
+      await tester.pumpAndSettle();
+
+      expect((await db.getTodoRow(a.id))!.columnId, progress);
+      expect((await db.getTodoRow(b.id))!.columnId, defaultTodoColumnId);
       await unmount(tester);
     });
 

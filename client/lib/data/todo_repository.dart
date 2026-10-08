@@ -485,13 +485,25 @@ class TodoRepository {
   }
 
   /// Marks every OPEN item in [ids] done (already-done ones are left alone,
-  /// unlike [toggle]). The multi-select toolbar's "Done".
+  /// unlike [toggle]). Live board cards are appended to the rightmost live
+  /// column in [ids] iteration order; rows without a live board placement keep
+  /// their placement. Completion and every board move share one transaction.
   Future<void> markManyDone(Iterable<String> ids) async {
+    final List<String> orderedIds = ids.toSet().toList(growable: false);
+    if (orderedIds.isEmpty) return;
     await _db.transaction(() async {
-      for (final String id in ids) {
+      final List<TodoColumnRow> columns = await listColumns();
+      final Set<String> liveColumnIds = columns
+          .map((TodoColumnRow column) => column.id)
+          .toSet();
+      final String? lastColumnId = columns.isEmpty ? null : columns.last.id;
+      for (final String id in orderedIds) {
         final TodoRow? row = await _db.getTodoRow(id);
         if (row == null || row.doneAt != null) continue;
         await _write(id, TodosCompanion(doneAt: Value(_stamp())));
+        if (lastColumnId != null && liveColumnIds.contains(row.columnId)) {
+          await moveOnBoard(id, lastColumnId, 1 << 30);
+        }
       }
     });
   }

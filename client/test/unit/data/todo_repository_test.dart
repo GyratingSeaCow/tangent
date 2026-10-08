@@ -286,7 +286,7 @@ void main() {
   );
 
   test(
-    'bulk board move appends in source order and spends every marker',
+    'bulk board move preserves caller order and spends every marker',
     () async {
       final TodoRow a = await repo.add('a');
       final TodoRow b = await repo.add('b');
@@ -294,6 +294,10 @@ void main() {
       final TodoRow anchor = await repo.add('anchor');
       final String progress = (await repo.listColumns())[1].id;
       await repo.moveOnBoard(anchor.id, progress, 0);
+      // Deliberately make source lane c, b, a, then pass a, c. The repository
+      // preserves caller order; board UI callers normalize to lane order.
+      await repo.moveOnBoard(c.id, defaultTodoColumnId, 0);
+      await repo.moveOnBoard(b.id, defaultTodoColumnId, 1);
       await db.customStatement(
         'INSERT INTO settings(key,value) VALUES(?,?),(?,?)',
         <Object?>[
@@ -316,6 +320,42 @@ void main() {
       expect((await rowOf(b.id)).boardOrder, 0, reason: 'source is compacted');
       expect(await db.pendingTodoBoardOrder(a.id), isNull);
       expect(await db.pendingTodoBoardOrder(c.id), isNull);
+    },
+  );
+
+  test(
+    'bulk completion appends live board cards but leaves unboarded placement',
+    () async {
+      final TodoRow a = await repo.add('a');
+      final TodoRow b = await repo.add('b');
+      final TodoRow unboarded = await repo.add('unboarded');
+      final TodoRow anchor = await repo.add('anchor');
+      final String done = (await repo.listColumns()).last.id;
+      await repo.moveOnBoard(anchor.id, done, 0);
+      await db.customStatement(
+        'UPDATE todos SET column_id = NULL WHERE id = ?',
+        <Object?>[unboarded.id],
+      );
+      await db.customStatement(
+        'INSERT INTO settings(key,value) VALUES(?,?),(?,?)',
+        <Object?>[
+          'todo_kanban_backfill:${a.id}',
+          '0',
+          'todo_kanban_backfill:${b.id}',
+          '1',
+        ],
+      );
+
+      await repo.markManyDone(<String>[a.id, b.id, unboarded.id]);
+
+      final List<TodoRow> target =
+          (await repo.listTodos()).where((row) => row.columnId == done).toList()
+            ..sort((x, y) => x.boardOrder.compareTo(y.boardOrder));
+      expect(target.map((row) => row.id), <String>[anchor.id, a.id, b.id]);
+      expect((await rowOf(unboarded.id)).doneAt, isNotNull);
+      expect((await rowOf(unboarded.id)).columnId, isNull);
+      expect(await db.pendingTodoBoardOrder(a.id), isNull);
+      expect(await db.pendingTodoBoardOrder(b.id), isNull);
     },
   );
 
