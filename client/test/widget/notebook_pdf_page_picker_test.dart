@@ -199,6 +199,50 @@ void main() {
     expect(results.single!.sourceData, base64Encode(<int>[1, 2, 3, 4]));
   });
 
+  testWidgets('checkbox toggle after a dirty range applies the range first', (
+    WidgetTester tester,
+  ) async {
+    await openPicker(tester);
+
+    // Vera round-2 Important #1: type a range without Apply, then refine by
+    // checkbox. The most recent gesture must win and the header must match
+    // what Import returns.
+    await tester.enterText(find.byKey(const ValueKey('pdf-page-range')), '1-2');
+    await tapThumbnail(tester, 1);
+    await tester.pump();
+
+    expect(find.text('1 of 4 pages selected'), findsOneWidget);
+    expect(await checkboxValue(tester, 1), isFalse);
+    expect(await checkboxValue(tester, 2), isTrue);
+
+    await tester.tap(find.byKey(const ValueKey('pdf-page-import')));
+    await tester.pumpAndSettle();
+    expect(results.single!.pages, <int>{2});
+  });
+
+  testWidgets('whitespace-only edit of an applied range is not dirty', (
+    WidgetTester tester,
+  ) async {
+    await openPicker(tester);
+
+    await tester.enterText(find.byKey(const ValueKey('pdf-page-range')), '1-4');
+    await tester.tap(find.byKey(const ValueKey('pdf-page-range-apply')));
+    await tester.pump();
+    await tapThumbnail(tester, 1);
+    await tester.pump();
+    // Trailing space must not resurrect the applied "1-4" over the toggle.
+    await tester.enterText(
+      find.byKey(const ValueKey('pdf-page-range')),
+      '1-4 ',
+    );
+    await tester.pump();
+
+    expect(find.text('3 of 4 pages selected'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('pdf-page-import')));
+    await tester.pumpAndSettle();
+    expect(results.single!.pages, <int>{2, 3, 4});
+  });
+
   testWidgets('empty range leaves checkbox selection in control of Import', (
     WidgetTester tester,
   ) async {

@@ -65,7 +65,8 @@ class _NotebookPdfPagePickerState extends State<NotebookPdfPagePicker> {
 
   bool get _hasRangeText => _rangeController.text.trim().isNotEmpty;
 
-  bool get _hasDirtyRange => _rangeController.text != _lastAppliedRangeText;
+  bool get _hasDirtyRange =>
+      _rangeController.text.trim() != _lastAppliedRangeText.trim();
 
   @override
   void dispose() {
@@ -75,6 +76,15 @@ class _NotebookPdfPagePickerState extends State<NotebookPdfPagePicker> {
 
   void _toggle(int page, bool selected) {
     setState(() {
+      // A valid typed-but-unapplied range would silently override this
+      // toggle at import time; apply it first so the most recent gesture
+      // wins and the header keeps matching what Import will return.
+      if (_hasRangeText && _hasDirtyRange && _range.isValid) {
+        _selected
+          ..clear()
+          ..addAll(_range.pages);
+        _lastAppliedRangeText = _rangeController.text;
+      }
       if (selected) {
         _selected.add(page);
       } else {
