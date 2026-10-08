@@ -156,6 +156,7 @@ void main() {
     bool summariesEnabled = false,
     NotebookPdfPicker? pdfPicker,
     PdfPageRasterLoader? pdfPageRasterLoader,
+    PdfPageRasterLoader? pdfPreviewRasterLoader,
     List<Override> extraOverrides = const <Override>[],
   }) async {
     if (setViewSize) {
@@ -189,6 +190,7 @@ void main() {
                         notebookId: notebook.id,
                         pdfPicker: pdfPicker,
                         pdfPageRasterLoader: pdfPageRasterLoader,
+                        pdfPreviewRasterLoader: pdfPreviewRasterLoader,
                       ),
                     ),
                   ),
@@ -327,11 +329,17 @@ void main() {
         PickedPdf(
           bytes: Uint8List.fromList(<int>[1, 2, 3, 4]),
           documentId: 'doc',
-          pageSizes: const <Size>[Size(200, 300), Size(400, 200)],
+          pageSizes: const <Size>[
+            Size(100, 100),
+            Size(200, 300),
+            Size(300, 200),
+            Size(400, 500),
+          ],
           name: 'notes.pdf',
         ),
       ),
       pdfPageRasterLoader: const _FailingPdfLoader(),
+      pdfPreviewRasterLoader: const _FailingPdfLoader(),
     );
 
     await tester.tap(find.byKey(const ValueKey('notebook-insert-menu')));
@@ -345,6 +353,24 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
 
+    expect(find.text('4 of 4 pages selected'), findsOneWidget);
+    final Finder pdfPageList = find.descendant(
+      of: find.byKey(const ValueKey('pdf-page-list')),
+      matching: find.byType(Scrollable),
+    );
+    await tester.tap(find.byKey(const ValueKey('pdf-page-thumbnail-1')));
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('pdf-page-thumbnail-3')),
+      180,
+      scrollable: pdfPageList,
+    );
+    await tester.tap(find.byKey(const ValueKey('pdf-page-thumbnail-3')));
+    await tester.pump();
+    expect(find.text('2 of 4 pages selected'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('pdf-page-import')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
     final List<NotebookPdfPageBlockWidget> pageWidgets = tester
         .widgetList<NotebookPdfPageBlockWidget>(
           find.byType(NotebookPdfPageBlockWidget),
@@ -355,7 +381,7 @@ void main() {
       pageWidgets.map(
         (NotebookPdfPageBlockWidget widget) => widget.block.pageNumber,
       ),
-      <int>[1, 2],
+      <int>[2, 4],
     );
     final double existingHeight = tester
         .getSize(find.byKey(const ValueKey('notebook-block-existing')))
@@ -433,7 +459,7 @@ void main() {
   });
 
   testWidgets(
-    'remove imported PDF is discoverable and undo restores the group',
+    'remove imported PDF removes only the latest same-document group',
     (tester) async {
       await mountEditor(
         tester,
@@ -443,6 +469,7 @@ void main() {
             NotebookPdfPageBlock(
               id: 'pdf-1',
               documentId: 'doc-remove',
+              importGroupId: 'first-import',
               pageNumber: 1,
               pageCount: 2,
               data: 'cGRm',
@@ -454,10 +481,22 @@ void main() {
             NotebookPdfPageBlock(
               id: 'pdf-2',
               documentId: 'doc-remove',
-              pageNumber: 2,
+              importGroupId: 'second-import',
+              pageNumber: 1,
               pageCount: 2,
               x: 16,
               y: 944,
+              width: 688,
+              height: 900,
+            ),
+            NotebookPdfPageBlock(
+              id: 'pdf-3',
+              documentId: 'doc-remove',
+              importGroupId: 'second-import',
+              pageNumber: 2,
+              pageCount: 2,
+              x: 16,
+              y: 1868,
               width: 688,
               height: 900,
             ),
@@ -465,7 +504,7 @@ void main() {
         ),
         pdfPageRasterLoader: const _FailingPdfLoader(),
       );
-      expect(find.byType(NotebookPdfPageBlockWidget), findsNWidgets(2));
+      expect(find.byType(NotebookPdfPageBlockWidget), findsNWidgets(3));
 
       await tester.tap(find.byKey(const ValueKey('notebook-insert-menu')));
       await tester.pump(const Duration(milliseconds: 200));
@@ -475,7 +514,11 @@ void main() {
       removeState.handleTap();
       await tester.pump();
 
-      expect(find.byType(NotebookPdfPageBlockWidget), findsNothing);
+      final NotebookPdfPageBlockWidget survivor = tester.widget(
+        find.byType(NotebookPdfPageBlockWidget),
+      );
+      expect(survivor.block.id, 'pdf-1');
+      expect(survivor.block.data, 'cGRm');
       expect(find.text('Removed 2-page PDF'), findsOneWidget);
       expect(find.text('Undo'), findsOneWidget);
       tester.widget<SnackBarAction>(find.byType(SnackBarAction)).onPressed();
@@ -486,10 +529,10 @@ void main() {
             find.byType(NotebookPdfPageBlockWidget),
           )
           .toList(growable: false);
-      expect(restored, hasLength(2));
+      expect(restored, hasLength(3));
       expect(
         restored.map((NotebookPdfPageBlockWidget widget) => widget.block.id),
-        <String>['pdf-1', 'pdf-2'],
+        <String>['pdf-1', 'pdf-2', 'pdf-3'],
       );
       expect(restored.first.block.data, 'cGRm');
       await unmount(tester);

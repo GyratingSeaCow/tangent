@@ -110,8 +110,7 @@ class _BlockingRenderer implements PdfPagePngRenderer {
   }
 }
 
-class _BlockingFileRenderer
-    implements PdfPagePngRenderer, PdfPageFileRenderer {
+class _BlockingFileRenderer implements PdfPagePngRenderer, PdfPageFileRenderer {
   final Completer<void> entered = Completer<void>();
   final Completer<void> release = Completer<void>();
   final List<String> cancelled = <String>[];
@@ -277,6 +276,7 @@ void main() {
       int id = 0;
       final List<NotebookPdfPageBlock> pages = buildImportedPdfPageBlocks(
         picked: picked,
+        sourceData: base64Encode(picked.bytes),
         existing: const <NotebookBlock>[
           NotebookTextBlock(id: 'old', text: 'old', x: 16, y: 600),
         ],
@@ -362,41 +362,46 @@ void main() {
     expect(await again.readAsBytes(), <int>[0x89, 0x50, 0x4E, 0x47, 1]);
   });
 
-  test('100-page fast fling keeps backend bounded and newest page wins', () async {
-    final Directory temp = await Directory.systemTemp.createTemp('pdf-fling-');
-    addTearDown(() => temp.delete(recursive: true));
-    final _BlockingRenderer renderer = _BlockingRenderer();
-    final NotebookPdfPageCache cache = NotebookPdfPageCache(
-      renderer: renderer,
-      cacheDirectory: () async => temp,
-    );
-    addTearDown(cache.dispose);
-    final String source = base64Encode(<int>[1, 2, 3, 4]);
-    final List<Future<Object>> results = <Future<Object>>[];
+  test(
+    '100-page fast fling keeps backend bounded and newest page wins',
+    () async {
+      final Directory temp = await Directory.systemTemp.createTemp(
+        'pdf-fling-',
+      );
+      addTearDown(() => temp.delete(recursive: true));
+      final _BlockingRenderer renderer = _BlockingRenderer();
+      final NotebookPdfPageCache cache = NotebookPdfPageCache(
+        renderer: renderer,
+        cacheDirectory: () async => temp,
+      );
+      addTearDown(cache.dispose);
+      final String source = base64Encode(<int>[1, 2, 3, 4]);
+      final List<Future<Object>> results = <Future<Object>>[];
 
-    Future<Object> request(int page) => cache
-        .loadPage(
-          documentId: 'doc',
-          sourceData: source,
-          pageNumber: page,
-          width: 100,
-          height: 100,
-        )
-        .then<Object>((File file) => file, onError: (Object error) => error);
+      Future<Object> request(int page) => cache
+          .loadPage(
+            documentId: 'doc',
+            sourceData: source,
+            pageNumber: page,
+            width: 100,
+            height: 100,
+          )
+          .then<Object>((File file) => file, onError: (Object error) => error);
 
-    results.add(request(1));
-    await renderer.firstEntered.future;
-    for (int page = 2; page <= 100; page++) {
-      results.add(request(page));
-    }
-    renderer.releaseFirst.complete();
-    final List<Object> settled = await Future.wait(results);
+      results.add(request(1));
+      await renderer.firstEntered.future;
+      for (int page = 2; page <= 100; page++) {
+        results.add(request(page));
+      }
+      renderer.releaseFirst.complete();
+      final List<Object> settled = await Future.wait(results);
 
-    expect(renderer.pages, <int>[1, 100]);
-    expect(renderer.maximumActive, 1);
-    expect(settled.whereType<File>(), hasLength(2));
-    expect(settled.whereType<PdfRenderCancelledException>(), hasLength(98));
-  });
+      expect(renderer.pages, <int>[1, 100]);
+      expect(renderer.maximumActive, 1);
+      expect(settled.whereType<File>(), hasLength(2));
+      expect(settled.whereType<PdfRenderCancelledException>(), hasLength(98));
+    },
+  );
 
   test('dispose cancels native output and cleans the partial file', () async {
     final Directory temp = await Directory.systemTemp.createTemp('pdf-cancel-');
@@ -424,7 +429,10 @@ void main() {
     expect(renderer.byteRenderCalls, 0);
     final Directory root = Directory('${temp.path}/notebook_pdf_pages');
     expect(
-      await root.list().where((FileSystemEntity entry) => entry.path.endsWith('.partial')).length,
+      await root
+          .list()
+          .where((FileSystemEntity entry) => entry.path.endsWith('.partial'))
+          .length,
       0,
     );
   });
@@ -584,40 +592,49 @@ void main() {
     },
   );
 
-  test('Android inspection cache prunes entries older than seven days', () async {
-    const MethodChannel channel = MethodChannel(kAndroidPdfRendererChannel);
-    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(channel, (_) async {
-          return <String, Object?>{
-            'pageCount': 1,
-            'pages': <Object?>[
-              <String, Object?>{'width': 100, 'height': 200},
-            ],
-          };
-        });
-    addTearDown(
-      () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-          .setMockMethodCallHandler(channel, null),
-    );
-    final Directory temp = await Directory.systemTemp.createTemp('pdf-inspect-');
-    addTearDown(() => temp.delete(recursive: true));
-    final Directory root = Directory('${temp.path}/notebook_pdf_inspection');
-    await root.create();
-    final File stale = File('${root.path}/stale.pdf')
-      ..writeAsBytesSync(<int>[9]);
-    await stale.setLastModified(
-      DateTime.now().subtract(const Duration(days: 8)),
-    );
+  test(
+    'Android inspection cache prunes entries older than seven days',
+    () async {
+      const MethodChannel channel = MethodChannel(kAndroidPdfRendererChannel);
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (_) async {
+            return <String, Object?>{
+              'pageCount': 1,
+              'pages': <Object?>[
+                <String, Object?>{'width': 100, 'height': 200},
+              ],
+            };
+          });
+      addTearDown(
+        () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, null),
+      );
+      final Directory temp = await Directory.systemTemp.createTemp(
+        'pdf-inspect-',
+      );
+      addTearDown(() => temp.delete(recursive: true));
+      final Directory root = Directory('${temp.path}/notebook_pdf_inspection');
+      await root.create();
+      final File stale = File('${root.path}/stale.pdf')
+        ..writeAsBytesSync(<int>[9]);
+      await stale.setLastModified(
+        DateTime.now().subtract(const Duration(days: 8)),
+      );
 
-    final List<Size> sizes = await AndroidPdfDocumentInspector(
-      channel: const AndroidPdfRendererChannel(channel: channel),
-      cacheDirectory: () async => temp,
-    ).inspect(Uint8List.fromList(<int>[1, 2, 3]), documentId: 'known-id');
+      final List<Size> sizes = await AndroidPdfDocumentInspector(
+        channel: const AndroidPdfRendererChannel(channel: channel),
+        cacheDirectory: () async => temp,
+      ).inspect(Uint8List.fromList(<int>[1, 2, 3]), documentId: 'known-id');
 
-    expect(sizes, <Size>[const Size(100, 200)]);
-    expect(await stale.exists(), isFalse);
-    expect(await File('${root.path}/known-id.pdf').readAsBytes(), <int>[1, 2, 3]);
-  });
+      expect(sizes, <Size>[const Size(100, 200)]);
+      expect(await stale.exists(), isFalse);
+      expect(await File('${root.path}/known-id.pdf').readAsBytes(), <int>[
+        1,
+        2,
+        3,
+      ]);
+    },
+  );
 
   test(
     'desktop engine inspects and renders a real locally generated PDF',
@@ -648,6 +665,201 @@ void main() {
     },
     skip: _pdfiumUnavailableReason(),
   );
+
+  test('page ranges accept comma-separated pages and inclusive ranges', () {
+    expect(parsePdfPageRange('1-3,7,12-14', pageCount: 14).pages, <int>{
+      1,
+      2,
+      3,
+      7,
+      12,
+      13,
+      14,
+    });
+    expect(parsePdfPageRange('0', pageCount: 14).error, contains('1 to 14'));
+    expect(parsePdfPageRange('abc', pageCount: 14).error, contains('1-3,7'));
+  });
+
+  test('selected PDF pages import in document order with source on first', () {
+    final PickedPdf picked = PickedPdf(
+      bytes: Uint8List.fromList(<int>[1, 2, 3, 4]),
+      documentId: 'selected-doc',
+      pageSizes: const <Size>[
+        Size(100, 100),
+        Size(200, 300),
+        Size(300, 200),
+        Size(400, 500),
+      ],
+      name: 'selected.pdf',
+    );
+    int id = 0;
+
+    final List<NotebookPdfPageBlock> pages = buildImportedPdfPageBlocks(
+      picked: picked,
+      sourceData: base64Encode(picked.bytes),
+      selectedPageNumbers: <int>{4, 2},
+      existing: const <NotebookBlock>[],
+      strokes: const <InkStroke>[],
+      newId: () => 'selected-${++id}',
+    );
+
+    expect(pages.map((NotebookPdfPageBlock page) => page.pageNumber), <int>[
+      2,
+      4,
+    ]);
+    expect(pages.map((NotebookPdfPageBlock page) => page.pageCount), <int>[
+      4,
+      4,
+    ]);
+    expect(pages.first.data, base64Encode(picked.bytes));
+    expect(pages.last.data, isNull);
+    expect(
+      pages.last.y,
+      pages.first.y + pages.first.height + kNotebookPdfPageSpacing,
+    );
+  });
+
+  test('same PDF imports form distinct groups with one shared source', () {
+    final PickedPdf picked = PickedPdf(
+      bytes: Uint8List.fromList(<int>[1, 2, 3, 4]),
+      documentId: 'same-doc',
+      pageSizes: const <Size>[
+        Size(100, 100),
+        Size(100, 100),
+        Size(100, 100),
+        Size(100, 100),
+      ],
+      name: 'same.pdf',
+    );
+    final String sourceData = base64Encode(picked.bytes);
+    int id = 0;
+    String newId() => 'generated-${++id}';
+
+    final List<NotebookPdfPageBlock> first = buildImportedPdfPageBlocks(
+      picked: picked,
+      sourceData: sourceData,
+      selectedPageNumbers: <int>{1, 2},
+      existing: const <NotebookBlock>[],
+      strokes: const <InkStroke>[],
+      newId: newId,
+    );
+    final List<NotebookPdfPageBlock> second = buildImportedPdfPageBlocks(
+      picked: picked,
+      sourceData: sourceData,
+      selectedPageNumbers: <int>{3, 4},
+      existing: first,
+      strokes: const <InkStroke>[],
+      newId: newId,
+    );
+
+    expect(
+      first.map((NotebookPdfPageBlock page) => page.importGroupId).toSet(),
+      hasLength(1),
+    );
+    expect(
+      second.map((NotebookPdfPageBlock page) => page.importGroupId).toSet(),
+      hasLength(1),
+    );
+    expect(second.first.importGroupId, isNot(first.first.importGroupId));
+    expect(first.first.data, sourceData);
+    expect(first.last.data, isNull);
+    expect(
+      second.map((NotebookPdfPageBlock page) => page.data),
+      everyElement(isNull),
+    );
+
+    final NotebookPdfImportRemoval removal = removeLastImportedPdfBlocks(
+      <NotebookBlock>[...first, ...second],
+    )!;
+    expect(
+      removal.removed.map(
+        ((int, NotebookPdfPageBlock) entry) => entry.$2.pageNumber,
+      ),
+      <int>[3, 4],
+    );
+    final List<NotebookPdfPageBlock> surviving = removal.remaining
+        .whereType<NotebookPdfPageBlock>()
+        .toList();
+    expect(surviving.map((NotebookPdfPageBlock page) => page.pageNumber), <int>[
+      1,
+      2,
+    ]);
+    expect(pdfSourceDataFor(surviving.last, removal.remaining), sourceData);
+  });
+
+  test('legacy null groups remove by document id', () {
+    const List<NotebookBlock> blocks = <NotebookBlock>[
+      NotebookTextBlock(id: 'text', text: 'keep'),
+      NotebookPdfPageBlock(
+        id: 'legacy-1',
+        documentId: 'legacy-doc',
+        pageNumber: 1,
+        pageCount: 2,
+        data: 'cGRm',
+        x: 16,
+        y: 20,
+        width: 688,
+        height: 900,
+      ),
+      NotebookPdfPageBlock(
+        id: 'legacy-2',
+        documentId: 'legacy-doc',
+        pageNumber: 2,
+        pageCount: 2,
+        x: 16,
+        y: 944,
+        width: 688,
+        height: 900,
+      ),
+    ];
+
+    final NotebookPdfImportRemoval removal = removeLastImportedPdfBlocks(
+      blocks,
+    )!;
+
+    expect(removal.removed, hasLength(2));
+    expect(removal.remaining.single, isA<NotebookTextBlock>());
+    expect(removal.restoreInto(removal.remaining), blocks);
+  });
+
+  test('removing a bearer group transfers bytes to a surviving group', () {
+    const NotebookPdfPageBlock survivor = NotebookPdfPageBlock(
+      id: 'older-reference',
+      documentId: 'shared-doc',
+      importGroupId: 'older-group',
+      pageNumber: 2,
+      pageCount: 2,
+      x: 16,
+      y: 20,
+      width: 688,
+      height: 900,
+    );
+    const NotebookPdfPageBlock bearer = NotebookPdfPageBlock(
+      id: 'latest-bearer',
+      documentId: 'shared-doc',
+      importGroupId: 'latest-group',
+      pageNumber: 1,
+      pageCount: 2,
+      data: 'cGRm',
+      x: 16,
+      y: 944,
+      width: 688,
+      height: 900,
+    );
+
+    final NotebookPdfImportRemoval removal = removeLastImportedPdfBlocks(
+      const <NotebookBlock>[survivor, bearer],
+    )!;
+    final NotebookPdfPageBlock transferred =
+        removal.remaining.single as NotebookPdfPageBlock;
+
+    expect(transferred.id, survivor.id);
+    expect(transferred.data, bearer.data);
+    expect(pdfSourceDataFor(transferred, removal.remaining), bearer.data);
+    final List<NotebookBlock> restored = removal.restoreInto(removal.remaining);
+    expect((restored.first as NotebookPdfPageBlock).data, isNull);
+    expect((restored.last as NotebookPdfPageBlock).data, bearer.data);
+  });
 
   test(
     'Android channel preserves page geometry and one-based render contract',

@@ -104,24 +104,23 @@ class Notebook implements NotebookHeader {
     NotebookInk? ink,
     NotebookRuling? ruling,
     PenStyle? lastPenStyle,
-  }) =>
-      Notebook(
-        id: id,
-        title: title ?? this.title,
-        createdAt: createdAt,
-        updatedAt: updatedAt ?? this.updatedAt,
-        document: document ?? this.document,
-        ink: ink ?? this.ink,
-        folderId: folderId,
-        pinned: pinned,
-        ruling: ruling ?? this.ruling,
-        lastPenStyle: lastPenStyle ?? this.lastPenStyle,
-        passwordHash: passwordHash,
-        passwordSalt: passwordSalt,
-        passwordIterations: passwordIterations,
-        passwordHashPrev: passwordHashPrev,
-        passwordMetadataPresent: passwordMetadataPresent,
-      );
+  }) => Notebook(
+    id: id,
+    title: title ?? this.title,
+    createdAt: createdAt,
+    updatedAt: updatedAt ?? this.updatedAt,
+    document: document ?? this.document,
+    ink: ink ?? this.ink,
+    folderId: folderId,
+    pinned: pinned,
+    ruling: ruling ?? this.ruling,
+    lastPenStyle: lastPenStyle ?? this.lastPenStyle,
+    passwordHash: passwordHash,
+    passwordSalt: passwordSalt,
+    passwordIterations: passwordIterations,
+    passwordHashPrev: passwordHashPrev,
+    passwordMetadataPresent: passwordMetadataPresent,
+  );
 }
 
 /// Default title for a freshly created notebook: `Notebook <yyyy-MM-dd HH-mm-ss>`.
@@ -130,7 +129,8 @@ class Notebook implements NotebookHeader {
 /// hyphens; the title is user-editable afterwards.
 String defaultNotebookTitle(DateTime when) {
   String two(int value) => value.toString().padLeft(2, '0');
-  final date = '${when.year.toString().padLeft(4, '0')}-'
+  final date =
+      '${when.year.toString().padLeft(4, '0')}-'
       '${two(when.month)}-${two(when.day)}';
   final time = '${two(when.hour)}-${two(when.minute)}-${two(when.second)}';
   return 'Notebook $date $time';
@@ -231,6 +231,7 @@ sealed class NotebookBlock {
         );
       case 'pdfPage':
         final documentId = raw['documentId'];
+        final importGroupId = raw['importGroupId'];
         final pageNumber = raw['pageNumber'];
         final pageCount = raw['pageCount'];
         final data = raw['data'];
@@ -240,6 +241,8 @@ sealed class NotebookBlock {
         final height = raw['height'];
         if (documentId is! String ||
             documentId.isEmpty ||
+            (importGroupId != null &&
+                (importGroupId is! String || importGroupId.isEmpty)) ||
             pageNumber is! int ||
             pageNumber < 1 ||
             pageCount is! int ||
@@ -256,6 +259,7 @@ sealed class NotebookBlock {
         return NotebookPdfPageBlock(
           id: id,
           documentId: documentId,
+          importGroupId: importGroupId as String?,
           pageNumber: pageNumber,
           pageCount: pageCount,
           data: data as String?,
@@ -381,27 +385,26 @@ class NotebookTextBlock extends NotebookBlock {
     double? x,
     double? y,
     List<TextStamp>? stamps,
-  }) =>
-      NotebookTextBlock(
-        id: id,
-        text: text ?? this.text,
-        x: x ?? this.x,
-        y: y ?? this.y,
-        stamps: stamps ?? this.stamps,
-      );
+  }) => NotebookTextBlock(
+    id: id,
+    text: text ?? this.text,
+    x: x ?? this.x,
+    y: y ?? this.y,
+    stamps: stamps ?? this.stamps,
+  );
 
   @override
   Map<String, dynamic> toJson() => {
-        'kind': 'text',
-        'id': id,
-        'text': text,
-        if (x != null) 'x': x,
-        if (y != null) 'y': y,
-        // Written only when present: an unstamped block re-encodes
-        // byte-identical to what every earlier build wrote.
-        if (stamps.isNotEmpty)
-          'stamps': stamps.map((s) => s.toJson()).toList(growable: false),
-      };
+    'kind': 'text',
+    'id': id,
+    'text': text,
+    if (x != null) 'x': x,
+    if (y != null) 'y': y,
+    // Written only when present: an unstamped block re-encodes
+    // byte-identical to what every earlier build wrote.
+    if (stamps.isNotEmpty)
+      'stamps': stamps.map((s) => s.toJson()).toList(growable: false),
+  };
 }
 
 /// A checkable line item.
@@ -428,24 +431,23 @@ class NotebookCheckboxBlock extends NotebookBlock {
     bool? checked,
     double? x,
     double? y,
-  }) =>
-      NotebookCheckboxBlock(
-        id: id,
-        text: text ?? this.text,
-        checked: checked ?? this.checked,
-        x: x ?? this.x,
-        y: y ?? this.y,
-      );
+  }) => NotebookCheckboxBlock(
+    id: id,
+    text: text ?? this.text,
+    checked: checked ?? this.checked,
+    x: x ?? this.x,
+    y: y ?? this.y,
+  );
 
   @override
   Map<String, dynamic> toJson() => {
-        'kind': 'checkbox',
-        'id': id,
-        'text': text,
-        'checked': checked,
-        if (x != null) 'x': x,
-        if (y != null) 'y': y,
-      };
+    'kind': 'checkbox',
+    'id': id,
+    'text': text,
+    'checked': checked,
+    if (x != null) 'x': x,
+    if (y != null) 'y': y,
+  };
 }
 
 /// A floating, draggable reference to an existing recording.
@@ -478,12 +480,12 @@ class NotebookDumpCardBlock extends NotebookBlock {
 
   @override
   Map<String, dynamic> toJson() => {
-        'kind': 'dumpCard',
-        'id': id,
-        'dumpId': dumpId,
-        'x': x,
-        'y': y,
-      };
+    'kind': 'dumpCard',
+    'id': id,
+    'dumpId': dumpId,
+    'x': x,
+    'y': y,
+  };
 }
 
 /// An imported picture, floating on the page like a dump card.
@@ -527,28 +529,27 @@ class NotebookImageBlock extends NotebookBlock {
     double? y,
     double? width,
     double? height,
-  }) =>
-      NotebookImageBlock(
-        id: id,
-        data: data,
-        mime: mime,
-        x: x ?? this.x,
-        y: y ?? this.y,
-        width: width ?? this.width,
-        height: height ?? this.height,
-      );
+  }) => NotebookImageBlock(
+    id: id,
+    data: data,
+    mime: mime,
+    x: x ?? this.x,
+    y: y ?? this.y,
+    width: width ?? this.width,
+    height: height ?? this.height,
+  );
 
   @override
   Map<String, dynamic> toJson() => {
-        'kind': 'image',
-        'id': id,
-        'data': data,
-        'mime': mime,
-        'x': x,
-        'y': y,
-        'width': width,
-        'height': height,
-      };
+    'kind': 'image',
+    'id': id,
+    'data': data,
+    'mime': mime,
+    'x': x,
+    'y': y,
+    'width': width,
+    'height': height,
+  };
 }
 
 /// One imported PDF page positioned on the notebook canvas.
@@ -558,6 +559,8 @@ class NotebookImageBlock extends NotebookBlock {
 /// on the first page block, as base64 [data]; sibling pages resolve them by
 /// [documentId]. This keeps the durable notebook self-contained for sync
 /// without multiplying a large PDF by its page count.
+const Object _notebookPdfUnchanged = Object();
+
 class NotebookPdfPageBlock extends NotebookBlock {
   const NotebookPdfPageBlock({
     required this.id,
@@ -568,6 +571,7 @@ class NotebookPdfPageBlock extends NotebookBlock {
     required this.y,
     required this.width,
     required this.height,
+    this.importGroupId,
     this.data,
   }) : assert(pageNumber >= 1),
        assert(pageCount >= pageNumber),
@@ -579,6 +583,9 @@ class NotebookPdfPageBlock extends NotebookBlock {
 
   /// Stable SHA-256 of the source bytes, shared by all pages in one import.
   final String documentId;
+
+  /// Identifies one picker/import action. Null means a pre-grouping document.
+  final String? importGroupId;
   final int pageNumber;
   final int pageCount;
 
@@ -595,12 +602,17 @@ class NotebookPdfPageBlock extends NotebookBlock {
     double? y,
     double? width,
     double? height,
+    Object? data = _notebookPdfUnchanged,
+    Object? importGroupId = _notebookPdfUnchanged,
   }) => NotebookPdfPageBlock(
     id: id,
     documentId: documentId,
+    importGroupId: identical(importGroupId, _notebookPdfUnchanged)
+        ? this.importGroupId
+        : importGroupId as String?,
     pageNumber: pageNumber,
     pageCount: pageCount,
-    data: data,
+    data: identical(data, _notebookPdfUnchanged) ? this.data : data as String?,
     x: x ?? this.x,
     y: y ?? this.y,
     width: width ?? this.width,
@@ -612,6 +624,7 @@ class NotebookPdfPageBlock extends NotebookBlock {
     'kind': 'pdfPage',
     'id': id,
     'documentId': documentId,
+    if (importGroupId != null) 'importGroupId': importGroupId,
     'pageNumber': pageNumber,
     'pageCount': pageCount,
     if (data != null) 'data': data,
@@ -636,8 +649,8 @@ class NotebookTableBlock extends NotebookBlock {
     required this.x,
     required this.y,
     this.cells = const <int, String>{},
-  })  : assert(rows >= 1 && rows <= kNotebookTableMaxDimension),
-        assert(columns >= 1 && columns <= kNotebookTableMaxDimension);
+  }) : assert(rows >= 1 && rows <= kNotebookTableMaxDimension),
+       assert(columns >= 1 && columns <= kNotebookTableMaxDimension);
 
   @override
   final String id;
@@ -668,15 +681,14 @@ class NotebookTableBlock extends NotebookBlock {
     double? x,
     double? y,
     Map<int, String>? cells,
-  }) =>
-      NotebookTableBlock(
-        id: id,
-        rows: rows,
-        columns: columns,
-        x: x ?? this.x,
-        y: y ?? this.y,
-        cells: cells ?? this.cells,
-      );
+  }) => NotebookTableBlock(
+    id: id,
+    rows: rows,
+    columns: columns,
+    x: x ?? this.x,
+    y: y ?? this.y,
+    cells: cells ?? this.cells,
+  );
 
   NotebookTableBlock copyWithCell(int row, int column, String text) {
     assert(row >= 0 && row < rows);
@@ -693,13 +705,14 @@ class NotebookTableBlock extends NotebookBlock {
 
   @override
   Map<String, dynamic> toJson() {
-    final List<MapEntry<int, String>> ordered = cells.entries
-        .where((MapEntry<int, String> entry) => entry.value.isNotEmpty)
-        .toList(growable: false)
-      ..sort(
-        (MapEntry<int, String> a, MapEntry<int, String> b) =>
-            a.key.compareTo(b.key),
-      );
+    final List<MapEntry<int, String>> ordered =
+        cells.entries
+            .where((MapEntry<int, String> entry) => entry.value.isNotEmpty)
+            .toList(growable: false)
+          ..sort(
+            (MapEntry<int, String> a, MapEntry<int, String> b) =>
+                a.key.compareTo(b.key),
+          );
     return <String, dynamic>{
       'kind': 'table',
       'id': id,
@@ -723,7 +736,7 @@ class NotebookTableBlock extends NotebookBlock {
 /// A block this build cannot interpret, retained byte-for-byte.
 class NotebookUnknownBlock extends NotebookBlock {
   NotebookUnknownBlock(Map<String, dynamic> raw)
-      : raw = Map<String, dynamic>.unmodifiable(raw);
+    : raw = Map<String, dynamic>.unmodifiable(raw);
 
   /// The original JSON map, returned unchanged on save.
   final Map<String, dynamic> raw;
@@ -760,8 +773,8 @@ class NotebookDocument {
   /// callers embedding the document in a larger payload use this directly
   /// instead of paying an encode→decode round trip.
   Map<String, dynamic> toJson() => {
-        'blocks': blocks.map((block) => block.toJson()).toList(growable: false),
-      };
+    'blocks': blocks.map((block) => block.toJson()).toList(growable: false),
+  };
 
   String encode() => jsonEncode(toJson());
 
@@ -783,28 +796,28 @@ class InkStroke {
     this.tool = InkTool.pen,
     this.colour = InkColor.white,
   }) : assert(
-          // The colour must belong to the tool's own palette. A highlighter
-          // carrying an opaque pen ink would round-trip to a *different*
-          // colour — `InkColor.fromWire` is palette-scoped, so it reads back
-          // as yellow — and a 0xFF band would blot out the handwriting it is
-          // painted beneath.
-          //
-          // Spelled out rather than `InkColor.paletteFor(tool).contains(...)`
-          // because a method invocation is not a constant expression and
-          // would make every `const InkStroke` a compile error. Keep this in
-          // step with `paletteFor`; `ink palette`/`an ink outside the tool
-          // palette cannot be constructed` fail loudly if it drifts.
-          tool == InkTool.pen
-              ? (colour == InkColor.white ||
-                  colour == InkColor.blue ||
-                  colour == InkColor.red ||
-                  colour == InkColor.amber)
-              : (colour == InkColor.yellow ||
-                  colour == InkColor.lime ||
-                  colour == InkColor.highlightBlue ||
-                  colour == InkColor.pink),
-          'colour must be one of InkColor.paletteFor(tool)',
-        );
+         // The colour must belong to the tool's own palette. A highlighter
+         // carrying an opaque pen ink would round-trip to a *different*
+         // colour — `InkColor.fromWire` is palette-scoped, so it reads back
+         // as yellow — and a 0xFF band would blot out the handwriting it is
+         // painted beneath.
+         //
+         // Spelled out rather than `InkColor.paletteFor(tool).contains(...)`
+         // because a method invocation is not a constant expression and
+         // would make every `const InkStroke` a compile error. Keep this in
+         // step with `paletteFor`; `ink palette`/`an ink outside the tool
+         // palette cannot be constructed` fail loudly if it drifts.
+         tool == InkTool.pen
+             ? (colour == InkColor.white ||
+                   colour == InkColor.blue ||
+                   colour == InkColor.red ||
+                   colour == InkColor.amber)
+             : (colour == InkColor.yellow ||
+                   colour == InkColor.lime ||
+                   colour == InkColor.highlightBlue ||
+                   colour == InkColor.pink),
+         'colour must be one of InkColor.paletteFor(tool)',
+       );
 
   final String id;
   final double width;
@@ -868,32 +881,32 @@ class InkStroke {
     List<InkPoint>? points,
     InkTool? tool,
     InkColor? colour,
-  }) =>
-      InkStroke(
-        id: id ?? this.id,
-        width: width ?? this.width,
-        style: style,
-        tool: tool ?? this.tool,
-        // A tool switch that names no colour adopts the new tool's default.
-        // Carrying the old tool's ink across would violate the palette
-        // invariant the constructor asserts.
-        colour: colour ??
-            (tool != null && tool != this.tool
-                ? InkColor.defaultFor(tool)
-                : this.colour),
-        points: points ?? this.points,
-      );
+  }) => InkStroke(
+    id: id ?? this.id,
+    width: width ?? this.width,
+    style: style,
+    tool: tool ?? this.tool,
+    // A tool switch that names no colour adopts the new tool's default.
+    // Carrying the old tool's ink across would violate the palette
+    // invariant the constructor asserts.
+    colour:
+        colour ??
+        (tool != null && tool != this.tool
+            ? InkColor.defaultFor(tool)
+            : this.colour),
+    points: points ?? this.points,
+  );
 
   Map<String, dynamic> toJson() => {
-        'id': id,
-        'width': width,
-        // Written only when set: a legacy file must re-encode byte-comparable,
-        // without gaining fields it never had.
-        if (style != PenStyle.ballpoint) 'style': style.wireValue,
-        if (tool != InkTool.pen) 'tool': tool.wireValue,
-        if (colour != InkColor.defaultFor(tool)) 'colour': colour.wireValue,
-        'points': points.map((p) => p.toJson()).toList(growable: false),
-      };
+    'id': id,
+    'width': width,
+    // Written only when set: a legacy file must re-encode byte-comparable,
+    // without gaining fields it never had.
+    if (style != PenStyle.ballpoint) 'style': style.wireValue,
+    if (tool != InkTool.pen) 'tool': tool.wireValue,
+    if (colour != InkColor.defaultFor(tool)) 'colour': colour.wireValue,
+    'points': points.map((p) => p.toJson()).toList(growable: false),
+  };
 
   @override
   bool operator ==(Object other) =>
@@ -911,7 +924,8 @@ class InkStroke {
       Object.hash(id, width, style, tool, colour, Object.hashAll(points));
 
   @override
-  String toString() => 'InkStroke($id, w=$width, ${tool.wireValue}, '
+  String toString() =>
+      'InkStroke($id, w=$width, ${tool.wireValue}, '
       '${colour.wireValue}, ${points.length}pts)';
 }
 
@@ -930,9 +944,9 @@ enum PenStyle {
   /// the wrong width beats dropping it because a newer build named a pen
   /// this one has never heard of.
   static PenStyle fromWire(Object? raw) => switch (raw) {
-        'fountain' => PenStyle.fountain,
-        _ => PenStyle.ballpoint,
-      };
+    'fountain' => PenStyle.fountain,
+    _ => PenStyle.ballpoint,
+  };
 }
 
 /// Which instrument drew a stroke. Stored per stroke, so a page can mix them.
@@ -952,9 +966,9 @@ enum InkTool {
   /// beats dropping it because a newer build named an instrument this one
   /// has never heard of.
   static InkTool fromWire(Object? raw) => switch (raw) {
-        'highlighter' => InkTool.highlighter,
-        _ => InkTool.pen,
-      };
+    'highlighter' => InkTool.highlighter,
+    _ => InkTool.pen,
+  };
 }
 
 /// The ink a stroke is drawn in.
@@ -988,20 +1002,15 @@ enum InkColor {
 
   /// The ink a tool uses when a stroke names no colour.
   static InkColor defaultFor(InkTool tool) => switch (tool) {
-        InkTool.pen => InkColor.white,
-        InkTool.highlighter => InkColor.yellow,
-      };
+    InkTool.pen => InkColor.white,
+    InkTool.highlighter => InkColor.yellow,
+  };
 
   /// The swatches offered for a tool, in palette order.
   static List<InkColor> paletteFor(InkTool tool) => switch (tool) {
-        InkTool.pen => const <InkColor>[white, blue, red, amber],
-        InkTool.highlighter => const <InkColor>[
-            yellow,
-            lime,
-            highlightBlue,
-            pink
-          ],
-      };
+    InkTool.pen => const <InkColor>[white, blue, red, amber],
+    InkTool.highlighter => const <InkColor>[yellow, lime, highlightBlue, pink],
+  };
 
   /// Unknown or absent colours read as the tool's default, so a stroke from
   /// a newer build still draws rather than vanishing.
@@ -1027,10 +1036,10 @@ class InkPoint {
 
   /// Tolerant reader: missing/!num coordinates fall back to the origin.
   factory InkPoint.fromJson(Map<String, dynamic> json) => InkPoint(
-        x: (json['x'] as num?)?.toDouble() ?? 0,
-        y: (json['y'] as num?)?.toDouble() ?? 0,
-        p: (json['p'] is num) ? (json['p'] as num).toDouble() : null,
-      );
+    x: (json['x'] as num?)?.toDouble() ?? 0,
+    y: (json['y'] as num?)?.toDouble() ?? 0,
+    p: (json['p'] is num) ? (json['p'] as num).toDouble() : null,
+  );
 
   /// Strict reader used when decoding storage.
   static InkPoint? tryFromJson(Map<String, dynamic> raw) {
@@ -1049,11 +1058,11 @@ class InkPoint {
   Offset get offset => Offset(x, y);
 
   Map<String, dynamic> toJson() => {
-        'x': x,
-        'y': y,
-        // Written only when present, so legacy files re-encode unchanged.
-        if (p != null) 'p': p,
-      };
+    'x': x,
+    'y': y,
+    // Written only when present, so legacy files re-encode unchanged.
+    if (p != null) 'p': p,
+  };
 
   @override
   bool operator ==(Object other) =>
@@ -1091,8 +1100,8 @@ class NotebookInk {
   /// The ink as a JSON-encodable map; same contract as
   /// [NotebookDocument.toJson].
   Map<String, dynamic> toJson() => {
-        'strokes': strokes.map((s) => s.toJson()).toList(growable: false),
-      };
+    'strokes': strokes.map((s) => s.toJson()).toList(growable: false),
+  };
 
   String encode() => jsonEncode(toJson());
 
