@@ -252,17 +252,72 @@ void main() {
     },
   );
 
-  test('checking a card never moves it implicitly', () async {
-    final TodoRow todo = await repo.add('stay put');
-    final String progress = (await repo.listColumns())[1].id;
-    await repo.moveOnBoard(todo.id, progress, 0);
+  test(
+    'checking moves to the last live column and unchecking leaves placement',
+    () async {
+      final TodoRow existingDone = await repo.add('already at the end');
+      final TodoRow todo = await repo.add('finish me');
+      final List<TodoColumnRow> columns = await repo.listColumns();
+      final String progress = columns[1].id;
+      final String done = columns[2].id;
+      await repo.moveOnBoard(existingDone.id, done, 0);
+      await repo.moveOnBoard(todo.id, progress, 0);
+      await repo.toggle(existingDone.id);
+      expect((await rowOf(existingDone.id)).boardOrder, 0);
+      await db.customStatement(
+        'INSERT INTO settings(key,value) VALUES(?,?)',
+        <Object?>['todo_kanban_backfill:${todo.id}', '1'],
+      );
 
-    await repo.toggle(todo.id);
+      await repo.toggle(todo.id);
 
-    final TodoRow checked = await rowOf(todo.id);
-    expect(checked.doneAt, isNotNull);
-    expect(checked.columnId, progress);
-  });
+      TodoRow checked = await rowOf(todo.id);
+      expect(checked.doneAt, isNotNull);
+      expect(checked.columnId, done);
+      expect(checked.boardOrder, 1, reason: 'completion appends at lane end');
+      expect(await db.pendingTodoBoardOrder(todo.id), isNull);
+
+      await repo.toggle(todo.id);
+      checked = await rowOf(todo.id);
+      expect(checked.doneAt, isNull);
+      expect(checked.columnId, done);
+      expect(checked.boardOrder, 1, reason: 'unchecking never moves the card');
+    },
+  );
+
+  test(
+    'bulk board move appends in source order and spends every marker',
+    () async {
+      final TodoRow a = await repo.add('a');
+      final TodoRow b = await repo.add('b');
+      final TodoRow c = await repo.add('c');
+      final TodoRow anchor = await repo.add('anchor');
+      final String progress = (await repo.listColumns())[1].id;
+      await repo.moveOnBoard(anchor.id, progress, 0);
+      await db.customStatement(
+        'INSERT INTO settings(key,value) VALUES(?,?),(?,?)',
+        <Object?>[
+          'todo_kanban_backfill:${a.id}',
+          '0',
+          'todo_kanban_backfill:${c.id}',
+          '2',
+        ],
+      );
+
+      await repo.moveManyOnBoard(<String>[a.id, c.id], progress);
+
+      final List<TodoRow> target =
+          (await repo.listTodos())
+              .where((row) => row.columnId == progress)
+              .toList()
+            ..sort((x, y) => x.boardOrder.compareTo(y.boardOrder));
+      expect(target.map((row) => row.id), <String>[anchor.id, a.id, c.id]);
+      expect(target.map((row) => row.boardOrder), <int>[0, 1, 2]);
+      expect((await rowOf(b.id)).boardOrder, 0, reason: 'source is compacted');
+      expect(await db.pendingTodoBoardOrder(a.id), isNull);
+      expect(await db.pendingTodoBoardOrder(c.id), isNull);
+    },
+  );
 
   test(
     'a stale column push acknowledgement cannot clean a newer edit',

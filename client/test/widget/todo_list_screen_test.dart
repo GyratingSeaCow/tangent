@@ -743,6 +743,170 @@ void main() {
   });
 
   group('kanban board', () {
+    testWidgets('board selection exits with back and X', (tester) async {
+      await mountPushed(tester);
+      await tester.tap(find.byKey(TodoListScreen.viewToggleKey));
+      await tester.pumpAndSettle();
+
+      Future<void> enterSelection() async {
+        await tester.tap(
+          find.byKey(TodoListScreen.columnMenuKey(defaultTodoColumnId)),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Select cards'));
+        await tester.pumpAndSettle();
+        expect(find.text('0 selected'), findsOneWidget);
+      }
+
+      await enterSelection();
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(find.byType(TodoListScreen), findsOneWidget);
+      expect(find.textContaining('selected'), findsNothing);
+
+      await enterSelection();
+      await tester.tap(find.byKey(TodoListScreen.selectCancelKey));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('selected'), findsNothing);
+      await unmount(tester);
+    });
+
+    testWidgets('column selection deletes two chosen cards only', (
+      tester,
+    ) async {
+      final TodoRepository repo = await mount(tester);
+      final TodoRow a = await repo.add('select alpha');
+      final TodoRow b = await repo.add('select beta');
+      final TodoRow c = await repo.add('leave gamma');
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(TodoListScreen.viewToggleKey));
+      await tester.pumpAndSettle();
+
+      await tester.tap(
+        find.byKey(TodoListScreen.columnMenuKey(defaultTodoColumnId)),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Select cards'));
+      await tester.pumpAndSettle();
+      expect(find.text('0 selected'), findsOneWidget);
+
+      await tester.tap(find.byKey(Key('todo-select-${a.id}')));
+      await tester.tap(find.byKey(Key('todo-select-${b.id}')));
+      await tester.pumpAndSettle();
+      expect(find.text('2 selected'), findsOneWidget);
+      await tester.tap(find.byKey(TodoListScreen.selectDeleteKey));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(TodoListScreen.bulkDeleteConfirmKey));
+      await tester.pumpAndSettle();
+
+      expect((await db.getTodoRow(a.id))!.deletedAt, isNotNull);
+      expect((await db.getTodoRow(b.id))!.deletedAt, isNotNull);
+      expect((await db.getTodoRow(c.id))!.deletedAt, isNull);
+      await tester.pump(const Duration(seconds: 6));
+      await unmount(tester);
+    });
+
+    testWidgets('column selection moves chosen cards in lane order', (
+      tester,
+    ) async {
+      final TodoRepository repo = await mount(tester);
+      final TodoRow a = await repo.add('move alpha');
+      final TodoRow b = await repo.add('leave beta');
+      final TodoRow c = await repo.add('move gamma');
+      final TodoRow anchor = await repo.add('target anchor');
+      final List<TodoColumnRow> columns = await repo.listColumns();
+      await repo.moveOnBoard(anchor.id, columns[1].id, 0);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(TodoListScreen.viewToggleKey));
+      await tester.pumpAndSettle();
+
+      await tester.tap(
+        find.byKey(TodoListScreen.columnMenuKey(defaultTodoColumnId)),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Select cards'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(Key('todo-select-${a.id}')));
+      await tester.tap(find.byKey(Key('todo-select-${c.id}')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(TodoListScreen.selectMoveKey));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(TodoListScreen.boardColumnChoiceKey(columns[1].id)),
+      );
+      await tester.pumpAndSettle();
+
+      final List<TodoRow> target =
+          (await repo.listTodos())
+              .where((row) => row.columnId == columns[1].id)
+              .toList()
+            ..sort((x, y) => x.boardOrder.compareTo(y.boardOrder));
+      expect(target.map((row) => row.id), <String>[anchor.id, a.id, c.id]);
+      expect((await db.getTodoRow(b.id))!.columnId, defaultTodoColumnId);
+      await unmount(tester);
+    });
+
+    testWidgets('hold and release opens board menu without moving the card', (
+      tester,
+    ) async {
+      final TodoRepository repo = await mount(tester);
+      final TodoRow card = await repo.add('held card');
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(TodoListScreen.viewToggleKey));
+      await tester.pumpAndSettle();
+
+      final TestGesture gesture = await tester.startGesture(
+        tester.getCenter(find.byKey(TodoListScreen.cardKey(card.id))),
+      );
+      await tester.pump(const Duration(milliseconds: 250));
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      expect(find.text('Kanban Board'), findsOneWidget);
+      expect(find.text('Move to folder'), findsOneWidget);
+      expect(find.text('Delete'), findsOneWidget);
+      expect(
+        find.byKey(TodoListScreen.boardColumnChoiceKey(defaultTodoColumnId)),
+        findsOneWidget,
+      );
+      final TodoRow unmoved = (await db.getTodoRow(card.id))!;
+      expect(unmoved.columnId, defaultTodoColumnId);
+      expect(unmoved.boardOrder, card.boardOrder);
+      await tester.tapAt(const Offset(10, 10));
+      await tester.pumpAndSettle();
+      await unmount(tester);
+    });
+
+    testWidgets('hold menu moves to a board column and spends the marker', (
+      tester,
+    ) async {
+      final TodoRepository repo = await mount(tester);
+      final TodoRow card = await repo.add('menu moved card');
+      final List<TodoColumnRow> columns = await repo.listColumns();
+      await db.customStatement(
+        'INSERT INTO settings(key,value) VALUES(?,?)',
+        <Object?>['todo_kanban_backfill:${card.id}', '0'],
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(TodoListScreen.viewToggleKey));
+      await tester.pumpAndSettle();
+
+      final TestGesture gesture = await tester.startGesture(
+        tester.getCenter(find.byKey(TodoListScreen.cardKey(card.id))),
+      );
+      await tester.pump(const Duration(milliseconds: 250));
+      await gesture.up();
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(TodoListScreen.boardColumnChoiceKey(columns[1].id)),
+      );
+      await tester.pumpAndSettle();
+
+      expect((await db.getTodoRow(card.id))!.columnId, columns[1].id);
+      expect(await db.pendingTodoBoardOrder(card.id), isNull);
+      await unmount(tester);
+    });
+
     testWidgets('toggle persists and board seeds the three default columns', (
       tester,
     ) async {
@@ -758,18 +922,11 @@ void main() {
       expect(find.text('In Progress (0)'), findsOneWidget);
       expect(find.text('Done (0)'), findsOneWidget);
       expect(find.byKey(TodoListScreen.cardKey(todo.id)), findsOneWidget);
-      await tester.longPress(find.byKey(TodoListScreen.cardKey(todo.id)));
-      await tester.pumpAndSettle();
-      expect(
-        find.byKey(TodoListScreen.selectCancelKey),
-        findsNothing,
-        reason: 'board long-press must not enter list multi-select',
-      );
       await tester.tap(find.byKey(Key('todo-check-${todo.id}')));
       await tester.pumpAndSettle();
       final TodoRow checked = (await db.getTodoRow(todo.id))!;
       expect(checked.doneAt, isNotNull);
-      expect(checked.columnId, defaultTodoColumnId);
+      expect(checked.columnId, (await repo.listColumns()).last.id);
       expect(find.byKey(TodoListScreen.cardKey(todo.id)), findsOneWidget);
 
       await unmount(tester);
@@ -793,6 +950,15 @@ void main() {
       await tester.tap(find.byKey(TodoListScreen.viewToggleKey));
       await tester.pumpAndSettle();
       final String progress = (await repo.listColumns())[1].id;
+
+      expect(
+        boardDragExceededDeadZone(Offset.zero, const Offset(7, 0)),
+        isFalse,
+      );
+      expect(
+        boardDragExceededDeadZone(Offset.zero, const Offset(9, 0)),
+        isTrue,
+      );
 
       Future<void> dragAfterHold(Finder source, Finder target) async {
         final TestGesture gesture = await tester.startGesture(
@@ -1313,8 +1479,8 @@ void main() {
         boardScrollable,
       );
       expect(boardState.position.maxScrollExtent, greaterThan(0));
-      await tester.flingFrom(
-        tester.getCenter(lastCard),
+      await tester.fling(
+        find.byKey(const Key('todo-board-scroll')),
         const Offset(-500, 0),
         1500,
       );
