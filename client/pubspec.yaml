@@ -81,6 +81,7 @@ dev_dependencies:
   integration_test:
     sdk: flutter
   just_audio_platform_interface: ^4.6.0
+  file_selector_platform_interface: ^2.6.2
   url_launcher_platform_interface: ^2.3.2
   plugin_platform_interface: ^2.1.8
   # Lets the real desktop-render smoke query the same vendored loader used by

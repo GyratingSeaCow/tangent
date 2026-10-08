@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' as ui;
 
+import 'package:file_selector_platform_interface/file_selector_platform_interface.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/rendering.dart';
@@ -1643,20 +1644,29 @@ void main() {
   });
 
   testWidgets('image insertion appends below existing blocks', (tester) async {
+    final Uint8List pixelPng = base64Decode(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk'
+      'YPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
+    );
+    // Non-Linux hosts pick through the platform channel...
     const MethodChannel channel = MethodChannel('dev.tangent.tangent/audio');
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (MethodCall call) async {
           expect(call.method, 'pickImageFile');
           return <String, Object>{
-            'bytes': base64Decode(
-              'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk'
-              'YPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
-            ),
+            'bytes': pixelPng,
             'mime': 'image/png',
             'width': 1,
             'height': 1,
           };
         });
+    // ...but Linux (the CI runner) branches to pickImageDesktop's GTK
+    // file_selector before the channel is ever consulted, which made this
+    // test fail deterministically on CI while passing on Windows. Serve the
+    // same pixel through a fake FileSelectorPlatform so both paths import.
+    final FileSelectorPlatform previousSelector = FileSelectorPlatform.instance;
+    FileSelectorPlatform.instance = _FakeImageFileSelector(pixelPng);
+    addTearDown(() => FileSelectorPlatform.instance = previousSelector);
     addTearDown(
       () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(channel, null),
@@ -4649,4 +4659,20 @@ void main() {
       await unmount(tester);
     });
   });
+}
+
+/// Serves a fixed in-memory image through the file_selector platform so the
+/// Linux (GTK) image-pick branch works under test; see the image-insertion
+/// test for why the platform channel mock alone is not enough.
+class _FakeImageFileSelector extends FileSelectorPlatform {
+  _FakeImageFileSelector(this.bytes);
+
+  final Uint8List bytes;
+
+  @override
+  Future<XFile?> openFile({
+    List<XTypeGroup>? acceptedTypeGroups,
+    String? initialDirectory,
+    String? confirmButtonText,
+  }) async => XFile.fromData(bytes, name: 'pixel.png');
 }
