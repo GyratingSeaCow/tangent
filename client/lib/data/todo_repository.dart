@@ -210,14 +210,74 @@ class TodoRepository {
   }
 
   /// Checks an open item (stamps `done_at`) or unchecks a done one
-  /// (clears it). Nothing ever auto-deletes.
+  /// (clears it). Completing a card files it at the end of the rightmost live
+  /// Kanban column; unchecking never moves it back.
   Future<void> toggle(String id) async {
-    final TodoRow? row = await _db.getTodoRow(id);
-    if (row == null) return;
-    await _write(
-      id,
-      TodosCompanion(doneAt: Value(row.doneAt == null ? _stamp() : null)),
-    );
+    final List<TodoColumnRow> columns = await ensureColumns();
+    await _db.transaction(() async {
+      final TodoRow? row = await _db.getTodoRow(id);
+      if (row == null) return;
+      if (row.doneAt != null) {
+        await _write(id, const TodosCompanion(doneAt: Value(null)));
+        return;
+      }
+      await _write(id, TodosCompanion(doneAt: Value(_stamp())));
+      final String lastColumnId = columns.last.id;
+      if (row.columnId != lastColumnId) {
+        await moveOnBoard(id, lastColumnId, 1 << 30);
+      }
+    });
+  }
+
+  /// Appends selected cards to [columnId] in the iteration order of [ids].
+  /// Source lanes are compacted and every moved card spends its migration
+  /// marker in this transaction, exactly like a single explicit board move.
+  Future<void> moveManyOnBoard(Iterable<String> ids, String columnId) async {
+    final List<String> orderedIds = ids.toSet().toList(growable: false);
+    if (orderedIds.isEmpty) return;
+    await _db.transaction(() async {
+      final List<TodoColumnRow> columns = await listColumns();
+      if (!columns.any((column) => column.id == columnId)) {
+        throw StateError('Column is not live: $columnId');
+      }
+      final List<TodoRow> moving = <TodoRow>[];
+      for (final String id in orderedIds) {
+        final TodoRow? row = await _db.getTodoRow(id);
+        if (row == null || row.deletedAt != null || row.columnId == columnId) {
+          continue;
+        }
+        moving.add(row);
+      }
+      if (moving.isEmpty) return;
+
+      final Set<String> sourceIds = moving
+          .map((row) => row.columnId)
+          .whereType<String>()
+          .toSet();
+      int order = await _nextBoardOrder(columnId);
+      for (final TodoRow row in moving) {
+        await _writeBoardPlacement(
+          row.id,
+          TodosCompanion(columnId: Value(columnId), boardOrder: Value(order++)),
+        );
+      }
+      for (final String sourceId in sourceIds) {
+        final List<TodoRow> remaining =
+            await (_db.select(_db.todos)
+                  ..where(
+                    (t) => t.columnId.equals(sourceId) & t.deletedAt.isNull(),
+                  )
+                  ..orderBy([(t) => OrderingTerm.asc(t.boardOrder)]))
+                .get();
+        for (int i = 0; i < remaining.length; i++) {
+          if (remaining[i].boardOrder == i) continue;
+          await _writeBoardPlacement(
+            remaining[i].id,
+            TodosCompanion(boardOrder: Value(i)),
+          );
+        }
+      }
+    });
   }
 
   Future<void> editText(String id, String text) async {
@@ -425,13 +485,25 @@ class TodoRepository {
   }
 
   /// Marks every OPEN item in [ids] done (already-done ones are left alone,
-  /// unlike [toggle]). The multi-select toolbar's "Done".
+  /// unlike [toggle]). Live board cards are appended to the rightmost live
+  /// column in [ids] iteration order; rows without a live board placement keep
+  /// their placement. Completion and every board move share one transaction.
   Future<void> markManyDone(Iterable<String> ids) async {
+    final List<String> orderedIds = ids.toSet().toList(growable: false);
+    if (orderedIds.isEmpty) return;
     await _db.transaction(() async {
-      for (final String id in ids) {
+      final List<TodoColumnRow> columns = await listColumns();
+      final Set<String> liveColumnIds = columns
+          .map((TodoColumnRow column) => column.id)
+          .toSet();
+      final String? lastColumnId = columns.isEmpty ? null : columns.last.id;
+      for (final String id in orderedIds) {
         final TodoRow? row = await _db.getTodoRow(id);
         if (row == null || row.doneAt != null) continue;
         await _write(id, TodosCompanion(doneAt: Value(_stamp())));
+        if (lastColumnId != null && liveColumnIds.contains(row.columnId)) {
+          await moveOnBoard(id, lastColumnId, 1 << 30);
+        }
       }
     });
   }

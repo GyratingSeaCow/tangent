@@ -19,6 +19,13 @@ import '../../widgets/instrument_scaffold.dart';
 import '../../widgets/top_nav_rail.dart';
 import 'todo_grouping.dart';
 
+const double _boardDragDeadZone = 8;
+
+/// A held card becomes a drag only after leaving this lane-safe dead zone.
+/// Releasing inside it resolves the same gesture as a board context-menu hold.
+bool boardDragExceededDeadZone(Offset origin, Offset current) =>
+    (current - origin).distance > _boardDragDeadZone;
+
 /// The To Do screen (v1.24.0, folders): quick-add pinned at top, then one
 /// collapsible section per SHARED folder (alphabetical, same rows as
 /// Recordings and Notebooks), `No folder` last, one `Done` section at the
@@ -28,9 +35,8 @@ import 'todo_grouping.dart';
 /// long-press a row = multi-select; ⋮ on the row = Move / Edit / Delete;
 /// long-press a folder header = rename/delete the folder, never selection;
 /// long-press the date chip = clear the due date (it is a chip, not the row).
-/// In board mode, direct drag owns card movement and ⋮ owns card actions, so
-/// long-press multi-select is deliberately disabled to avoid competing gesture
-/// meanings. Checking a card changes completion only; it never moves columns.
+/// In board mode, a stationary hold opens board actions while a hold followed
+/// by movement drags; column ⋮ menus enter column-scoped multi-select.
 class TodoListScreen extends ConsumerStatefulWidget {
   const TodoListScreen({super.key, this.autofocusQuickAdd = false});
 
@@ -68,6 +74,11 @@ class TodoListScreen extends ConsumerStatefulWidget {
       Key('todo-empty-drop-$columnId');
   static Key dropKey(String columnId, int index) =>
       Key('todo-drop-$columnId-$index');
+  static Key boardColumnChoiceKey(String columnId) =>
+      Key('todo-board-column-choice-$columnId');
+  static const Key boardFolderMoveKey = Key('todo-board-folder-move');
+  static const Key boardDeleteKey = Key('todo-board-delete');
+  static const Key boardMenuHeaderKey = Key('todo-board-menu-header');
 
   @override
   ConsumerState<TodoListScreen> createState() => _TodoListScreenState();
@@ -123,21 +134,64 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
   // UI ordering and error surfacing, not a database-race fix.
   Future<void> _boardMoveTail = Future<void>.value();
 
-  void _queueBoardMove(String todoId, String columnId, int index) {
+  Future<void> _queueBoardOperation(
+    Future<void> Function(TodoRepository repo) operation,
+    String description,
+  ) {
     final TodoRepository repo = ref.read(todoRepositoryProvider);
-    final Future<void> move = _boardMoveTail.then(
-      (_) => repo.moveOnBoard(todoId, columnId, index),
-    );
+    final Future<void> move = _boardMoveTail.then((_) => operation(repo));
     _boardMoveTail = move.catchError((Object error, StackTrace stackTrace) {
       FlutterError.reportError(
         FlutterErrorDetails(
           exception: error,
           stack: stackTrace,
           library: 'todo board',
-          context: ErrorDescription('while persisting a queued card drop'),
+          context: ErrorDescription(description),
         ),
       );
     });
+    return _boardMoveTail;
+  }
+
+  void _queueBoardMove(String todoId, String columnId, int index) {
+    _queueBoardOperation(
+      (TodoRepository repo) => repo.moveOnBoard(todoId, columnId, index),
+      'while persisting a queued card move',
+    );
+  }
+
+  void _acceptBoardDrop(TodoRow todo, String columnId, int index) {
+    if (_boardDraggingId != todo.id || !_boardDragMoved) return;
+    _queueBoardMove(todo.id, columnId, index);
+  }
+
+  void _boardPointerStarted(PointerDownEvent event) {
+    // Listener wraps every card. A resting second finger must not replace the
+    // pointer and drag gate belonging to the card already in flight.
+    if (_boardDraggingId != null) return;
+    _boardPointerId = event.pointer;
+    _boardPointerDown = event.position;
+    _boardPointerCurrent = event.position;
+    _boardDraggingId = null;
+    _boardDragMoved = false;
+    _boardDragCanceled = false;
+  }
+
+  void _boardPointerMoved(PointerMoveEvent event) {
+    if (_boardPointerId != event.pointer || _boardPointerDown == null) return;
+    _boardPointerCurrent = event.position;
+    if (boardDragExceededDeadZone(_boardPointerDown!, event.position)) {
+      _boardDragMoved = true;
+    }
+  }
+
+  void _clearBoardPointer() {
+    _boardPointerId = null;
+    _boardPointerDown = null;
+    _boardPointerCurrent = null;
+    _boardDraggingId = null;
+    _boardDragMoved = false;
+    _boardDragCanceled = false;
   }
 
   /// Multi-select state. [_selecting] is the mode flag (the toolbar and
@@ -145,6 +199,14 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
   /// row that vanished under a sync can never be acted on.
   bool _selecting = false;
   final Set<String> _selected = <String>{};
+  String? _boardSelectionColumnId;
+
+  int? _boardPointerId;
+  Offset? _boardPointerDown;
+  Offset? _boardPointerCurrent;
+  String? _boardDraggingId;
+  bool _boardDragMoved = false;
+  bool _boardDragCanceled = false;
 
   @override
   void initState() {
@@ -181,6 +243,7 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
       if (board) {
         _selecting = false;
         _selected.clear();
+        _boardSelectionColumnId = null;
       }
     });
     final SharedPreferences prefs = await SharedPreferences.getInstance();
@@ -364,7 +427,17 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
   void _enterSelection(String id) {
     setState(() {
       _selecting = true;
+      _boardSelectionColumnId = null;
       _selected.add(id);
+      _editingId = null;
+    });
+  }
+
+  void _enterBoardSelection(String columnId) {
+    setState(() {
+      _selecting = true;
+      _boardSelectionColumnId = columnId;
+      _selected.clear();
       _editingId = null;
     });
   }
@@ -372,8 +445,11 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
   void _toggleSelected(String id) {
     setState(() {
       if (!_selected.remove(id)) _selected.add(id);
-      // Deselecting the last row leaves selection mode, as on Android.
-      if (_selected.isEmpty) _selecting = false;
+      // Deselecting the last list row leaves selection mode, as on Android.
+      // Board selection stays active at zero so Select all remains available.
+      if (_selected.isEmpty && _boardSelectionColumnId == null) {
+        _selecting = false;
+      }
     });
   }
 
@@ -381,6 +457,7 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
     setState(() {
       _selecting = false;
       _selected.clear();
+      _boardSelectionColumnId = null;
     });
   }
 
@@ -404,6 +481,53 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
       ).showSnackBar(SnackBar(content: Text('Could not move to-dos: $error')));
       return;
     }
+    if (mounted) _cancelSelection();
+  }
+
+  Future<void> _moveSelectedOnBoard(
+    List<TodoRow> rows,
+    List<TodoColumnRow> columns,
+  ) async {
+    final String? sourceId = _boardSelectionColumnId;
+    if (sourceId == null || _selected.isEmpty) return;
+    final List<TodoRow> selectedRows =
+        rows.where((row) => _selected.contains(row.id)).toList()
+          ..sort((a, b) => a.boardOrder.compareTo(b.boardOrder));
+    final List<String> ids = selectedRows
+        .map((row) => row.id)
+        .toList(growable: false);
+    final List<TodoColumnRow> destinations = columns
+        .where((column) => column.id != sourceId)
+        .toList(growable: false);
+    final String? destination = await showDialog<String>(
+      context: context,
+      builder: (BuildContext dialogContext) => AlertDialog(
+        title: Text('Move ${ids.length} card${ids.length == 1 ? '' : 's'} to'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            for (final TodoColumnRow column in destinations)
+              ListTile(
+                key: TodoListScreen.boardColumnChoiceKey(column.id),
+                leading: const Icon(Icons.arrow_forward),
+                title: Text(column.name),
+                onTap: () => Navigator.pop(dialogContext, column.id),
+              ),
+          ],
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
+    );
+    if (destination == null || !mounted) return;
+    await _queueBoardOperation(
+      (TodoRepository repo) => repo.moveManyOnBoard(ids, destination),
+      'while persisting a queued bulk card move',
+    );
     if (mounted) _cancelSelection();
   }
 
@@ -481,9 +605,33 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
     // Prune the selection against what is live NOW, so a row deleted or
     // synced away under us can never be bulk-acted on.
     _selected.retainAll(rows.map((TodoRow t) => t.id).toSet());
-    if (_selecting && _selected.isEmpty) {
+    final List<TodoColumnRow>? liveColumns = columns.valueOrNull;
+    if (_boardSelectionColumnId != null &&
+        liveColumns != null &&
+        !liveColumns.any(
+          (TodoColumnRow column) => column.id == _boardSelectionColumnId,
+        )) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted && _selecting && _selected.isEmpty) _cancelSelection();
+        if (!mounted) return;
+        final List<TodoColumnRow>? currentColumns = ref
+            .read(todoColumnsProvider)
+            .valueOrNull;
+        if (currentColumns != null &&
+            !currentColumns.any(
+              (TodoColumnRow column) => column.id == _boardSelectionColumnId,
+            )) {
+          _cancelSelection();
+        }
+      });
+    }
+    if (_selecting && _selected.isEmpty && _boardSelectionColumnId == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted &&
+            _selecting &&
+            _selected.isEmpty &&
+            _boardSelectionColumnId == null) {
+          _cancelSelection();
+        }
       });
     }
 
@@ -495,7 +643,11 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
       child: InstrumentScaffold(
         root: TangentRoot.todo,
         appBar: _selecting
-            ? _buildSelectionBar(context, rows)
+            ? _buildSelectionBar(
+                context,
+                rows,
+                columns.valueOrNull ?? const <TodoColumnRow>[],
+              )
             : AppBar(
                 title: const Text('To Do'),
                 // Same shared button as Recordings and Notebooks: to-dos
@@ -547,8 +699,26 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
   PreferredSizeWidget _buildSelectionBar(
     BuildContext context,
     List<TodoRow> rows,
+    List<TodoColumnRow> columns,
   ) {
     final int count = _selected.length;
+    final String? boardColumnId = _boardSelectionColumnId;
+    final List<String> selectableIds;
+    if (boardColumnId == null) {
+      selectableIds = rows.map((row) => row.id).toList(growable: false);
+    } else {
+      final Set<String> liveIds = columns.map((column) => column.id).toSet();
+      final String? fallback = columns.isEmpty ? null : columns.first.id;
+      selectableIds = rows
+          .where((row) {
+            final String? renderedColumn = liveIds.contains(row.columnId)
+                ? row.columnId
+                : fallback;
+            return renderedColumn == boardColumnId;
+          })
+          .map((row) => row.id)
+          .toList(growable: false);
+    }
     return AppBar(
       leading: IconButton(
         key: TodoListScreen.selectCancelKey,
@@ -562,20 +732,25 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
           key: TodoListScreen.selectAllKey,
           icon: const Icon(Icons.select_all),
           tooltip: 'Select all',
-          onPressed: () => _selectAll(rows.map((TodoRow t) => t.id)),
+          onPressed: () => _selectAll(selectableIds),
         ),
         IconButton(
           key: TodoListScreen.selectMoveKey,
           icon: const Icon(Icons.drive_file_move_outline),
-          tooltip: 'Move to folder',
-          onPressed: count == 0 ? null : _moveSelected,
+          tooltip: boardColumnId == null ? 'Move to folder' : 'Move to column',
+          onPressed: count == 0
+              ? null
+              : boardColumnId == null
+              ? _moveSelected
+              : () => _moveSelectedOnBoard(rows, columns),
         ),
-        IconButton(
-          key: TodoListScreen.selectDoneKey,
-          icon: const Icon(Icons.check_circle_outline),
-          tooltip: 'Mark done',
-          onPressed: count == 0 ? null : _markSelectedDone,
-        ),
+        if (boardColumnId == null)
+          IconButton(
+            key: TodoListScreen.selectDoneKey,
+            icon: const Icon(Icons.check_circle_outline),
+            tooltip: 'Mark done',
+            onPressed: count == 0 ? null : _markSelectedDone,
+          ),
         IconButton(
           key: TodoListScreen.selectDeleteKey,
           icon: const Icon(Icons.delete_outline),
@@ -782,6 +957,8 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
               tooltip: 'Column actions',
               onSelected: (String action) async {
                 switch (action) {
+                  case 'select':
+                    _enterBoardSelection(column.id);
                   case 'rename':
                     await _editColumnName(column: column);
                   case 'left':
@@ -797,6 +974,10 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
                 }
               },
               itemBuilder: (_) => <PopupMenuEntry<String>>[
+                const PopupMenuItem(
+                  value: 'select',
+                  child: Text('Select cards'),
+                ),
                 const PopupMenuItem(value: 'rename', child: Text('Rename')),
                 if (columnIndex > 0)
                   const PopupMenuItem(value: 'left', child: Text('Move left')),
@@ -832,7 +1013,12 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
                           column.id,
                           cardIndex,
                           cards[cardIndex],
-                          _buildBoardCard(context, cards[cardIndex]),
+                          _buildBoardCard(
+                            context,
+                            cards[cardIndex],
+                            column.id,
+                            columns,
+                          ),
                         );
                       },
                     ),
@@ -848,7 +1034,7 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
       key: TodoListScreen.dropKey(columnId, index),
       onWillAcceptWithDetails: (_) => true,
       onAcceptWithDetails: (details) =>
-          _queueBoardMove(details.data.id, columnId, index),
+          _acceptBoardDrop(details.data, columnId, index),
       builder: (context, candidates, rejected) => AnimatedContainer(
         duration: const Duration(milliseconds: 100),
         height: candidates.isEmpty ? 10 : 36,
@@ -868,7 +1054,7 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
       key: TodoListScreen.laneAppendDropKey(columnId),
       onWillAcceptWithDetails: (_) => true,
       onAcceptWithDetails: (details) =>
-          _queueBoardMove(details.data.id, columnId, appendIndex),
+          _acceptBoardDrop(details.data, columnId, appendIndex),
       builder: (context, candidates, rejected) => AnimatedContainer(
         duration: const Duration(milliseconds: 100),
         decoration: BoxDecoration(
@@ -887,7 +1073,7 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
       key: TodoListScreen.emptyLaneDropKey(columnId),
       onWillAcceptWithDetails: (_) => true,
       onAcceptWithDetails: (details) =>
-          _queueBoardMove(details.data.id, columnId, 0),
+          _acceptBoardDrop(details.data, columnId, 0),
       builder: (context, candidates, rejected) => AnimatedContainer(
         key: TodoListScreen.dropKey(columnId, 0),
         duration: const Duration(milliseconds: 100),
@@ -913,7 +1099,7 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
       key: TodoListScreen.cardDropKey(columnId, todo.id),
       onWillAcceptWithDetails: (_) => true,
       onAcceptWithDetails: (details) =>
-          _queueBoardMove(details.data.id, columnId, index),
+          _acceptBoardDrop(details.data, columnId, index),
       builder: (context, candidates, rejected) => AnimatedContainer(
         duration: const Duration(milliseconds: 100),
         decoration: BoxDecoration(
@@ -930,19 +1116,36 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
     );
   }
 
-  Widget _buildBoardCard(BuildContext context, TodoRow todo) {
+  Widget _buildBoardCard(
+    BuildContext context,
+    TodoRow todo,
+    String renderedColumnId,
+    List<TodoColumnRow> columns,
+  ) {
     final bool done = todo.doneAt != null;
+    final bool selectingColumn =
+        _selecting && _boardSelectionColumnId == renderedColumnId;
+    final bool selected = _selected.contains(todo.id);
     final TodoRepository repo = ref.read(todoRepositoryProvider);
     final Widget card = Card(
       key: TodoListScreen.cardKey(todo.id),
       margin: const EdgeInsets.symmetric(horizontal: 8),
       child: ListTile(
         dense: true,
-        leading: Checkbox(
-          key: Key('todo-check-${todo.id}'),
-          value: done,
-          onChanged: (_) => repo.toggle(todo.id),
-        ),
+        selected: selectingColumn && selected,
+        selectedTileColor: Theme.of(context).colorScheme.primaryContainer,
+        onTap: selectingColumn ? () => _toggleSelected(todo.id) : null,
+        leading: selectingColumn
+            ? Checkbox(
+                key: Key('todo-select-${todo.id}'),
+                value: selected,
+                onChanged: (_) => _toggleSelected(todo.id),
+              )
+            : Checkbox(
+                key: Key('todo-check-${todo.id}'),
+                value: done,
+                onChanged: _selecting ? null : (_) => repo.toggle(todo.id),
+              ),
         title: Text(
           todo.body,
           style: done
@@ -950,27 +1153,169 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
               : null,
         ),
         subtitle: todo.dueDate == null ? null : Text(todo.dueDate!),
-        trailing: IconButton(
-          key: Key('todo-menu-${todo.id}'),
-          icon: const Icon(Icons.more_vert),
-          tooltip: 'More',
-          onPressed: () => _showRowMenu(todo),
+        trailing: _selecting
+            ? null
+            : IconButton(
+                key: Key('todo-menu-${todo.id}'),
+                icon: const Icon(Icons.more_vert),
+                tooltip: 'More',
+                onPressed: () => _showRowMenu(todo),
+              ),
+      ),
+    );
+    if (_selecting) return card;
+    return Listener(
+      onPointerDown: _boardPointerStarted,
+      onPointerMove: _boardPointerMoved,
+      onPointerUp: (PointerUpEvent event) {
+        if (_boardPointerId == event.pointer && _boardDraggingId == null) {
+          _clearBoardPointer();
+        }
+      },
+      onPointerCancel: (PointerCancelEvent event) {
+        if (_boardPointerId == event.pointer) {
+          if (_boardDraggingId == null) {
+            _clearBoardPointer();
+          } else {
+            _boardDragCanceled = true;
+          }
+        }
+      },
+      child: LongPressDraggable<TodoRow>(
+        delay: const Duration(milliseconds: 200),
+        maxSimultaneousDrags: 1,
+        data: todo,
+        onDragStarted: () => _boardDraggingId ??= todo.id,
+        onDragUpdate: (DragUpdateDetails details) {
+          if (_boardDraggingId != todo.id) return;
+          _boardPointerCurrent = details.globalPosition;
+          final Offset? origin = _boardPointerDown;
+          if (origin != null &&
+              boardDragExceededDeadZone(origin, details.globalPosition)) {
+            _boardDragMoved = true;
+          }
+        },
+        onDragEnd: (_) {
+          if (_boardDraggingId != todo.id) return;
+          final Offset? origin = _boardPointerDown;
+          final Offset? current = _boardPointerCurrent;
+          final bool moved =
+              _boardDragMoved ||
+              (origin != null &&
+                  current != null &&
+                  boardDragExceededDeadZone(origin, current));
+          final bool canceled = _boardDragCanceled;
+          _clearBoardPointer();
+          if (!moved && !canceled && mounted) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) {
+                _showBoardCardMenu(todo, renderedColumnId, columns);
+              }
+            });
+          }
+        },
+        feedback: Material(
+          elevation: 6,
+          borderRadius: BorderRadius.circular(12),
+          child: SizedBox(width: 284, child: card),
+        ),
+        childWhenDragging: Opacity(opacity: .3, child: card),
+        child: card,
+      ),
+    );
+  }
+
+  Future<void> _showBoardCardMenu(
+    TodoRow todo,
+    String currentColumnId,
+    List<TodoColumnRow> columns,
+  ) async {
+    final String? action = await showModalBottomSheet<String>(
+      context: context,
+      builder: (BuildContext sheetContext) => SafeArea(
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
+                child: Text(
+                  todo.body,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(sheetContext).textTheme.titleMedium,
+                ),
+              ),
+              ListTile(
+                key: TodoListScreen.boardDeleteKey,
+                leading: Icon(
+                  Icons.delete_outline,
+                  color: Theme.of(sheetContext).colorScheme.error,
+                ),
+                title: Text(
+                  'Delete',
+                  style: TextStyle(
+                    color: Theme.of(sheetContext).colorScheme.error,
+                  ),
+                ),
+                onTap: () => Navigator.pop(sheetContext, 'delete'),
+              ),
+              ListTile(
+                key: TodoListScreen.boardFolderMoveKey,
+                leading: const Icon(Icons.drive_file_move_outline),
+                title: const Text('Move to folder'),
+                onTap: () => Navigator.pop(sheetContext, 'folder'),
+              ),
+              const Divider(height: 1),
+              Padding(
+                key: TodoListScreen.boardMenuHeaderKey,
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
+                child: Text(
+                  'Kanban Board',
+                  style: Theme.of(sheetContext).textTheme.titleSmall,
+                ),
+              ),
+              for (final TodoColumnRow column in columns)
+                ListTile(
+                  key: TodoListScreen.boardColumnChoiceKey(column.id),
+                  enabled: column.id != currentColumnId,
+                  leading: Icon(
+                    column.id == currentColumnId
+                        ? Icons.check
+                        : Icons.arrow_forward,
+                  ),
+                  title: Text(column.name),
+                  onTap: column.id == currentColumnId
+                      ? null
+                      : () =>
+                            Navigator.pop(sheetContext, 'column:${column.id}'),
+                ),
+              const SizedBox(height: 8),
+            ],
+          ),
         ),
       ),
     );
-    // Let touch scrolling win unless the card is deliberately held. Board
-    // mode has no long-press selection gesture; checkbox and ⋮ remain explicit.
-    return LongPressDraggable<TodoRow>(
-      delay: const Duration(milliseconds: 200),
-      data: todo,
-      feedback: Material(
-        elevation: 6,
-        borderRadius: BorderRadius.circular(12),
-        child: SizedBox(width: 284, child: card),
-      ),
-      childWhenDragging: Opacity(opacity: .3, child: card),
-      child: card,
-    );
+    if (action == null || !mounted) return;
+    if (action == 'delete') {
+      await _delete(todo);
+      return;
+    }
+    if (action == 'folder') {
+      await _move(todo);
+      return;
+    }
+    if (action.startsWith('column:')) {
+      await _queueBoardOperation(
+        (TodoRepository repo) => repo.moveOnBoard(
+          todo.id,
+          action.substring('column:'.length),
+          1 << 30,
+        ),
+        'while persisting a queued menu card move',
+      );
+    }
   }
 
   Future<void> _editColumnName({TodoColumnRow? column}) async {
