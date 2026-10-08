@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE en-export SYSTEM "http://xml.evernote.com/pub/evernote-export4.dtd">
+<en-export export-date="20261007T120000Z" application="Evernote" version="10">
+  <note notebook="Work">
+    <title>Planning</title>
+    <content><![CDATA[<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE en-note SYSTEM "http://xml.evernote.com/pub/enml2.dtd"><en-note><div>Opening paragraph</div><div><en-todo checked="true"/>Ship release</div><div><en-media type="image/png" hash="8feea4e2ac428d1b5bda8b7ec9955825"/></div></en-note>]]></content>
+    <created>20261001T101500Z</created>
+    <updated>20261002T111500Z</updated>
+    <resource>
+      <data encoding="base64">iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==</data>
+      <mime>image/png</mime>
+      <resource-attributes><file-name>pixel.png</file-name></resource-attributes>
+    </resource>
+  </note>
+  <note>
+    <title>Second note</title>
+    <content><![CDATA[<en-note><div>Line one<br/>Line two</div></en-note>]]></content>
+    <created>20261003T120000Z</created>
+  </note>
+</en-export>
