@@ -1543,6 +1543,8 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
         syncStates,
         inkIndexEntries,
         askMessages,
+        todos,
+        todoColumns,
       ])
         TableUpdate.onTable(table),
     });

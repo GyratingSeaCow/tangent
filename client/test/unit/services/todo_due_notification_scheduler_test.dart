@@ -2,7 +2,9 @@
 import 'dart:async';
 
 import 'package:drift/native.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:tangent/data/local_db.dart';
 import 'package:tangent/data/todo_repository.dart';
 import 'package:tangent/services/todo_due_notification_scheduler.dart';
@@ -197,6 +199,30 @@ void main() {
     },
   );
 
+  test('shared point-of-use requester persists one permission attempt', () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final ProviderContainer container = ProviderContainer(
+      overrides: <Override>[
+        todoDueNotificationSchedulerProvider.overrideWithValue(scheduler),
+      ],
+    );
+    addTearDown(container.dispose);
+    final Future<void> Function() request =
+        container.read(todoDuePermissionRequesterProvider);
+
+    await request();
+    await request();
+
+    expect(port.notificationPermissionRequests, 1);
+    expect(port.exactPermissionRequests, 1);
+    expect(
+      (await SharedPreferences.getInstance()).getBool(
+        kTodoDuePermissionRequestedKey,
+      ),
+      isTrue,
+    );
+  });
+
   test('notification ids are deterministic, positive, and collision-safe', () {
     final Map<String, int> forward =
         TodoDueNotificationScheduler.notificationIdsFor(<String>[
@@ -246,7 +272,7 @@ void main() {
     expect((await changed).fireAt, DateTime(2026, 10, 12, 16, 45));
   });
 
-  test('mark done action uses repository toggle and rightmost lane', () async {
+  test('mark done action is idempotent and uses rightmost lane', () async {
     final TodoRow todo = await repo.add(
       'action',
       dueDate: '2026-10-10',
@@ -273,5 +299,13 @@ void main() {
     expect(done.columnId, columns.last.id);
     expect(done.syncDirty, isTrue);
     expect(cancelled, <int>[42]);
+
+    await handler.handle(
+      actionId: kTodoDoneActionId,
+      payload: todoNotificationPayload(todo.id),
+      notificationId: 43,
+    );
+    expect((await db.getTodoRow(todo.id))!.doneAt, done.doneAt);
+    expect(cancelled, <int>[42, 43]);
   });
 }

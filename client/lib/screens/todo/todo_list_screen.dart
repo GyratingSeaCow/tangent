@@ -119,9 +119,6 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
   String? _pendingDueDate;
   String? _pendingDueTime;
 
-  static const String _duePermissionRequestedKey =
-      'todo_due_permissions_requested';
-
   /// The item whose text is being edited in place, if any.
   String? _editingId;
   final TextEditingController _editController = TextEditingController();
@@ -311,13 +308,8 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
   }
 
   Future<void> _requestDuePermissionsAtPointOfUse() async {
-    final SharedPreferences prefs = await SharedPreferences.getInstance();
-    if (prefs.getBool(_duePermissionRequestedKey) == true) return;
     try {
-      await ref
-          .read(todoDueNotificationSchedulerProvider)
-          .requestPermissionsForDueTime();
-      await prefs.setBool(_duePermissionRequestedKey, true);
+      await ref.read(todoDuePermissionRequesterProvider)();
     } on UnimplementedError {
       // Widget/test hosts and unsupported platforms intentionally omit a port.
     }
@@ -1207,7 +1199,9 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
             : Checkbox(
                 key: Key('todo-check-${todo.id}'),
                 value: done,
-                onChanged: _selecting ? null : (_) => repo.toggle(todo.id),
+                onChanged: _selecting
+                    ? null
+                    : (bool? value) => repo.setDone(todo.id, value ?? false),
               ),
         title: Text(
           todo.body,
@@ -1527,7 +1521,7 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
           : Checkbox(
               key: Key('todo-check-${todo.id}'),
               value: done,
-              onChanged: (_) => repo.toggle(todo.id),
+              onChanged: (bool? value) => repo.setDone(todo.id, value ?? false),
             ),
       title: _editingId == todo.id && !_selecting
           ? TextField(

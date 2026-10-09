@@ -10,6 +10,7 @@ library;
 import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../data/local_db.dart';
 import '../data/todo_repository.dart';
@@ -18,6 +19,13 @@ const String kTodoDueChannelId = 'todo_due_times';
 const String kTodoDueChannelName = 'To-do due times';
 const String kTodoDoneActionId = 'todo_mark_done';
 const String kTodoPayloadPrefix = 'todo:';
+
+/// Native exact-alarm permission broadcasts enqueue this WorkManager task.
+/// It is intentionally separate from network sync: re-arming is local and
+/// must work offline without opening the app.
+const String kExactAlarmReconcileTaskName =
+    'tangent.exactAlarmPermission.reconcile';
+const String kTodoDuePermissionRequestedKey = 'todo_due_permissions_requested';
 
 String todoNotificationPayload(String todoId) => '$kTodoPayloadPrefix$todoId';
 
@@ -64,6 +72,11 @@ class TodoDueNotificationScheduler {
     await _port.requestNotificationPermission();
     await _port.requestExactAlarmPermission();
   }
+
+  Future<bool> exactAllowed() => _port.canScheduleExact();
+
+  Future<bool> requestExactAlarmPermission() =>
+      _port.requestExactAlarmPermission();
 
   /// Replaces the platform pending set with all future, live, open todos.
   Future<void> reconcile() async {
@@ -127,7 +140,9 @@ class TodoDueNotificationScheduler {
   }
 
   /// Deterministic and collision-safe for the complete current todo set.
-  /// Sorting makes the linear-probe result independent of query order.
+  /// Sorting makes the linear-probe result independent of query order; adding
+  /// a new colliding id can move later assignments, so ids are not per-todo
+  /// stable across different sets. Reconciliation repairs the pending set.
   static Map<String, int> notificationIdsFor(
     Iterable<String> todoIds, {
     int Function(String value)? hash,
@@ -210,6 +225,21 @@ todoDueNotificationSchedulerProvider = Provider<TodoDueNotificationScheduler>((
     loadTodos: () => ref.read(todoRepositoryProvider).listTodos(),
   );
 });
+
+/// Shared point-of-use gate for picker-created and voice-created timed todos.
+/// The callback is injectable through Riverpod, and the persisted attempt bit
+/// prevents repeated OS prompts after the user has made a choice.
+final Provider<Future<void> Function()> todoDuePermissionRequesterProvider =
+    Provider<Future<void> Function()>((Ref ref) {
+      return () async {
+        final SharedPreferences prefs = await SharedPreferences.getInstance();
+        if (prefs.getBool(kTodoDuePermissionRequestedKey) == true) return;
+        await ref
+            .read(todoDueNotificationSchedulerProvider)
+            .requestPermissionsForDueTime();
+        await prefs.setBool(kTodoDuePermissionRequestedKey, true);
+      };
+    });
 
 final Provider<TodoDueNotificationOwner> todoDueNotificationOwnerProvider =
     Provider<TodoDueNotificationOwner>((Ref ref) {

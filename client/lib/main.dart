@@ -103,6 +103,9 @@ void backgroundSyncDispatcher() {
   Workmanager().executeTask((String task, Map<String, dynamic>? input) async {
     if (task == kDueReminderTaskName) return _runDueReminderTask();
     if (task == kMorningReviewTaskName) return _runMorningReviewTask();
+    if (task == kExactAlarmReconcileTaskName) {
+      return _runExactAlarmPermissionReconcileTask();
+    }
     if (task != kDocumentSyncTaskName) return true;
     LocalDb? db;
     try {
@@ -145,6 +148,42 @@ void backgroundSyncDispatcher() {
       await db?.close();
     }
   });
+}
+
+/// Re-arms every alarm family after Android grants exact-alarm access.
+/// Enqueued directly by the manifest receiver, so it runs with no activity
+/// and no network. Android does not send this broadcast on revocation (and
+/// deletes existing exact alarms then); a later grant repairs them immediately.
+Future<bool> _runExactAlarmPermissionReconcileTask() async {
+  LocalDb? db;
+  try {
+    WidgetsFlutterBinding.ensureInitialized();
+    db = LocalDb();
+    final LocalDb handle = db;
+    await TodoDueNotificationScheduler(
+      port: AndroidTodoDueNotificationPort(),
+      loadTodos: () => TodoRepository(db: handle).listTodos(),
+    ).reconcile();
+
+    final SettingsStore settings = await SettingsStore.load();
+    if (settings.remindersEnabled) {
+      await DueReminderScheduler(
+        port: AndroidDueReminderPort(),
+        loadTodos: () => TodoRepository(db: handle).listTodos(),
+      ).scheduleNext(minuteOfDay: settings.reminderMinuteOfDay);
+    }
+    if (settings.morningReviewEnabled) {
+      await MorningReviewScheduler(
+        port: _androidMorningReviewPort(),
+        loadDumps: () => handle.listDumps(limit: 500),
+      ).scheduleNext(minuteOfDay: settings.morningReviewMinuteOfDay);
+    }
+    return true;
+  } catch (_) {
+    return false;
+  } finally {
+    await db?.close();
+  }
 }
 
 /// The daily reminder, at fire time: read the list AS IT IS NOW, post the
@@ -249,8 +288,8 @@ void _onNotificationTap(NotificationResponse response) {
 }
 
 /// Android action responses run in a background isolate. Build fresh database
-/// and plugin handles, then route through TodoRepository.toggle so completion
-/// is sync-dirty and files into the rightmost Kanban lane exactly like the UI.
+/// and plugin handles, then route through TodoRepository.setDone so completion
+/// is idempotent, sync-dirty, and files into the rightmost Kanban lane like UI.
 @pragma('vm:entry-point')
 void onTodoNotificationBackgroundResponse(NotificationResponse response) async {
   if (response.actionId != kTodoDoneActionId) return;
@@ -433,32 +472,18 @@ Future<void> _runTangent(List<String> args, DebugLogBuffer debugLog) async {
     // notifier can claim the singleton plugin: initialize() replaces the
     // tap callback, and the first caller wins.
     late final AndroidTodoDueNotificationPort todoPort;
-    late final TodoNotificationActionHandler todoActionHandler;
-    void onAndroidNotificationResponse(NotificationResponse response) {
-      if (response.actionId == kTodoDoneActionId) {
-        unawaited(
-          todoActionHandler.handle(
-            actionId: response.actionId,
-            payload: response.payload,
-            notificationId: response.id ?? -1,
-          ),
-        );
-        return;
-      }
-      _onNotificationTap(response);
-    }
 
     androidReminderPort = AndroidDueReminderPort(
-      onResponse: onAndroidNotificationResponse,
+      onResponse: _onNotificationTap,
       onBackgroundResponse: onTodoNotificationBackgroundResponse,
     );
     todoPort = AndroidTodoDueNotificationPort(
-      onResponse: onAndroidNotificationResponse,
+      // showsUserInterface:false actions are always dispatched through the
+      // plugin's background engine, even while this activity is foreground.
+      // The foreground callback therefore handles taps only; completion lives
+      // exclusively in onTodoNotificationBackgroundResponse above.
+      onResponse: _onNotificationTap,
       onBackgroundResponse: onTodoNotificationBackgroundResponse,
-    );
-    todoActionHandler = TodoNotificationActionHandler(
-      repository: TodoRepository(db: db),
-      cancelNotification: todoPort.cancelTodo,
     );
     androidTodoDuePort = todoPort;
     try {
@@ -927,7 +952,7 @@ class _TranscriptionLifecycleHostState
       // The background sync isolate writes through its own DB connection,
       // which this connection's stream watchers cannot observe. Resume is
       // the moment the user looks at the screen again — re-emit the synced
-      // tables so notebooks pulled while the app slept actually appear.
+      // tables so pulled notebooks and notification-completed todos appear.
       unawaited(ref.read(localDbProvider).refreshExternalWrites());
       // Fresh eyes deserve fresh data: without this, an edit made on the
       // other device inside the last half hour sits invisible until the

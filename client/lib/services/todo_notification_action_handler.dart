@@ -5,8 +5,8 @@ import '../data/local_db.dart';
 import '../data/todo_repository.dart';
 import 'todo_due_notification_scheduler.dart';
 
-/// Handles notification actions through the same repository toggle used by
-/// the checkbox. That preserves sync-dirty stamping and rightmost-lane filing.
+/// Handles notification actions through the repository's idempotent complete
+/// operation. That preserves sync-dirty stamping and rightmost-lane filing.
 class TodoNotificationActionHandler {
   const TodoNotificationActionHandler({
     required this.repository,
@@ -29,7 +29,7 @@ class TodoNotificationActionHandler {
       await cancelNotification(notificationId);
       return false;
     }
-    if (row.doneAt == null) await repository.toggle(todoId);
+    if (row.doneAt == null) await repository.setDone(todoId, true);
     await cancelNotification(notificationId);
     return true;
   }

@@ -300,14 +300,27 @@ class TodoRepository {
   /// (clears it). Completing a card files it at the end of the rightmost live
   /// Kanban column; unchecking never moves it back.
   Future<void> toggle(String id) async {
+    final TodoRow? row = await _db.getTodoRow(id);
+    if (row == null) return;
+    await setDone(id, row.doneAt == null);
+  }
+
+  /// Sets the checkbox to the UI's requested value rather than blindly
+  /// inverting the durable row. This matters when a background notification
+  /// action completed the row through another database connection just before
+  /// the foreground watcher refreshed: an old unchecked tap remains an
+  /// idempotent "complete", never an accidental un-complete.
+  Future<void> setDone(String id, bool done) async {
     final List<TodoColumnRow> columns = await ensureColumns();
     await _db.transaction(() async {
       final TodoRow? row = await _db.getTodoRow(id);
       if (row == null) return;
-      if (row.doneAt != null) {
+      if (!done) {
+        if (row.doneAt == null) return;
         await _write(id, const TodosCompanion(doneAt: Value(null)));
         return;
       }
+      if (row.doneAt != null) return;
       await _write(id, TodosCompanion(doneAt: Value(_stamp())));
       final String lastColumnId = columns.last.id;
       if (row.columnId != lastColumnId) {

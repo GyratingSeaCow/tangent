@@ -41,6 +41,7 @@ Future<List<TodoRow>> captureVoiceTodos({
   required String? transcript,
   required DateTime recordedOn,
   TodoRepository? repository,
+  Future<void> Function()? onTimedTodosCreated,
 }) async {
   final TodoRepository repo = repository ?? TodoRepository(db: db);
   // The recording DAY is a local-calendar notion; sync hands us UTC stamps.
@@ -60,7 +61,7 @@ Future<List<TodoRow>> captureVoiceTodos({
   if (existing.isEmpty) {
     if (entries.isEmpty) return const <TodoRow>[];
     final String fingerprint = captureFingerprintOf(entries);
-    return <TodoRow>[
+    final List<TodoRow> created = <TodoRow>[
       for (final VoiceTodoItem entry in entries)
         await repo.add(
           entry.text,
@@ -71,6 +72,10 @@ Future<List<TodoRow>> captureVoiceTodos({
           captureFingerprint: fingerprint,
         ),
     ];
+    if (created.any((TodoRow row) => row.dueTime != null)) {
+      await onTimedTodosCreated?.call();
+    }
+    return created;
   }
   // Something was captured before. Same result → nothing to do; and a
   // transcript that no longer yields any item must not touch rows either.
@@ -81,6 +86,7 @@ Future<List<TodoRow>> captureVoiceTodos({
   }
   // A re-transcription. Reconcile by text; never delete, never resurrect.
   final List<TodoRow> created = <TodoRow>[];
+  bool timedTodoChanged = false;
   for (final VoiceTodoItem entry in entries) {
     final Iterable<TodoRow> sameText = existing.where(
       (TodoRow row) => row.body == entry.text,
@@ -96,6 +102,7 @@ Future<List<TodoRow>> captureVoiceTodos({
           captureFingerprint: fingerprint,
         ),
       );
+      timedTodoChanged |= entry.dueTime != null;
       continue;
     }
     for (final TodoRow row in sameText) {
@@ -104,11 +111,13 @@ Future<List<TodoRow>> captureVoiceTodos({
       if (row.deletedAt != null) continue;
       if (row.dueDate == null && entry.dueDate != null) {
         await repo.setDueDate(row.id, entry.dueDate, dueTime: entry.dueTime);
+        timedTodoChanged |= entry.dueTime != null;
       }
     }
   }
   // Remember this parse so the same transcript arriving again is a no-op.
   await repo.setCaptureFingerprint(dumpId, fingerprint);
+  if (timedTodoChanged) await onTimedTodosCreated?.call();
   return created;
 }
 
@@ -138,6 +147,7 @@ Future<void> captureVoiceTodosQuietly({
   required String dumpId,
   required String? transcript,
   required DateTime recordedOn,
+  Future<void> Function()? onTimedTodosCreated,
 }) async {
   try {
     await captureVoiceTodos(
@@ -145,6 +155,7 @@ Future<void> captureVoiceTodosQuietly({
       dumpId: dumpId,
       transcript: transcript,
       recordedOn: recordedOn,
+      onTimedTodosCreated: onTimedTodosCreated,
     );
   } catch (_) {
     // Deliberately ignored; see above.

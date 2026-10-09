@@ -124,6 +124,16 @@ class AndroidDueReminderPort implements DueReminderPort {
     }
   }
 
+  @override
+  Future<bool> requestExactAlarmPermission() async {
+    await ensureReady();
+    try {
+      return await _android?.requestExactAlarmsPermission() ?? true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   NotificationDetails _details() => NotificationDetails(
     android: AndroidNotificationDetails(
       _channelId,

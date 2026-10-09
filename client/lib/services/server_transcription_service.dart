@@ -88,8 +88,10 @@ class ServerTranscriptionService extends ChangeNotifier {
     Duration recoveryRetryBaseDelay = const Duration(seconds: 1),
     Duration recoveryRetryMaxDelay = const Duration(seconds: 30),
     TranscriptionOutcomeHook? onOutcome,
+    Future<void> Function()? onVoiceTimedTodoCreated,
   })  : _client = client,
         _onOutcome = onOutcome,
+        _onVoiceTimedTodoCreated = onVoiceTimedTodoCreated,
         _db = db,
         _access = recordingAccess,
         _mutations = mutations,
@@ -122,6 +124,7 @@ class ServerTranscriptionService extends ChangeNotifier {
   /// the shade can never announce an outcome the database does not hold.
   /// Null when nobody listens (tests, hosts without a shade).
   final TranscriptionOutcomeHook? _onOutcome;
+  final Future<void> Function()? _onVoiceTimedTodoCreated;
 
   final List<_QueuedTranscription> _queue = [];
   final Map<String, DumpRow> _durableRows = {};
@@ -763,6 +766,7 @@ class ServerTranscriptionService extends ChangeNotifier {
       dumpId: row.id,
       transcript: transcript,
       recordedOn: row.createdAt,
+      onTimedTodosCreated: _onVoiceTimedTodoCreated,
     );
     await captureVoiceEventsQuietly(
       db: _db,
@@ -1145,6 +1149,7 @@ class ServerTranscriptionService extends ChangeNotifier {
         dumpId: row.id,
         transcript: stored,
         recordedOn: row.createdAt,
+        onTimedTodosCreated: _onVoiceTimedTodoCreated,
       );
       await captureVoiceEventsQuietly(
         db: _db,

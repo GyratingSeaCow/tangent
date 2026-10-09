@@ -70,6 +70,36 @@ void main() {
     }
   });
 
+  test(
+      'voice-created timed todo requests reminder permissions once at capture',
+      () async {
+    int permissionRequests = 0;
+    Future<List<TodoRow>> capture(String id, String text) => captureVoiceTodos(
+          db: db,
+          dumpId: id,
+          transcript: text,
+          recordedOn: DateTime(2026, 9, 27, 14, 3),
+          repository: repo,
+          onTimedTodosCreated: () async => permissionRequests++,
+        );
+
+    final List<TodoRow> created = await capture(
+      dumpId,
+      'add to my to do list call mom tomorrow at 3 pm',
+    );
+    expect(created.single.dueDate, '2026-09-28');
+    expect(created.single.dueTime, '15:00');
+    expect(permissionRequests, 1);
+
+    await capture(dumpId, 'add to my to do list call mom tomorrow at 3 pm');
+    await capture('dump-untimed', 'add to my to do list buy milk');
+    expect(
+      permissionRequests,
+      1,
+      reason: 'idempotent replay and untimed voice capture never re-prompt',
+    );
+  });
+
   test('the SAME transcript arriving twice creates nothing new', () async {
     await arrive();
     clock = clock.add(const Duration(minutes: 5));

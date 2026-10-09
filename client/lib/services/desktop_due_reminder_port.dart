@@ -117,6 +117,9 @@ class DesktopDueReminderPort implements DueReminderPort {
   @override
   Future<bool> canScheduleExact() async => true;
 
+  @override
+  Future<bool> requestExactAlarmPermission() async => true;
+
   /// [digest] is deliberately ignored: desktop always builds live at fire
   /// time, so a to-do added or completed after arming is never misreported.
   @override

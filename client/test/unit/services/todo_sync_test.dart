@@ -140,17 +140,24 @@ void main() {
   );
 
   Map<String, dynamic> fullPayload({
+    String id = 'remote-1',
     String text = 'from the peer',
     String updatedAt = '2026-09-27T10:00:00.000Z',
     Object? doneAt,
     Object? dueDate,
+    Object? dueTime,
     Object? deletedAt,
   }) => <String, dynamic>{
+    'id': id,
     'text': text,
     'done_at': doneAt,
     'due_date': dueDate,
+    'due_time': dueTime,
     'source': 'manual',
     'source_ref': null,
+    'folder_id': null,
+    'column_id': null,
+    'board_order': 0,
     'created_at': '2026-09-27T09:00:00.000Z',
     'updated_at': updatedAt,
     'deleted_at': deletedAt,
@@ -1165,17 +1172,25 @@ void main() {
   );
 
   test(
-    'old peer due_date without due_time defaults new rows to 09:00',
+    'old production payload without due_time defaults once without churn',
     () async {
       client.pullPages = <SyncPullPage>[
         SyncPullPage(
           changes: <RemoteChange>[
             todoChange(
               payload: <String, dynamic>{
+                'id': 'remote-1',
                 'text': 'legacy dated todo',
+                'done_at': null,
                 'due_date': '2026-10-12',
+                'source': 'manual',
+                'source_ref': null,
+                'folder_id': null,
+                'column_id': null,
+                'board_order': 0,
                 'created_at': '2026-09-27T09:00:00.000Z',
                 'updated_at': '2026-09-27T10:00:00.000Z',
+                'deleted_at': null,
               },
             ),
           ],
@@ -1189,16 +1204,25 @@ void main() {
       final TodoRow row = (await db.getTodoRow('remote-1'))!;
       expect(row.dueDate, '2026-10-12');
       expect(row.dueTime, defaultTodoDueTime);
+      expect(row.syncDirty, isFalse);
+
+      client.pushedChanges = null;
+      await build().syncNow();
+      expect(
+        client.pushedChanges,
+        isNull,
+        reason: 'the client-side 09:00 compatibility default is not re-pushed',
+      );
     },
   );
 
   test(
-    'sync pull due_time change reschedules the local notification',
+    'device A pushes 17:00, server-shaped wire reaches B and schedules 17:00',
     () async {
       final TodoRow local = await repo.add(
         'timed local',
         dueDate: '2026-10-15',
-        dueTime: '15:30',
+        dueTime: '17:00',
       );
       client.pushResults = <PushResult>[
         PushResult(
@@ -1208,17 +1232,7 @@ void main() {
           applied: true,
         ),
       ];
-      final _SyncTodoDuePort duePort = _SyncTodoDuePort();
-      final TodoDueNotificationScheduler dueScheduler =
-          TodoDueNotificationScheduler(
-            port: duePort,
-            loadTodos: repo.listTodos,
-            now: () => DateTime(2026, 10, 9, 8),
-          );
-      await dueScheduler.reconcile();
-      expect(duePort.scheduled.values.single, DateTime(2026, 10, 15, 15, 30));
-
-      await build(onTodoChanged: dueScheduler.reconcile).syncNow();
+      await build().syncNow();
       final Map<String, dynamic> pushed =
           client.pushedChanges!.singleWhere(
                 (Map<String, dynamic> change) =>
@@ -1226,34 +1240,54 @@ void main() {
               )['payload']
               as Map<String, dynamic>;
       expect(pushed['due_date'], '2026-10-15');
-      expect(pushed['due_time'], '15:30');
+      expect(pushed['due_time'], '17:00');
 
-      client.pullPages = <SyncPullPage>[
+      final LocalDb deviceB = LocalDb.forTesting(NativeDatabase.memory());
+      addTearDown(deviceB.close);
+      final TodoRepository repoB = TodoRepository(db: deviceB);
+      final _RecordingClient clientB = _RecordingClient();
+      final _SyncTodoDuePort duePort = _SyncTodoDuePort();
+      final TodoDueNotificationScheduler dueScheduler =
+          TodoDueNotificationScheduler(
+            port: duePort,
+            loadTodos: repoB.listTodos,
+            now: () => DateTime(2026, 10, 9, 8),
+          );
+      clientB.pullPages = <SyncPullPage>[
         SyncPullPage(
           changes: <RemoteChange>[
             todoChange(
               seq: 5,
               id: local.id,
-              payload: <String, dynamic>{
-                ...fullPayload(
-                  text: 'timed local',
-                  updatedAt: '2027-10-01T12:00:00.000Z',
-                  dueDate: '2026-10-16',
-                ),
-                'due_time': '16:45',
-              },
+              payload: fullPayload(
+                id: local.id,
+                text: 'timed local',
+                updatedAt: local.updatedAt,
+                dueDate: '2026-10-15',
+                dueTime: '17:00',
+              ),
             ),
           ],
           headSeq: 5,
           hasMore: false,
         ),
       ];
-      await build(onTodoChanged: dueScheduler.reconcile).syncNow();
+      final DocumentSyncEngine deviceBEngine = DocumentSyncEngine(
+        db: () => deviceB,
+        client: () => clientB,
+        connectivity: _OnlineConnectivity(),
+        deviceLabel: () async => 'device B',
+        newDeviceId: 'device-b',
+        onTodoChanged: dueScheduler.reconcile,
+      );
+      addTearDown(deviceBEngine.dispose);
+      await deviceBEngine.syncNow();
 
-      final TodoRow pulled = (await db.getTodoRow(local.id))!;
-      expect(pulled.dueDate, '2026-10-16');
-      expect(pulled.dueTime, '16:45');
-      expect(duePort.scheduled.values.single, DateTime(2026, 10, 16, 16, 45));
+      final TodoRow pulled = (await deviceB.getTodoRow(local.id))!;
+      expect(pulled.dueDate, '2026-10-15');
+      expect(pulled.dueTime, '17:00');
+      expect(pulled.syncDirty, isFalse);
+      expect(duePort.scheduled.values.single, DateTime(2026, 10, 15, 17));
     },
   );
 

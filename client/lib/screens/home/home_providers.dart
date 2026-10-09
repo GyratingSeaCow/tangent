@@ -88,6 +88,10 @@ final serverTranscriptionServiceProvider =
         db: ref.watch(localDbProvider),
         recordingAccess: ref.watch(recordingAccessProvider),
         mutations: ref.watch(recordingMutationsProvider),
+        // A spoken due date/time is a foreground point-of-use action just as
+        // much as confirming the picker. Remote sync capture has no callback,
+        // so it can never prompt from a background isolate.
+        onVoiceTimedTodoCreated: ref.read(todoDuePermissionRequesterProvider),
         // N4: the outcome notice fires from the terminal write itself. Read,
         // not watched: the notifier never changes identity in a session.
         onOutcome: ({required dumpId, required title, required failed}) {
