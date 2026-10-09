@@ -57,15 +57,14 @@ sqlite3.Database _v18Database() {
 }
 
 Set<String> _columns(sqlite3.Database sql, String table) => <String>{
-      for (final sqlite3.Row row in sql.select("PRAGMA table_info('$table')"))
-        row['name'] as String,
-    };
+  for (final sqlite3.Row row in sql.select("PRAGMA table_info('$table')"))
+    row['name'] as String,
+};
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test(
-      'a v18 recording survives the upgrade and gains a NULL summary_template '
+  test('a v18 recording survives the upgrade and gains a NULL summary_template '
       'column', () async {
     final sqlite3.Database raw = _v18Database();
     raw.execute(
@@ -80,7 +79,7 @@ void main() {
     addTearDown(db.close);
     await db.listDumps();
 
-    expect(raw.userVersion, 35);
+    expect(raw.userVersion, 36);
     expect(_columns(raw, 'dumps'), contains('summary_template'));
     final DumpRow row = (await db.getDump('old-dump'))!;
     expect(row.transcript, 'we talked', reason: 'existing data survives');
@@ -102,8 +101,7 @@ void main() {
     );
   });
 
-  test(
-      'the upgrade is safe when the summary_template column somehow already '
+  test('the upgrade is safe when the summary_template column somehow already '
       'exists', () async {
     final sqlite3.Database raw = _v18Database();
     raw.execute('ALTER TABLE dumps ADD COLUMN summary_template TEXT;');
@@ -112,66 +110,70 @@ void main() {
     addTearDown(db.close);
     await db.listDumps();
 
-    expect(raw.userVersion, 35);
+    expect(raw.userVersion, 36);
     expect(_columns(raw, 'dumps'), contains('summary_template'));
   });
 
-  test('applyRemoteDump: absent key keeps the template, present null erases it',
-      () async {
-    final LocalDb db = LocalDb.forTesting(NativeDatabase.memory());
-    addTearDown(db.close);
-    final DateTime t = DateTime.utc(2026, 9, 26);
-    Future<void> apply({Object? template = LocalDb.absentSummaryField}) =>
-        db.applyRemoteDump(
-          id: 'd1',
-          mode: 'brain_dump',
-          title: 'T',
-          transcript: 'hello',
-          meetingNotes: null,
-          durationSeconds: 3,
-          audioOnServer: true,
-          createdAt: t,
-          updatedAt: t,
-          seq: 1,
-          summaryTemplate: template,
-        );
+  test(
+    'applyRemoteDump: absent key keeps the template, present null erases it',
+    () async {
+      final LocalDb db = LocalDb.forTesting(NativeDatabase.memory());
+      addTearDown(db.close);
+      final DateTime t = DateTime.utc(2026, 9, 26);
+      Future<void> apply({Object? template = LocalDb.absentSummaryField}) =>
+          db.applyRemoteDump(
+            id: 'd1',
+            mode: 'brain_dump',
+            title: 'T',
+            transcript: 'hello',
+            meetingNotes: null,
+            durationSeconds: 3,
+            audioOnServer: true,
+            createdAt: t,
+            updatedAt: t,
+            seq: 1,
+            summaryTemplate: template,
+          );
 
-    await apply(template: 'lecture');
-    expect((await db.getDump('d1'))!.summaryTemplate, 'lecture');
+      await apply(template: 'lecture');
+      expect((await db.getDump('d1'))!.summaryTemplate, 'lecture');
 
-    await apply(); // older server: key absent
-    expect(
-      (await db.getDump('d1'))!.summaryTemplate,
-      'lecture',
-      reason: 'absence is not an eraser',
-    );
+      await apply(); // older server: key absent
+      expect(
+        (await db.getDump('d1'))!.summaryTemplate,
+        'lecture',
+        reason: 'absence is not an eraser',
+      );
 
-    await apply(template: null); // server says: none
-    expect(
-      (await db.getDump('d1'))!.summaryTemplate,
-      isNull,
-      reason: 'an explicit null is authoritative',
-    );
-  });
+      await apply(template: null); // server says: none
+      expect(
+        (await db.getDump('d1'))!.summaryTemplate,
+        isNull,
+        reason: 'an explicit null is authoritative',
+      );
+    },
+  );
 
-  test('applyRemoteDump: a fresh remote-only row stores the template',
-      () async {
-    final LocalDb db = LocalDb.forTesting(NativeDatabase.memory());
-    addTearDown(db.close);
-    final DateTime t = DateTime.utc(2026, 9, 26);
-    await db.applyRemoteDump(
-      id: 'd-new',
-      mode: 'meeting',
-      title: 'T',
-      transcript: 'hello',
-      meetingNotes: null,
-      durationSeconds: 3,
-      audioOnServer: true,
-      createdAt: t,
-      updatedAt: t,
-      seq: 1,
-      summaryTemplate: 'actions_only',
-    );
-    expect((await db.getDump('d-new'))!.summaryTemplate, 'actions_only');
-  });
+  test(
+    'applyRemoteDump: a fresh remote-only row stores the template',
+    () async {
+      final LocalDb db = LocalDb.forTesting(NativeDatabase.memory());
+      addTearDown(db.close);
+      final DateTime t = DateTime.utc(2026, 9, 26);
+      await db.applyRemoteDump(
+        id: 'd-new',
+        mode: 'meeting',
+        title: 'T',
+        transcript: 'hello',
+        meetingNotes: null,
+        durationSeconds: 3,
+        audioOnServer: true,
+        createdAt: t,
+        updatedAt: t,
+        seq: 1,
+        summaryTemplate: 'actions_only',
+      );
+      expect((await db.getDump('d-new'))!.summaryTemplate, 'actions_only');
+    },
+  );
 }

@@ -598,6 +598,7 @@ def _todo_sync_payload(row: sqlite3.Row) -> dict[str, Any]:
         "text": row["text"],
         "done_at": row["done_at"],
         "due_date": row["due_date"],
+        "due_time": row["due_time"],
         "source": row["source"],
         "source_ref": row["source_ref"],
         "folder_id": row["folder_id"],
@@ -664,6 +665,13 @@ def _apply_todo(
                 raise ValueError
         except ValueError as exc:
             raise ValueError("todo due_date must be YYYY-MM-DD or null") from exc
+    due_time = nullable("due_time")
+    if due_time is not None:
+        try:
+            if datetime.strptime(due_time, "%H:%M").strftime("%H:%M") != due_time:
+                raise ValueError
+        except ValueError as exc:
+            raise ValueError("todo due_time must be HH:MM or null") from exc
     source_ref = nullable("source_ref")
     folder_id = nullable("folder_id")
     column_id = nullable("column_id")
@@ -682,18 +690,19 @@ def _apply_todo(
     conn.execute(
         """
         INSERT INTO todos
-            (id, text, done_at, due_date, source, source_ref, folder_id,
+            (id, text, done_at, due_date, due_time, source, source_ref, folder_id,
              created_at, updated_at, deleted_at, column_id, board_order)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             text = excluded.text, done_at = excluded.done_at,
-            due_date = excluded.due_date, source = excluded.source,
+            due_date = excluded.due_date, due_time = excluded.due_time,
+            source = excluded.source,
             source_ref = excluded.source_ref, folder_id = excluded.folder_id,
             column_id = excluded.column_id, board_order = excluded.board_order,
             updated_at = excluded.updated_at,
             deleted_at = excluded.deleted_at
         """,
-        (change.entity_id, p["text"], done_at, due_date, source, source_ref,
+        (change.entity_id, p["text"], done_at, due_date, due_time, source, source_ref,
          folder_id, created_at, updated_at, deleted_at, column_id, board_order),
     )
     stored = conn.execute("SELECT * FROM todos WHERE id = ?", (change.entity_id,)).fetchone()

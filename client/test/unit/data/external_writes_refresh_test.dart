@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tangent/data/local_db.dart';
+import 'package:tangent/data/todo_repository.dart';
 import '../../support/resolved_temp.dart';
 
 /// The background sync isolate writes through its OWN database connection.
@@ -85,5 +86,42 @@ void main() {
         .timeout(const Duration(seconds: 5));
     await a.refreshExternalWrites();
     expect(await after, contains('Externally synced answer'));
+  });
+
+  test(
+      'background completion refreshes the todo and a stale unchecked tap '
+      'cannot un-complete it', () async {
+    final TodoRepository foreground = TodoRepository(
+      db: a,
+      idFactory: () => 'todo-external',
+      now: () => DateTime.utc(2026, 10, 9, 12),
+    );
+    final TodoRepository background = TodoRepository(
+      db: b,
+      now: () => DateTime.utc(2026, 10, 9, 12, 1),
+    );
+    await foreground.add('finish from notification');
+    final StreamController<List<TodoRow>> seen =
+        StreamController<List<TodoRow>>.broadcast();
+    final StreamSubscription<List<TodoRow>> sub = foreground.watchTodos().listen(
+      seen.add,
+    );
+    addTearDown(sub.cancel);
+    expect((await seen.stream.first).single.doneAt, isNull);
+
+    // showsUserInterface:false actions run through Android's background engine
+    // and therefore a separate database connection.
+    await background.setDone('todo-external', true);
+    final Future<List<TodoRow>> refreshed = seen.stream
+        .firstWhere((rows) => rows.single.doneAt != null)
+        .timeout(const Duration(seconds: 5));
+    await a.refreshExternalWrites();
+    final TodoRow visible = (await refreshed).single;
+    expect(visible.doneAt, isNotNull, reason: 'resume shows the completed row');
+
+    // A tap dispatched from an already-built unchecked checkbox says what the
+    // UI intended (complete=true), so it cannot invert the newer durable row.
+    await foreground.setDone(visible.id, true);
+    expect((await a.getTodoRow(visible.id))!.doneAt, isNotNull);
   });
 }

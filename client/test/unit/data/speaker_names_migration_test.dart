@@ -58,7 +58,8 @@ const String _dumpsV19 = '''
 ''';
 
 /// (a) a 2-speaker dump renamed by v1.15.0: headings AND turn prefixes.
-const String _renamed = '## Jeff\n'
+const String _renamed =
+    '## Jeff\n'
     'Jeff: Morning. Jeff: is not a prefix here.\n'
     'Talked about Jeff and Sarah in prose.\n'
     '\n'
@@ -68,7 +69,8 @@ const String _renamed = '## Jeff\n'
     '## [unattributed]\n'
     'mumbling\n';
 
-const String _renamedRaw = '## Speaker 1\n'
+const String _renamedRaw =
+    '## Speaker 1\n'
     'Speaker 1: Morning. Jeff: is not a prefix here.\n'
     'Talked about Jeff and Sarah in prose.\n'
     '\n'
@@ -110,19 +112,24 @@ void _insert(
 }
 
 Set<String> _columns(sqlite3.Database sql, String table) => <String>{
-      for (final sqlite3.Row row in sql.select("PRAGMA table_info('$table')"))
-        row['name'] as String,
-    };
+  for (final sqlite3.Row row in sql.select("PRAGMA table_info('$table')"))
+    row['name'] as String,
+};
 
 Set<String> _tables(sqlite3.Database sql) => <String>{
-      for (final sqlite3.Row row
-          in sql.select("SELECT name FROM sqlite_master WHERE type='table'"))
-        row['name'] as String,
-    };
+  for (final sqlite3.Row row in sql.select(
+    "SELECT name FROM sqlite_master WHERE type='table'",
+  ))
+    row['name'] as String,
+};
 
-String _record(sqlite3.Database raw) => raw
-    .select("SELECT value FROM settings WHERE key = 'speaker_names_backfill'")
-    .single['value'] as String;
+String _record(sqlite3.Database raw) =>
+    raw
+            .select(
+              "SELECT value FROM settings WHERE key = 'speaker_names_backfill'",
+            )
+            .single['value']
+        as String;
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -134,7 +141,7 @@ void main() {
     addTearDown(db.close);
     await db.listDumps();
 
-    expect(raw.userVersion, 35);
+    expect(raw.userVersion, 36);
     expect(_columns(raw, 'dumps'), contains('speaker_names'));
     expect(_tables(raw), contains('settings'));
     final DumpRow row = (await db.getDump('plain'))!;
@@ -154,11 +161,10 @@ void main() {
     final LocalDb db = LocalDb.forTesting(NativeDatabase.opened(raw));
     addTearDown(db.close);
     await expectLater(db.listDumps(), completes);
-    expect(raw.userVersion, 35);
+    expect(raw.userVersion, 36);
   });
 
-  test(
-      'back-fill: a renamed dump gets the map, raw labels restored, dirty; '
+  test('back-fill: a renamed dump gets the map, raw labels restored, dirty; '
       'a raw dump and a Summary-only dump are untouched', () async {
     final sqlite3.Database raw = _v19Database();
     _insert(raw, 'renamed', _renamed);
@@ -173,9 +179,7 @@ void main() {
     final DumpRow renamed = (await db.getDump('renamed'))!;
     expect(
       SpeakerNames.decode(renamed.speakerNames),
-      SpeakerNames(
-        <String, String>{'Speaker 1': 'Jeff', 'Speaker 2': 'Sarah'},
-      ),
+      SpeakerNames(<String, String>{'Speaker 1': 'Jeff', 'Speaker 2': 'Sarah'}),
     );
     expect(
       renamed.transcript,
@@ -217,73 +221,80 @@ void main() {
     expect(jsonDecode(_record(raw)), record);
   });
 
-  test('(d) idempotent: a second run over the converted rows changes nothing',
-      () async {
-    final sqlite3.Database raw = _v19Database();
-    _insert(raw, 'renamed', _renamed);
-    _insert(raw, 'raw', _rawDump);
-    final LocalDb db = LocalDb.forTesting(NativeDatabase.opened(raw));
-    await db.listDumps();
-    final DumpRow first = (await db.getDump('renamed'))!;
-    expect(first.transcript, _renamedRaw);
-    // Simulate the row having been pushed since, so a second run that
-    // touched it would be visible as dirty again.
-    raw.execute('UPDATE dumps SET sync_dirty = 0, updated_at = 300');
-    final String record = _record(raw);
+  test(
+    '(d) idempotent: a second run over the converted rows changes nothing',
+    () async {
+      final sqlite3.Database raw = _v19Database();
+      _insert(raw, 'renamed', _renamed);
+      _insert(raw, 'raw', _rawDump);
+      final LocalDb db = LocalDb.forTesting(NativeDatabase.opened(raw));
+      await db.listDumps();
+      final DumpRow first = (await db.getDump('renamed'))!;
+      expect(first.transcript, _renamedRaw);
+      // Simulate the row having been pushed since, so a second run that
+      // touched it would be visible as dirty again.
+      raw.execute('UPDATE dumps SET sync_dirty = 0, updated_at = 300');
+      final String record = _record(raw);
 
-    // Force the v20 step to run again on the SAME database, as an install
-    // that crashed between the back-fill and the version bump would.
-    raw.execute('PRAGMA user_version = 19;');
-    final LocalDb again = LocalDb.forTesting(NativeDatabase.opened(raw));
-    addTearDown(again.close);
-    await again.listDumps();
+      // Force the v20 step to run again on the SAME database, as an install
+      // that crashed between the back-fill and the version bump would.
+      raw.execute('PRAGMA user_version = 19;');
+      final LocalDb again = LocalDb.forTesting(NativeDatabase.opened(raw));
+      addTearDown(again.close);
+      await again.listDumps();
 
-    expect(raw.userVersion, 35);
-    final DumpRow second = (await again.getDump('renamed'))!;
-    expect(second.transcript, _renamedRaw, reason: 'still raw');
-    expect(
-      SpeakerNames.decode(second.speakerNames).nameFor('Speaker 1'),
-      'Jeff',
-    );
-    expect(second.syncDirty, isFalse, reason: 'nothing rewritten twice');
-    expect(second.updatedAt.millisecondsSinceEpoch ~/ 1000, 300);
-    expect((await again.getDump('raw'))!.transcript, _rawDump);
-    expect(
-      _record(raw),
-      record,
-      reason: 'the undo record is not rewritten either',
-    );
-  });
+      expect(raw.userVersion, 36);
+      final DumpRow second = (await again.getDump('renamed'))!;
+      expect(second.transcript, _renamedRaw, reason: 'still raw');
+      expect(
+        SpeakerNames.decode(second.speakerNames).nameFor('Speaker 1'),
+        'Jeff',
+      );
+      expect(second.syncDirty, isFalse, reason: 'nothing rewritten twice');
+      expect(second.updatedAt.millisecondsSinceEpoch ~/ 1000, 300);
+      expect((await again.getDump('raw'))!.transcript, _rawDump);
+      expect(
+        _record(raw),
+        record,
+        reason: 'the undo record is not rewritten either',
+      );
+    },
+  );
 
-  test('back-fill refuses an ambiguous pairing rather than merging speakers',
-      () async {
-    // A raw `## Speaker 1` AFTER a user heading means position ≠ label; the
-    // safe failure is to leave the text alone (nothing is deleted, and the
-    // user can name speakers again through the sheet).
-    final sqlite3.Database raw = _v19Database();
-    const String odd = '## Jeff\nJeff: a\n## Speaker 1\nSpeaker 1: b\n';
-    _insert(raw, 'odd', odd);
-    final LocalDb db = LocalDb.forTesting(NativeDatabase.opened(raw));
-    addTearDown(db.close);
-    await db.listDumps();
-    final DumpRow row = (await db.getDump('odd'))!;
-    expect(row.transcript, odd);
-    expect(row.speakerNames, isNull);
-    expect(row.syncDirty, isFalse);
-    expect(await db.speakerNamesBackfillRecord(), isNull);
-  });
+  test(
+    'back-fill refuses an ambiguous pairing rather than merging speakers',
+    () async {
+      // A raw `## Speaker 1` AFTER a user heading means position ≠ label; the
+      // safe failure is to leave the text alone (nothing is deleted, and the
+      // user can name speakers again through the sheet).
+      final sqlite3.Database raw = _v19Database();
+      const String odd = '## Jeff\nJeff: a\n## Speaker 1\nSpeaker 1: b\n';
+      _insert(raw, 'odd', odd);
+      final LocalDb db = LocalDb.forTesting(NativeDatabase.opened(raw));
+      addTearDown(db.close);
+      await db.listDumps();
+      final DumpRow row = (await db.getDump('odd'))!;
+      expect(row.transcript, odd);
+      expect(row.speakerNames, isNull);
+      expect(row.syncDirty, isFalse);
+      expect(await db.speakerNamesBackfillRecord(), isNull);
+    },
+  );
 
   group('L5: refused pairings are recorded in speaker_backfill_skipped', () {
     const String odd = '## Jeff\nJeff: a\n## Speaker 1\nSpeaker 1: b\n';
 
-    List<Object?> skippedRaw(sqlite3.Database raw) => jsonDecode(
-          raw
-              .select(
-                'SELECT value FROM settings '
-                "WHERE key = 'speaker_backfill_skipped'",
-              )
-              .single['value'] as String,
-        ) as List<Object?>;
+    List<Object?> skippedRaw(sqlite3.Database raw) =>
+        jsonDecode(
+              raw
+                      .select(
+                        'SELECT value FROM settings '
+                        "WHERE key = 'speaker_backfill_skipped'",
+                      )
+                      .single['value']
+                  as String,
+            )
+            as List<Object?>;
 
     test('one ambiguous transcript -> the key holds exactly that id', () async {
       final sqlite3.Database raw = _v19Database();
@@ -298,8 +309,8 @@ void main() {
       expect(skippedRaw(raw), <String>['odd'], reason: 'JSON list of ids');
       expect(await db.speakerBackfillSkippedIds(), <String>['odd']);
       // The converted row and the never-renamed rows are not skips.
-      final Map<String, dynamic>? record =
-          await db.speakerNamesBackfillRecord();
+      final Map<String, dynamic>? record = await db
+          .speakerNamesBackfillRecord();
       expect(record!.keys, <String>['renamed']);
       expect((await db.getDump('odd'))!.transcript, odd, reason: 'untouched');
     });
@@ -322,41 +333,43 @@ void main() {
       expect(await db.speakerBackfillSkippedIds(), isEmpty);
     });
 
-    test('clear deletes the key; a re-run does not resurrect a dismissed id',
-        () async {
-      final sqlite3.Database raw = _v19Database();
-      _insert(raw, 'odd', odd);
-      final LocalDb db = LocalDb.forTesting(NativeDatabase.opened(raw));
-      await db.listDumps();
-      expect(await db.speakerBackfillSkippedIds(), <String>['odd']);
+    test(
+      'clear deletes the key; a re-run does not resurrect a dismissed id',
+      () async {
+        final sqlite3.Database raw = _v19Database();
+        _insert(raw, 'odd', odd);
+        final LocalDb db = LocalDb.forTesting(NativeDatabase.opened(raw));
+        await db.listDumps();
+        expect(await db.speakerBackfillSkippedIds(), <String>['odd']);
 
-      await db.clearSpeakerBackfillSkipped();
-      expect(await db.speakerBackfillSkippedIds(), isEmpty);
-      expect(
-        raw.select(
-          "SELECT value FROM settings WHERE key = 'speaker_backfill_skipped'",
-        ),
-        isEmpty,
-        reason: 'dismiss removes the row, not just empties it',
-      );
-      // The unrelated back-fill record is left alone.
-      expect(
-        raw.select(
-          "SELECT value FROM settings WHERE key = 'speaker_names_backfill'",
-        ),
-        isEmpty,
-        reason: 'nothing was converted in this fixture',
-      );
+        await db.clearSpeakerBackfillSkipped();
+        expect(await db.speakerBackfillSkippedIds(), isEmpty);
+        expect(
+          raw.select(
+            "SELECT value FROM settings WHERE key = 'speaker_backfill_skipped'",
+          ),
+          isEmpty,
+          reason: 'dismiss removes the row, not just empties it',
+        );
+        // The unrelated back-fill record is left alone.
+        expect(
+          raw.select(
+            "SELECT value FROM settings WHERE key = 'speaker_names_backfill'",
+          ),
+          isEmpty,
+          reason: 'nothing was converted in this fixture',
+        );
 
-      // A crashed-between-back-fill-and-bump install re-runs v20: the
-      // transcript is still ambiguous, so the id is recorded again. This
-      // is the documented behaviour, pinned so a change is visible.
-      raw.execute('PRAGMA user_version = 19;');
-      final LocalDb again = LocalDb.forTesting(NativeDatabase.opened(raw));
-      addTearDown(again.close);
-      await again.listDumps();
-      expect(await again.speakerBackfillSkippedIds(), <String>['odd']);
-    });
+        // A crashed-between-back-fill-and-bump install re-runs v20: the
+        // transcript is still ambiguous, so the id is recorded again. This
+        // is the documented behaviour, pinned so a change is visible.
+        raw.execute('PRAGMA user_version = 19;');
+        final LocalDb again = LocalDb.forTesting(NativeDatabase.opened(raw));
+        addTearDown(again.close);
+        await again.listDumps();
+        expect(await again.speakerBackfillSkippedIds(), <String>['odd']);
+      },
+    );
 
     test('a second run unions rather than duplicates', () async {
       final sqlite3.Database raw = _v19Database();
@@ -372,42 +385,44 @@ void main() {
   });
 
   group('LocalDb.updateSpeakerNames', () {
-    test('writes the map, bumps updated_at, marks dirty, leaves text alone',
-        () async {
-      final LocalDb db = LocalDb.forTesting(NativeDatabase.memory());
-      addTearDown(db.close);
-      final DateTime t0 = DateTime.utc(2026, 9, 26, 10);
-      await db.applyRemoteDump(
-        id: 'd1',
-        mode: 'meeting',
-        title: 'T',
-        transcript: _rawDump,
-        meetingNotes: null,
-        durationSeconds: 3,
-        audioOnServer: true,
-        createdAt: t0,
-        updatedAt: t0,
-        seq: 1,
-      );
-      final DateTime t1 = DateTime.utc(2026, 9, 26, 11);
-      final DumpRow row = await db.updateSpeakerNames(
-        'd1',
-        SpeakerNames(<String, String>{'Speaker 1': 'Jeff'}),
-        now: t1,
-      );
-      expect(row.speakerNames, '{"Speaker 1":"Jeff"}');
-      expect(row.transcript, _rawDump, reason: 'byte-equal: text untouched');
-      expect(row.updatedAt.toUtc(), t1);
-      expect(row.syncDirty, isTrue);
+    test(
+      'writes the map, bumps updated_at, marks dirty, leaves text alone',
+      () async {
+        final LocalDb db = LocalDb.forTesting(NativeDatabase.memory());
+        addTearDown(db.close);
+        final DateTime t0 = DateTime.utc(2026, 9, 26, 10);
+        await db.applyRemoteDump(
+          id: 'd1',
+          mode: 'meeting',
+          title: 'T',
+          transcript: _rawDump,
+          meetingNotes: null,
+          durationSeconds: 3,
+          audioOnServer: true,
+          createdAt: t0,
+          updatedAt: t0,
+          seq: 1,
+        );
+        final DateTime t1 = DateTime.utc(2026, 9, 26, 11);
+        final DumpRow row = await db.updateSpeakerNames(
+          'd1',
+          SpeakerNames(<String, String>{'Speaker 1': 'Jeff'}),
+          now: t1,
+        );
+        expect(row.speakerNames, '{"Speaker 1":"Jeff"}');
+        expect(row.transcript, _rawDump, reason: 'byte-equal: text untouched');
+        expect(row.updatedAt.toUtc(), t1);
+        expect(row.syncDirty, isTrue);
 
-      final DumpRow cleared = await db.updateSpeakerNames('d1', null);
-      expect(cleared.speakerNames, isNull);
-      final DumpRow emptied = await db.updateSpeakerNames(
-        'd1',
-        const SpeakerNames.empty(),
-      );
-      expect(emptied.speakerNames, isNull, reason: 'empty map = no names');
-    });
+        final DumpRow cleared = await db.updateSpeakerNames('d1', null);
+        expect(cleared.speakerNames, isNull);
+        final DumpRow emptied = await db.updateSpeakerNames(
+          'd1',
+          const SpeakerNames.empty(),
+        );
+        expect(emptied.speakerNames, isNull, reason: 'empty map = no names');
+      },
+    );
 
     test('throws for an unknown dump', () async {
       final LocalDb db = LocalDb.forTesting(NativeDatabase.memory());
@@ -419,39 +434,41 @@ void main() {
     });
   });
 
-  test('applyRemoteDump: absent key keeps the map, present null clears it',
-      () async {
-    final LocalDb db = LocalDb.forTesting(NativeDatabase.memory());
-    addTearDown(db.close);
-    final DateTime t = DateTime.utc(2026, 9, 26);
-    Future<void> apply({Object? names = LocalDb.absentSpeakerNamesField}) =>
-        db.applyRemoteDump(
-          id: 'd1',
-          mode: 'brain_dump',
-          title: 'T',
-          transcript: 'hello',
-          meetingNotes: null,
-          durationSeconds: 3,
-          audioOnServer: true,
-          createdAt: t,
-          updatedAt: t,
-          seq: 1,
-          speakerNames: names,
-        );
+  test(
+    'applyRemoteDump: absent key keeps the map, present null clears it',
+    () async {
+      final LocalDb db = LocalDb.forTesting(NativeDatabase.memory());
+      addTearDown(db.close);
+      final DateTime t = DateTime.utc(2026, 9, 26);
+      Future<void> apply({Object? names = LocalDb.absentSpeakerNamesField}) =>
+          db.applyRemoteDump(
+            id: 'd1',
+            mode: 'brain_dump',
+            title: 'T',
+            transcript: 'hello',
+            meetingNotes: null,
+            durationSeconds: 3,
+            audioOnServer: true,
+            createdAt: t,
+            updatedAt: t,
+            seq: 1,
+            speakerNames: names,
+          );
 
-    await apply(names: '{"Speaker 1":"Jeff"}');
-    expect((await db.getDump('d1'))!.speakerNames, '{"Speaker 1":"Jeff"}');
-    await apply(); // older server: key absent
-    expect(
-      (await db.getDump('d1'))!.speakerNames,
-      '{"Speaker 1":"Jeff"}',
-      reason: 'absence is not an eraser',
-    );
-    await apply(names: null);
-    expect(
-      (await db.getDump('d1'))!.speakerNames,
-      isNull,
-      reason: 'an explicit null is authoritative',
-    );
-  });
+      await apply(names: '{"Speaker 1":"Jeff"}');
+      expect((await db.getDump('d1'))!.speakerNames, '{"Speaker 1":"Jeff"}');
+      await apply(); // older server: key absent
+      expect(
+        (await db.getDump('d1'))!.speakerNames,
+        '{"Speaker 1":"Jeff"}',
+        reason: 'absence is not an eraser',
+      );
+      await apply(names: null);
+      expect(
+        (await db.getDump('d1'))!.speakerNames,
+        isNull,
+        reason: 'an explicit null is authoritative',
+      );
+    },
+  );
 }

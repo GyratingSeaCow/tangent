@@ -50,6 +50,9 @@ abstract class DueReminderPort {
   /// Android 12+: whether exact alarms are allowed for this app.
   Future<bool> canScheduleExact();
 
+  /// Opens Android's exact-alarm access screen; other platforms return true.
+  Future<bool> requestExactAlarmPermission();
+
   /// Arms the alarm for [fireAt] and the background task for the same
   /// instant. [digest] is the PREDICTED content to show at that moment;
   /// null means arm the task only (nothing is expected to be due) — the
@@ -117,6 +120,9 @@ class DueReminderScheduler {
   Future<bool> requestPermission() => _port.requestNotificationPermission();
 
   Future<bool> exactAllowed() => _port.canScheduleExact();
+
+  Future<bool> requestExactAlarmPermission() =>
+      _port.requestExactAlarmPermission();
 
   Future<void> openSystemSettings() => _port.openSystemSettings();
 

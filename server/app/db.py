@@ -239,6 +239,7 @@ CREATE TABLE IF NOT EXISTS todos (
     text TEXT NOT NULL,
     done_at TEXT,
     due_date TEXT,
+    due_time TEXT,
     source TEXT NOT NULL DEFAULT 'manual',
     source_ref TEXT,
     folder_id TEXT,
@@ -424,6 +425,13 @@ def _migrate_jobs_request_id(conn: sqlite3.Connection) -> None:
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_request_id "
         "ON jobs(request_id)"
     )
+
+
+def _migrate_todos_due_time(conn: sqlite3.Connection) -> None:
+    """Add the nullable device-authored due-time wire field exactly once."""
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(todos)")}
+    if "due_time" not in columns:
+        conn.execute("ALTER TABLE todos ADD COLUMN due_time TEXT")
 
 
 def _migrate_jobs_result_segments(conn: sqlite3.Connection) -> None:
@@ -1274,6 +1282,7 @@ def init_db(data_dir: str) -> None:
         _migrate_dumps_folder_id(conn)
         _migrate_notebooks_folder_id(conn)
         _migrate_notebooks_password_metadata(conn)
+        _migrate_todos_due_time(conn)
         _migrate_todos_folder_id(conn)
         _migrate_todos_google_columns(conn)
         _migrate_todo_kanban(conn)

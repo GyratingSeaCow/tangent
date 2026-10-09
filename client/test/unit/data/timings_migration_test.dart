@@ -56,89 +56,95 @@ sqlite3.Database _v17Database() {
 }
 
 Set<String> _columns(sqlite3.Database sql, String table) => <String>{
-      for (final sqlite3.Row row in sql.select("PRAGMA table_info('$table')"))
-        row['name'] as String,
-    };
+  for (final sqlite3.Row row in sql.select("PRAGMA table_info('$table')"))
+    row['name'] as String,
+};
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('a v17 recording survives the upgrade and gains a NULL timings column',
-      () async {
-    final sqlite3.Database raw = _v17Database();
-    raw.execute(
-      'INSERT INTO dumps (id, created_at, updated_at, mode, '
-      'duration_seconds, title, transcript, audio_path, audio_size_bytes, '
-      "sync_status, summary) VALUES ('old-dump', 100, 200, 'brain_dump', 60, "
-      "'Idea', 'we talked', '/audio/idea.opus', 4096, 'synced', '# S');",
-    );
+  test(
+    'a v17 recording survives the upgrade and gains a NULL timings column',
+    () async {
+      final sqlite3.Database raw = _v17Database();
+      raw.execute(
+        'INSERT INTO dumps (id, created_at, updated_at, mode, '
+        'duration_seconds, title, transcript, audio_path, audio_size_bytes, '
+        "sync_status, summary) VALUES ('old-dump', 100, 200, 'brain_dump', 60, "
+        "'Idea', 'we talked', '/audio/idea.opus', 4096, 'synced', '# S');",
+      );
 
-    final LocalDb db = LocalDb.forTesting(NativeDatabase.opened(raw));
-    addTearDown(db.close);
-    await db.listDumps();
+      final LocalDb db = LocalDb.forTesting(NativeDatabase.opened(raw));
+      addTearDown(db.close);
+      await db.listDumps();
 
-    expect(raw.userVersion, 35);
-    expect(_columns(raw, 'dumps'), contains('transcript_timings'));
-    final DumpRow row = (await db.getDump('old-dump'))!;
-    expect(row.transcript, 'we talked', reason: 'existing data survives');
-    expect(row.summary, '# S', reason: 'v17 columns untouched');
-    expect(
-      row.transcriptTimings,
-      isNull,
-      reason: 'no timings were ever produced for this row',
-    );
-  });
+      expect(raw.userVersion, 36);
+      expect(_columns(raw, 'dumps'), contains('transcript_timings'));
+      final DumpRow row = (await db.getDump('old-dump'))!;
+      expect(row.transcript, 'we talked', reason: 'existing data survives');
+      expect(row.summary, '# S', reason: 'v17 columns untouched');
+      expect(
+        row.transcriptTimings,
+        isNull,
+        reason: 'no timings were ever produced for this row',
+      );
+    },
+  );
 
-  test('the upgrade is safe when the timings column somehow already exists',
-      () async {
-    final sqlite3.Database raw = _v17Database();
-    raw.execute('ALTER TABLE dumps ADD COLUMN transcript_timings TEXT;');
+  test(
+    'the upgrade is safe when the timings column somehow already exists',
+    () async {
+      final sqlite3.Database raw = _v17Database();
+      raw.execute('ALTER TABLE dumps ADD COLUMN transcript_timings TEXT;');
 
-    final LocalDb db = LocalDb.forTesting(NativeDatabase.opened(raw));
-    addTearDown(db.close);
-    await db.listDumps();
+      final LocalDb db = LocalDb.forTesting(NativeDatabase.opened(raw));
+      addTearDown(db.close);
+      await db.listDumps();
 
-    expect(raw.userVersion, 35);
-    expect(_columns(raw, 'dumps'), contains('transcript_timings'));
-  });
+      expect(raw.userVersion, 36);
+      expect(_columns(raw, 'dumps'), contains('transcript_timings'));
+    },
+  );
 
-  test('applyRemoteDump: absent key keeps timings, present null erases them',
-      () async {
-    final LocalDb db = LocalDb.forTesting(NativeDatabase.memory());
-    addTearDown(db.close);
-    final DateTime t = DateTime.utc(2026, 9, 25);
-    Future<void> apply({Object? timings = LocalDb.absentSummaryField}) =>
-        db.applyRemoteDump(
-          id: 'd1',
-          mode: 'brain_dump',
-          title: 'T',
-          transcript: 'hello',
-          meetingNotes: null,
-          durationSeconds: 3,
-          audioOnServer: true,
-          createdAt: t,
-          updatedAt: t,
-          seq: 1,
-          transcriptTimings: timings,
-        );
+  test(
+    'applyRemoteDump: absent key keeps timings, present null erases them',
+    () async {
+      final LocalDb db = LocalDb.forTesting(NativeDatabase.memory());
+      addTearDown(db.close);
+      final DateTime t = DateTime.utc(2026, 9, 25);
+      Future<void> apply({Object? timings = LocalDb.absentSummaryField}) =>
+          db.applyRemoteDump(
+            id: 'd1',
+            mode: 'brain_dump',
+            title: 'T',
+            transcript: 'hello',
+            meetingNotes: null,
+            durationSeconds: 3,
+            audioOnServer: true,
+            createdAt: t,
+            updatedAt: t,
+            seq: 1,
+            transcriptTimings: timings,
+          );
 
-    await apply(
-      timings: '{"segments":[{"start":0,"end":1,"text":"hello","words":[]}]}',
-    );
-    expect((await db.getDump('d1'))!.transcriptTimings, contains('hello'));
+      await apply(
+        timings: '{"segments":[{"start":0,"end":1,"text":"hello","words":[]}]}',
+      );
+      expect((await db.getDump('d1'))!.transcriptTimings, contains('hello'));
 
-    await apply(); // older server: key absent
-    expect(
-      (await db.getDump('d1'))!.transcriptTimings,
-      contains('hello'),
-      reason: 'absence is not an eraser',
-    );
+      await apply(); // older server: key absent
+      expect(
+        (await db.getDump('d1'))!.transcriptTimings,
+        contains('hello'),
+        reason: 'absence is not an eraser',
+      );
 
-    await apply(timings: null); // server says: none
-    expect(
-      (await db.getDump('d1'))!.transcriptTimings,
-      isNull,
-      reason: 'an explicit null is authoritative',
-    );
-  });
+      await apply(timings: null); // server says: none
+      expect(
+        (await db.getDump('d1'))!.transcriptTimings,
+        isNull,
+        reason: 'an explicit null is authoritative',
+      );
+    },
+  );
 }

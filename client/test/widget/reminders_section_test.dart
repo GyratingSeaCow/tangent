@@ -156,7 +156,16 @@ void main() {
   testWidgets('inexact fallback is stated in the status line', (tester) async {
     port.exact = false;
     await tester.pumpWidget(host());
-    await tester.pump();
+    await tester.pumpAndSettle();
+    final ListTile exactStatus = tester.widget<ListTile>(
+      find.byKey(RemindersSection.exactStatusKey),
+    );
+    expect((exactStatus.subtitle! as Text).data, contains('Unavailable'));
+    expect(find.byKey(RemindersSection.requestExactKey), findsOneWidget);
+    await tester.tap(find.byKey(RemindersSection.requestExactKey));
+    await tester.pumpAndSettle();
+    expect(port.exactPermissionRequests, 1);
+
     await tester.tap(switchFinder());
     await tester.pumpAndSettle();
     expect(port.scheduledExact, <bool>[false]);

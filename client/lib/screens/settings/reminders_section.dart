@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../services/due_reminder_scheduler.dart';
 import '../../services/morning_review_scheduler.dart';
+import '../../services/todo_due_notification_scheduler.dart';
 import '../home/morning_review_screen.dart'
     show morningBriefingProvider, morningReviewEnabledProvider;
 import 'completion_notifications_section.dart';
@@ -24,6 +25,8 @@ class RemindersSection extends ConsumerStatefulWidget {
   static const Key timeKey = Key('reminders-time');
   static const Key statusKey = Key('reminders-status');
   static const Key openSettingsKey = Key('reminders-open-settings');
+  static const Key exactStatusKey = Key('reminders-exact-status');
+  static const Key requestExactKey = Key('reminders-request-exact');
   static const Key morningEnabledKey = Key('morning-review-enabled');
   static const Key morningTimeKey = Key('morning-review-time');
   static const Key morningStatusKey = Key('morning-review-status');
@@ -37,16 +40,20 @@ class _RemindersSectionState extends ConsumerState<RemindersSection> {
   late int _minuteOfDay = ref.read(settingsStoreProvider).reminderMinuteOfDay;
   bool _denied = false;
   bool _exact = true;
+  bool _checkingExact = true;
+  bool _requestingExact = false;
   DateTime? _nextFire;
   bool _busy = false;
 
   // The morning review (queued item 2) mirrors the due reminder's state
   // machine exactly — same permission dance, same status line — but on its
   // own scheduler, alarm and time.
-  late bool _morningEnabled =
-      ref.read(settingsStoreProvider).morningReviewEnabled;
-  late int _morningMinuteOfDay =
-      ref.read(settingsStoreProvider).morningReviewMinuteOfDay;
+  late bool _morningEnabled = ref
+      .read(settingsStoreProvider)
+      .morningReviewEnabled;
+  late int _morningMinuteOfDay = ref
+      .read(settingsStoreProvider)
+      .morningReviewMinuteOfDay;
   bool _morningDenied = false;
   DateTime? _morningNextFire;
   bool _morningBusy = false;
@@ -55,6 +62,9 @@ class _RemindersSectionState extends ConsumerState<RemindersSection> {
   void initState() {
     super.initState();
     if (ref.read(remindersSupportedProvider)) {
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _refreshExactStatus(),
+      );
       // Already on from a previous session: show the real next times.
       if (_enabled) {
         WidgetsBinding.instance.addPostFrameCallback((_) => _rearm());
@@ -66,23 +76,62 @@ class _RemindersSectionState extends ConsumerState<RemindersSection> {
   }
 
   Future<void> _rearm() async {
-    final DueReminderScheduler scheduler =
-        ref.read(dueReminderSchedulerProvider);
+    final DueReminderScheduler scheduler = ref.read(
+      dueReminderSchedulerProvider,
+    );
     final bool exact = await scheduler.exactAllowed();
-    final DateTime next =
-        await scheduler.scheduleNext(minuteOfDay: _minuteOfDay);
+    final DateTime next = await scheduler.scheduleNext(
+      minuteOfDay: _minuteOfDay,
+    );
     if (!mounted) return;
     setState(() {
       _exact = exact;
+      _checkingExact = false;
       _nextFire = next;
     });
+  }
+
+  Future<void> _refreshExactStatus() async {
+    final bool exact = await ref
+        .read(dueReminderSchedulerProvider)
+        .exactAllowed();
+    if (!mounted) return;
+    setState(() {
+      _exact = exact;
+      _checkingExact = false;
+    });
+  }
+
+  Future<void> _requestExactAlarmAccess() async {
+    if (_requestingExact) return;
+    setState(() => _requestingExact = true);
+    try {
+      final DueReminderScheduler scheduler = ref.read(
+        dueReminderSchedulerProvider,
+      );
+      await scheduler.requestExactAlarmPermission();
+      await _refreshExactStatus();
+      if (_exact) {
+        if (_enabled && !_denied) await _rearm();
+        if (_morningEnabled && !_morningDenied) await _rearmMorning();
+        try {
+          await ref.read(todoDueNotificationSchedulerProvider).reconcile();
+        } on UnimplementedError {
+          // A non-Android/test host may expose daily reminders without the
+          // per-todo notification port.
+        }
+      }
+    } finally {
+      if (mounted) setState(() => _requestingExact = false);
+    }
   }
 
   Future<void> _toggle(bool on) async {
     if (_busy) return;
     setState(() => _busy = true);
-    final DueReminderScheduler scheduler =
-        ref.read(dueReminderSchedulerProvider);
+    final DueReminderScheduler scheduler = ref.read(
+      dueReminderSchedulerProvider,
+    );
     try {
       if (on) {
         final bool granted = await scheduler.requestPermission();
@@ -125,10 +174,12 @@ class _RemindersSectionState extends ConsumerState<RemindersSection> {
   }
 
   Future<void> _rearmMorning() async {
-    final MorningReviewScheduler scheduler =
-        ref.read(morningReviewSchedulerProvider);
-    final DateTime next =
-        await scheduler.scheduleNext(minuteOfDay: _morningMinuteOfDay);
+    final MorningReviewScheduler scheduler = ref.read(
+      morningReviewSchedulerProvider,
+    );
+    final DateTime next = await scheduler.scheduleNext(
+      minuteOfDay: _morningMinuteOfDay,
+    );
     if (!mounted) return;
     setState(() => _morningNextFire = next);
   }
@@ -136,8 +187,9 @@ class _RemindersSectionState extends ConsumerState<RemindersSection> {
   Future<void> _toggleMorning(bool on) async {
     if (_morningBusy) return;
     setState(() => _morningBusy = true);
-    final MorningReviewScheduler scheduler =
-        ref.read(morningReviewSchedulerProvider);
+    final MorningReviewScheduler scheduler = ref.read(
+      morningReviewSchedulerProvider,
+    );
     try {
       if (on) {
         final bool granted = await scheduler.requestPermission();
@@ -221,13 +273,15 @@ class _RemindersSectionState extends ConsumerState<RemindersSection> {
       when = 'scheduling\u2026';
     } else {
       final DateTime now = DateTime.now();
-      final bool today = next.year == now.year &&
+      final bool today =
+          next.year == now.year &&
           next.month == now.month &&
           next.day == now.day;
       when = '${today ? 'today' : 'tomorrow'} ${_timeLabel(context)}';
     }
-    final String timing =
-        _exact ? '' : ' \u00B7 exact alarms not allowed, timing may drift';
+    final String timing = _exact
+        ? ''
+        : ' \u00B7 exact alarms not allowed, timing may drift';
     return 'Next: $when$timing';
   }
 
@@ -288,6 +342,25 @@ class _RemindersSectionState extends ConsumerState<RemindersSection> {
               ),
             ),
           ),
+        ListTile(
+          key: RemindersSection.exactStatusKey,
+          leading: Icon(_exact ? Icons.alarm_on : Icons.alarm_off),
+          title: const Text('Exact alarm timing'),
+          subtitle: Text(
+            _checkingExact
+                ? 'Checking availability…'
+                : _exact
+                ? 'Available — reminders can arrive at the selected time.'
+                : 'Unavailable — Android may delay reminder notifications.',
+          ),
+          trailing: !_checkingExact && !_exact
+              ? OutlinedButton(
+                  key: RemindersSection.requestExactKey,
+                  onPressed: _requestingExact ? null : _requestExactAlarmAccess,
+                  child: const Text('Allow'),
+                )
+              : null,
+        ),
         // Queued item 2: the morning review lives under the same heading —
         // it is the other thing that happens at a chosen time each morning.
         SwitchListTile(

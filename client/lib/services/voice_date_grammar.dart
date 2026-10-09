@@ -27,7 +27,8 @@ class VoiceDateGrammar {
   ///   `September 30th, 2027`  → m1 d1 y1
   ///   `the 30th of September` → d2 m2 y2
   ///   `9/30`, `09/30/2027`    → m3 d3 y3
-  static const String absolute = r'(?:the\s+)?(?:'
+  static const String absolute =
+      r'(?:the\s+)?(?:'
       '(?<m1>$month)\\s+(?<d1>\\d{1,2})$ordinal(?:,?\\s+(?<y1>\\d{4}))?'
       '|(?<d2>\\d{1,2})$ordinal\\s+of\\s+(?<m2>$month)(?:,?\\s+(?<y2>\\d{4}))?'
       r'|(?<m3>\d{1,2})[/-](?<d3>\d{1,2})(?:[/-](?<y3>\d{4}))?'
@@ -37,7 +38,8 @@ class VoiceDateGrammar {
   /// the item, a period or a comma — "buy sun screen" and "mon ami" are text
   /// (spec ambiguity guards). Full names still need the word boundary the
   /// whole phrase gets below.
-  static const String weekdayNames = r'monday|tuesday|wednesday|thursday'
+  static const String weekdayNames =
+      r'monday|tuesday|wednesday|thursday'
       r'|friday|saturday|sunday'
       r'|(?:mon|tue|tues|wed|weds|thu|thur|thurs|fri|sat|sun)(?=\.|,|\s*$)';
 
@@ -52,8 +54,9 @@ class VoiceDateGrammar {
   static const String hourWords =
       'one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve';
   static const String hourish = '(?:\\d{1,2}(?::\\d{2})?|$hourWords)';
-  static const String time = '(?:'
-      '(?:at|around)\\s+(?:noon|midnight|$hourish'
+  static const String time =
+      '(?:'
+      '(?:at|around|by)\\s+(?:noon|midnight|$hourish'
       "(?:\\s*(?:a\\.?m\\.?|p\\.?m\\.?|o'?clock))?)"
       '|$hourish'
       "\\s*(?:a\\.?m\\.?|p\\.?m\\.?|o'?clock)"
@@ -69,7 +72,8 @@ class VoiceDateGrammar {
   /// optional preposition. ONE source string, composed three ways below so
   /// the sentence head and the item start/end recognise exactly the same
   /// language and [resolve] reads the same named groups from all three.
-  static const String phrase = r'(?:(?:for|on|by|due(?:\s+on)?)\s+)?'
+  static const String phrase =
+      r'(?:(?:for|on|by|due(?:\s+on)?)\s+)?'
       r'(?:'
       '$absolute'
       r'|(?<today>today)'
@@ -93,7 +97,8 @@ class VoiceDateGrammar {
   /// The trailing `to` is the "to go to the store" of the real recording;
   /// it belongs to the phrase, not the item (v1.26.0 fixture 1).
   static final RegExp headDate = RegExp(
-    '^[.,;:!?…\\s]*$phrase[.,:]?\\s*(?:to\\s+)?',
+    '^[.,;:!?…\\s]*(?:(?<tb>$time)\\s+)?$phrase'
+    '(?:\\s+(?<ta>$time))?[.,:]?\\s*(?:to\\s+)?',
     caseSensitive: false,
   );
 
@@ -112,7 +117,14 @@ class VoiceDateGrammar {
   /// A per-item phrase at the START of an already-cleaned item
   /// ("Sunday call mom", "tomorrow buy milk").
   static final RegExp itemStartDate = RegExp(
-    '^$phrase[.,:]?\\s*',
+    '^$phrase(?:\\s+(?<ta>$time))?[.,:]?\\s*',
+    caseSensitive: false,
+  );
+
+  /// A time without a date at an item's end (`call Dana by 5`). Its date is
+  /// the day containing the next matching wall-clock occurrence.
+  static final RegExp itemEndTime = RegExp(
+    '(?<!\\S)(?<only>$time)\\.?\$',
     caseSensitive: false,
   );
 
@@ -168,8 +180,11 @@ class VoiceDateGrammar {
   /// phrase is not a real calendar date. All arithmetic goes through
   /// `DateTime(y, m, d + n)` so a DST change can never shift a day.
   static String? resolve(RegExpMatch m, DateTime recordedOn) {
-    final DateTime anchor =
-        DateTime(recordedOn.year, recordedOn.month, recordedOn.day);
+    final DateTime anchor = DateTime(
+      recordedOn.year,
+      recordedOn.month,
+      recordedOn.day,
+    );
     String? g(String name) => m.namedGroup(name);
 
     if (g('m1') != null || g('m2') != null || g('m3') != null) {
@@ -356,19 +371,20 @@ class VoiceDateGrammar {
 
 /// A wall-clock time parsed from a spoken phrase ([parseTimePhrase]).
 class ParsedTime {
-  const ParsedTime(this.hour, this.minute);
+  const ParsedTime(this.hour, this.minute, {this.dayOffset = 0});
   final int hour;
   final int minute;
+  final int dayOffset;
 
   @override
   String toString() => 'ParsedTime($hour:$minute)';
 }
 
-/// `at 3`, `3:30 pm`, `noon`, `at 15:00`, `3 o'clock`, `at 7 in the
-/// morning` → a value; anything else → null. Bare hours follow the way
-/// people book things: 1–7 are afternoon, 8–11 are morning, 12 is noon;
-/// an explicit am/pm or "in the morning" overrides that.
-ParsedTime? parseTimePhrase(String phrase) {
+/// `at 3`, `by 5`, `3:30 pm`, `noon`, `at 15:00`, `3 o'clock`, `at 7 in the
+/// morning` → a value. Bare hours resolve to the next occurrence: start with
+/// the conventional spoken half-day (1–7 pm, 8–11 am, 12 noon), then add
+/// twelve hours when that occurrence has already passed on the due day.
+ParsedTime? parseTimePhrase(String phrase, {DateTime? nextAfter}) {
   final RegExpMatch? m = _timeValue.firstMatch(phrase.trim());
   if (m == null) return null;
   if (m.namedGroup('noon') != null) return const ParsedTime(12, 0);
@@ -384,6 +400,19 @@ ParsedTime? parseTimePhrase(String phrase) {
     if (hour == 12) hour = 0;
   } else if (mer == 'pm') {
     if (hour != 12) hour += 12;
+  } else if (nextAfter != null && hour >= 1 && hour <= 12) {
+    final int first = hour == 12 ? 0 : hour;
+    final DateTime morning = DateTime(
+      nextAfter.year,
+      nextAfter.month,
+      nextAfter.day,
+      first,
+      minute,
+    );
+    final DateTime evening = morning.add(const Duration(hours: 12));
+    if (morning.isAfter(nextAfter)) return ParsedTime(first, minute);
+    if (evening.isAfter(nextAfter)) return ParsedTime(first + 12, minute);
+    return ParsedTime(first, minute, dayOffset: 1);
   } else if (hour >= 1 && hour <= 7) {
     hour += 12;
   }
@@ -391,7 +420,7 @@ ParsedTime? parseTimePhrase(String phrase) {
 }
 
 final RegExp _timeValue = RegExp(
-  r'^(?:at|around)?\s*(?:(?<noon>noon)|(?<midnight>midnight)'
+  r'^(?:at|around|by)?\s*(?:(?<noon>noon)|(?<midnight>midnight)'
   '|(?<h>\\d{1,2}|${VoiceDateGrammar.hourWords})(?::(?<mi>\\d{2}))?'
   r'\s*(?<mer>a\.?m\.?|p\.?m\.?)?'
   r"(?:\s*o'?clock)?(?:\s+in\s+the\s+(?<morning>morning))?)\s*$",

@@ -26,14 +26,12 @@
          FOREGROUND_SERVICE permission is declared. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <!-- Daily due-date reminder: an exact alarm at the user's chosen minute.
-         SCHEDULE_EXACT_ALARM is the Android 12 (API 31-32) form and can be
-         revoked by the user (the app then falls back to inexact and says so
-         in Settings); USE_EXACT_ALARM is the 13+ form for user-facing
-         alarms. RECEIVE_BOOT_COMPLETED lets the plugin's boot receiver
-         re-arm the alarm after a restart. -->
-    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" android:maxSdkVersion="32" />
-    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <!-- Exact due-time alarms. SCHEDULE_EXACT_ALARM remains user-revocable on
+         Android 12+ and is requested only when the user first sets a due
+         date/time. USE_EXACT_ALARM is deliberately not used: it is a
+         restricted auto-grant and would bypass that point-of-use posture.
+         RECEIVE_BOOT_COMPLETED lets the plugin re-arm persisted schedules. -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application
@@ -145,6 +143,20 @@
         <receiver
             android:exported="false"
             android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationReceiver" />
+        <!-- Required for the background "Mark done" notification action. -->
+        <receiver
+            android:exported="false"
+            android:name="com.dexterous.flutterlocalnotifications.ActionBroadcastReceiver" />
+        <!-- Android broadcasts when user-revocable exact-alarm access is
+             granted. Enqueue a headless Flutter reconciliation immediately;
+             waiting for the next activity launch would leave reminders dead. -->
+        <receiver
+            android:name=".reminders.ExactAlarmPermissionReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED" />
+            </intent-filter>
+        </receiver>
         <receiver
             android:exported="false"
             android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationBootReceiver">

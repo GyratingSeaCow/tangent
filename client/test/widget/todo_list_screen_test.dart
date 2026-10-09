@@ -19,6 +19,7 @@ import 'package:tangent/screens/settings/ai_summaries_section.dart'
     show summariesClientProvider;
 import 'package:tangent/screens/todo/todo_list_screen.dart';
 import 'package:tangent/services/summaries_client.dart';
+import 'package:tangent/services/todo_due_notification_scheduler.dart';
 import 'package:tangent/services/todo_sections.dart';
 import 'package:tangent/widgets/folder_picker.dart';
 import 'package:tangent/widgets/item_action_sheet.dart';
@@ -51,6 +52,41 @@ class _FailingFirstMoveTodoRepository extends TodoRepository {
     }
     await super.moveOnBoard(todoId, columnId, index);
   }
+}
+
+class _PermissionTodoDuePort implements TodoDueNotificationPort {
+  int notificationRequests = 0;
+  int exactRequests = 0;
+
+  @override
+  Future<bool> requestNotificationPermission() async {
+    notificationRequests++;
+    return true;
+  }
+
+  @override
+  Future<bool> requestExactAlarmPermission() async {
+    exactRequests++;
+    return true;
+  }
+
+  @override
+  Future<bool> canScheduleExact() async => true;
+
+  @override
+  Future<Set<int>> pendingTodoNotificationIds() async => <int>{};
+
+  @override
+  Future<void> scheduleTodo({
+    required int notificationId,
+    required String todoId,
+    required String title,
+    required DateTime fireAt,
+    required bool exact,
+  }) async {}
+
+  @override
+  Future<void> cancelTodo(int notificationId) async {}
 }
 
 /// The To Do screen against a real in-memory database — quick-add chained
@@ -87,11 +123,20 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
   }
 
-  Future<TodoRepository> mount(WidgetTester tester) async {
+  Future<TodoRepository> mount(
+    WidgetTester tester, {
+    TodoDueNotificationScheduler? dueScheduler,
+  }) async {
     sizeView(tester);
     await tester.pumpWidget(
       ProviderScope(
-        overrides: <Override>[localDbProvider.overrideWithValue(db)],
+        overrides: <Override>[
+          localDbProvider.overrideWithValue(db),
+          if (dueScheduler != null)
+            todoDueNotificationSchedulerProvider.overrideWithValue(
+              dueScheduler,
+            ),
+        ],
         child: const MaterialApp(home: TodoListScreen()),
       ),
     );
@@ -186,15 +231,29 @@ void main() {
 
     testWidgets('an armed date chip dates the NEXT item only, and a new item '
         'lands unfiled', (tester) async {
-      final TodoRepository repo = await mount(tester);
+      final _PermissionTodoDuePort permissionPort = _PermissionTodoDuePort();
+      final TodoDueNotificationScheduler dueScheduler =
+          TodoDueNotificationScheduler(
+            port: permissionPort,
+            loadTodos: () => TodoRepository(db: db).listTodos(),
+          );
+      final TodoRepository repo = await mount(
+        tester,
+        dueScheduler: dueScheduler,
+      );
 
       await tester.tap(find.byKey(TodoListScreen.quickAddDateChipKey));
       // The date picker is a ROUTE with a 150 ms transition, longer than the
       // 50 ms `settle` helper the rest of this file uses.
       await tester.pumpAndSettle();
-      // Accept the picker's default (today, from the pinned clock).
+      // Accept the picker's default date, then the required default time.
       await tester.tap(find.text('OK'));
       await tester.pumpAndSettle();
+      expect(find.byKey(TodoListScreen.dueTimePickerKey), findsOneWidget);
+      await tester.tap(find.text('OK'));
+      await tester.pumpAndSettle();
+      expect(permissionPort.notificationRequests, 1);
+      expect(permissionPort.exactRequests, 1);
       await tester.enterText(
         find.byKey(TodoListScreen.quickAddFieldKey),
         'dated item',
@@ -215,6 +274,7 @@ void main() {
       final List<TodoRow> rows = await repo.listTodos();
       final TodoRow dated = rows.singleWhere((t) => t.body == 'dated item');
       expect(dated.dueDate, todoDateKey(fixedNow));
+      expect(dated.dueTime, defaultTodoDueTime);
       expect(dated.folderId, isNull, reason: 'new items land unfiled');
       expect(
         rows.singleWhere((t) => t.body == 'undated item').dueDate,
@@ -225,7 +285,7 @@ void main() {
       expect(
         find.descendant(
           of: find.byKey(Key('todo-row-${dated.id}')),
-          matching: find.text('Today'),
+          matching: find.text('Today · 09:00'),
         ),
         findsOneWidget,
       );
@@ -385,13 +445,13 @@ void main() {
         matching: find.byType(Text),
       ),
     );
-    expect(overdueChip.data, 'Overdue · 2026-09-20');
+    expect(overdueChip.data, 'Overdue · 2026-09-20 · 09:00');
     expect(
       overdueChip.style?.color,
       Theme.of(tester.element(find.byType(TodoListScreen))).colorScheme.error,
     );
-    expect(find.text('Today'), findsOneWidget);
-    expect(find.text('2026-10-03'), findsOneWidget);
+    expect(find.text('Today · 09:00'), findsOneWidget);
+    expect(find.text('2026-10-03 · 09:00'), findsOneWidget);
     expect(find.byKey(Key('todo-chip-${someday.id}')), findsNothing);
 
     await unmount(tester);
@@ -434,12 +494,12 @@ void main() {
       dueDate: todoDateKey(fixedNow),
     );
     await settle(tester);
-    expect(find.text('Today'), findsOneWidget);
+    expect(find.text('Today · 09:00'), findsOneWidget);
 
     await tester.longPress(find.byKey(Key('todo-chip-${added.id}')));
     await settle(tester);
 
-    expect(find.text('Today'), findsNothing);
+    expect(find.text('Today · 09:00'), findsNothing);
     expect(find.byKey(Key('todo-chip-${added.id}')), findsNothing);
     expect((await db.getTodoRow(added.id))!.dueDate, isNull);
     expect(find.textContaining('selected'), findsNothing);

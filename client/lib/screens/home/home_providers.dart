@@ -22,6 +22,7 @@ import '../../services/note_persistence.dart';
 import '../../services/recording_playback.dart';
 import '../../services/server_transcription_service.dart';
 import '../../services/sync_engine.dart';
+import '../../services/todo_due_notification_scheduler.dart';
 import '../../services/transcription_notifications.dart';
 import '../server/server_connection_screen.dart'
     show transcriptionClientProvider;
@@ -68,11 +69,7 @@ class _CatalogImportRunner implements AudioImportRunner {
       mutations: _ref.read(recordingMutationsProvider),
       durationOf: probeAudioDuration,
     );
-    return importer.import(
-      sourcePath: sourcePath,
-      mode: mode,
-      title: title,
-    );
+    return importer.import(sourcePath: sourcePath, mode: mode, title: title);
   }
 }
 
@@ -86,28 +83,34 @@ final audioImportRunnerProvider = Provider<AudioImportRunner>((ref) {
 /// container and listens for the SSE transcript event.
 final serverTranscriptionServiceProvider =
     ChangeNotifierProvider<ServerTranscriptionService>((ref) {
-  final service = ServerTranscriptionService(
-    client: ref.watch(transcriptionClientProvider),
-    db: ref.watch(localDbProvider),
-    recordingAccess: ref.watch(recordingAccessProvider),
-    mutations: ref.watch(recordingMutationsProvider),
-    // N4: the outcome notice fires from the terminal write itself. Read,
-    // not watched: the notifier never changes identity in a session.
-    onOutcome: ({required dumpId, required title, required failed}) {
-      unawaited(
-        ref.read(completionNotifierProvider).announce(
-              transcriptionCompletionNotice(
-                dumpId: dumpId,
-                title: title,
-                failed: failed,
-              ),
-            ),
+      final service = ServerTranscriptionService(
+        client: ref.watch(transcriptionClientProvider),
+        db: ref.watch(localDbProvider),
+        recordingAccess: ref.watch(recordingAccessProvider),
+        mutations: ref.watch(recordingMutationsProvider),
+        // A spoken due date/time is a foreground point-of-use action just as
+        // much as confirming the picker. Remote sync capture has no callback,
+        // so it can never prompt from a background isolate.
+        onVoiceTimedTodoCreated: ref.read(todoDuePermissionRequesterProvider),
+        // N4: the outcome notice fires from the terminal write itself. Read,
+        // not watched: the notifier never changes identity in a session.
+        onOutcome: ({required dumpId, required title, required failed}) {
+          unawaited(
+            ref
+                .read(completionNotifierProvider)
+                .announce(
+                  transcriptionCompletionNotice(
+                    dumpId: dumpId,
+                    title: title,
+                    failed: failed,
+                  ),
+                ),
+          );
+        },
       );
-    },
-  );
-  unawaited(service.reconcilePending());
-  return service;
-});
+      unawaited(service.reconcilePending());
+      return service;
+    });
 
 /// N3: the recording whose detail screen is on top, or null. Set and
 /// cleared by DumpDetailScreen; the completion notifier wipes any notices
@@ -119,17 +122,18 @@ final currentDumpIdProvider = StateProvider<String?>((ref) => null);
 /// Android builds its port here, guarded like the progress port; main()
 /// overrides with the desktop port on Linux/Windows; tests override with a
 /// double; everywhere else delivers nothing.
-final completionNotificationPortProvider =
-    Provider<CompletionNotificationPort>((ref) {
-  if (!Platform.isAndroid) return const NullCompletionNotificationPort();
-  try {
-    return AndroidCompletionNotificationPort();
-  } catch (error, stack) {
-    debugPrint('tangent.notifications completion unavailable: $error');
-    debugPrintStack(stackTrace: stack, label: 'tangent.notifications');
-    return const NullCompletionNotificationPort();
-  }
-});
+final completionNotificationPortProvider = Provider<CompletionNotificationPort>(
+  (ref) {
+    if (!Platform.isAndroid) return const NullCompletionNotificationPort();
+    try {
+      return AndroidCompletionNotificationPort();
+    } catch (error, stack) {
+      debugPrint('tangent.notifications completion unavailable: $error');
+      debugPrintStack(stackTrace: stack, label: 'tangent.notifications');
+      return const NullCompletionNotificationPort();
+    }
+  },
+);
 
 /// The one [CompletionNotifier] of the session. Both N4 sources (the
 /// transcription service and the document sync engine) announce through
@@ -143,16 +147,12 @@ final completionNotifierProvider = Provider<CompletionNotifier>((ref) {
     enabled: () =>
         ref.read(settingsStoreProvider).completionNotificationsEnabled,
   );
-  ref.listen<String?>(
-    currentDumpIdProvider,
-    (_, String? dumpId) {
-      // Opened by any path — the tap, the list, a deep link — answers it.
-      // (No suppression while it is open: a result that lands while the
-      // user watches still pings; Jeff read the silent case as a bug.)
-      if (dumpId != null) unawaited(notifier.clearFor(dumpId));
-    },
-    fireImmediately: true,
-  );
+  ref.listen<String?>(currentDumpIdProvider, (_, String? dumpId) {
+    // Opened by any path — the tap, the list, a deep link — answers it.
+    // (No suppression while it is open: a result that lands while the
+    // user watches still pings; Jeff read the silent case as a bug.)
+    if (dumpId != null) unawaited(notifier.clearFor(dumpId));
+  }, fireImmediately: true);
   ref.onDispose(notifier.dispose);
   return notifier;
 });
@@ -167,8 +167,10 @@ final completionNotifierProvider = Provider<CompletionNotifier>((ref) {
 /// — the user saw "can't connect to the server" over a notification bug.
 final transcriptionNotificationPortProvider =
     Provider<TranscriptionNotificationPort>((ref) {
-  return _platformNotificationPort(() => AndroidTranscriptionNotificationPort());
-});
+      return _platformNotificationPort(
+        () => AndroidTranscriptionNotificationPort(),
+      );
+    });
 
 /// Builds a platform port, degrading to silence if the plugin cannot be had.
 TranscriptionNotificationPort _platformNotificationPort(
@@ -201,20 +203,31 @@ final documentSyncEngineProvider = Provider<DocumentSyncEngine>((ref) {
     // N4: "Notes ready" fires from the pull that lands the summary this
     // device asked for; the pure layer turns the requestedAt gate into a
     // notice or nothing.
-    onSummaryLanded: ({
-      required dumpId,
-      required title,
-      required template,
-      required requestedAt,
-    }) {
-      final CompletionNotice? notice = summaryCompletionNotice(
-        dumpId: dumpId,
-        title: title,
-        template: template,
-        requestedAt: requestedAt,
-      );
-      if (notice != null) {
-        unawaited(ref.read(completionNotifierProvider).announce(notice));
+    onSummaryLanded:
+        ({
+          required dumpId,
+          required title,
+          required template,
+          required requestedAt,
+        }) {
+          final CompletionNotice? notice = summaryCompletionNotice(
+            dumpId: dumpId,
+            title: title,
+            template: template,
+            requestedAt: requestedAt,
+          );
+          if (notice != null) {
+            unawaited(ref.read(completionNotifierProvider).announce(notice));
+          }
+        },
+    // A sync pull can move, complete, or delete a due todo without any UI
+    // repository call. Await reconciliation so sync returning means the
+    // platform alarm set already reflects the remote state.
+    onTodoChanged: () async {
+      try {
+        await ref.read(todoDueNotificationSchedulerProvider).reconcile();
+      } on UnimplementedError {
+        // Unsupported platforms and provider-only tests have no due port.
       }
     },
   );
@@ -309,13 +322,9 @@ final transcriptionRecoveryOwnerProvider = Provider<void>((ref) {
   );
   // Retain the live coordinator without rebuilding the database subscription.
   // Notifier progress changes are not coordinator replacements.
-  ref.listen(
-    serverTranscriptionServiceProvider,
-    (previous, next) {
-      if (!identical(previous, next)) signals.coordinatorChanged();
-    },
-    fireImmediately: true,
-  );
+  ref.listen(serverTranscriptionServiceProvider, (previous, next) {
+    if (!identical(previous, next)) signals.coordinatorChanged();
+  }, fireImmediately: true);
   ref.onDispose(signals.dispose);
 });
 
@@ -362,10 +371,13 @@ class _DurableRecoverySignals {
       final work = error.startsWith('sidecar_sync_pending: manual_edit:')
           ? error // Exact UUID revision, including distinct same-text edits.
           : error.startsWith('sidecar_sync_pending:')
-              ? 'sidecar'
-              : 'network';
-      next[row.id] =
-          (row.transcriptionAttempt, row.transcriptionRequestId, work);
+          ? 'sidecar'
+          : 'network';
+      next[row.id] = (
+        row.transcriptionAttempt,
+        row.transcriptionRequestId,
+        work,
+      );
     }
     final changed = next.keys.where((id) => next[id] != _pending[id]).toList();
     _pending = next;
@@ -382,8 +394,8 @@ class _DurableRecoverySignals {
 
 final recordingPlaybackEngineFactoryProvider =
     Provider<RecordingPlaybackEngine Function()>((ref) {
-  return JustAudioRecordingPlaybackEngine.new;
-});
+      return JustAudioRecordingPlaybackEngine.new;
+    });
 
 /// Note persistence bound to the app-owned storage pipeline, mirroring the
 /// wiring shape of `recordingControllerProvider`'s coordinator dependencies.

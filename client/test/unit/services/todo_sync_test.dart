@@ -16,6 +16,7 @@ import 'package:tangent/data/todo_repository.dart';
 import 'package:tangent/models/sync_change.dart';
 import 'package:tangent/services/connectivity_service.dart';
 import 'package:tangent/services/document_sync_engine.dart';
+import 'package:tangent/services/todo_due_notification_scheduler.dart';
 import 'package:tangent/services/todo_voice_capture.dart';
 import 'package:tangent/services/transcription_client.dart';
 
@@ -69,6 +70,38 @@ class _OnlineConnectivity implements ConnectivityService {
       throw UnimplementedError('unexpected call: ${invocation.memberName}');
 }
 
+class _SyncTodoDuePort implements TodoDueNotificationPort {
+  final Map<int, DateTime> scheduled = <int, DateTime>{};
+
+  @override
+  Future<bool> canScheduleExact() async => true;
+
+  @override
+  Future<void> cancelTodo(int notificationId) async {
+    scheduled.remove(notificationId);
+  }
+
+  @override
+  Future<Set<int>> pendingTodoNotificationIds() async => scheduled.keys.toSet();
+
+  @override
+  Future<bool> requestExactAlarmPermission() async => true;
+
+  @override
+  Future<bool> requestNotificationPermission() async => true;
+
+  @override
+  Future<void> scheduleTodo({
+    required int notificationId,
+    required String todoId,
+    required String title,
+    required DateTime fireAt,
+    required bool exact,
+  }) async {
+    scheduled[notificationId] = fireAt;
+  }
+}
+
 void main() {
   late LocalDb db;
   late _RecordingClient client;
@@ -82,12 +115,14 @@ void main() {
 
   tearDown(() async => db.close());
 
-  DocumentSyncEngine build() => DocumentSyncEngine(
+  DocumentSyncEngine build({TodoChangedHook? onTodoChanged}) =>
+      DocumentSyncEngine(
         db: () => db,
         client: () => client,
         connectivity: _OnlineConnectivity(),
         deviceLabel: () async => 'test device',
         newDeviceId: 'device-under-test',
+        onTodoChanged: onTodoChanged,
       );
 
   RemoteChange todoChange({
@@ -96,30 +131,37 @@ void main() {
     SyncOp op = SyncOp.upsert,
     Map<String, dynamic>? payload,
   }) => RemoteChange(
-        seq: seq,
-        entityType: 'todo',
-        entityId: id,
-        op: op,
-        payload: payload,
-        deviceId: 'peer-device',
-      );
+    seq: seq,
+    entityType: 'todo',
+    entityId: id,
+    op: op,
+    payload: payload,
+    deviceId: 'peer-device',
+  );
 
   Map<String, dynamic> fullPayload({
+    String id = 'remote-1',
     String text = 'from the peer',
     String updatedAt = '2026-09-27T10:00:00.000Z',
     Object? doneAt,
     Object? dueDate,
+    Object? dueTime,
     Object? deletedAt,
   }) => <String, dynamic>{
-        'text': text,
-        'done_at': doneAt,
-        'due_date': dueDate,
-        'source': 'manual',
-        'source_ref': null,
-        'created_at': '2026-09-27T09:00:00.000Z',
-        'updated_at': updatedAt,
-        'deleted_at': deletedAt,
-      };
+    'id': id,
+    'text': text,
+    'done_at': doneAt,
+    'due_date': dueDate,
+    'due_time': dueTime,
+    'source': 'manual',
+    'source_ref': null,
+    'folder_id': null,
+    'column_id': null,
+    'board_order': 0,
+    'created_at': '2026-09-27T09:00:00.000Z',
+    'updated_at': updatedAt,
+    'deleted_at': deletedAt,
+  };
 
   test('a dirty local todo pushes as entity_type todo with every field, '
       'and a confirmed push marks it clean', () async {
@@ -145,6 +187,8 @@ void main() {
     expect(payload['text'], 'pick up thermal paste');
     expect(payload.keys, contains('done_at'));
     expect(payload.keys, contains('due_date'));
+    expect(payload.keys, contains('due_time'));
+    expect(payload['due_time'], isNull);
     expect(payload.keys, contains('deleted_at'));
     expect(payload.keys, contains('folder_id'));
     expect(payload['column_id'], defaultTodoColumnId);
@@ -244,12 +288,11 @@ void main() {
       expect(todo.syncDirty, isFalse);
     });
 
-    for (final ({String label, bool includesNullColumn}) variant in <
-      ({String label, bool includesNullColumn})
-    >[
-      (label: 'present null column_id', includesNullColumn: true),
-      (label: 'absent column_id', includesNullColumn: false),
-    ]) {
+    for (final ({String label, bool includesNullColumn}) variant
+        in <({String label, bool includesNullColumn})>[
+          (label: 'present null column_id', includesNullColumn: true),
+          (label: 'absent column_id', includesNullColumn: false),
+        ]) {
       test(
         'explicit board placement survives an old-device ${variant.label} echo',
         () async {
@@ -307,89 +350,96 @@ void main() {
       );
     }
 
-    test('two cycles converge after one old-device null placement echo', () async {
-      final List<TodoColumnRow> columns = await repo.ensureColumns();
-      const String todoId = 'two-cycle-explicit-move';
-      const String originalStamp = '2026-09-01T00:00:00.000Z';
-      await db.applyRemoteTodo(
-        id: todoId,
-        text: 'migrated card',
-        createdAt: originalStamp,
-        updatedAt: originalStamp,
-        columnId: defaultTodoColumnId,
-        boardOrder: 7,
-        seq: 4,
-      );
-      await db.customStatement(
-        'INSERT INTO settings(key,value) VALUES(?,?)',
-        <Object?>['todo_kanban_backfill:$todoId', '7'],
-      );
-      final TodoRepository movingRepo = TodoRepository(
-        db: db,
-        now: () => DateTime.utc(2026, 10, 7, 12),
-      );
-      final String explicitColumn = columns[1].id;
-      await movingRepo.moveOnBoard(todoId, explicitColumn, 0);
+    test(
+      'two cycles converge after one old-device null placement echo',
+      () async {
+        final List<TodoColumnRow> columns = await repo.ensureColumns();
+        const String todoId = 'two-cycle-explicit-move';
+        const String originalStamp = '2026-09-01T00:00:00.000Z';
+        await db.applyRemoteTodo(
+          id: todoId,
+          text: 'migrated card',
+          createdAt: originalStamp,
+          updatedAt: originalStamp,
+          columnId: defaultTodoColumnId,
+          boardOrder: 7,
+          seq: 4,
+        );
+        await db.customStatement(
+          'INSERT INTO settings(key,value) VALUES(?,?)',
+          <Object?>['todo_kanban_backfill:$todoId', '7'],
+        );
+        final TodoRepository movingRepo = TodoRepository(
+          db: db,
+          now: () => DateTime.utc(2026, 10, 7, 12),
+        );
+        final String explicitColumn = columns[1].id;
+        await movingRepo.moveOnBoard(todoId, explicitColumn, 0);
 
-      RemoteChange nullEcho(int seq) => todoChange(
-        id: todoId,
-        seq: seq,
-        payload: <String, dynamic>{
-          ...fullPayload(
-            text: 'body echoed by old device',
-            updatedAt: '2026-10-06T10:00:00.000Z',
-          ),
-          'column_id': null,
-          'board_order': 7,
-        },
-      );
-      client
-        ..pullPages = <SyncPullPage>[
-          SyncPullPage(
-            changes: <RemoteChange>[nullEcho(90)],
-            headSeq: 90,
-            hasMore: false,
-          ),
-        ]
-        ..pushResults = const <PushResult>[
-          PushResult(
-            entityId: todoId,
-            entityType: 'todo',
-            seq: 91,
-            applied: true,
-          ),
-        ];
-      final DocumentSyncEngine engine = build();
+        RemoteChange nullEcho(int seq) => todoChange(
+          id: todoId,
+          seq: seq,
+          payload: <String, dynamic>{
+            ...fullPayload(
+              text: 'body echoed by old device',
+              updatedAt: '2026-10-06T10:00:00.000Z',
+            ),
+            'column_id': null,
+            'board_order': 7,
+          },
+        );
+        client
+          ..pullPages = <SyncPullPage>[
+            SyncPullPage(
+              changes: <RemoteChange>[nullEcho(90)],
+              headSeq: 90,
+              hasMore: false,
+            ),
+          ]
+          ..pushResults = const <PushResult>[
+            PushResult(
+              entityId: todoId,
+              entityType: 'todo',
+              seq: 91,
+              applied: true,
+            ),
+          ];
+        final DocumentSyncEngine engine = build();
 
-      await engine.syncNow();
+        await engine.syncNow();
 
-      TodoRow row = (await db.getTodoRow(todoId))!;
-      expect(row.columnId, explicitColumn);
-      expect(row.syncDirty, isFalse, reason: 'the explicit move was accepted');
-      expect(await db.pendingTodoBoardOrder(todoId), isNull);
-      expect(
-        client.pushedChanges!.singleWhere(
-          (Map<String, dynamic> change) => change['entity_id'] == todoId,
-        )['payload']['column_id'],
-        explicitColumn,
-      );
+        TodoRow row = (await db.getTodoRow(todoId))!;
+        expect(row.columnId, explicitColumn);
+        expect(
+          row.syncDirty,
+          isFalse,
+          reason: 'the explicit move was accepted',
+        );
+        expect(await db.pendingTodoBoardOrder(todoId), isNull);
+        expect(
+          client.pushedChanges!.singleWhere(
+            (Map<String, dynamic> change) => change['entity_id'] == todoId,
+          )['payload']['column_id'],
+          explicitColumn,
+        );
 
-      client
-        ..pushResults = const <PushResult>[]
-        ..pullPages = <SyncPullPage>[
-          SyncPullPage(
-            changes: <RemoteChange>[nullEcho(92)],
-            headSeq: 92,
-            hasMore: false,
-          ),
-        ];
-      await engine.syncNow();
+        client
+          ..pushResults = const <PushResult>[]
+          ..pullPages = <SyncPullPage>[
+            SyncPullPage(
+              changes: <RemoteChange>[nullEcho(92)],
+              headSeq: 92,
+              hasMore: false,
+            ),
+          ];
+        await engine.syncNow();
 
-      row = (await db.getTodoRow(todoId))!;
-      expect(row.columnId, explicitColumn);
-      expect(row.syncDirty, isFalse);
-      expect(await db.pendingTodoBoardOrder(todoId), isNull);
-    });
+        row = (await db.getTodoRow(todoId))!;
+        expect(row.columnId, explicitColumn);
+        expect(row.syncDirty, isFalse);
+        expect(await db.pendingTodoBoardOrder(todoId), isNull);
+      },
+    );
 
     test('a newer remote body merges into a migration-dirtied todo before '
         'its placement pushes', () async {
@@ -585,7 +635,7 @@ void main() {
           client.pushedChanges!.singleWhere(
                 (chg) => chg['entity_type'] == 'todo',
               )['payload']
-          as Map<String, dynamic>;
+              as Map<String, dynamic>;
       expect(payload['folder_id'], 'folder-shop', reason: 'push carries it');
       expect(
         payload['updated_at'],
@@ -669,61 +719,61 @@ void main() {
 
     test(
       'moveManyToFolder files the whole set, dirty with fresh stamps',
-        () async {
-      final DateTime t0 = DateTime.utc(2026, 9, 27, 9);
-      final DateTime t1 = DateTime.utc(2026, 9, 27, 10);
-      DateTime clock = t0;
-      int n = 0;
-      final TodoRepository r = TodoRepository(
-        db: db,
-        idFactory: () => 'id-${n++}',
-        now: () => clock,
-      );
-      await r.add('one');
-      await r.add('two');
-      await r.add('three');
-      await db.markTodoSynced(
-        'id-0',
-        seq: 1,
-        pushedUpdatedAt: t0.toIso8601String(),
-      );
-      await db.markTodoSynced(
-        'id-1',
-        seq: 1,
-        pushedUpdatedAt: t0.toIso8601String(),
-      );
+      () async {
+        final DateTime t0 = DateTime.utc(2026, 9, 27, 9);
+        final DateTime t1 = DateTime.utc(2026, 9, 27, 10);
+        DateTime clock = t0;
+        int n = 0;
+        final TodoRepository r = TodoRepository(
+          db: db,
+          idFactory: () => 'id-${n++}',
+          now: () => clock,
+        );
+        await r.add('one');
+        await r.add('two');
+        await r.add('three');
+        await db.markTodoSynced(
+          'id-0',
+          seq: 1,
+          pushedUpdatedAt: t0.toIso8601String(),
+        );
+        await db.markTodoSynced(
+          'id-1',
+          seq: 1,
+          pushedUpdatedAt: t0.toIso8601String(),
+        );
 
-      clock = t1;
-      await r.moveManyToFolder(<String>['id-0', 'id-1'], 'folder-shop');
+        clock = t1;
+        await r.moveManyToFolder(<String>['id-0', 'id-1'], 'folder-shop');
 
-      for (final String id in <String>['id-0', 'id-1']) {
-        final TodoRow row = (await db.getTodoRow(id))!;
-        expect(row.folderId, 'folder-shop');
-        expect(row.syncDirty, isTrue);
-        expect(row.updatedAt, t1.toIso8601String());
-      }
-      expect((await db.getTodoRow('id-2'))!.folderId, isNull);
+        for (final String id in <String>['id-0', 'id-1']) {
+          final TodoRow row = (await db.getTodoRow(id))!;
+          expect(row.folderId, 'folder-shop');
+          expect(row.syncDirty, isTrue);
+          expect(row.updatedAt, t1.toIso8601String());
+        }
+        expect((await db.getTodoRow('id-2'))!.folderId, isNull);
       },
     );
 
     test(
       'deleting a folder unfiles its todos in the same transaction',
-        () async {
-      final String shop = await db.createFolder(name: 'Shop');
-      final TodoRow a = await repo.add('in shop');
-      await repo.moveToFolder(a.id, shop);
-      await db.markTodoSynced(
-        a.id,
-        seq: 3,
-        pushedUpdatedAt: (await db.getTodoRow(a.id))!.updatedAt,
-      );
+      () async {
+        final String shop = await db.createFolder(name: 'Shop');
+        final TodoRow a = await repo.add('in shop');
+        await repo.moveToFolder(a.id, shop);
+        await db.markTodoSynced(
+          a.id,
+          seq: 3,
+          pushedUpdatedAt: (await db.getTodoRow(a.id))!.updatedAt,
+        );
 
-      await db.deleteFolder(shop);
+        await db.deleteFolder(shop);
 
-      final TodoRow after = (await db.getTodoRow(a.id))!;
-      expect(after.folderId, isNull);
-      expect(after.deletedAt, isNull, reason: 'contents are kept');
-      expect(after.syncDirty, isTrue, reason: 'unfiled state must push');
+        final TodoRow after = (await db.getTodoRow(a.id))!;
+        expect(after.folderId, isNull);
+        expect(after.deletedAt, isNull, reason: 'contents are kept');
+        expect(after.syncDirty, isTrue, reason: 'unfiled state must push');
       },
     );
   });
@@ -786,16 +836,16 @@ void main() {
       String? sourceRef = 'dump-1',
       required String createdAt,
     }) => <String, dynamic>{
-          'text': text,
-          'done_at': null,
-          'due_date': null,
-          'source': 'voice',
-          'source_ref': sourceRef,
-          'created_at': createdAt,
-          'updated_at': createdAt,
-          'deleted_at': null,
-          'folder_id': null,
-        };
+      'text': text,
+      'done_at': null,
+      'due_date': null,
+      'source': 'voice',
+      'source_ref': sourceRef,
+      'created_at': createdAt,
+      'updated_at': createdAt,
+      'deleted_at': null,
+      'folder_id': null,
+    };
 
     Future<TodoRow> localVoiceRow({
       String id = 'local-1',
@@ -923,23 +973,23 @@ void main() {
 
     test(
       'two different recordings with the same item text do NOT collapse',
-        () async {
-      await localVoiceRow(
-        sourceRef: 'dump-1',
-        createdAt: '2026-09-27T09:00:00.000Z',
-      );
+      () async {
+        await localVoiceRow(
+          sourceRef: 'dump-1',
+          createdAt: '2026-09-27T09:00:00.000Z',
+        );
 
-      await pull(
-        voicePayload(
-          text: 'pick up thermal paste',
-          sourceRef: 'dump-2',
-          createdAt: '2026-09-27T09:05:00.000Z',
-        ),
-      );
+        await pull(
+          voicePayload(
+            text: 'pick up thermal paste',
+            sourceRef: 'dump-2',
+            createdAt: '2026-09-27T09:05:00.000Z',
+          ),
+        );
 
-      expect((await db.getTodoRow('local-1'))!.deletedAt, isNull);
-      expect((await db.getTodoRow('remote-1'))!.deletedAt, isNull);
-      expect((await repo.listTodos()).length, 2);
+        expect((await db.getTodoRow('local-1'))!.deletedAt, isNull);
+        expect((await db.getTodoRow('remote-1'))!.deletedAt, isNull);
+        expect((await repo.listTodos()).length, 2);
       },
     );
 
@@ -980,55 +1030,55 @@ void main() {
 
   test(
     'an incoming todo lands clean (no echo back on the next cycle)',
-      () async {
-    client.pullPages = <SyncPullPage>[
-      SyncPullPage(
-        changes: <RemoteChange>[todoChange(payload: fullPayload())],
-        headSeq: 5,
-        hasMore: false,
-      ),
-    ];
+    () async {
+      client.pullPages = <SyncPullPage>[
+        SyncPullPage(
+          changes: <RemoteChange>[todoChange(payload: fullPayload())],
+          headSeq: 5,
+          hasMore: false,
+        ),
+      ];
 
-    await build().syncNow();
+      await build().syncNow();
 
-    final TodoRow row = (await db.getTodoRow('remote-1'))!;
-    expect(row.body, 'from the peer');
-    expect(row.syncDirty, isFalse, reason: 'pulled content must not re-push');
-    expect(client.pushedChanges, isNull, reason: 'nothing dirty to push');
+      final TodoRow row = (await db.getTodoRow('remote-1'))!;
+      expect(row.body, 'from the peer');
+      expect(row.syncDirty, isFalse, reason: 'pulled content must not re-push');
+      expect(client.pushedChanges, isNull, reason: 'nothing dirty to push');
     },
   );
 
   test(
     'a local dirty edit survives an incoming copy (own edit wins)',
-      () async {
-    await db.applyRemoteTodo(
-      id: 'remote-1',
-      text: 'original',
-      createdAt: '2026-09-27T09:00:00.000Z',
-      updatedAt: '2026-09-27T09:00:00.000Z',
-      seq: 1,
-    );
-    await repo.editText('remote-1', 'my unpushed edit');
-    client.pullPages = <SyncPullPage>[
-      SyncPullPage(
-        changes: <RemoteChange>[
-          todoChange(
-            payload: fullPayload(
-              text: 'peer overwrite',
-              updatedAt: '2126-01-01T00:00:00.000Z',
+    () async {
+      await db.applyRemoteTodo(
+        id: 'remote-1',
+        text: 'original',
+        createdAt: '2026-09-27T09:00:00.000Z',
+        updatedAt: '2026-09-27T09:00:00.000Z',
+        seq: 1,
+      );
+      await repo.editText('remote-1', 'my unpushed edit');
+      client.pullPages = <SyncPullPage>[
+        SyncPullPage(
+          changes: <RemoteChange>[
+            todoChange(
+              payload: fullPayload(
+                text: 'peer overwrite',
+                updatedAt: '2126-01-01T00:00:00.000Z',
+              ),
             ),
-          ),
-        ],
-        headSeq: 5,
-        hasMore: false,
-      ),
-    ];
+          ],
+          headSeq: 5,
+          hasMore: false,
+        ),
+      ];
 
-    await build().syncNow();
+      await build().syncNow();
 
-    final TodoRow row = (await db.getTodoRow('remote-1'))!;
-    expect(row.body, 'my unpushed edit');
-    expect(row.syncDirty, isTrue, reason: 'still owed to the server');
+      final TodoRow row = (await db.getTodoRow('remote-1'))!;
+      expect(row.body, 'my unpushed edit');
+      expect(row.syncDirty, isTrue, reason: 'still owed to the server');
     },
   );
 
@@ -1062,99 +1112,221 @@ void main() {
 
   test(
     'an absent key keeps the local value; a present null erases it',
-      () async {
-    await db.applyRemoteTodo(
-      id: 'remote-1',
-      text: 'dated and done',
-      createdAt: '2026-09-27T09:00:00.000Z',
-      updatedAt: '2026-09-27T09:00:00.000Z',
-      dueDate: '2026-10-01',
-      doneAt: '2026-09-27T09:30:00.000Z',
-      seq: 1,
-    );
-    // An older client's payload without due_date/done_at keys at all.
-    client.pullPages = <SyncPullPage>[
-      SyncPullPage(
-        changes: <RemoteChange>[
-          todoChange(
-            payload: <String, dynamic>{
-              'text': 'renamed by an older client',
-              'created_at': '2026-09-27T09:00:00.000Z',
-              'updated_at': '2026-09-27T10:00:00.000Z',
-            },
-          ),
-        ],
-        headSeq: 7,
-        hasMore: false,
-      ),
-    ];
-    await build().syncNow();
-
-    TodoRow row = (await db.getTodoRow('remote-1'))!;
-    expect(row.body, 'renamed by an older client');
-    expect(row.dueDate, '2026-10-01', reason: 'absence is not an eraser');
-    expect(row.doneAt, '2026-09-27T09:30:00.000Z');
-
-    // A present null IS the eraser: the peer unchecked and un-dated it.
-    client.pullPages = <SyncPullPage>[
-      SyncPullPage(
-        changes: <RemoteChange>[
-          todoChange(
-            seq: 8,
-            payload: fullPayload(
-              text: 'renamed by an older client',
-              updatedAt: '2026-09-27T11:00:00.000Z',
+    () async {
+      await db.applyRemoteTodo(
+        id: 'remote-1',
+        text: 'dated and done',
+        createdAt: '2026-09-27T09:00:00.000Z',
+        updatedAt: '2026-09-27T09:00:00.000Z',
+        dueDate: '2026-10-01',
+        doneAt: '2026-09-27T09:30:00.000Z',
+        seq: 1,
+      );
+      // An older client's payload without due_date/done_at keys at all.
+      client.pullPages = <SyncPullPage>[
+        SyncPullPage(
+          changes: <RemoteChange>[
+            todoChange(
+              payload: <String, dynamic>{
+                'text': 'renamed by an older client',
+                'created_at': '2026-09-27T09:00:00.000Z',
+                'updated_at': '2026-09-27T10:00:00.000Z',
+              },
             ),
-          ),
-        ],
-        headSeq: 8,
-        hasMore: false,
-      ),
-    ];
-    await build().syncNow();
+          ],
+          headSeq: 7,
+          hasMore: false,
+        ),
+      ];
+      await build().syncNow();
 
-    row = (await db.getTodoRow('remote-1'))!;
-    expect(row.dueDate, isNull);
-    expect(row.doneAt, isNull);
+      TodoRow row = (await db.getTodoRow('remote-1'))!;
+      expect(row.body, 'renamed by an older client');
+      expect(row.dueDate, '2026-10-01', reason: 'absence is not an eraser');
+      expect(row.dueTime, '09:00', reason: 'old peer omission keeps the time');
+      expect(row.doneAt, '2026-09-27T09:30:00.000Z');
+
+      // A present null IS the eraser: the peer unchecked and un-dated it.
+      client.pullPages = <SyncPullPage>[
+        SyncPullPage(
+          changes: <RemoteChange>[
+            todoChange(
+              seq: 8,
+              payload: fullPayload(
+                text: 'renamed by an older client',
+                updatedAt: '2026-09-27T11:00:00.000Z',
+              ),
+            ),
+          ],
+          headSeq: 8,
+          hasMore: false,
+        ),
+      ];
+      await build().syncNow();
+
+      row = (await db.getTodoRow('remote-1'))!;
+      expect(row.dueDate, isNull);
+      expect(row.dueTime, isNull);
+      expect(row.doneAt, isNull);
+    },
+  );
+
+  test(
+    'old production payload without due_time defaults once without churn',
+    () async {
+      client.pullPages = <SyncPullPage>[
+        SyncPullPage(
+          changes: <RemoteChange>[
+            todoChange(
+              payload: <String, dynamic>{
+                'id': 'remote-1',
+                'text': 'legacy dated todo',
+                'done_at': null,
+                'due_date': '2026-10-12',
+                'source': 'manual',
+                'source_ref': null,
+                'folder_id': null,
+                'column_id': null,
+                'board_order': 0,
+                'created_at': '2026-09-27T09:00:00.000Z',
+                'updated_at': '2026-09-27T10:00:00.000Z',
+                'deleted_at': null,
+              },
+            ),
+          ],
+          headSeq: 7,
+          hasMore: false,
+        ),
+      ];
+
+      await build().syncNow();
+
+      final TodoRow row = (await db.getTodoRow('remote-1'))!;
+      expect(row.dueDate, '2026-10-12');
+      expect(row.dueTime, defaultTodoDueTime);
+      expect(row.syncDirty, isFalse);
+
+      client.pushedChanges = null;
+      await build().syncNow();
+      expect(
+        client.pushedChanges,
+        isNull,
+        reason: 'the client-side 09:00 compatibility default is not re-pushed',
+      );
+    },
+  );
+
+  test(
+    'device A pushes 17:00, server-shaped wire reaches B and schedules 17:00',
+    () async {
+      final TodoRow local = await repo.add(
+        'timed local',
+        dueDate: '2026-10-15',
+        dueTime: '17:00',
+      );
+      client.pushResults = <PushResult>[
+        PushResult(
+          entityId: local.id,
+          entityType: 'todo',
+          seq: 4,
+          applied: true,
+        ),
+      ];
+      await build().syncNow();
+      final Map<String, dynamic> pushed =
+          client.pushedChanges!.singleWhere(
+                (Map<String, dynamic> change) =>
+                    change['entity_id'] == local.id,
+              )['payload']
+              as Map<String, dynamic>;
+      expect(pushed['due_date'], '2026-10-15');
+      expect(pushed['due_time'], '17:00');
+
+      final LocalDb deviceB = LocalDb.forTesting(NativeDatabase.memory());
+      addTearDown(deviceB.close);
+      final TodoRepository repoB = TodoRepository(db: deviceB);
+      final _RecordingClient clientB = _RecordingClient();
+      final _SyncTodoDuePort duePort = _SyncTodoDuePort();
+      final TodoDueNotificationScheduler dueScheduler =
+          TodoDueNotificationScheduler(
+            port: duePort,
+            loadTodos: repoB.listTodos,
+            now: () => DateTime(2026, 10, 9, 8),
+          );
+      clientB.pullPages = <SyncPullPage>[
+        SyncPullPage(
+          changes: <RemoteChange>[
+            todoChange(
+              seq: 5,
+              id: local.id,
+              payload: fullPayload(
+                id: local.id,
+                text: 'timed local',
+                updatedAt: local.updatedAt,
+                dueDate: '2026-10-15',
+                dueTime: '17:00',
+              ),
+            ),
+          ],
+          headSeq: 5,
+          hasMore: false,
+        ),
+      ];
+      final DocumentSyncEngine deviceBEngine = DocumentSyncEngine(
+        db: () => deviceB,
+        client: () => clientB,
+        connectivity: _OnlineConnectivity(),
+        deviceLabel: () async => 'device B',
+        newDeviceId: 'device-b',
+        onTodoChanged: dueScheduler.reconcile,
+      );
+      addTearDown(deviceBEngine.dispose);
+      await deviceBEngine.syncNow();
+
+      final TodoRow pulled = (await deviceB.getTodoRow(local.id))!;
+      expect(pulled.dueDate, '2026-10-15');
+      expect(pulled.dueTime, '17:00');
+      expect(pulled.syncDirty, isFalse);
+      expect(duePort.scheduled.values.single, DateTime(2026, 10, 15, 17));
     },
   );
 
   test(
     'a peer soft delete arrives as a deleted_at upsert and hides the row',
-      () async {
-    await db.applyRemoteTodo(
-      id: 'remote-1',
-      text: 'doomed',
-      createdAt: '2026-09-27T09:00:00.000Z',
-      updatedAt: '2026-09-27T09:00:00.000Z',
-      seq: 1,
-    );
-    client.pullPages = <SyncPullPage>[
-      SyncPullPage(
-        changes: <RemoteChange>[
-          todoChange(
-            seq: 9,
-            payload: fullPayload(
-              text: 'doomed',
-              updatedAt: '2026-09-27T10:00:00.000Z',
-              deletedAt: '2026-09-27T10:00:00.000Z',
+    () async {
+      await db.applyRemoteTodo(
+        id: 'remote-1',
+        text: 'doomed',
+        createdAt: '2026-09-27T09:00:00.000Z',
+        updatedAt: '2026-09-27T09:00:00.000Z',
+        seq: 1,
+      );
+      client.pullPages = <SyncPullPage>[
+        SyncPullPage(
+          changes: <RemoteChange>[
+            todoChange(
+              seq: 9,
+              payload: fullPayload(
+                text: 'doomed',
+                updatedAt: '2026-09-27T10:00:00.000Z',
+                deletedAt: '2026-09-27T10:00:00.000Z',
+              ),
             ),
-          ),
-        ],
-        headSeq: 9,
-        hasMore: false,
-      ),
-    ];
+          ],
+          headSeq: 9,
+          hasMore: false,
+        ),
+      ];
 
-    await build().syncNow();
+      await build().syncNow();
 
-    final TodoRow row = (await db.getTodoRow('remote-1'))!;
-    expect(row.deletedAt, '2026-09-27T10:00:00.000Z');
-    expect(
-      await TodoRepository(db: db).watchTodos().first,
-      isEmpty,
-      reason: 'a synced-in delete leaves the list',
-    );
+      final TodoRow row = (await db.getTodoRow('remote-1'))!;
+      expect(row.deletedAt, '2026-09-27T10:00:00.000Z');
+      expect(
+        await TodoRepository(db: db).watchTodos().first,
+        isEmpty,
+        reason: 'a synced-in delete leaves the list',
+      );
     },
   );
 

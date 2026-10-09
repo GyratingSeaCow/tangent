@@ -7,6 +7,7 @@ import '../../data/local_db.dart';
 import '../../data/notebook_repository.dart' show foldersProvider;
 import '../../data/todo_repository.dart';
 import '../../services/todo_sections.dart';
+import '../../services/todo_due_notification_scheduler.dart';
 import '../../widgets/folder_header_actions.dart';
 import '../../widgets/folder_picker.dart';
 import '../../widgets/item_action_sheet.dart';
@@ -46,6 +47,7 @@ class TodoListScreen extends ConsumerStatefulWidget {
 
   static const Key quickAddFieldKey = Key('todo-quick-add-field');
   static const Key quickAddDateChipKey = Key('todo-quick-add-date-chip');
+  static const Key dueTimePickerKey = Key('todo-due-time-picker');
   static const Key doneHeaderKey = Key('todo-section-done');
   static const Key unfiledHeaderKey = Key('todo-section-unfiled');
   static Key folderHeaderKey(String folderId) => Key('todo-section-$folderId');
@@ -115,6 +117,7 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
   /// Due date armed for the NEXT added item, as ISO `YYYY-MM-DD`; spent
   /// (cleared) by the add so a date never leaks onto later items.
   String? _pendingDueDate;
+  String? _pendingDueTime;
 
   /// The item whose text is being edited in place, if any.
   String? _editingId;
@@ -258,39 +261,83 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
     _quickAddFocus.requestFocus();
     if (text.isEmpty) return;
     final String? due = _pendingDueDate;
+    final String? dueTime = _pendingDueTime;
     _quickAdd.clear();
-    setState(() => _pendingDueDate = null);
+    setState(() {
+      _pendingDueDate = null;
+      _pendingDueTime = null;
+    });
     // New items land unfiled; Move files them after.
-    await ref.read(todoRepositoryProvider).add(text, dueDate: due);
+    await ref
+        .read(todoRepositoryProvider)
+        .add(text, dueDate: due, dueTime: dueTime);
   }
 
-  Future<void> _pickPendingDueDate() async {
-    final DateTime now = todoNow();
-    final DateTime? picked = await showDatePicker(
-      context: context,
-      initialDate: now,
-      firstDate: DateTime(now.year - 1),
-      lastDate: DateTime(now.year + 10),
-    );
-    if (picked == null) return;
-    setState(() => _pendingDueDate = todoDateKey(picked));
-  }
-
-  Future<void> _editDueDate(TodoRow todo) async {
+  Future<({String date, String time})?> _pickDueDateTime({
+    String? initialDate,
+    String? initialTime,
+  }) async {
     final DateTime now = todoNow();
     final DateTime initial =
-        DateTime.tryParse(todo.dueDate ?? '') ??
+        DateTime.tryParse(initialDate ?? '') ??
         DateTime(now.year, now.month, now.day);
-    final DateTime? picked = await showDatePicker(
+    final DateTime? pickedDate = await showDatePicker(
       context: context,
       initialDate: initial,
       firstDate: DateTime(now.year - 1),
       lastDate: DateTime(now.year + 10),
     );
+    if (pickedDate == null || !mounted) return null;
+    final List<String> parts = (initialTime ?? defaultTodoDueTime).split(':');
+    final TimeOfDay? pickedTime = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay(
+        hour: int.tryParse(parts.first) ?? 9,
+        minute: int.tryParse(parts.length > 1 ? parts[1] : '') ?? 0,
+      ),
+      builder: (BuildContext context, Widget? child) =>
+          KeyedSubtree(key: TodoListScreen.dueTimePickerKey, child: child!),
+    );
+    if (pickedTime == null) return null;
+    return (
+      date: todoDateKey(pickedDate),
+      time:
+          '${pickedTime.hour.toString().padLeft(2, '0')}:'
+          '${pickedTime.minute.toString().padLeft(2, '0')}',
+    );
+  }
+
+  Future<void> _requestDuePermissionsAtPointOfUse() async {
+    try {
+      await ref.read(todoDuePermissionRequesterProvider)();
+    } on UnimplementedError {
+      // Widget/test hosts and unsupported platforms intentionally omit a port.
+    }
+  }
+
+  Future<void> _pickPendingDueDate() async {
+    final ({String date, String time})? picked = await _pickDueDateTime(
+      initialDate: _pendingDueDate,
+      initialTime: _pendingDueTime,
+    );
+    if (picked == null || !mounted) return;
+    setState(() {
+      _pendingDueDate = picked.date;
+      _pendingDueTime = picked.time;
+    });
+    await _requestDuePermissionsAtPointOfUse();
+  }
+
+  Future<void> _editDueDate(TodoRow todo) async {
+    final ({String date, String time})? picked = await _pickDueDateTime(
+      initialDate: todo.dueDate,
+      initialTime: todo.dueTime,
+    );
     if (picked == null) return;
     await ref
         .read(todoRepositoryProvider)
-        .setDueDate(todo.id, todoDateKey(picked));
+        .setDueDate(todo.id, picked.date, dueTime: picked.time);
+    await _requestDuePermissionsAtPointOfUse();
   }
 
   Future<void> _delete(TodoRow todo) async {
@@ -783,11 +830,18 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
           InputChip(
             key: TodoListScreen.quickAddDateChipKey,
             avatar: const Icon(Icons.calendar_today, size: 18),
-            label: Text(_pendingDueDate ?? 'Due'),
+            label: Text(
+              _pendingDueDate == null
+                  ? 'Due'
+                  : '${_pendingDueDate!} · ${_pendingDueTime ?? defaultTodoDueTime}',
+            ),
             onPressed: _pickPendingDueDate,
             onDeleted: _pendingDueDate == null
                 ? null
-                : () => setState(() => _pendingDueDate = null),
+                : () => setState(() {
+                    _pendingDueDate = null;
+                    _pendingDueTime = null;
+                  }),
           ),
         ],
       ),
@@ -1145,7 +1199,9 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
             : Checkbox(
                 key: Key('todo-check-${todo.id}'),
                 value: done,
-                onChanged: _selecting ? null : (_) => repo.toggle(todo.id),
+                onChanged: _selecting
+                    ? null
+                    : (bool? value) => repo.setDone(todo.id, value ?? false),
               ),
         title: Text(
           todo.body,
@@ -1155,7 +1211,9 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
               ? const TextStyle(decoration: TextDecoration.lineThrough)
               : null,
         ),
-        subtitle: todo.dueDate == null ? null : Text(todo.dueDate!),
+        subtitle: todo.dueDate == null
+            ? null
+            : Text('${todo.dueDate} · ${todo.dueTime ?? defaultTodoDueTime}'),
         trailing: _selecting
             ? null
             : IconButton(
@@ -1400,16 +1458,18 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
     await repo.deleteColumn(column.id, destination);
   }
 
-  /// The time chip's label and tint: Overdue (red) / Today / the date.
+  /// The due chip's label and tint, including its required wall-clock time.
   ({String label, bool overdue})? _chipFor(TodoRow todo, DateTime now) {
     final String? due = todo.dueDate;
     if (due == null) return null;
+    final String time = todo.dueTime ?? defaultTodoDueTime;
     final String today = todoDateKey(now);
-    if (due.compareTo(today) < 0) {
-      return (label: 'Overdue · $due', overdue: true);
+    final bool overdue = due.compareTo(today) < 0;
+    if (overdue) {
+      return (label: 'Overdue · $due · $time', overdue: true);
     }
-    if (due == today) return (label: 'Today', overdue: false);
-    return (label: due, overdue: false);
+    if (due == today) return (label: 'Today · $time', overdue: false);
+    return (label: '$due · $time', overdue: false);
   }
 
   Widget _buildRow(BuildContext context, TodoRow todo, DateTime now) {
@@ -1461,7 +1521,7 @@ class _TodoListScreenState extends ConsumerState<TodoListScreen> {
           : Checkbox(
               key: Key('todo-check-${todo.id}'),
               value: done,
-              onChanged: (_) => repo.toggle(todo.id),
+              onChanged: (bool? value) => repo.setDone(todo.id, value ?? false),
             ),
       title: _editingId == todo.id && !_selecting
           ? TextField(

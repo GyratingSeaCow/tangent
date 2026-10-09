@@ -42,6 +42,7 @@ def _todo(text: str = "buy thermal paste", updated: str = "2026-09-27T12:00:00Z"
         "text": text,
         "done_at": None,
         "due_date": "2026-09-27",
+        "due_time": "17:00",
         "source": "manual",
         "source_ref": None,
         "created_at": "2026-09-27T11:00:00Z",
@@ -69,6 +70,7 @@ def test_push_stores_and_pull_fans_todo_without_opt_in(todo_api):
     row = db.execute("SELECT * FROM todos WHERE id = 'todo-1'").fetchone()
     assert row["text"] == "buy thermal paste"
     assert row["due_date"] == "2026-09-27"
+    assert row["due_time"] == "17:00"
 
     pulled = client.get(
         "/v1/sync/pull",
@@ -83,6 +85,44 @@ def test_push_stores_and_pull_fans_todo_without_opt_in(todo_api):
         "column_id": None,
         "board_order": 0,
     }
+
+
+def test_old_client_payload_without_due_time_stays_null_and_round_trips(todo_api):
+    client, token, db = todo_api
+    payload = _todo()
+    del payload["due_time"]
+    result = _push(client, token, [{
+        "entity_type": "todo", "entity_id": "todo-old-client", "op": "upsert",
+        "payload": payload,
+    }]).json()["results"][0]
+
+    assert result["status"] == "applied"
+    assert db.execute(
+        "SELECT due_time FROM todos WHERE id = 'todo-old-client'"
+    ).fetchone()[0] is None
+    pulled = client.get(
+        "/v1/sync/pull",
+        params={"device_id": "device-bbbb-2", "since_seq": 0},
+        headers=_headers(token),
+    ).json()
+    change = next(c for c in pulled["changes"] if c["entity_id"] == "todo-old-client")
+    assert change["payload"]["due_time"] is None
+
+
+@pytest.mark.parametrize("value", ["5:00", "24:00", "17:60", "17:00:00", "noon", 1700])
+def test_malformed_due_time_is_rejected(todo_api, value):
+    client, token, db = todo_api
+    payload = {**_todo(), "due_time": value}
+    result = _push(client, token, [{
+        "entity_type": "todo", "entity_id": "todo-bad-time", "op": "upsert",
+        "payload": payload,
+    }]).json()["results"][0]
+
+    assert result["status"] == "rejected"
+    assert "due_time" in result["reason"]
+    assert db.execute(
+        "SELECT COUNT(*) FROM todos WHERE id = 'todo-bad-time'"
+    ).fetchone()[0] == 0
 
 
 def test_todo_folder_id_round_trips(todo_api):
@@ -233,6 +273,36 @@ def test_todo_folder_migration_adds_column_exactly_once(temp_data_dir):
     conn = sqlite3.connect(db_file)
     columns = [row[1] for row in conn.execute("PRAGMA table_info(todos)")]
     assert columns.count("folder_id") == 1
+    conn.close()
+
+
+def test_todo_due_time_migration_adds_nullable_column_exactly_once(temp_data_dir):
+    db_file = temp_data_dir / "tangent.db"
+    conn = sqlite3.connect(db_file)
+    conn.execute("""
+        CREATE TABLE todos (
+            id TEXT PRIMARY KEY, text TEXT NOT NULL, done_at TEXT,
+            due_date TEXT, source TEXT NOT NULL DEFAULT 'manual',
+            source_ref TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+            deleted_at TEXT
+        )
+    """)
+    conn.execute(
+        "INSERT INTO todos (id, text, due_date, created_at, updated_at) "
+        "VALUES ('legacy', 'old row', '2026-10-09', 'a', 'b')"
+    )
+    conn.commit()
+    conn.close()
+
+    init_db(str(temp_data_dir))
+    init_db(str(temp_data_dir))
+
+    conn = sqlite3.connect(db_file)
+    columns = [row[1] for row in conn.execute("PRAGMA table_info(todos)")]
+    assert columns.count("due_time") == 1
+    assert conn.execute(
+        "SELECT due_time FROM todos WHERE id = 'legacy'"
+    ).fetchone()[0] is None
     conn.close()
 
 

@@ -8,6 +8,7 @@ class FakeDueReminderPort implements DueReminderPort {
   bool exact = true;
   bool canOpenSettings = true;
   int permissionRequests = 0;
+  int exactPermissionRequests = 0;
   int cancels = 0;
   int withdraws = 0;
   int openSettingsCalls = 0;
@@ -24,6 +25,12 @@ class FakeDueReminderPort implements DueReminderPort {
 
   @override
   Future<bool> canScheduleExact() async => exact;
+
+  @override
+  Future<bool> requestExactAlarmPermission() async {
+    exactPermissionRequests++;
+    return exact;
+  }
 
   @override
   Future<void> schedule({

@@ -29,25 +29,28 @@ class AndroidDueReminderPort implements DueReminderPort {
     FlutterLocalNotificationsPlugin? plugin,
     Workmanager? workmanager,
     void Function(NotificationResponse response)? onResponse,
+    void Function(NotificationResponse response)? onBackgroundResponse,
     int notificationId = kDueReminderNotificationId,
     String channelId = kDueReminderChannelId,
     String channelName = kDueReminderChannelName,
     String channelDescription = 'A morning digest of to-dos due today.',
     String taskName = kDueReminderTaskName,
     String payload = kDueReminderPayload,
-  })  : _plugin = plugin ?? FlutterLocalNotificationsPlugin(),
-        _workmanager = workmanager ?? Workmanager(),
-        _onResponse = onResponse,
-        _notificationId = notificationId,
-        _channelId = channelId,
-        _channelName = channelName,
-        _channelDescription = channelDescription,
-        _taskName = taskName,
-        _payload = payload;
+  }) : _plugin = plugin ?? FlutterLocalNotificationsPlugin(),
+       _workmanager = workmanager ?? Workmanager(),
+       _onResponse = onResponse,
+       _onBackgroundResponse = onBackgroundResponse,
+       _notificationId = notificationId,
+       _channelId = channelId,
+       _channelName = channelName,
+       _channelDescription = channelDescription,
+       _taskName = taskName,
+       _payload = payload;
 
   final FlutterLocalNotificationsPlugin _plugin;
   final Workmanager _workmanager;
   final void Function(NotificationResponse response)? _onResponse;
+  final void Function(NotificationResponse response)? _onBackgroundResponse;
   final int _notificationId;
   final String _channelId;
   final String _channelName;
@@ -58,14 +61,19 @@ class AndroidDueReminderPort implements DueReminderPort {
   static const Color _accent = Color(0xFF9B2594);
   bool _tzReady = false;
 
-  AndroidFlutterLocalNotificationsPlugin? get _android =>
-      _plugin.resolvePlatformSpecificImplementation<
-          AndroidFlutterLocalNotificationsPlugin>();
+  AndroidFlutterLocalNotificationsPlugin? get _android => _plugin
+      .resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin
+      >();
 
   /// Plugin init (shared guard) and time-zone database load. zonedSchedule
   /// needs a `tz.local` that matches the device, or "07:00" lands hours off.
   Future<void> ensureReady() async {
-    await ensureLocalNotificationsInitialised(_plugin, onResponse: _onResponse);
+    await ensureLocalNotificationsInitialised(
+      _plugin,
+      onResponse: _onResponse,
+      onBackgroundResponse: _onBackgroundResponse,
+    );
     if (_tzReady) return;
     tzdata.initializeTimeZones();
     try {
@@ -89,8 +97,8 @@ class AndroidDueReminderPort implements DueReminderPort {
   /// its cold start through here.
   Future<String?> launchPayload() async {
     try {
-      final NotificationAppLaunchDetails? details =
-          await _plugin.getNotificationAppLaunchDetails();
+      final NotificationAppLaunchDetails? details = await _plugin
+          .getNotificationAppLaunchDetails();
       if (details?.didNotificationLaunchApp != true) return null;
       return details?.notificationResponse?.payload;
     } catch (_) {
@@ -116,18 +124,28 @@ class AndroidDueReminderPort implements DueReminderPort {
     }
   }
 
+  @override
+  Future<bool> requestExactAlarmPermission() async {
+    await ensureReady();
+    try {
+      return await _android?.requestExactAlarmsPermission() ?? true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   NotificationDetails _details() => NotificationDetails(
-        android: AndroidNotificationDetails(
-          _channelId,
-          _channelName,
-          channelDescription: _channelDescription,
-          icon: '@drawable/ic_notification',
-          color: _accent,
-          importance: Importance.defaultImportance,
-          priority: Priority.defaultPriority,
-          autoCancel: true,
-        ),
-      );
+    android: AndroidNotificationDetails(
+      _channelId,
+      _channelName,
+      channelDescription: _channelDescription,
+      icon: '@drawable/ic_notification',
+      color: _accent,
+      importance: Importance.defaultImportance,
+      priority: Priority.defaultPriority,
+      autoCancel: true,
+    ),
+  );
 
   @override
   Future<void> schedule({

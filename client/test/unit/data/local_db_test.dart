@@ -24,18 +24,15 @@ void main() {
       // never transcribed (spec: 2026-09-17-text-note-design data model).
       expect(TranscriptionStatus.notApplicable.isTerminal, isTrue);
       expect(TranscriptionStatus.notApplicable.isInProgress, isFalse);
-      expect(
-        TranscriptionStatus.values.map((status) => status.wireValue),
-        [
-          'not_transcribed',
-          'uploading',
-          'queued',
-          'running',
-          'completed',
-          'failed',
-          'not_applicable',
-        ],
-      );
+      expect(TranscriptionStatus.values.map((status) => status.wireValue), [
+        'not_transcribed',
+        'uploading',
+        'queued',
+        'running',
+        'completed',
+        'failed',
+        'not_applicable',
+      ]);
     });
   });
 
@@ -187,20 +184,23 @@ void main() {
 
       await migrated.listDumps();
 
-      final trigger = sqlite
-          .select(
-            "SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = 'dumps_au'",
-          )
-          .single['sql'] as String;
+      final trigger =
+          sqlite
+                  .select(
+                    "SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = 'dumps_au'",
+                  )
+                  .single['sql']
+              as String;
       expect(trigger, contains("VALUES ('delete'"));
-      expect(sqlite.userVersion, 35);
+      expect(sqlite.userVersion, 36);
     });
 
-    test('migrates v2 by adding meeting notes without changing transcript',
-        () async {
-      await db.close();
-      final sqlite = sqlite3.openInMemory();
-      sqlite.execute('''
+    test(
+      'migrates v2 by adding meeting notes without changing transcript',
+      () async {
+        await db.close();
+        final sqlite = sqlite3.openInMemory();
+        sqlite.execute('''
         CREATE TABLE dumps (
           id TEXT NOT NULL PRIMARY KEY,
           created_at INTEGER NOT NULL,
@@ -226,25 +226,25 @@ void main() {
         );
         PRAGMA user_version = 2;
       ''');
-      final migrated = LocalDb.forTesting(NativeDatabase.opened(sqlite));
-      addTearDown(migrated.close);
+        final migrated = LocalDb.forTesting(NativeDatabase.opened(sqlite));
+        addTearDown(migrated.close);
 
-      final row = await migrated.getDump('meeting-1');
+        final row = await migrated.getDump('meeting-1');
 
-      expect(sqlite.userVersion, 35);
-      expect(row!.transcript, 'Raw legacy transcript');
-      expect(row.meetingNotes, isNull);
-      expect(row.syncStatus, 'local_only');
-      expect(
-        sqlite
-            .select("PRAGMA table_info('dumps')")
-            .map((column) => column['name']),
-        contains('meeting_notes'),
-      );
-    });
+        expect(sqlite.userVersion, 36);
+        expect(row!.transcript, 'Raw legacy transcript');
+        expect(row.meetingNotes, isNull);
+        expect(row.syncStatus, 'local_only');
+        expect(
+          sqlite
+              .select("PRAGMA table_info('dumps')")
+              .map((column) => column['name']),
+          contains('meeting_notes'),
+        );
+      },
+    );
 
-    test(
-        'migrating v2 keeps already-synced meetings synced and clears stale '
+    test('migrating v2 keeps already-synced meetings synced and clears stale '
         'errors on demoted ones', () async {
       await db.close();
       final sqlite = sqlite3.openInMemory();
@@ -345,7 +345,7 @@ void main() {
       final blank = await migrated.getDump('blank');
       final done = await migrated.getDump('done');
 
-      expect(sqlite.userVersion, 35);
+      expect(sqlite.userVersion, 36);
       expect(blank!.transcriptionStatus, 'not_transcribed');
       expect(blank.transcriptionAttempt, 0);
       expect(blank.transcriptionCompletedAt, isNull);
@@ -464,553 +464,573 @@ void main() {
       );
     });
 
-    test('recovery query returns in-progress and sidecar-pending rows',
-        () async {
-      final now = DateTime.utc(2026, 9, 14);
-      Future<void> insert(
-        String id,
-        TranscriptionStatus status, {
-        String? error,
-      }) {
-        return seedFileFixtureRow(
+    test(
+      'recovery query returns in-progress and sidecar-pending rows',
+      () async {
+        final now = DateTime.utc(2026, 9, 14);
+        Future<void> insert(
+          String id,
+          TranscriptionStatus status, {
+          String? error,
+        }) {
+          return seedFileFixtureRow(
+            db,
+            DumpRow(
+              id: id,
+              createdAt: now,
+              updatedAt: now,
+              mode: 'brain_dump',
+              durationSeconds: 1,
+              title: id,
+              transcript: status == TranscriptionStatus.completed
+                  ? 'done'
+                  : null,
+              audioPath: '/$id.opus',
+              audioSizeBytes: 1,
+              syncStatus: 'pending',
+              syncAttempts: 0,
+              transcriptionStatus: status.wireValue,
+              transcriptionAttempt: status == TranscriptionStatus.notTranscribed
+                  ? 0
+                  : 1,
+              transcriptionRequestId:
+                  status == TranscriptionStatus.notTranscribed
+                  ? null
+                  : 'request-$id',
+              transcriptionError: error,
+            ),
+          );
+        }
+
+        await insert('uploading', TranscriptionStatus.uploading);
+        await insert('queued', TranscriptionStatus.queued);
+        await insert('running', TranscriptionStatus.running);
+        await insert(
+          'sidecar',
+          TranscriptionStatus.completed,
+          error: 'sidecar_sync_pending: write failed',
+        );
+        await insert('completed', TranscriptionStatus.completed);
+        await insert('failed', TranscriptionStatus.failed);
+        await insert('idle', TranscriptionStatus.notTranscribed);
+
+        final rows = await db.dumpsNeedingTranscriptionRecovery();
+
+        expect(rows.map((row) => row.id).toSet(), {
+          'uploading',
+          'queued',
+          'running',
+          'sidecar',
+        });
+      },
+    );
+
+    test(
+      'sidecar completion barrier blocks a newer attempt until cleared',
+      () async {
+        final now = DateTime.utc(2026, 9, 14, 20);
+        await seedFileFixtureRow(
           db,
           DumpRow(
-            id: id,
+            id: 'sidecar-barrier',
             createdAt: now,
             updatedAt: now,
             mode: 'brain_dump',
-            durationSeconds: 1,
-            title: id,
-            transcript: status == TranscriptionStatus.completed ? 'done' : null,
-            audioPath: '/$id.opus',
+            durationSeconds: 5,
+            title: 'Sidecar barrier',
+            audioPath: '/sidecar-barrier.opus',
             audioSizeBytes: 1,
             syncStatus: 'pending',
             syncAttempts: 0,
-            transcriptionStatus: status.wireValue,
-            transcriptionAttempt:
-                status == TranscriptionStatus.notTranscribed ? 0 : 1,
-            transcriptionRequestId: status == TranscriptionStatus.notTranscribed
-                ? null
-                : 'request-$id',
-            transcriptionError: error,
+            transcriptionStatus: 'not_transcribed',
+            transcriptionAttempt: 0,
           ),
         );
-      }
-
-      await insert('uploading', TranscriptionStatus.uploading);
-      await insert('queued', TranscriptionStatus.queued);
-      await insert('running', TranscriptionStatus.running);
-      await insert(
-        'sidecar',
-        TranscriptionStatus.completed,
-        error: 'sidecar_sync_pending: write failed',
-      );
-      await insert('completed', TranscriptionStatus.completed);
-      await insert('failed', TranscriptionStatus.failed);
-      await insert('idle', TranscriptionStatus.notTranscribed);
-
-      final rows = await db.dumpsNeedingTranscriptionRecovery();
-
-      expect(
-        rows.map((row) => row.id).toSet(),
-        {'uploading', 'queued', 'running', 'sidecar'},
-      );
-    });
-
-    test('sidecar completion barrier blocks a newer attempt until cleared',
-        () async {
-      final now = DateTime.utc(2026, 9, 14, 20);
-      await seedFileFixtureRow(
-        db,
-        DumpRow(
-          id: 'sidecar-barrier',
-          createdAt: now,
-          updatedAt: now,
-          mode: 'brain_dump',
-          durationSeconds: 5,
-          title: 'Sidecar barrier',
-          audioPath: '/sidecar-barrier.opus',
-          audioSizeBytes: 1,
-          syncStatus: 'pending',
-          syncAttempts: 0,
-          transcriptionStatus: 'not_transcribed',
-          transcriptionAttempt: 0,
-        ),
-      );
-      final attempt = await db.beginTranscriptionAttempt(
-        'sidecar-barrier',
-        storageKey: fileFixtureKey('sidecar-barrier'),
-        requestId: 'request-sidecar',
-        now: now,
-      );
-
-      final completed = await db.completeTranscriptionAttempt(
-        'sidecar-barrier',
-        storageKey: fileFixtureKey('sidecar-barrier'),
-        attempt: attempt.transcriptionAttempt,
-        requestId: 'request-sidecar',
-        transcript: 'done',
-        now: now.add(const Duration(seconds: 1)),
-        sidecarError: 'sidecar_sync_pending: write pending',
-      );
-      final lateRunning = await db.updateTranscriptionStatus(
-        'sidecar-barrier',
-        storageKey: fileFixtureKey('sidecar-barrier'),
-        attempt: attempt.transcriptionAttempt,
-        requestId: 'request-sidecar',
-        status: TranscriptionStatus.running,
-        now: now.add(const Duration(milliseconds: 1500)),
-        jobId: 'job-sidecar',
-      );
-      final pending = await db.getDump('sidecar-barrier');
-      await expectLater(
-        db.beginTranscriptionAttempt(
+        final attempt = await db.beginTranscriptionAttempt(
           'sidecar-barrier',
           storageKey: fileFixtureKey('sidecar-barrier'),
-          requestId: 'request-too-early',
+          requestId: 'request-sidecar',
+          now: now,
+        );
+
+        final completed = await db.completeTranscriptionAttempt(
+          'sidecar-barrier',
+          storageKey: fileFixtureKey('sidecar-barrier'),
+          attempt: attempt.transcriptionAttempt,
+          requestId: 'request-sidecar',
+          transcript: 'done',
+          now: now.add(const Duration(seconds: 1)),
+          sidecarError: 'sidecar_sync_pending: write pending',
+        );
+        final lateRunning = await db.updateTranscriptionStatus(
+          'sidecar-barrier',
+          storageKey: fileFixtureKey('sidecar-barrier'),
+          attempt: attempt.transcriptionAttempt,
+          requestId: 'request-sidecar',
+          status: TranscriptionStatus.running,
+          now: now.add(const Duration(milliseconds: 1500)),
+          jobId: 'job-sidecar',
+        );
+        final pending = await db.getDump('sidecar-barrier');
+        await expectLater(
+          db.beginTranscriptionAttempt(
+            'sidecar-barrier',
+            storageKey: fileFixtureKey('sidecar-barrier'),
+            requestId: 'request-too-early',
+            now: now.add(const Duration(seconds: 2)),
+          ),
+          throwsStateError,
+        );
+        final cleared = await db.updateTranscriptionSidecarError(
+          'sidecar-barrier',
+          storageKey: fileFixtureKey('sidecar-barrier'),
+          attempt: attempt.transcriptionAttempt,
+          requestId: 'request-sidecar',
+          error: null,
+          now: now.add(const Duration(seconds: 3)),
+        );
+        final next = await db.beginTranscriptionAttempt(
+          'sidecar-barrier',
+          storageKey: fileFixtureKey('sidecar-barrier'),
+          requestId: 'request-next',
+          now: now.add(const Duration(seconds: 4)),
+        );
+
+        expect(completed, isTrue);
+        expect(lateRunning, isFalse);
+        expect(pending!.transcriptionStatus, 'completed');
+        expect(
+          pending.transcriptionError,
+          'sidecar_sync_pending: write pending',
+        );
+        expect(cleared, isTrue);
+        expect(next.transcriptionAttempt, 2);
+      },
+    );
+
+    test(
+      'completion ownership can be acquired only once per attempt',
+      () async {
+        final now = DateTime.utc(2026, 9, 14, 21);
+        await seedFileFixtureRow(
+          db,
+          DumpRow(
+            id: 'single-completion-owner',
+            createdAt: now,
+            updatedAt: now,
+            mode: 'brain_dump',
+            durationSeconds: 5,
+            title: 'Single completion owner',
+            audioPath: '/single-completion-owner.opus',
+            audioSizeBytes: 1,
+            syncStatus: 'pending',
+            syncAttempts: 0,
+            transcriptionStatus: 'not_transcribed',
+            transcriptionAttempt: 0,
+          ),
+        );
+        final attempt = await db.beginTranscriptionAttempt(
+          'single-completion-owner',
+          storageKey: fileFixtureKey('single-completion-owner'),
+          requestId: 'request-single-owner',
+          now: now,
+        );
+
+        final first = await db.completeTranscriptionAttempt(
+          attempt.id,
+          storageKey: fileFixtureKey(attempt.id),
+          attempt: attempt.transcriptionAttempt,
+          requestId: attempt.transcriptionRequestId!,
+          transcript: 'winning transcript',
+          now: now.add(const Duration(seconds: 1)),
+          sidecarError: 'sidecar_sync_pending: write pending',
+        );
+        final duplicate = await db.completeTranscriptionAttempt(
+          attempt.id,
+          storageKey: fileFixtureKey(attempt.id),
+          attempt: attempt.transcriptionAttempt,
+          requestId: attempt.transcriptionRequestId!,
+          transcript: 'duplicate transcript',
           now: now.add(const Duration(seconds: 2)),
-        ),
-        throwsStateError,
-      );
-      final cleared = await db.updateTranscriptionSidecarError(
-        'sidecar-barrier',
-        storageKey: fileFixtureKey('sidecar-barrier'),
-        attempt: attempt.transcriptionAttempt,
-        requestId: 'request-sidecar',
-        error: null,
-        now: now.add(const Duration(seconds: 3)),
-      );
-      final next = await db.beginTranscriptionAttempt(
-        'sidecar-barrier',
-        storageKey: fileFixtureKey('sidecar-barrier'),
-        requestId: 'request-next',
-        now: now.add(const Duration(seconds: 4)),
-      );
+          sidecarError: 'sidecar_sync_pending: duplicate',
+        );
+        final saved = (await db.getDump(attempt.id))!;
 
-      expect(completed, isTrue);
-      expect(lateRunning, isFalse);
-      expect(pending!.transcriptionStatus, 'completed');
-      expect(
-        pending.transcriptionError,
-        'sidecar_sync_pending: write pending',
-      );
-      expect(cleared, isTrue);
-      expect(next.transcriptionAttempt, 2);
-    });
+        expect(first, isTrue);
+        expect(duplicate, isFalse);
+        expect(saved.transcript, 'winning transcript');
+        expect(saved.transcriptionError, 'sidecar_sync_pending: write pending');
+      },
+    );
 
-    test('completion ownership can be acquired only once per attempt',
-        () async {
-      final now = DateTime.utc(2026, 9, 14, 21);
-      await seedFileFixtureRow(
-        db,
-        DumpRow(
-          id: 'single-completion-owner',
-          createdAt: now,
-          updatedAt: now,
-          mode: 'brain_dump',
-          durationSeconds: 5,
-          title: 'Single completion owner',
-          audioPath: '/single-completion-owner.opus',
-          audioSizeBytes: 1,
-          syncStatus: 'pending',
-          syncAttempts: 0,
-          transcriptionStatus: 'not_transcribed',
-          transcriptionAttempt: 0,
-        ),
-      );
-      final attempt = await db.beginTranscriptionAttempt(
-        'single-completion-owner',
-        storageKey: fileFixtureKey('single-completion-owner'),
-        requestId: 'request-single-owner',
-        now: now,
-      );
+    test(
+      'partial detail edits preserve durable transcription ownership',
+      () async {
+        final now = DateTime.utc(2026, 9, 14, 22);
+        await seedFileFixtureRow(
+          db,
+          DumpRow(
+            id: 'partial-detail-edit',
+            createdAt: now,
+            updatedAt: now,
+            mode: 'meeting',
+            durationSeconds: 5,
+            title: 'Original title',
+            audioPath: '/partial-detail-edit.opus',
+            audioSizeBytes: 1,
+            syncStatus: 'pending',
+            syncAttempts: 0,
+            transcriptionStatus: 'not_transcribed',
+            transcriptionAttempt: 0,
+          ),
+        );
+        final attempt = await db.beginTranscriptionAttempt(
+          'partial-detail-edit',
+          storageKey: fileFixtureKey('partial-detail-edit'),
+          requestId: 'request-partial-edit',
+          now: now,
+        );
+        await db.updateTranscriptionStatus(
+          attempt.id,
+          storageKey: fileFixtureKey(attempt.id),
+          attempt: attempt.transcriptionAttempt,
+          requestId: attempt.transcriptionRequestId!,
+          status: TranscriptionStatus.running,
+          jobId: 'job-partial-edit',
+          now: now.add(const Duration(seconds: 1)),
+        );
 
-      final first = await db.completeTranscriptionAttempt(
-        attempt.id,
-        storageKey: fileFixtureKey(attempt.id),
-        attempt: attempt.transcriptionAttempt,
-        requestId: attempt.transcriptionRequestId!,
-        transcript: 'winning transcript',
-        now: now.add(const Duration(seconds: 1)),
-        sidecarError: 'sidecar_sync_pending: write pending',
-      );
-      final duplicate = await db.completeTranscriptionAttempt(
-        attempt.id,
-        storageKey: fileFixtureKey(attempt.id),
-        attempt: attempt.transcriptionAttempt,
-        requestId: attempt.transcriptionRequestId!,
-        transcript: 'duplicate transcript',
-        now: now.add(const Duration(seconds: 2)),
-        sidecarError: 'sidecar_sync_pending: duplicate',
-      );
-      final saved = (await db.getDump(attempt.id))!;
+        await db.updateDumpTitle(
+          attempt.id,
+          storageKey: fileFixtureKey(attempt.id),
+          title: 'Edited title',
+          now: now.add(const Duration(seconds: 2)),
+        );
+        final running = (await db.getDump(attempt.id))!;
+        expect(running.title, 'Edited title');
+        expect(running.transcriptionStatus, 'running');
+        expect(running.transcriptionAttempt, 1);
+        expect(running.transcriptionRequestId, 'request-partial-edit');
+        expect(running.transcriptionJobId, 'job-partial-edit');
 
-      expect(first, isTrue);
-      expect(duplicate, isFalse);
-      expect(saved.transcript, 'winning transcript');
-      expect(saved.transcriptionError, 'sidecar_sync_pending: write pending');
-    });
+        await db.completeTranscriptionAttempt(
+          attempt.id,
+          storageKey: fileFixtureKey(attempt.id),
+          attempt: attempt.transcriptionAttempt,
+          requestId: attempt.transcriptionRequestId!,
+          transcript: 'Current transcript',
+          meetingNotes: 'Original notes',
+          now: now.add(const Duration(seconds: 3)),
+          sidecarError: 'sidecar_sync_pending: write pending',
+        );
+        await db.updateDumpMeetingNotes(
+          attempt.id,
+          storageKey: fileFixtureKey(attempt.id),
+          expectedTitle: 'Edited title',
+          expectedTranscript: 'Current transcript',
+          expectedTranscriptionAttempt: attempt.transcriptionAttempt,
+          expectedTranscriptionRequestId: attempt.transcriptionRequestId,
+          meetingNotes: 'Edited notes',
+          now: now.add(const Duration(seconds: 4)),
+        );
+        final completed = (await db.getDump(attempt.id))!;
+        expect(completed.meetingNotes, 'Edited notes');
+        expect(completed.transcript, 'Current transcript');
+        expect(completed.transcriptionStatus, 'completed');
+        expect(completed.transcriptionAttempt, 1);
+        expect(completed.transcriptionRequestId, 'request-partial-edit');
+        expect(completed.transcriptionJobId, 'job-partial-edit');
+        expect(
+          completed.transcriptionError,
+          'sidecar_sync_pending: write pending',
+        );
+      },
+    );
 
-    test('partial detail edits preserve durable transcription ownership',
-        () async {
-      final now = DateTime.utc(2026, 9, 14, 22);
-      await seedFileFixtureRow(
-        db,
-        DumpRow(
-          id: 'partial-detail-edit',
+    test(
+      'guarded transcript edit preserves notes and durable ownership',
+      () async {
+        final now = DateTime.utc(2026, 9, 15, 8);
+        final original = DumpRow(
+          id: 'editable-transcript',
           createdAt: now,
           updatedAt: now,
           mode: 'meeting',
           durationSeconds: 5,
-          title: 'Original title',
-          audioPath: '/partial-detail-edit.opus',
-          audioSizeBytes: 1,
+          title: 'Editable transcript',
+          transcript: 'Original words',
+          meetingNotes: 'Keep these notes',
+          audioPath: '/editable-transcript.opus',
+          audioSizeBytes: 17,
           syncStatus: 'pending',
           syncAttempts: 0,
-          transcriptionStatus: 'not_transcribed',
+          transcriptionStatus: 'completed',
+          transcriptionRequestId: 'request-editable',
+          transcriptionJobId: 'job-editable',
+          transcriptionAttempt: 3,
+          transcriptionStartedAt: now,
+          transcriptionUpdatedAt: now,
+          transcriptionCompletedAt: now,
+        );
+        await seedFileFixtureRow(db, original);
+
+        final saved = await db.updateDumpTranscript(
+          original.id,
+          storageKey: fileFixtureKey(original.id),
+          expectedTranscript: original.transcript!,
+          expectedTranscriptionAttempt: original.transcriptionAttempt,
+          expectedTranscriptionRequestId: original.transcriptionRequestId,
+          transcript: 'Corrected words',
+          now: now.add(const Duration(minutes: 1)),
+        );
+
+        expect(saved.transcript, 'Corrected words');
+        expect(saved.meetingNotes, 'Keep these notes');
+        expect(saved.audioPath, '/editable-transcript.opus');
+        expect(saved.audioSizeBytes, 17);
+        expect(saved.transcriptionStatus, 'completed');
+        expect(saved.transcriptionRequestId, 'request-editable');
+        expect(saved.transcriptionJobId, 'job-editable');
+        expect(saved.transcriptionAttempt, 3);
+        expect(
+          saved.transcriptionStartedAt!.millisecondsSinceEpoch,
+          now.millisecondsSinceEpoch,
+        );
+        expect(
+          saved.transcriptionCompletedAt!.millisecondsSinceEpoch,
+          now.millisecondsSinceEpoch,
+        );
+      },
+    );
+
+    test(
+      'note body edit succeeds against the not_applicable revision gate',
+      () async {
+        final now = DateTime.utc(2026, 9, 17, 9);
+        final original = DumpRow(
+          id: 'note-edit',
+          createdAt: now,
+          updatedAt: now,
+          mode: 'text_note',
+          durationSeconds: 0,
+          title: 'Note 2026-09-17 09-00-00',
+          transcript: 'First draft',
+          audioPath: '/note-edit.md',
+          audioSizeBytes: 11,
+          syncStatus: 'pending',
+          syncAttempts: 0,
+          transcriptionStatus: 'not_applicable',
           transcriptionAttempt: 0,
-        ),
-      );
-      final attempt = await db.beginTranscriptionAttempt(
-        'partial-detail-edit',
-        storageKey: fileFixtureKey('partial-detail-edit'),
-        requestId: 'request-partial-edit',
-        now: now,
-      );
-      await db.updateTranscriptionStatus(
-        attempt.id,
-        storageKey: fileFixtureKey(attempt.id),
-        attempt: attempt.transcriptionAttempt,
-        requestId: attempt.transcriptionRequestId!,
-        status: TranscriptionStatus.running,
-        jobId: 'job-partial-edit',
-        now: now.add(const Duration(seconds: 1)),
-      );
+        );
+        await seedFileFixtureRow(db, original);
 
-      await db.updateDumpTitle(
-        attempt.id,
-        storageKey: fileFixtureKey(attempt.id),
-        title: 'Edited title',
-        now: now.add(const Duration(seconds: 2)),
-      );
-      final running = (await db.getDump(attempt.id))!;
-      expect(running.title, 'Edited title');
-      expect(running.transcriptionStatus, 'running');
-      expect(running.transcriptionAttempt, 1);
-      expect(running.transcriptionRequestId, 'request-partial-edit');
-      expect(running.transcriptionJobId, 'job-partial-edit');
+        final saved = await db.updateDumpTranscript(
+          original.id,
+          storageKey: fileFixtureKey(original.id),
+          expectedTranscript: original.transcript!,
+          expectedTranscriptionAttempt: 0,
+          expectedTranscriptionRequestId: null,
+          transcript: 'Edited note body',
+          now: now.add(const Duration(minutes: 1)),
+        );
 
-      await db.completeTranscriptionAttempt(
-        attempt.id,
-        storageKey: fileFixtureKey(attempt.id),
-        attempt: attempt.transcriptionAttempt,
-        requestId: attempt.transcriptionRequestId!,
-        transcript: 'Current transcript',
-        meetingNotes: 'Original notes',
-        now: now.add(const Duration(seconds: 3)),
-        sidecarError: 'sidecar_sync_pending: write pending',
-      );
-      await db.updateDumpMeetingNotes(
-        attempt.id,
-        storageKey: fileFixtureKey(attempt.id),
-        expectedTitle: 'Edited title',
-        expectedTranscript: 'Current transcript',
-        expectedTranscriptionAttempt: attempt.transcriptionAttempt,
-        expectedTranscriptionRequestId: attempt.transcriptionRequestId,
-        meetingNotes: 'Edited notes',
-        now: now.add(const Duration(seconds: 4)),
-      );
-      final completed = (await db.getDump(attempt.id))!;
-      expect(completed.meetingNotes, 'Edited notes');
-      expect(completed.transcript, 'Current transcript');
-      expect(completed.transcriptionStatus, 'completed');
-      expect(completed.transcriptionAttempt, 1);
-      expect(completed.transcriptionRequestId, 'request-partial-edit');
-      expect(completed.transcriptionJobId, 'job-partial-edit');
-      expect(
-        completed.transcriptionError,
-        'sidecar_sync_pending: write pending',
-      );
-    });
+        expect(saved.transcript, 'Edited note body');
+        expect(saved.mode, 'text_note');
+        expect(saved.transcriptionStatus, 'not_applicable');
+        expect(
+          saved.transcriptionError,
+          startsWith('sidecar_sync_pending: manual_edit:'),
+        );
+      },
+    );
 
-    test('guarded transcript edit preserves notes and durable ownership',
-        () async {
-      final now = DateTime.utc(2026, 9, 15, 8);
-      final original = DumpRow(
-        id: 'editable-transcript',
-        createdAt: now,
-        updatedAt: now,
-        mode: 'meeting',
-        durationSeconds: 5,
-        title: 'Editable transcript',
-        transcript: 'Original words',
-        meetingNotes: 'Keep these notes',
-        audioPath: '/editable-transcript.opus',
-        audioSizeBytes: 17,
-        syncStatus: 'pending',
-        syncAttempts: 0,
-        transcriptionStatus: 'completed',
-        transcriptionRequestId: 'request-editable',
-        transcriptionJobId: 'job-editable',
-        transcriptionAttempt: 3,
-        transcriptionStartedAt: now,
-        transcriptionUpdatedAt: now,
-        transcriptionCompletedAt: now,
-      );
-      await seedFileFixtureRow(db, original);
+    test(
+      'note deletion claim and eligibility treat not_applicable as terminal',
+      () async {
+        final now = DateTime.utc(2026, 9, 17, 9, 30);
+        final note = DumpRow(
+          id: 'note-delete',
+          createdAt: now,
+          updatedAt: now,
+          mode: 'text_note',
+          durationSeconds: 0,
+          title: 'Note 2026-09-17 09-30-00',
+          transcript: 'Delete me',
+          audioPath: '/note-delete.md',
+          audioSizeBytes: 9,
+          syncStatus: 'local_only',
+          syncAttempts: 0,
+          transcriptionStatus: 'not_applicable',
+          transcriptionAttempt: 0,
+        );
+        final binding = await seedFileFixtureRow(db, note);
+        final coordinator = DefaultRecordingMutationCoordinator(db: db);
+        addTearDown(coordinator.drain);
+        await coordinator.restoreFences();
 
-      final saved = await db.updateDumpTranscript(
-        original.id,
-        storageKey: fileFixtureKey(original.id),
-        expectedTranscript: original.transcript!,
-        expectedTranscriptionAttempt: original.transcriptionAttempt,
-        expectedTranscriptionRequestId: original.transcriptionRequestId,
-        transcript: 'Corrected words',
-        now: now.add(const Duration(minutes: 1)),
-      );
+        expect(
+          (await coordinator.watchEligibility().first)[note.id],
+          Eligibility.eligible,
+        );
+        final admission = await coordinator.acquire(note.id, UseKind.deletion);
+        expect(admission, isA<Ok<UseLease>>());
+        await (admission as Ok<UseLease>).value.close();
 
-      expect(saved.transcript, 'Corrected words');
-      expect(saved.meetingNotes, 'Keep these notes');
-      expect(saved.audioPath, '/editable-transcript.opus');
-      expect(saved.audioSizeBytes, 17);
-      expect(saved.transcriptionStatus, 'completed');
-      expect(saved.transcriptionRequestId, 'request-editable');
-      expect(saved.transcriptionJobId, 'job-editable');
-      expect(saved.transcriptionAttempt, 3);
-      expect(
-        saved.transcriptionStartedAt!.millisecondsSinceEpoch,
-        now.millisecondsSinceEpoch,
-      );
-      expect(
-        saved.transcriptionCompletedAt!.millisecondsSinceEpoch,
-        now.millisecondsSinceEpoch,
-      );
-    });
-
-    test('note body edit succeeds against the not_applicable revision gate',
-        () async {
-      final now = DateTime.utc(2026, 9, 17, 9);
-      final original = DumpRow(
-        id: 'note-edit',
-        createdAt: now,
-        updatedAt: now,
-        mode: 'text_note',
-        durationSeconds: 0,
-        title: 'Note 2026-09-17 09-00-00',
-        transcript: 'First draft',
-        audioPath: '/note-edit.md',
-        audioSizeBytes: 11,
-        syncStatus: 'pending',
-        syncAttempts: 0,
-        transcriptionStatus: 'not_applicable',
-        transcriptionAttempt: 0,
-      );
-      await seedFileFixtureRow(db, original);
-
-      final saved = await db.updateDumpTranscript(
-        original.id,
-        storageKey: fileFixtureKey(original.id),
-        expectedTranscript: original.transcript!,
-        expectedTranscriptionAttempt: 0,
-        expectedTranscriptionRequestId: null,
-        transcript: 'Edited note body',
-        now: now.add(const Duration(minutes: 1)),
-      );
-
-      expect(saved.transcript, 'Edited note body');
-      expect(saved.mode, 'text_note');
-      expect(saved.transcriptionStatus, 'not_applicable');
-      expect(
-        saved.transcriptionError,
-        startsWith('sidecar_sync_pending: manual_edit:'),
-      );
-    });
-
-    test('note deletion claim and eligibility treat not_applicable as terminal',
-        () async {
-      final now = DateTime.utc(2026, 9, 17, 9, 30);
-      final note = DumpRow(
-        id: 'note-delete',
-        createdAt: now,
-        updatedAt: now,
-        mode: 'text_note',
-        durationSeconds: 0,
-        title: 'Note 2026-09-17 09-30-00',
-        transcript: 'Delete me',
-        audioPath: '/note-delete.md',
-        audioSizeBytes: 9,
-        syncStatus: 'local_only',
-        syncAttempts: 0,
-        transcriptionStatus: 'not_applicable',
-        transcriptionAttempt: 0,
-      );
-      final binding = await seedFileFixtureRow(db, note);
-      final coordinator = DefaultRecordingMutationCoordinator(db: db);
-      addTearDown(coordinator.drain);
-      await coordinator.restoreFences();
-
-      expect(
-        (await coordinator.watchEligibility().first)[note.id],
-        Eligibility.eligible,
-      );
-      final admission = await coordinator.acquire(note.id, UseKind.deletion);
-      expect(admission, isA<Ok<UseLease>>());
-      await (admission as Ok<UseLease>).value.close();
-
-      final claimed = await db.claimLocalDeletion(
-        'note-delete-op',
-        (
+        final claimed = await db.claimLocalDeletion('note-delete-op', (
           id: note.id,
           binding: binding,
           title: note.title,
           eligibility: Eligibility.eligible,
           retryTicketId: null,
-        ),
-      );
-      expect(claimed, isA<Ok<DeletionTicket>>());
-    });
+        ));
+        expect(claimed, isA<Ok<DeletionTicket>>());
+      },
+    );
 
     test(
-        'fix round stale sidecar acknowledgement cannot clear a newer identical edit',
-        () async {
-      final now = DateTime.utc(2026, 9, 15);
-      final original = DumpRow(
-        id: 'manual-aba',
-        createdAt: now,
-        updatedAt: now,
-        mode: 'meeting',
-        durationSeconds: 1,
-        title: 'ABA',
-        transcript: 'Original',
-        meetingNotes: 'Keep notes',
-        audioPath: '/manual-aba.opus',
-        audioSizeBytes: 3,
-        syncStatus: 'pending',
-        syncAttempts: 0,
-        transcriptionStatus: 'failed',
-        transcriptionAttempt: 0,
-        transcriptionError: 'server rejection',
-      );
-      await seedFileFixtureRow(db, original);
-      Future<DumpRow> edit(String expected, String value) =>
+      'fix round stale sidecar acknowledgement cannot clear a newer identical edit',
+      () async {
+        final now = DateTime.utc(2026, 9, 15);
+        final original = DumpRow(
+          id: 'manual-aba',
+          createdAt: now,
+          updatedAt: now,
+          mode: 'meeting',
+          durationSeconds: 1,
+          title: 'ABA',
+          transcript: 'Original',
+          meetingNotes: 'Keep notes',
+          audioPath: '/manual-aba.opus',
+          audioSizeBytes: 3,
+          syncStatus: 'pending',
+          syncAttempts: 0,
+          transcriptionStatus: 'failed',
+          transcriptionAttempt: 0,
+          transcriptionError: 'server rejection',
+        );
+        await seedFileFixtureRow(db, original);
+        Future<DumpRow> edit(String expected, String value) =>
+            db.updateDumpTranscript(
+              original.id,
+              storageKey: fileFixtureKey(original.id),
+              expectedTranscript: expected,
+              expectedTranscriptionAttempt: 0,
+              expectedTranscriptionRequestId: null,
+              transcript: value,
+              now: now,
+            );
+        final first = await edit('Original', 'Edited');
+        final second = await edit('Edited', 'Edited');
+        expect(
+          await db.updateTranscriptionSidecarError(
+            original.id,
+            storageKey: fileFixtureKey(original.id),
+            attempt: 0,
+            requestId: null,
+            error: 'server rejection',
+            now: now,
+            expectedTranscript: first.transcript,
+            expectedError: first.transcriptionError,
+          ),
+          isFalse,
+        );
+        expect(
+          (await db.getDump(original.id))!.transcriptionError,
+          second.transcriptionError,
+        );
+        await expectLater(
+          db.beginTranscriptionAttempt(
+            original.id,
+            storageKey: fileFixtureKey(original.id),
+            requestId: 'request-new',
+            now: now,
+          ),
+          throwsStateError,
+        );
+        expect(
+          LocalDb.errorAfterSidecarSync(second.transcriptionError),
+          'server rejection',
+        );
+        expect(
+          await db.updateTranscriptionSidecarError(
+            original.id,
+            storageKey: fileFixtureKey(original.id),
+            attempt: 0,
+            requestId: null,
+            error: 'server rejection',
+            now: now,
+            expectedTranscript: second.transcript,
+            expectedError: second.transcriptionError,
+          ),
+          isTrue,
+        );
+        final saved = (await db.getDump(original.id))!;
+        expect(saved.transcriptionStatus, 'failed');
+        expect(saved.meetingNotes, 'Keep notes');
+        expect(saved.transcriptionError, 'server rejection');
+      },
+    );
+
+    test(
+      'transcript edit rejects blank, in-progress, and stale revisions',
+      () async {
+        final now = DateTime.utc(2026, 9, 15, 9);
+        final original = DumpRow(
+          id: 'guarded-transcript-edit',
+          createdAt: now,
+          updatedAt: now,
+          mode: 'brain_dump',
+          durationSeconds: 5,
+          title: 'Guarded transcript',
+          transcript: 'Original words',
+          audioPath: '/guarded-transcript.opus',
+          audioSizeBytes: 17,
+          syncStatus: 'pending',
+          syncAttempts: 0,
+          transcriptionStatus: 'completed',
+          transcriptionRequestId: 'request-one',
+          transcriptionJobId: 'job-one',
+          transcriptionAttempt: 1,
+          transcriptionStartedAt: now,
+          transcriptionUpdatedAt: now,
+          transcriptionCompletedAt: now,
+        );
+        await seedFileFixtureRow(db, original);
+
+        expect(
+          () => db.updateDumpTranscript(
+            original.id,
+            storageKey: fileFixtureKey(original.id),
+            expectedTranscript: original.transcript!,
+            expectedTranscriptionAttempt: 1,
+            expectedTranscriptionRequestId: 'request-one',
+            transcript: '   \n ',
+            now: now.add(const Duration(seconds: 1)),
+          ),
+          throwsArgumentError,
+        );
+
+        await db.beginTranscriptionAttempt(
+          original.id,
+          storageKey: fileFixtureKey(original.id),
+          requestId: 'request-two',
+          now: now.add(const Duration(seconds: 2)),
+        );
+        await expectLater(
           db.updateDumpTranscript(
             original.id,
             storageKey: fileFixtureKey(original.id),
-            expectedTranscript: expected,
-            expectedTranscriptionAttempt: 0,
-            expectedTranscriptionRequestId: null,
-            transcript: value,
-            now: now,
-          );
-      final first = await edit('Original', 'Edited');
-      final second = await edit('Edited', 'Edited');
-      expect(
-        await db.updateTranscriptionSidecarError(
-          original.id,
-          storageKey: fileFixtureKey(original.id),
-          attempt: 0,
-          requestId: null,
-          error: 'server rejection',
-          now: now,
-          expectedTranscript: first.transcript,
-          expectedError: first.transcriptionError,
-        ),
-        isFalse,
-      );
-      expect(
-        (await db.getDump(original.id))!.transcriptionError,
-        second.transcriptionError,
-      );
-      await expectLater(
-        db.beginTranscriptionAttempt(
-          original.id,
-          storageKey: fileFixtureKey(original.id),
-          requestId: 'request-new',
-          now: now,
-        ),
-        throwsStateError,
-      );
-      expect(
-        LocalDb.errorAfterSidecarSync(second.transcriptionError),
-        'server rejection',
-      );
-      expect(
-        await db.updateTranscriptionSidecarError(
-          original.id,
-          storageKey: fileFixtureKey(original.id),
-          attempt: 0,
-          requestId: null,
-          error: 'server rejection',
-          now: now,
-          expectedTranscript: second.transcript,
-          expectedError: second.transcriptionError,
-        ),
-        isTrue,
-      );
-      final saved = (await db.getDump(original.id))!;
-      expect(saved.transcriptionStatus, 'failed');
-      expect(saved.meetingNotes, 'Keep notes');
-      expect(saved.transcriptionError, 'server rejection');
-    });
-
-    test('transcript edit rejects blank, in-progress, and stale revisions',
-        () async {
-      final now = DateTime.utc(2026, 9, 15, 9);
-      final original = DumpRow(
-        id: 'guarded-transcript-edit',
-        createdAt: now,
-        updatedAt: now,
-        mode: 'brain_dump',
-        durationSeconds: 5,
-        title: 'Guarded transcript',
-        transcript: 'Original words',
-        audioPath: '/guarded-transcript.opus',
-        audioSizeBytes: 17,
-        syncStatus: 'pending',
-        syncAttempts: 0,
-        transcriptionStatus: 'completed',
-        transcriptionRequestId: 'request-one',
-        transcriptionJobId: 'job-one',
-        transcriptionAttempt: 1,
-        transcriptionStartedAt: now,
-        transcriptionUpdatedAt: now,
-        transcriptionCompletedAt: now,
-      );
-      await seedFileFixtureRow(db, original);
-
-      expect(
-        () => db.updateDumpTranscript(
-          original.id,
-          storageKey: fileFixtureKey(original.id),
-          expectedTranscript: original.transcript!,
-          expectedTranscriptionAttempt: 1,
-          expectedTranscriptionRequestId: 'request-one',
-          transcript: '   \n ',
-          now: now.add(const Duration(seconds: 1)),
-        ),
-        throwsArgumentError,
-      );
-
-      await db.beginTranscriptionAttempt(
-        original.id,
-        storageKey: fileFixtureKey(original.id),
-        requestId: 'request-two',
-        now: now.add(const Duration(seconds: 2)),
-      );
-      await expectLater(
-        db.updateDumpTranscript(
-          original.id,
-          storageKey: fileFixtureKey(original.id),
-          expectedTranscript: original.transcript!,
-          expectedTranscriptionAttempt: 1,
-          expectedTranscriptionRequestId: 'request-one',
-          transcript: 'Stale corrected words',
-          now: now.add(const Duration(seconds: 3)),
-        ),
-        throwsStateError,
-      );
-      expect((await db.getDump(original.id))!.transcript, 'Original words');
-    });
+            expectedTranscript: original.transcript!,
+            expectedTranscriptionAttempt: 1,
+            expectedTranscriptionRequestId: 'request-one',
+            transcript: 'Stale corrected words',
+            now: now.add(const Duration(seconds: 3)),
+          ),
+          throwsStateError,
+        );
+        expect((await db.getDump(original.id))!.transcript, 'Original words');
+      },
+    );
 
     test('late nonterminal updates cannot regress a running phase', () async {
       final now = DateTime.utc(2026, 9, 14, 23, 30);
@@ -1075,57 +1095,61 @@ void main() {
       expect(saved.transcriptionError, isNull);
     });
 
-    test('beginTranscriptionAttempt rejects not_applicable note rows',
-        () async {
-      final now = DateTime.utc(2026, 9, 17, 12);
-      await seedFileFixtureRow(
-        db,
-        DumpRow(
-          id: 'note-na',
-          createdAt: now,
-          updatedAt: now,
-          mode: 'text_note',
-          durationSeconds: 0,
-          title: 'Note',
-          audioPath: '/note-na.md',
-          audioSizeBytes: 4,
-          transcript: 'body',
-          syncStatus: 'pending',
-          syncAttempts: 0,
-          transcriptionStatus: 'not_applicable',
-          transcriptionAttempt: 0,
-        ),
-      );
-
-      await expectLater(
-        db.beginTranscriptionAttempt(
-          'note-na',
-          storageKey: fileFixtureKey('note-na'),
-          requestId: 'request-note',
-          now: now,
-        ),
-        throwsA(
-          isA<StateError>().having(
-            (e) => e.message,
-            'message',
-            contains('not applicable'),
+    test(
+      'beginTranscriptionAttempt rejects not_applicable note rows',
+      () async {
+        final now = DateTime.utc(2026, 9, 17, 12);
+        await seedFileFixtureRow(
+          db,
+          DumpRow(
+            id: 'note-na',
+            createdAt: now,
+            updatedAt: now,
+            mode: 'text_note',
+            durationSeconds: 0,
+            title: 'Note',
+            audioPath: '/note-na.md',
+            audioSizeBytes: 4,
+            transcript: 'body',
+            syncStatus: 'pending',
+            syncAttempts: 0,
+            transcriptionStatus: 'not_applicable',
+            transcriptionAttempt: 0,
           ),
-        ),
-      );
-      final after = (await db.getDump('note-na'))!;
-      expect(after.transcriptionStatus, 'not_applicable');
-      expect(after.transcriptionAttempt, 0);
-    });
-    test('createFolder ids never collide, even back-to-back in one clock tick',
-        () async {
-      // Regression: ids were DateTime.now().microsecondsSinceEpoch; Windows
-      // advances that in ~1 ms steps, so a burst of creates hit UNIQUE
-      // constraint failed: folders.id.
-      final Set<String> ids = <String>{};
-      for (int i = 0; i < 50; i++) {
-        ids.add(await db.createFolder(name: 'Burst $i'));
-      }
-      expect(ids, hasLength(50));
-    });
+        );
+
+        await expectLater(
+          db.beginTranscriptionAttempt(
+            'note-na',
+            storageKey: fileFixtureKey('note-na'),
+            requestId: 'request-note',
+            now: now,
+          ),
+          throwsA(
+            isA<StateError>().having(
+              (e) => e.message,
+              'message',
+              contains('not applicable'),
+            ),
+          ),
+        );
+        final after = (await db.getDump('note-na'))!;
+        expect(after.transcriptionStatus, 'not_applicable');
+        expect(after.transcriptionAttempt, 0);
+      },
+    );
+    test(
+      'createFolder ids never collide, even back-to-back in one clock tick',
+      () async {
+        // Regression: ids were DateTime.now().microsecondsSinceEpoch; Windows
+        // advances that in ~1 ms steps, so a burst of creates hit UNIQUE
+        // constraint failed: folders.id.
+        final Set<String> ids = <String>{};
+        for (int i = 0; i < 50; i++) {
+          ids.add(await db.createFolder(name: 'Burst $i'));
+        }
+        expect(ids, hasLength(50));
+      },
+    );
   });
 }

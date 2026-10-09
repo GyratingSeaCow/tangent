@@ -17,6 +17,7 @@ bool _initialised = false;
 Future<void> ensureLocalNotificationsInitialised(
   FlutterLocalNotificationsPlugin plugin, {
   void Function(NotificationResponse response)? onResponse,
+  void Function(NotificationResponse response)? onBackgroundResponse,
 }) async {
   if (_initialised) return;
   _initialised = true;
@@ -25,5 +26,6 @@ Future<void> ensureLocalNotificationsInitialised(
       android: AndroidInitializationSettings('@mipmap/ic_launcher'),
     ),
     onDidReceiveNotificationResponse: onResponse,
+    onDidReceiveBackgroundNotificationResponse: onBackgroundResponse,
   );
 }
