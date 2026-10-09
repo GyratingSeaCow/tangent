@@ -240,7 +240,7 @@ FROM ink_index_entries_new
 
       final Database upgraded = sqlite3.open(file.path);
       addTearDown(upgraded.close);
-      expect(upgraded.userVersion, 35);
+      expect(upgraded.userVersion, 36);
       final List<Row> newPk =
           upgraded
               .select('PRAGMA table_info(ink_index_entries)')

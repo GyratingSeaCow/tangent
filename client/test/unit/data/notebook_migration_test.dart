@@ -99,7 +99,7 @@ void main() {
 
       final Database migrated = sqlite3.open(file.path);
       addTearDown(migrated.close);
-      expect(migrated.userVersion, 35);
+      expect(migrated.userVersion, 36);
       expect(_columnNames(migrated, 'notebooks'), _v30MigratedNotebookColumns);
       final Row row = migrated
           .select(
@@ -123,8 +123,8 @@ void main() {
 
       await db.listDumps();
 
-      expect(db.schemaVersion, 35);
-      expect(sql.userVersion, 35);
+      expect(db.schemaVersion, 36);
+      expect(sql.userVersion, 36);
       expect(_columnNames(sql, 'notebooks'), _notebookColumns);
       expect(
         sql.select('PRAGMA foreign_key_list(notebooks)'),
@@ -152,7 +152,7 @@ void main() {
 
       await db.listDumps();
 
-      expect(sql.userVersion, 35);
+      expect(sql.userVersion, 36);
       expect(_columnNames(sql, 'notebooks'), _notebookColumns);
       // v8 adds folder_id to dumps, so compare the columns the fixture had:
       // this test is about existing rows surviving, not about the column list.
@@ -208,7 +208,7 @@ void main() {
 
       sql = sqlite3.open(file.path);
       addTearDown(sql.close);
-      expect(sql.userVersion, 35);
+      expect(sql.userVersion, 36);
       expect(_columnNames(sql, 'notebooks'), _notebookColumns);
       // v8 adds folder_id to dumps, so compare the columns the fixture had:
       // this test is about existing rows surviving, not about the column list.
@@ -267,7 +267,7 @@ void main() {
     addTearDown(db.close);
     await db.listDumps();
 
-    expect(sql.userVersion, 35);
+    expect(sql.userVersion, 36);
     final rows = <String, int>{
       for (final r in sql.select('SELECT id, sync_dirty FROM notebooks'))
         r['id'] as String: r['sync_dirty'] as int,
@@ -302,20 +302,23 @@ void main() {
     addTearDown(db.close);
     await db.listDumps();
 
-    expect(sql.userVersion, 35);
+    expect(sql.userVersion, 36);
     expect(
       sql.select(
         "SELECT name FROM sqlite_master WHERE type='table' "
         "AND name='ink_index_entries'",
       ),
       isNotEmpty,
-      reason: 'a v14 device must gain the handwriting-search mirror — '
+      reason:
+          'a v14 device must gain the handwriting-search mirror — '
           'without the table every ink_index sync pull throws',
     );
 
     // Prove Drift and SQLite agree on the shape: a full round-trip through
     // the generated table, not just a name in sqlite_master.
-    await db.into(db.inkIndexEntries).insert(
+    await db
+        .into(db.inkIndexEntries)
+        .insert(
           InkIndexEntriesCompanion.insert(
             id: 'line-1:000',
             notebookId: 'nb-1',
@@ -330,8 +333,7 @@ void main() {
         );
     final InkIndexEntry row = await (db.select(
       db.inkIndexEntries,
-    )..where((t) => t.id.equals('line-1:000')))
-        .getSingle();
+    )..where((t) => t.id.equals('line-1:000'))).getSingle();
     expect(row.wordTextLower, 'brake');
   });
 }

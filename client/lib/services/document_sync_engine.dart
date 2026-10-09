@@ -67,6 +67,8 @@ typedef SummaryLandedHook =
       required int requestedAt,
     });
 
+typedef TodoChangedHook = Future<void> Function();
+
 class DocumentSyncEngine extends ChangeNotifier {
   DocumentSyncEngine({
     required LocalDb Function() db,
@@ -75,16 +77,19 @@ class DocumentSyncEngine extends ChangeNotifier {
     required Future<String> Function() deviceLabel,
     required String newDeviceId,
     SummaryLandedHook? onSummaryLanded,
+    TodoChangedHook? onTodoChanged,
   }) : _dbFactory = db,
        _client = client,
        _connectivity = connectivity,
        _deviceLabel = deviceLabel,
        _newDeviceId = newDeviceId,
-       _onSummaryLanded = onSummaryLanded;
+       _onSummaryLanded = onSummaryLanded,
+       _onTodoChanged = onTodoChanged;
 
   /// Spec 2026-09-28 N4: told when a pull lands a summary THIS device asked
   /// for. Null when nobody listens (tests, background isolate).
   final SummaryLandedHook? _onSummaryLanded;
+  final TodoChangedHook? _onTodoChanged;
 
   /// Resolved on first use, not at construction. Building this engine must
   /// not open a database: it is created whenever a screen with a sync button
@@ -645,6 +650,7 @@ class DocumentSyncEngine extends ChangeNotifier {
       if (pendingBoardOrder != null) {
         await _db.completeTodoBoardBackfill(change.entityId);
       }
+      await _onTodoChanged?.call();
       return;
     }
 
@@ -671,6 +677,12 @@ class DocumentSyncEngine extends ChangeNotifier {
           : LocalDb.absentTodoField,
       dueDate: payload.containsKey('due_date')
           ? payload['due_date'] as String?
+          : LocalDb.absentTodoField,
+      // Old peers omit due_time. A newly arriving dated row therefore takes
+      // the 09:00 compatibility default in LocalDb.applyRemoteTodo; a held
+      // newer value survives when this is an update.
+      dueTime: payload.containsKey('due_time')
+          ? payload['due_time'] as String?
           : LocalDb.absentTodoField,
       sourceRef: payload.containsKey('source_ref')
           ? payload['source_ref'] as String?
@@ -714,6 +726,7 @@ class DocumentSyncEngine extends ChangeNotifier {
       }
     }
     await _dedupeVoiceTodo(change.entityId);
+    await _onTodoChanged?.call();
   }
 
   String _stampStrictlyAfter(String other) {
@@ -1053,6 +1066,7 @@ class DocumentSyncEngine extends ChangeNotifier {
       source: p['source'] as String?,
       doneAt: field('done_at'),
       dueDate: field('due_date'),
+      dueTime: field('due_time'),
       sourceRef: field('source_ref'),
       deletedAt: field('deleted_at'),
       folderId: field('folder_id'),
@@ -1240,6 +1254,7 @@ class DocumentSyncEngine extends ChangeNotifier {
             'text': row.body,
             'done_at': row.doneAt,
             'due_date': row.dueDate,
+            'due_time': row.dueTime,
             'source': row.source,
             'source_ref': row.sourceRef,
             'created_at': row.createdAt,

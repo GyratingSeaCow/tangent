@@ -253,7 +253,7 @@ void main() {
     addTearDown(db.close);
     await db.listDumps();
 
-    expect(raw.userVersion, 35);
+    expect(raw.userVersion, 36);
     final List<DumpRow> all = await db.select(db.dumps).get();
     expect(all, hasLength(6));
     expect(
@@ -263,8 +263,7 @@ void main() {
     );
   });
 
-  test('a database older than the dumps status column still upgrades',
-      () async {
+  test('a database older than the dumps status column still upgrades', () async {
     // Regression: the repair originally ran a bare UPDATE, which threw
     // "no such column: transcription_status" on a v7/v9 database, because
     // migrations run in sequence and this step is reached before the column
@@ -309,10 +308,11 @@ void main() {
     // Read through raw SQL, not Drift's typed mapper: this deliberately
     // minimal fixture omits unrelated columns the generated mapper requires,
     // and the claim under test is only that the upgrade COMPLETES.
-    final List<QueryRow> rows =
-        await db.customSelect('SELECT id, title, audio_path FROM dumps').get();
+    final List<QueryRow> rows = await db
+        .customSelect('SELECT id, title, audio_path FROM dumps')
+        .get();
 
-    expect(raw.userVersion, 35);
+    expect(raw.userVersion, 36);
     expect(rows, hasLength(1));
     expect(rows.single.data['id'], 'ancient');
     expect(rows.single.data['title'], 'Old one');

@@ -6,29 +6,36 @@ import 'voice_date_grammar.dart';
 /// item said none, even if the sentence named one; callers fall back to
 /// [VoiceTodoParse.dueDate] (`entry.dueDate ?? parse.dueDate`).
 class VoiceTodoItem {
-  const VoiceTodoItem(this.text, {this.dueDate});
+  const VoiceTodoItem(this.text, {this.dueDate, this.dueTime});
 
   final String text;
 
   /// ISO `YYYY-MM-DD`, or null when the item carried no date phrase of its own.
   final String? dueDate;
 
+  /// Local wall-clock `HH:MM`, or null when the item carried no due date.
+  final String? dueTime;
+
   @override
   bool operator ==(Object other) =>
-      other is VoiceTodoItem && other.text == text && other.dueDate == dueDate;
+      other is VoiceTodoItem &&
+      other.text == text &&
+      other.dueDate == dueDate &&
+      other.dueTime == dueTime;
 
   @override
-  int get hashCode => Object.hash(text, dueDate);
+  int get hashCode => Object.hash(text, dueDate, dueTime);
 
   @override
-  String toString() => 'VoiceTodoItem($text, dueDate: $dueDate)';
+  String toString() =>
+      'VoiceTodoItem($text, dueDate: $dueDate, dueTime: $dueTime)';
 }
 
 /// The result of [TodoVoiceParser.parseWithDate]: the items plus the ONE
 /// sentence-level due date a leading date phrase gave every item (v1.26.0,
 /// D1), and since v1.27.0 the per-item dates in [entries].
 class VoiceTodoParse {
-  const VoiceTodoParse({required this.entries, this.dueDate});
+  const VoiceTodoParse({required this.entries, this.dueDate, this.dueTime});
 
   /// The items spoken after the trigger, in order, each with its own date.
   final List<VoiceTodoItem> entries;
@@ -37,12 +44,16 @@ class VoiceTodoParse {
   /// phrase was recognised. Items without their own date inherit it.
   final String? dueDate;
 
+  /// The sentence due time, defaulting to 09:00 whenever [dueDate] is set.
+  final String? dueTime;
+
   /// The item texts only (see [TodoVoiceParser.parse]).
   List<String> get items =>
       entries.map((VoiceTodoItem e) => e.text).toList(growable: false);
 
-  static const VoiceTodoParse empty =
-      VoiceTodoParse(entries: <VoiceTodoItem>[]);
+  static const VoiceTodoParse empty = VoiceTodoParse(
+    entries: <VoiceTodoItem>[],
+  );
 }
 
 /// Pulls to-do items out of a spoken transcript (To Do arc Phase 2).
@@ -133,30 +144,30 @@ class TodoVoiceParser {
     if (span.trim().isEmpty) return VoiceTodoParse.empty;
 
     String? dueDate;
+    String? dueTime;
     final RegExpMatch? date = VoiceDateGrammar.headDate.firstMatch(span);
     if (date != null) {
       final String? resolved = VoiceDateGrammar.resolve(date, recordedOn);
       // An unresolvable phrase (Feb 30) is left in place as item text — the
       // user said something, and guessing a date would be worse than none.
-      // A relative word that IS the whole span ("…to-do list, today.") is
-      // kept as an item too (phrase-was-the-whole-item rule, fixture 9);
-      // an absolute date alone still yields no items, as in v1.26.0.
       final bool wholeSpan = span.substring(date.end).trim().isEmpty;
-      final bool keepAsText = wholeSpan &&
+      final bool keepAsText =
+          wholeSpan &&
           date.namedGroup('m1') == null &&
           date.namedGroup('m2') == null &&
           date.namedGroup('m3') == null;
       if (resolved != null && !keepAsText) {
         dueDate = resolved;
-        // At the sentence HEAD there is no item for a V5 word to belong
-        // to ("…to-do list tonight, call mom" must not yield an item
-        // called "tonight"), so every head phrase is removed; V5's
-        // keep-the-word rule applies inside items only (see _entry).
+        dueTime = _timeFromMatch(date) ?? '09:00';
         span = span.substring(date.end);
       }
     }
     if (span.trim().isEmpty) {
-      return VoiceTodoParse(entries: const <VoiceTodoItem>[], dueDate: dueDate);
+      return VoiceTodoParse(
+        entries: const <VoiceTodoItem>[],
+        dueDate: dueDate,
+        dueTime: dueTime,
+      );
     }
 
     final List<VoiceTodoItem> entries = <VoiceTodoItem>[];
@@ -166,52 +177,89 @@ class TodoVoiceParser {
       entries.add(entry);
       if (entries.length == maxItems) break;
     }
-    return VoiceTodoParse(entries: entries, dueDate: dueDate);
+    return VoiceTodoParse(entries: entries, dueDate: dueDate, dueTime: dueTime);
   }
 
-  /// One split fragment → an item with its OWN date, if it ends or starts
-  /// with a date phrase (R2). End wins over start. If stripping the phrase
-  /// would leave nothing, the phrase WAS the item: keep the text, no date.
+  /// One split fragment → an item with its OWN date/time. A date without a
+  /// spoken time defaults to 09:00; a trailing time without a date uses the
+  /// next occurrence rule documented in [VoiceDateGrammar].
   static VoiceTodoItem? _entry(String raw, DateTime recordedOn) {
     final String cleaned = _clean(raw);
     if (cleaned.isEmpty) return null;
 
     String? dueDate;
+    String? dueTime;
     String rest = cleaned;
     final RegExpMatch? atEnd = VoiceDateGrammar.itemEndDate.firstMatch(cleaned);
     if (atEnd != null) {
       dueDate = VoiceDateGrammar.resolve(atEnd, recordedOn);
       if (dueDate != null) {
-        // V5: "tonight" carries the date AND belongs in the text.
+        dueTime = _timeFromMatch(atEnd) ?? '09:00';
         if (VoiceDateGrammar.keepsText(atEnd)) {
-          return VoiceTodoItem(cleaned, dueDate: dueDate);
+          return VoiceTodoItem(cleaned, dueDate: dueDate, dueTime: dueTime);
         }
-        // V1: the time phrase stays where the date phrase was.
-        final String time = <String?>[
-          atEnd.namedGroup('tb'),
-          atEnd.namedGroup('ta'),
-        ].whereType<String>().join(' ');
-        rest = '${cleaned.substring(0, atEnd.start)} $time';
+        rest = cleaned.substring(0, atEnd.start);
       }
     }
     if (dueDate == null) {
-      final RegExpMatch? atStart =
-          VoiceDateGrammar.itemStartDate.firstMatch(cleaned);
+      final RegExpMatch? atStart = VoiceDateGrammar.itemStartDate.firstMatch(
+        cleaned,
+      );
       if (atStart != null) {
         dueDate = VoiceDateGrammar.resolve(atStart, recordedOn);
         if (dueDate != null) {
+          dueTime = _timeFromMatch(atStart) ?? '09:00';
           if (VoiceDateGrammar.keepsText(atStart)) {
-            return VoiceTodoItem(cleaned, dueDate: dueDate);
+            return VoiceTodoItem(cleaned, dueDate: dueDate, dueTime: dueTime);
           }
           rest = cleaned.substring(atStart.end);
         }
       }
     }
-    if (dueDate == null) return VoiceTodoItem(cleaned);
+    if (dueDate == null) {
+      final RegExpMatch? atTime = VoiceDateGrammar.itemEndTime.firstMatch(
+        cleaned,
+      );
+      final String? phrase = atTime?.namedGroup('only');
+      final ParsedTime? parsed = phrase == null
+          ? null
+          : parseTimePhrase(phrase, nextAfter: recordedOn);
+      if (parsed == null) return VoiceTodoItem(cleaned);
+      final String text = _clean(cleaned.substring(0, atTime!.start));
+      if (text.isEmpty) return VoiceTodoItem(cleaned);
+      final DateTime day = DateTime(
+        recordedOn.year,
+        recordedOn.month,
+        recordedOn.day + parsed.dayOffset,
+      );
+      return VoiceTodoItem(
+        text,
+        dueDate: VoiceDateGrammar.isoOf(day),
+        dueTime: _formatTime(parsed),
+      );
+    }
     final String text = _clean(rest);
     if (text.isEmpty) return VoiceTodoItem(cleaned);
-    return VoiceTodoItem(text, dueDate: dueDate);
+    return VoiceTodoItem(text, dueDate: dueDate, dueTime: dueTime);
   }
+
+  static String? _timeFromMatch(RegExpMatch match) {
+    String? group(String name) {
+      try {
+        return match.namedGroup(name);
+      } on ArgumentError {
+        return null;
+      }
+    }
+
+    final String? phrase = group('ta') ?? group('tb');
+    final ParsedTime? parsed = phrase == null ? null : parseTimePhrase(phrase);
+    return parsed == null ? null : _formatTime(parsed);
+  }
+
+  static String _formatTime(ParsedTime value) =>
+      '${value.hour.toString().padLeft(2, '0')}:'
+      '${value.minute.toString().padLeft(2, '0')}';
 
   /// Sentence punctuation Whisper glues to the FRONT of the first item:
   /// it closes the trigger phrase with a period ("…to do list. Go to the

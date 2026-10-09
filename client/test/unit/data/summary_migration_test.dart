@@ -56,60 +56,64 @@ sqlite3.Database _v16Database() {
 }
 
 Set<String> _columns(sqlite3.Database sql, String table) => <String>{
-      for (final sqlite3.Row row in sql.select("PRAGMA table_info('$table')"))
-        row['name'] as String,
-    };
+  for (final sqlite3.Row row in sql.select("PRAGMA table_info('$table')"))
+    row['name'] as String,
+};
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('a v16 recording survives the upgrade and gains NULL summary columns',
-      () async {
-    final sqlite3.Database raw = _v16Database();
-    raw.execute(
-      'INSERT INTO dumps (id, created_at, updated_at, mode, '
-      'duration_seconds, title, transcript, audio_path, audio_size_bytes, '
-      "sync_status) VALUES ('old-dump', 100, 200, 'meeting', 60, "
-      "'Standup', 'we talked', '/audio/standup.opus', 4096, 'synced');",
-    );
+  test(
+    'a v16 recording survives the upgrade and gains NULL summary columns',
+    () async {
+      final sqlite3.Database raw = _v16Database();
+      raw.execute(
+        'INSERT INTO dumps (id, created_at, updated_at, mode, '
+        'duration_seconds, title, transcript, audio_path, audio_size_bytes, '
+        "sync_status) VALUES ('old-dump', 100, 200, 'meeting', 60, "
+        "'Standup', 'we talked', '/audio/standup.opus', 4096, 'synced');",
+      );
 
-    final LocalDb db = LocalDb.forTesting(NativeDatabase.opened(raw));
-    addTearDown(db.close);
-    await db.listDumps();
+      final LocalDb db = LocalDb.forTesting(NativeDatabase.opened(raw));
+      addTearDown(db.close);
+      await db.listDumps();
 
-    // The upgrade runs to the CURRENT schema, past 17 (v18 added timings).
-    expect(raw.userVersion, 35);
-    expect(
-      _columns(raw, 'dumps'),
-      containsAll(<String>['summary', 'summary_model', 'summarized_at']),
-    );
-    final DumpRow row = (await db.getDump('old-dump'))!;
-    expect(row.title, 'Standup', reason: 'existing data must survive');
-    expect(row.transcript, 'we talked');
-    expect(row.audioPath, '/audio/standup.opus');
-    // No summary was ever generated for this row; the columns must say so
-    // honestly rather than defaulting to anything.
-    expect(row.summary, isNull);
-    expect(row.summaryModel, isNull);
-    expect(row.summarizedAt, isNull);
-  });
+      // The upgrade runs to the CURRENT schema, past 17 (v18 added timings).
+      expect(raw.userVersion, 36);
+      expect(
+        _columns(raw, 'dumps'),
+        containsAll(<String>['summary', 'summary_model', 'summarized_at']),
+      );
+      final DumpRow row = (await db.getDump('old-dump'))!;
+      expect(row.title, 'Standup', reason: 'existing data must survive');
+      expect(row.transcript, 'we talked');
+      expect(row.audioPath, '/audio/standup.opus');
+      // No summary was ever generated for this row; the columns must say so
+      // honestly rather than defaulting to anything.
+      expect(row.summary, isNull);
+      expect(row.summaryModel, isNull);
+      expect(row.summarizedAt, isNull);
+    },
+  );
 
-  test('the upgrade is safe when a summary column somehow already exists',
-      () async {
-    // Ask-the-database, never the version number: adding a column twice
-    // throws "duplicate column name" and bricks app launch.
-    final sqlite3.Database raw = _v16Database();
-    raw.execute('ALTER TABLE dumps ADD COLUMN summary TEXT;');
+  test(
+    'the upgrade is safe when a summary column somehow already exists',
+    () async {
+      // Ask-the-database, never the version number: adding a column twice
+      // throws "duplicate column name" and bricks app launch.
+      final sqlite3.Database raw = _v16Database();
+      raw.execute('ALTER TABLE dumps ADD COLUMN summary TEXT;');
 
-    final LocalDb db = LocalDb.forTesting(NativeDatabase.opened(raw));
-    addTearDown(db.close);
-    await db.listDumps();
+      final LocalDb db = LocalDb.forTesting(NativeDatabase.opened(raw));
+      addTearDown(db.close);
+      await db.listDumps();
 
-    // The upgrade runs to the CURRENT schema, past 17 (v18 added timings).
-    expect(raw.userVersion, 35);
-    expect(
-      _columns(raw, 'dumps'),
-      containsAll(<String>['summary', 'summary_model', 'summarized_at']),
-    );
-  });
+      // The upgrade runs to the CURRENT schema, past 17 (v18 added timings).
+      expect(raw.userVersion, 36);
+      expect(
+        _columns(raw, 'dumps'),
+        containsAll(<String>['summary', 'summary_model', 'summarized_at']),
+      );
+    },
+  );
 }

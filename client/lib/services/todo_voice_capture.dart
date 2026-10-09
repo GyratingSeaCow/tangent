@@ -50,7 +50,11 @@ Future<List<TodoRow>> captureVoiceTodos({
   );
   final List<VoiceTodoItem> entries = <VoiceTodoItem>[
     for (final VoiceTodoItem entry in parse.entries)
-      VoiceTodoItem(entry.text, dueDate: entry.dueDate ?? parse.dueDate),
+      VoiceTodoItem(
+        entry.text,
+        dueDate: entry.dueDate ?? parse.dueDate,
+        dueTime: entry.dueTime ?? parse.dueTime,
+      ),
   ];
   final List<TodoRow> existing = await repo.todosFromSource(dumpId);
   if (existing.isEmpty) {
@@ -61,6 +65,7 @@ Future<List<TodoRow>> captureVoiceTodos({
         await repo.add(
           entry.text,
           dueDate: entry.dueDate,
+          dueTime: entry.dueTime,
           source: voiceTodoSource,
           sourceRef: dumpId,
           captureFingerprint: fingerprint,
@@ -77,13 +82,15 @@ Future<List<TodoRow>> captureVoiceTodos({
   // A re-transcription. Reconcile by text; never delete, never resurrect.
   final List<TodoRow> created = <TodoRow>[];
   for (final VoiceTodoItem entry in entries) {
-    final Iterable<TodoRow> sameText =
-        existing.where((TodoRow row) => row.body == entry.text);
+    final Iterable<TodoRow> sameText = existing.where(
+      (TodoRow row) => row.body == entry.text,
+    );
     if (sameText.isEmpty) {
       created.add(
         await repo.add(
           entry.text,
           dueDate: entry.dueDate,
+          dueTime: entry.dueTime,
           source: voiceTodoSource,
           sourceRef: dumpId,
           captureFingerprint: fingerprint,
@@ -96,7 +103,7 @@ Future<List<TodoRow>> captureVoiceTodos({
       // their id; a date is added only when the row has none yet.
       if (row.deletedAt != null) continue;
       if (row.dueDate == null && entry.dueDate != null) {
-        await repo.setDueDate(row.id, entry.dueDate);
+        await repo.setDueDate(row.id, entry.dueDate, dueTime: entry.dueTime);
       }
     }
   }
@@ -105,13 +112,15 @@ Future<List<TodoRow>> captureVoiceTodos({
   return created;
 }
 
-/// SHA-1 hex over the parsed RESULT: `text|dueDate` per entry, joined by
+/// SHA-1 hex over the parsed RESULT: `text|dueDate|dueTime` per entry, joined by
 /// `\n`. Two transcripts that yield identical to-dos share a fingerprint;
 /// a changed word inside an item, or a newly recognised date, does not.
 /// Deliberately NOT a hash of the raw transcript (spec rule 1).
 String captureFingerprintOf(Iterable<VoiceTodoItem> entries) {
   final String joined = entries
-      .map((VoiceTodoItem e) => '${e.text}|${e.dueDate ?? ''}')
+      .map(
+        (VoiceTodoItem e) => '${e.text}|${e.dueDate ?? ''}|${e.dueTime ?? ''}',
+      )
       .join('\n');
   return sha1.convert(utf8.encode(joined)).toString();
 }

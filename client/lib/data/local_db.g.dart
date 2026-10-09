@@ -8583,6 +8583,17 @@ class $TodosTable extends Todos with TableInfo<$TodosTable, TodoRow> {
     requiredDuringInsert: false,
     defaultValue: const Constant(0),
   );
+  static const VerificationMeta _dueTimeMeta = const VerificationMeta(
+    'dueTime',
+  );
+  @override
+  late final GeneratedColumn<String> dueTime = GeneratedColumn<String>(
+    'due_time',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   @override
   List<GeneratedColumn> get $columns => [
     id,
@@ -8601,6 +8612,7 @@ class $TodosTable extends Todos with TableInfo<$TodosTable, TodoRow> {
     pinned,
     columnId,
     boardOrder,
+    dueTime,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -8718,6 +8730,12 @@ class $TodosTable extends Todos with TableInfo<$TodosTable, TodoRow> {
         boardOrder.isAcceptableOrUnknown(data['board_order']!, _boardOrderMeta),
       );
     }
+    if (data.containsKey('due_time')) {
+      context.handle(
+        _dueTimeMeta,
+        dueTime.isAcceptableOrUnknown(data['due_time']!, _dueTimeMeta),
+      );
+    }
     return context;
   }
 
@@ -8791,6 +8809,10 @@ class $TodosTable extends Todos with TableInfo<$TodosTable, TodoRow> {
         DriftSqlType.int,
         data['${effectivePrefix}board_order'],
       )!,
+      dueTime: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}due_time'],
+      ),
     );
   }
 
@@ -8852,6 +8874,11 @@ class TodoRow extends DataClass implements Insertable<TodoRow> {
 
   /// Stable order within a lane. List mode deliberately ignores it.
   final int boardOrder;
+
+  /// v36: local wall-clock `HH:MM`. Every dated row has one; nullable keeps
+  /// the additive wire/schema compatible with old peers and undated rows.
+  /// Declared last so fresh databases match the additive migration order.
+  final String? dueTime;
   const TodoRow({
     required this.id,
     required this.body,
@@ -8869,6 +8896,7 @@ class TodoRow extends DataClass implements Insertable<TodoRow> {
     this.pinned,
     this.columnId,
     required this.boardOrder,
+    this.dueTime,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -8907,6 +8935,9 @@ class TodoRow extends DataClass implements Insertable<TodoRow> {
       map['column_id'] = Variable<String>(columnId);
     }
     map['board_order'] = Variable<int>(boardOrder);
+    if (!nullToAbsent || dueTime != null) {
+      map['due_time'] = Variable<String>(dueTime);
+    }
     return map;
   }
 
@@ -8946,6 +8977,9 @@ class TodoRow extends DataClass implements Insertable<TodoRow> {
           ? const Value.absent()
           : Value(columnId),
       boardOrder: Value(boardOrder),
+      dueTime: dueTime == null && nullToAbsent
+          ? const Value.absent()
+          : Value(dueTime),
     );
   }
 
@@ -8973,6 +9007,7 @@ class TodoRow extends DataClass implements Insertable<TodoRow> {
       pinned: serializer.fromJson<bool?>(json['pinned']),
       columnId: serializer.fromJson<String?>(json['columnId']),
       boardOrder: serializer.fromJson<int>(json['boardOrder']),
+      dueTime: serializer.fromJson<String?>(json['dueTime']),
     );
   }
   @override
@@ -8995,6 +9030,7 @@ class TodoRow extends DataClass implements Insertable<TodoRow> {
       'pinned': serializer.toJson<bool?>(pinned),
       'columnId': serializer.toJson<String?>(columnId),
       'boardOrder': serializer.toJson<int>(boardOrder),
+      'dueTime': serializer.toJson<String?>(dueTime),
     };
   }
 
@@ -9015,6 +9051,7 @@ class TodoRow extends DataClass implements Insertable<TodoRow> {
     Value<bool?> pinned = const Value.absent(),
     Value<String?> columnId = const Value.absent(),
     int? boardOrder,
+    Value<String?> dueTime = const Value.absent(),
   }) => TodoRow(
     id: id ?? this.id,
     body: body ?? this.body,
@@ -9034,6 +9071,7 @@ class TodoRow extends DataClass implements Insertable<TodoRow> {
     pinned: pinned.present ? pinned.value : this.pinned,
     columnId: columnId.present ? columnId.value : this.columnId,
     boardOrder: boardOrder ?? this.boardOrder,
+    dueTime: dueTime.present ? dueTime.value : this.dueTime,
   );
   TodoRow copyWithCompanion(TodosCompanion data) {
     return TodoRow(
@@ -9057,6 +9095,7 @@ class TodoRow extends DataClass implements Insertable<TodoRow> {
       boardOrder: data.boardOrder.present
           ? data.boardOrder.value
           : this.boardOrder,
+      dueTime: data.dueTime.present ? data.dueTime.value : this.dueTime,
     );
   }
 
@@ -9078,7 +9117,8 @@ class TodoRow extends DataClass implements Insertable<TodoRow> {
           ..write('captureFingerprint: $captureFingerprint, ')
           ..write('pinned: $pinned, ')
           ..write('columnId: $columnId, ')
-          ..write('boardOrder: $boardOrder')
+          ..write('boardOrder: $boardOrder, ')
+          ..write('dueTime: $dueTime')
           ..write(')'))
         .toString();
   }
@@ -9101,6 +9141,7 @@ class TodoRow extends DataClass implements Insertable<TodoRow> {
     pinned,
     columnId,
     boardOrder,
+    dueTime,
   );
   @override
   bool operator ==(Object other) =>
@@ -9121,7 +9162,8 @@ class TodoRow extends DataClass implements Insertable<TodoRow> {
           other.captureFingerprint == this.captureFingerprint &&
           other.pinned == this.pinned &&
           other.columnId == this.columnId &&
-          other.boardOrder == this.boardOrder);
+          other.boardOrder == this.boardOrder &&
+          other.dueTime == this.dueTime);
 }
 
 class TodosCompanion extends UpdateCompanion<TodoRow> {
@@ -9141,6 +9183,7 @@ class TodosCompanion extends UpdateCompanion<TodoRow> {
   final Value<bool?> pinned;
   final Value<String?> columnId;
   final Value<int> boardOrder;
+  final Value<String?> dueTime;
   final Value<int> rowid;
   const TodosCompanion({
     this.id = const Value.absent(),
@@ -9159,6 +9202,7 @@ class TodosCompanion extends UpdateCompanion<TodoRow> {
     this.pinned = const Value.absent(),
     this.columnId = const Value.absent(),
     this.boardOrder = const Value.absent(),
+    this.dueTime = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   TodosCompanion.insert({
@@ -9178,6 +9222,7 @@ class TodosCompanion extends UpdateCompanion<TodoRow> {
     this.pinned = const Value.absent(),
     this.columnId = const Value.absent(),
     this.boardOrder = const Value.absent(),
+    this.dueTime = const Value.absent(),
     this.rowid = const Value.absent(),
   }) : id = Value(id),
        body = Value(body),
@@ -9200,6 +9245,7 @@ class TodosCompanion extends UpdateCompanion<TodoRow> {
     Expression<bool>? pinned,
     Expression<String>? columnId,
     Expression<int>? boardOrder,
+    Expression<String>? dueTime,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -9219,6 +9265,7 @@ class TodosCompanion extends UpdateCompanion<TodoRow> {
       if (pinned != null) 'pinned': pinned,
       if (columnId != null) 'column_id': columnId,
       if (boardOrder != null) 'board_order': boardOrder,
+      if (dueTime != null) 'due_time': dueTime,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -9240,6 +9287,7 @@ class TodosCompanion extends UpdateCompanion<TodoRow> {
     Value<bool?>? pinned,
     Value<String?>? columnId,
     Value<int>? boardOrder,
+    Value<String?>? dueTime,
     Value<int>? rowid,
   }) {
     return TodosCompanion(
@@ -9259,6 +9307,7 @@ class TodosCompanion extends UpdateCompanion<TodoRow> {
       pinned: pinned ?? this.pinned,
       columnId: columnId ?? this.columnId,
       boardOrder: boardOrder ?? this.boardOrder,
+      dueTime: dueTime ?? this.dueTime,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -9314,6 +9363,9 @@ class TodosCompanion extends UpdateCompanion<TodoRow> {
     if (boardOrder.present) {
       map['board_order'] = Variable<int>(boardOrder.value);
     }
+    if (dueTime.present) {
+      map['due_time'] = Variable<String>(dueTime.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -9339,6 +9391,7 @@ class TodosCompanion extends UpdateCompanion<TodoRow> {
           ..write('pinned: $pinned, ')
           ..write('columnId: $columnId, ')
           ..write('boardOrder: $boardOrder, ')
+          ..write('dueTime: $dueTime, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -16936,6 +16989,7 @@ typedef $$TodosTableCreateCompanionBuilder =
       Value<bool?> pinned,
       Value<String?> columnId,
       Value<int> boardOrder,
+      Value<String?> dueTime,
       Value<int> rowid,
     });
 typedef $$TodosTableUpdateCompanionBuilder =
@@ -16956,6 +17010,7 @@ typedef $$TodosTableUpdateCompanionBuilder =
       Value<bool?> pinned,
       Value<String?> columnId,
       Value<int> boardOrder,
+      Value<String?> dueTime,
       Value<int> rowid,
     });
 
@@ -17044,6 +17099,11 @@ class $$TodosTableFilterComposer extends Composer<_$LocalDb, $TodosTable> {
 
   ColumnFilters<int> get boardOrder => $composableBuilder(
     column: $table.boardOrder,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get dueTime => $composableBuilder(
+    column: $table.dueTime,
     builder: (column) => ColumnFilters(column),
   );
 }
@@ -17135,6 +17195,11 @@ class $$TodosTableOrderingComposer extends Composer<_$LocalDb, $TodosTable> {
     column: $table.boardOrder,
     builder: (column) => ColumnOrderings(column),
   );
+
+  ColumnOrderings<String> get dueTime => $composableBuilder(
+    column: $table.dueTime,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$TodosTableAnnotationComposer extends Composer<_$LocalDb, $TodosTable> {
@@ -17196,6 +17261,9 @@ class $$TodosTableAnnotationComposer extends Composer<_$LocalDb, $TodosTable> {
     column: $table.boardOrder,
     builder: (column) => column,
   );
+
+  GeneratedColumn<String> get dueTime =>
+      $composableBuilder(column: $table.dueTime, builder: (column) => column);
 }
 
 class $$TodosTableTableManager
@@ -17242,6 +17310,7 @@ class $$TodosTableTableManager
                 Value<bool?> pinned = const Value.absent(),
                 Value<String?> columnId = const Value.absent(),
                 Value<int> boardOrder = const Value.absent(),
+                Value<String?> dueTime = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => TodosCompanion(
                 id: id,
@@ -17260,6 +17329,7 @@ class $$TodosTableTableManager
                 pinned: pinned,
                 columnId: columnId,
                 boardOrder: boardOrder,
+                dueTime: dueTime,
                 rowid: rowid,
               ),
           createCompanionCallback:
@@ -17280,6 +17350,7 @@ class $$TodosTableTableManager
                 Value<bool?> pinned = const Value.absent(),
                 Value<String?> columnId = const Value.absent(),
                 Value<int> boardOrder = const Value.absent(),
+                Value<String?> dueTime = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => TodosCompanion.insert(
                 id: id,
@@ -17298,6 +17369,7 @@ class $$TodosTableTableManager
                 pinned: pinned,
                 columnId: columnId,
                 boardOrder: boardOrder,
+                dueTime: dueTime,
                 rowid: rowid,
               ),
           withReferenceMapper: (p0) => p0

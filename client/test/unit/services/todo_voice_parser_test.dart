@@ -16,51 +16,52 @@ void main() {
       );
     });
 
-    test('Whisper closes the trigger with a period — first item is not ". Go…"', () {
-      // Real recording, v1.23.0 first-day data: the server stored
-      // '. Go to the store' and '. Go out for a drive'.
-      expect(
-        TodoVoiceParser.parse('Add to my to do list. Go to the store and go get Advil.'),
-        ['Go to the store', 'go get Advil'],
-      );
-      expect(
-        TodoVoiceParser.parse('add to my to do list… go out for a drive'),
-        ['go out for a drive'],
-      );
-    });
+    test(
+      'Whisper closes the trigger with a period — first item is not ". Go…"',
+      () {
+        // Real recording, v1.23.0 first-day data: the server stored
+        // '. Go to the store' and '. Go out for a drive'.
+        expect(
+          TodoVoiceParser.parse(
+            'Add to my to do list. Go to the store and go get Advil.',
+          ),
+          ['Go to the store', 'go get Advil'],
+        );
+        expect(
+          TodoVoiceParser.parse('add to my to do list… go out for a drive'),
+          ['go out for a drive'],
+        );
+      },
+    );
     test('add to my todo list (one word)', () {
-      expect(
-        TodoVoiceParser.parse('add to my todo list call the bank'),
-        ['call the bank'],
-      );
+      expect(TodoVoiceParser.parse('add to my todo list call the bank'), [
+        'call the bank',
+      ]);
     });
 
     test('to-do hyphenated', () {
-      expect(
-        TodoVoiceParser.parse('add to my to-do list order filters'),
-        ['order filters'],
-      );
+      expect(TodoVoiceParser.parse('add to my to-do list order filters'), [
+        'order filters',
+      ]);
     });
 
     test('put on my to do list', () {
-      expect(
-        TodoVoiceParser.parse('put on my to do list sweep the bench'),
-        ['sweep the bench'],
-      );
+      expect(TodoVoiceParser.parse('put on my to do list sweep the bench'), [
+        'sweep the bench',
+      ]);
     });
 
     test('add that to my list', () {
-      expect(
-        TodoVoiceParser.parse('add that to my list ship the Fold'),
-        ['ship the Fold'],
-      );
+      expect(TodoVoiceParser.parse('add that to my list ship the Fold'), [
+        'ship the Fold',
+      ]);
     });
 
     test('remind me to keeps its own semantics', () {
-      expect(
-        TodoVoiceParser.parse('remind me to buy milk and to call Dana'),
-        ['buy milk', 'call Dana'],
-      );
+      expect(TodoVoiceParser.parse('remind me to buy milk and to call Dana'), [
+        'buy milk',
+        'call Dana',
+      ]);
     });
 
     test('mixed case matches', () {
@@ -71,10 +72,9 @@ void main() {
     });
 
     test('optional trailing colon is swallowed', () {
-      expect(
-        TodoVoiceParser.parse('add to my to do list: pay rent'),
-        ['pay rent'],
-      );
+      expect(TodoVoiceParser.parse('add to my to do list: pay rent'), [
+        'pay rent',
+      ]);
     });
 
     test('no trigger yields nothing', () {
@@ -110,21 +110,22 @@ void main() {
       expect(TodoVoiceParser.parse('okay add to my to do list:   '), isEmpty);
     });
 
-    test('trigger appearing twice: the first wins, the second is item text',
-        () {
-      expect(
-        TodoVoiceParser.parse(
-          'add to my to do list buy nails, add to my to do list buy screws',
-        ),
-        ['buy nails', 'add to my to do list buy screws'],
-      );
-    });
+    test(
+      'trigger appearing twice: the first wins, the second is item text',
+      () {
+        expect(
+          TodoVoiceParser.parse(
+            'add to my to do list buy nails, add to my to do list buy screws',
+          ),
+          ['buy nails', 'add to my to do list buy screws'],
+        );
+      },
+    );
 
     test('"and" inside a word never splits', () {
-      expect(
-        TodoVoiceParser.parse('remind me to pick up a brand new sander'),
-        ['pick up a brand new sander'],
-      );
+      expect(TodoVoiceParser.parse('remind me to pick up a brand new sander'), [
+        'pick up a brand new sander',
+      ]);
       expect(
         TodoVoiceParser.parse('add to my to do list flash the android tablet'),
         ['flash the android tablet'],
@@ -146,25 +147,28 @@ void main() {
     });
 
     test('whitespace is collapsed and trailing periods stripped', () {
-      expect(
-        TodoVoiceParser.parse('add to my to do list   buy   nails...'),
-        ['buy nails'],
-      );
+      expect(TodoVoiceParser.parse('add to my to do list   buy   nails...'), [
+        'buy nails',
+      ]);
     });
 
     test('empty fragments between separators are dropped', () {
-      expect(
-        TodoVoiceParser.parse('add to my to do list a,, , and b'),
-        ['a', 'b'],
-      );
+      expect(TodoVoiceParser.parse('add to my to do list a,, , and b'), [
+        'a',
+        'b',
+      ]);
     });
   });
 
   group('TodoVoiceParser caps', () {
     test('at most 20 items', () {
-      final String span = List<String>.generate(30, (i) => 'item $i').join(', ');
-      final List<String> items =
-          TodoVoiceParser.parse('add to my to do list $span');
+      final String span = List<String>.generate(
+        30,
+        (i) => 'item $i',
+      ).join(', ');
+      final List<String> items = TodoVoiceParser.parse(
+        'add to my to do list $span',
+      );
       expect(items.length, 20);
       expect(items.first, 'item 0');
       expect(items.last, 'item 19');
@@ -172,8 +176,7 @@ void main() {
 
     test('each item truncated to 200 chars', () {
       final String long = 'x' * 260;
-      final List<String> items =
-          TodoVoiceParser.parse('remind me to $long');
+      final List<String> items = TodoVoiceParser.parse('remind me to $long');
       expect(items.single.length, 200);
     });
   });
@@ -210,17 +213,20 @@ void main() {
       expect(p.dueDate, isNull);
     });
 
-    test('4. a weekday ending an item is THAT item\'s date (v1.27.0 lifts D3/D1)', () {
-      // v1.26.0 kept 'call the dentist on Friday' whole; the relative-dates
-      // arc turns the trailing weekday into a per-item date (R2).
-      final VoiceTodoParse p = TodoVoiceParser.parseWithDate(
-        'Add to my to-do list, pick up milk and call the dentist on Friday',
-        recordedOn: sep27,
-      );
-      expect(p.items, ['pick up milk', 'call the dentist']);
-      expect(p.dueDate, isNull);
-      expect(p.entries.map((e) => e.dueDate), [null, '2026-10-02']);
-    });
+    test(
+      '4. a weekday ending an item is THAT item\'s date (v1.27.0 lifts D3/D1)',
+      () {
+        // v1.26.0 kept 'call the dentist on Friday' whole; the relative-dates
+        // arc turns the trailing weekday into a per-item date (R2).
+        final VoiceTodoParse p = TodoVoiceParser.parseWithDate(
+          'Add to my to-do list, pick up milk and call the dentist on Friday',
+          recordedOn: sep27,
+        );
+        expect(p.items, ['pick up milk', 'call the dentist']);
+        expect(p.dueDate, isNull);
+        expect(p.entries.map((e) => e.dueDate), [null, '2026-10-02']);
+      },
+    );
 
     test('5. "on the 30th of September" after remind me to', () {
       final VoiceTodoParse p = TodoVoiceParser.parseWithDate(
@@ -280,9 +286,11 @@ void main() {
   group('TodoVoiceParser.parseWithDate — spellings and forms', () {
     final DateTime sep27 = DateTime(2026, 9, 27);
 
-    String? due(String transcript, {DateTime? on}) => TodoVoiceParser
-        .parseWithDate(transcript, recordedOn: on ?? sep27)
-        .dueDate;
+    String? due(String transcript, {DateTime? on}) =>
+        TodoVoiceParser.parseWithDate(
+          transcript,
+          recordedOn: on ?? sep27,
+        ).dueDate;
 
     List<String> items(String transcript) =>
         TodoVoiceParser.parseWithDate(transcript, recordedOn: sep27).items;
@@ -314,17 +322,23 @@ void main() {
           e.value,
           reason: e.key,
         );
-        expect(
-          items('add to my to do list ${e.key} buy nails'),
-          ['buy nails'],
-          reason: e.key,
-        );
+        expect(items('add to my to do list ${e.key} buy nails'), [
+          'buy nails',
+        ], reason: e.key);
       }
     });
 
     test('ordinal suffixes', () {
       const List<String> days = <String>[
-        '1st', '2nd', '3rd', '4th', '21st', '22nd', '23rd', '30th', '30',
+        '1st',
+        '2nd',
+        '3rd',
+        '4th',
+        '21st',
+        '22nd',
+        '23rd',
+        '30th',
+        '30',
       ];
       for (final String d in days) {
         final String digits = d.replaceAll(RegExp('[a-z]'), '');
@@ -338,7 +352,12 @@ void main() {
 
     test('prepositions: for / on / by / due / due on / none', () {
       const List<String> preps = <String>[
-        'for ', 'on ', 'by ', 'due ', 'due on ', '',
+        'for ',
+        'on ',
+        'by ',
+        'due ',
+        'due on ',
+        '',
       ];
       for (final String prep in preps) {
         final VoiceTodoParse p = TodoVoiceParser.parseWithDate(
@@ -431,17 +450,20 @@ void main() {
       }
     });
 
-    test('an absolute date at the START of a later item is that item\'s date', () {
-      // v1.26.0 kept 'on September 30th call Dana' whole (D1); the
-      // relative-dates arc recognises item-start phrases (R2).
-      final VoiceTodoParse p = TodoVoiceParser.parseWithDate(
-        'add to my to do list buy nails and on September 30th call Dana',
-        recordedOn: sep27,
-      );
-      expect(p.items, ['buy nails', 'call Dana']);
-      expect(p.dueDate, isNull);
-      expect(p.entries.last.dueDate, '2026-09-30');
-    });
+    test(
+      'an absolute date at the START of a later item is that item\'s date',
+      () {
+        // v1.26.0 kept 'on September 30th call Dana' whole (D1); the
+        // relative-dates arc recognises item-start phrases (R2).
+        final VoiceTodoParse p = TodoVoiceParser.parseWithDate(
+          'add to my to do list buy nails and on September 30th call Dana',
+          recordedOn: sep27,
+        );
+        expect(p.items, ['buy nails', 'call Dana']);
+        expect(p.dueDate, isNull);
+        expect(p.entries.last.dueDate, '2026-09-30');
+      },
+    );
 
     test('a middle-of-item absolute date stays text', () {
       final VoiceTodoParse p = TodoVoiceParser.parseWithDate(
@@ -453,12 +475,13 @@ void main() {
     });
 
     test('a bare number that is not a date form is item text', () {
-      expect(items('add to my to do list 30 bags of mulch'), ['30 bags of mulch']);
+      expect(items('add to my to do list 30 bags of mulch'), [
+        '30 bags of mulch',
+      ]);
       expect(due('add to my to do list 30 bags of mulch'), isNull);
-      expect(
-        items('add to my to do list may the fourth be with you'),
-        ['may the fourth be with you'],
-      );
+      expect(items('add to my to do list may the fourth be with you'), [
+        'may the fourth be with you',
+      ]);
     });
   });
 
@@ -466,20 +489,22 @@ void main() {
     String? due(String transcript, DateTime on) =>
         TodoVoiceParser.parseWithDate(transcript, recordedOn: on).dueDate;
 
-    test('recorded ON the date itself resolves to that date, not next year',
-        () {
-      expect(
-        due(
-          'add to my to do list for September 30th pay rent',
-          DateTime(2026, 9, 30, 23, 59),
-        ),
-        '2026-09-30',
-      );
-      expect(
-        due('add to my to do list for 9/30 pay rent', DateTime(2026, 9, 30)),
-        '2026-09-30',
-      );
-    });
+    test(
+      'recorded ON the date itself resolves to that date, not next year',
+      () {
+        expect(
+          due(
+            'add to my to do list for September 30th pay rent',
+            DateTime(2026, 9, 30, 23, 59),
+          ),
+          '2026-09-30',
+        );
+        expect(
+          due('add to my to do list for 9/30 pay rent', DateTime(2026, 9, 30)),
+          '2026-09-30',
+        );
+      },
+    );
 
     test('the day after rolls to next year', () {
       expect(
@@ -493,7 +518,10 @@ void main() {
 
     test('a later month this year stays this year', () {
       expect(
-        due('add to my to do list December 31st pay rent', DateTime(2026, 9, 27)),
+        due(
+          'add to my to do list December 31st pay rent',
+          DateTime(2026, 9, 27),
+        ),
         '2026-12-31',
       );
     });
@@ -510,15 +538,24 @@ void main() {
 
     test('Feb 29 without a year goes to the next leap occurrence', () {
       expect(
-        due('add to my to do list February 29th pay rent', DateTime(2026, 9, 27)),
+        due(
+          'add to my to do list February 29th pay rent',
+          DateTime(2026, 9, 27),
+        ),
         '2028-02-29',
       );
       expect(
-        due('add to my to do list February 29th pay rent', DateTime(2028, 2, 29)),
+        due(
+          'add to my to do list February 29th pay rent',
+          DateTime(2028, 2, 29),
+        ),
         '2028-02-29',
       );
       expect(
-        due('add to my to do list February 29th pay rent', DateTime(2028, 3, 1)),
+        due(
+          'add to my to do list February 29th pay rent',
+          DateTime(2028, 3, 1),
+        ),
         '2032-02-29',
       );
     });
@@ -544,108 +581,152 @@ void main() {
     });
   });
 
-  group('TodoVoiceParser.parseWithDate — relative + per-item fixtures (v1.27.0)', () {
-    // docs/design/2026-09-27-voice-todo-relative-dates.md §"Real-data-shaped
-    // fixtures", verbatim. recordedOn 2026-09-27 is a SUNDAY.
-    final DateTime sunday = DateTime(2026, 9, 27);
+  group(
+    'TodoVoiceParser.parseWithDate — relative + per-item fixtures (v1.27.0)',
+    () {
+      // docs/design/2026-09-27-voice-todo-relative-dates.md §"Real-data-shaped
+      // fixtures", verbatim. recordedOn 2026-09-27 is a SUNDAY.
+      final DateTime sunday = DateTime(2026, 9, 27);
 
-    VoiceTodoParse parse(String t) =>
-        TodoVoiceParser.parseWithDate(t, recordedOn: sunday);
+      VoiceTodoParse parse(String t) =>
+          TodoVoiceParser.parseWithDate(t, recordedOn: sunday);
 
-    test('1. "call the dentist on Friday" — per-item weekday', () {
-      final VoiceTodoParse p = parse('Add to my to-do list, call the dentist on Friday.');
-      expect(p.items, ['call the dentist']);
-      expect(p.dueDate, isNull);
-      expect(p.entries, [const VoiceTodoItem('call the dentist', dueDate: '2026-10-02')]);
-    });
+      test('1. "call the dentist on Friday" — per-item weekday', () {
+        final VoiceTodoParse p = parse(
+          'Add to my to-do list, call the dentist on Friday.',
+        );
+        expect(p.items, ['call the dentist']);
+        expect(p.dueDate, isNull);
+        expect(p.entries, [
+          const VoiceTodoItem(
+            'call the dentist',
+            dueDate: '2026-10-02',
+            dueTime: '09:00',
+          ),
+        ]);
+      });
 
-    test('2. sentence Friday, mom on Sunday — item beats sentence (R2)', () {
-      final VoiceTodoParse p = parse(
-        'Add to my to-do list for Friday, buy milk and call mom on Sunday.',
-      );
-      expect(p.dueDate, '2026-10-02');
-      expect(p.entries, [
-        const VoiceTodoItem('buy milk'),
-        const VoiceTodoItem('call mom', dueDate: '2026-10-04'),
-      ]);
-      // What the capture layer will write per row:
-      expect(
-        p.entries.map((e) => e.dueDate ?? p.dueDate),
-        ['2026-10-02', '2026-10-04'],
-      );
-    });
+      test('2. sentence Friday, mom on Sunday — item beats sentence (R2)', () {
+        final VoiceTodoParse p = parse(
+          'Add to my to-do list for Friday, buy milk and call mom on Sunday.',
+        );
+        expect(p.dueDate, '2026-10-02');
+        expect(p.entries, [
+          const VoiceTodoItem('buy milk'),
+          const VoiceTodoItem(
+            'call mom',
+            dueDate: '2026-10-04',
+            dueTime: '09:00',
+          ),
+        ]);
+        // What the capture layer will write per row:
+        expect(p.entries.map((e) => e.dueDate ?? p.dueDate), [
+          '2026-10-02',
+          '2026-10-04',
+        ]);
+      });
 
-    test('3. "take the bins out tomorrow"', () {
-      final VoiceTodoParse p = parse('Remind me to take the bins out tomorrow.');
-      expect(p.entries, [const VoiceTodoItem('take the bins out', dueDate: '2026-09-28')]);
-    });
+      test('3. "take the bins out tomorrow"', () {
+        final VoiceTodoParse p = parse(
+          'Remind me to take the bins out tomorrow.',
+        );
+        expect(p.entries, [
+          const VoiceTodoItem(
+            'take the bins out',
+            dueDate: '2026-09-28',
+            dueTime: '09:00',
+          ),
+        ]);
+      });
 
-    test('4. "next month" = the 1st, "next week" = next Monday (R3)', () {
-      final VoiceTodoParse p = parse(
-        'Add to my to-do list, pay rent next month and renew the plates next week.',
-      );
-      expect(p.dueDate, isNull);
-      expect(p.entries, [
-        const VoiceTodoItem('pay rent', dueDate: '2026-10-01'),
-        // Sep 27 is a Sunday, so "next week" is the very next day.
-        const VoiceTodoItem('renew the plates', dueDate: '2026-09-28'),
-      ]);
-    });
+      test('4. "next month" = the 1st, "next week" = next Monday (R3)', () {
+        final VoiceTodoParse p = parse(
+          'Add to my to-do list, pay rent next month and renew the plates next week.',
+        );
+        expect(p.dueDate, isNull);
+        expect(p.entries, [
+          const VoiceTodoItem(
+            'pay rent',
+            dueDate: '2026-10-01',
+            dueTime: '09:00',
+          ),
+          // Sep 27 is a Sunday, so "next week" is the very next day.
+          const VoiceTodoItem(
+            'renew the plates',
+            dueDate: '2026-09-28',
+            dueTime: '09:00',
+          ),
+        ]);
+      });
 
-    test('5. "for Sunday" said ON a Sunday is next week\'s Sunday (R1)', () {
-      final VoiceTodoParse p = parse('Add to my to-do list for Sunday, wash the car.');
-      expect(p.items, ['wash the car']);
-      expect(p.dueDate, '2026-10-04');
-    });
+      test('5. "for Sunday" said ON a Sunday is next week\'s Sunday (R1)', () {
+        final VoiceTodoParse p = parse(
+          'Add to my to-do list for Sunday, wash the car.',
+        );
+        expect(p.items, ['wash the car']);
+        expect(p.dueDate, '2026-10-04');
+      });
 
-    test('6. "sun screen" and "mon ami" are text (short-form guards)', () {
-      final VoiceTodoParse p = parse('Add to my to-do list, buy sun screen and call mon ami.');
-      expect(p.dueDate, isNull);
-      expect(p.entries, [
-        const VoiceTodoItem('buy sun screen'),
-        const VoiceTodoItem('call mon ami'),
-      ]);
-    });
+      test('6. "sun screen" and "mon ami" are text (short-form guards)', () {
+        final VoiceTodoParse p = parse(
+          'Add to my to-do list, buy sun screen and call mon ami.',
+        );
+        expect(p.dueDate, isNull);
+        expect(p.entries, [
+          const VoiceTodoItem('buy sun screen'),
+          const VoiceTodoItem('call mon ami'),
+        ]);
+      });
 
-    test('7. "in three days" as the sentence date, number word', () {
-      final VoiceTodoParse p = parse('Add to my to-do list, in three days call the vet.');
-      expect(p.items, ['call the vet']);
-      expect(p.dueDate, '2026-09-30');
-    });
+      test('7. "in three days" as the sentence date, number word', () {
+        final VoiceTodoParse p = parse(
+          'Add to my to-do list, in three days call the vet.',
+        );
+        expect(p.items, ['call the vet']);
+        expect(p.dueDate, '2026-09-30');
+      });
 
-    test('8. a weekday in the MIDDLE of an item is not a date', () {
-      final VoiceTodoParse p = parse('Add to my to-do list, call mom on Sunday about the trip.');
-      expect(p.dueDate, isNull);
-      expect(p.entries, [const VoiceTodoItem('call mom on Sunday about the trip')]);
-    });
+      test('8. a weekday in the MIDDLE of an item is not a date', () {
+        final VoiceTodoParse p = parse(
+          'Add to my to-do list, call mom on Sunday about the trip.',
+        );
+        expect(p.dueDate, isNull);
+        expect(p.entries, [
+          const VoiceTodoItem('call mom on Sunday about the trip'),
+        ]);
+      });
 
-    test('9. the phrase was the whole item — text kept, no date', () {
-      final VoiceTodoParse p = parse('Add to my to-do list, today.');
-      expect(p.dueDate, isNull);
-      expect(p.entries, [const VoiceTodoItem('today')]);
-    });
+      test('9. the phrase was the whole item — text kept, no date', () {
+        final VoiceTodoParse p = parse('Add to my to-do list, today.');
+        expect(p.dueDate, isNull);
+        expect(p.entries, [const VoiceTodoItem('today')]);
+      });
 
-    test('10. v1.26.0 fixture 1 is unchanged', () {
-      final VoiceTodoParse p = parse(
-        'Add to my to-do list for September 30th to go to the store.',
-      );
-      expect(p.items, ['go to the store']);
-      expect(p.dueDate, '2026-09-30');
-      expect(p.entries.single.dueDate, isNull);
-    });
-  });
+      test('10. v1.26.0 fixture 1 is unchanged', () {
+        final VoiceTodoParse p = parse(
+          'Add to my to-do list for September 30th to go to the store.',
+        );
+        expect(p.items, ['go to the store']);
+        expect(p.dueDate, '2026-09-30');
+        expect(p.entries.single.dueDate, isNull);
+      });
+    },
+  );
 
   group('TodoVoiceParser.parseWithDate — relative phrase table', () {
     // 2026-09-27 is a Sunday; the week after runs Mon 28 … Sun Oct 4.
     final DateTime sunday = DateTime(2026, 9, 27);
 
-    String? due(String phrase, {DateTime? on}) => TodoVoiceParser
-        .parseWithDate('add to my to do list $phrase buy nails', recordedOn: on ?? sunday)
-        .dueDate;
+    String? due(String phrase, {DateTime? on}) => TodoVoiceParser.parseWithDate(
+      'add to my to do list $phrase buy nails',
+      recordedOn: on ?? sunday,
+    ).dueDate;
 
-    List<String> items(String phrase, {DateTime? on}) => TodoVoiceParser
-        .parseWithDate('add to my to do list $phrase buy nails', recordedOn: on ?? sunday)
-        .items;
+    List<String> items(String phrase, {DateTime? on}) =>
+        TodoVoiceParser.parseWithDate(
+          'add to my to do list $phrase buy nails',
+          recordedOn: on ?? sunday,
+        ).items;
 
     test('today / tomorrow / the day after tomorrow', () {
       expect(due('today'), '2026-09-27');
@@ -659,14 +740,24 @@ void main() {
 
     test('every weekday name and short form, strictly after a Sunday (R1)', () {
       const Map<String, String> table = <String, String>{
-        'Monday': '2026-09-28', 'mon': '2026-09-28',
-        'Tuesday': '2026-09-29', 'tue': '2026-09-29', 'tues': '2026-09-29',
-        'Wednesday': '2026-09-30', 'wed': '2026-09-30', 'weds': '2026-09-30',
-        'Thursday': '2026-10-01', 'thu': '2026-10-01', 'thur': '2026-10-01',
+        'Monday': '2026-09-28',
+        'mon': '2026-09-28',
+        'Tuesday': '2026-09-29',
+        'tue': '2026-09-29',
+        'tues': '2026-09-29',
+        'Wednesday': '2026-09-30',
+        'wed': '2026-09-30',
+        'weds': '2026-09-30',
+        'Thursday': '2026-10-01',
+        'thu': '2026-10-01',
+        'thur': '2026-10-01',
         'thurs': '2026-10-01',
-        'Friday': '2026-10-02', 'fri': '2026-10-02',
-        'Saturday': '2026-10-03', 'sat': '2026-10-03',
-        'Sunday': '2026-10-04', 'sun': '2026-10-04',
+        'Friday': '2026-10-02',
+        'fri': '2026-10-02',
+        'Saturday': '2026-10-03',
+        'sat': '2026-10-03',
+        'Sunday': '2026-10-04',
+        'sun': '2026-10-04',
       };
       for (final MapEntry<String, String> e in table.entries) {
         // Short forms need end-of-item / `.` / `,` after them, so they are
@@ -692,24 +783,45 @@ void main() {
         recordedOn: sunday,
       );
       expect(p.entries, [
-        const VoiceTodoItem('buy nails', dueDate: '2026-10-02'),
-        const VoiceTodoItem('call Dana', dueDate: '2026-10-03'),
+        const VoiceTodoItem(
+          'buy nails',
+          dueDate: '2026-10-02',
+          dueTime: '09:00',
+        ),
+        const VoiceTodoItem(
+          'call Dana',
+          dueDate: '2026-10-03',
+          dueTime: '09:00',
+        ),
       ]);
     });
 
     test('R1 across every anchor weekday: same name = +7, never today', () {
       // Anchor Mon Sep 28 … Sun Oct 4; ask for each weekday from each.
       const List<String> names = <String>[
-        'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday',
+        'Monday',
+        'Tuesday',
+        'Wednesday',
+        'Thursday',
+        'Friday',
+        'Saturday',
+        'Sunday',
       ];
       for (int a = 0; a < 7; a++) {
         final DateTime anchor = DateTime(2026, 9, 28 + a);
         for (int t = 0; t < 7; t++) {
-          final int delta = ((t - a) % 7 + 7) % 7 == 0 ? 7 : ((t - a) % 7 + 7) % 7;
+          final int delta = ((t - a) % 7 + 7) % 7 == 0
+              ? 7
+              : ((t - a) % 7 + 7) % 7;
           final DateTime expected = DateTime(2026, 9, 28 + a + delta);
-          final String iso = '${expected.year}-${expected.month.toString().padLeft(2, '0')}-'
+          final String iso =
+              '${expected.year}-${expected.month.toString().padLeft(2, '0')}-'
               '${expected.day.toString().padLeft(2, '0')}';
-          expect(due('on ${names[t]}', on: anchor), iso, reason: '${names[a]} → ${names[t]}');
+          expect(
+            due('on ${names[t]}', on: anchor),
+            iso,
+            reason: '${names[a]} → ${names[t]}',
+          );
         }
       }
     });
@@ -731,15 +843,41 @@ void main() {
 
     test('number words one through thirty', () {
       const List<String> words = <String>[
-        'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine',
-        'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen',
-        'seventeen', 'eighteen', 'nineteen', 'twenty', 'twenty-one', 'twenty-two',
-        'twenty-three', 'twenty-four', 'twenty-five', 'twenty-six',
-        'twenty-seven', 'twenty-eight', 'twenty-nine', 'thirty',
+        'one',
+        'two',
+        'three',
+        'four',
+        'five',
+        'six',
+        'seven',
+        'eight',
+        'nine',
+        'ten',
+        'eleven',
+        'twelve',
+        'thirteen',
+        'fourteen',
+        'fifteen',
+        'sixteen',
+        'seventeen',
+        'eighteen',
+        'nineteen',
+        'twenty',
+        'twenty-one',
+        'twenty-two',
+        'twenty-three',
+        'twenty-four',
+        'twenty-five',
+        'twenty-six',
+        'twenty-seven',
+        'twenty-eight',
+        'twenty-nine',
+        'thirty',
       ];
       for (int i = 0; i < words.length; i++) {
         final DateTime expected = DateTime(2026, 9, 27 + i + 1);
-        final String iso = '${expected.year}-${expected.month.toString().padLeft(2, '0')}-'
+        final String iso =
+            '${expected.year}-${expected.month.toString().padLeft(2, '0')}-'
             '${expected.day.toString().padLeft(2, '0')}';
         expect(due('in ${words[i]} days'), iso, reason: words[i]);
       }
@@ -747,8 +885,14 @@ void main() {
 
     test('next week = next Monday, next month = the 1st (R3)', () {
       expect(due('next week'), '2026-09-28'); // Sunday → tomorrow
-      expect(due('next week', on: DateTime(2026, 9, 28)), '2026-10-05'); // Monday → +7
-      expect(due('next week', on: DateTime(2026, 9, 30)), '2026-10-05'); // Wednesday
+      expect(
+        due('next week', on: DateTime(2026, 9, 28)),
+        '2026-10-05',
+      ); // Monday → +7
+      expect(
+        due('next week', on: DateTime(2026, 9, 30)),
+        '2026-10-05',
+      ); // Wednesday
       expect(due('next month'), '2026-10-01');
       expect(due('next month', on: DateTime(2026, 12, 15)), '2027-01-01');
       expect(items('by next week'), ['buy nails']);
@@ -756,27 +900,43 @@ void main() {
 
     test('end of the week = coming Sunday (or today), end of the month', () {
       expect(due('end of the week'), '2026-09-27'); // recorded on a Sunday
-      expect(due('the end of the week', on: DateTime(2026, 9, 28)), '2026-10-04');
-      expect(due('by the end of the week', on: DateTime(2026, 10, 3)), '2026-10-04');
+      expect(
+        due('the end of the week', on: DateTime(2026, 9, 28)),
+        '2026-10-04',
+      );
+      expect(
+        due('by the end of the week', on: DateTime(2026, 10, 3)),
+        '2026-10-04',
+      );
       expect(due('end of week', on: DateTime(2026, 9, 30)), '2026-10-04');
       expect(due('end of the month'), '2026-09-30');
-      expect(due('by the end of the month', on: DateTime(2026, 2, 3)), '2026-02-28');
+      expect(
+        due('by the end of the month', on: DateTime(2026, 2, 3)),
+        '2026-02-28',
+      );
       expect(due('end of the month', on: DateTime(2028, 2, 3)), '2028-02-29');
       expect(due('end of the month', on: DateTime(2026, 12, 3)), '2026-12-31');
     });
 
-    test('no Duration arithmetic: crossing the November DST change is exact', () {
-      // US DST ends Sun 2026-11-01; a 23-hour-day bug would land on Oct 31.
-      expect(due('in 7 days', on: DateTime(2026, 10, 27)), '2026-11-03');
-      expect(due('in a week', on: DateTime(2026, 10, 31)), '2026-11-07');
-      expect(due('on Sunday', on: DateTime(2026, 10, 31)), '2026-11-01');
-    });
+    test(
+      'no Duration arithmetic: crossing the November DST change is exact',
+      () {
+        // US DST ends Sun 2026-11-01; a 23-hour-day bug would land on Oct 31.
+        expect(due('in 7 days', on: DateTime(2026, 10, 27)), '2026-11-03');
+        expect(due('in a week', on: DateTime(2026, 10, 31)), '2026-11-07');
+        expect(due('on Sunday', on: DateTime(2026, 10, 31)), '2026-11-01');
+      },
+    );
 
     test('NOT parsed: times of day, soon, in a few days', () {
       // v1.27.0 also listed "this weekend" and "a week from Friday" here;
       // both became dates in the V2/V4 follow-ups (see the V1-V5 groups).
       const List<String> phrases = <String>[
-        'at 3', 'soon', 'later', 'someday', 'in a few days',
+        'at 3',
+        'soon',
+        'later',
+        'someday',
+        'in a few days',
       ];
       for (final String phrase in phrases) {
         expect(due(phrase), isNull, reason: phrase);
@@ -800,22 +960,45 @@ void main() {
       expect(p.dueDate, isNull);
       expect(p.entries, [
         const VoiceTodoItem('buy nails'),
-        const VoiceTodoItem('call mom', dueDate: '2026-10-04'),
-        const VoiceTodoItem('buy milk', dueDate: '2026-09-28'),
+        const VoiceTodoItem(
+          'call mom',
+          dueDate: '2026-10-04',
+          dueTime: '09:00',
+        ),
+        const VoiceTodoItem(
+          'buy milk',
+          dueDate: '2026-09-28',
+          dueTime: '09:00',
+        ),
       ]);
     });
 
-    test('the first item\'s leading phrase is the SENTENCE date, not its own', () {
-      final VoiceTodoParse p = parse('add to my to do list Sunday call mom and buy milk');
-      expect(p.dueDate, '2026-10-04');
-      expect(p.entries, [const VoiceTodoItem('call mom'), const VoiceTodoItem('buy milk')]);
-    });
+    test(
+      'the first item\'s leading phrase is the SENTENCE date, not its own',
+      () {
+        final VoiceTodoParse p = parse(
+          'add to my to do list Sunday call mom and buy milk',
+        );
+        expect(p.dueDate, '2026-10-04');
+        expect(p.entries, [
+          const VoiceTodoItem('call mom'),
+          const VoiceTodoItem('buy milk'),
+        ]);
+      },
+    );
 
     test('end wins when both the start and the end carry a phrase', () {
       final VoiceTodoParse p = parse(
         'add to my to do list buy nails, tomorrow call mom on Friday',
       );
-      expect(p.entries.last, const VoiceTodoItem('tomorrow call mom', dueDate: '2026-10-02'));
+      expect(
+        p.entries.last,
+        const VoiceTodoItem(
+          'tomorrow call mom',
+          dueDate: '2026-10-02',
+          dueTime: '09:00',
+        ),
+      );
     });
 
     test('an absolute date at the item END', () {
@@ -823,8 +1006,16 @@ void main() {
         'add to my to do list pay rent by the 30th of September, buy milk 10/2',
       );
       expect(p.entries, [
-        const VoiceTodoItem('pay rent', dueDate: '2026-09-30'),
-        const VoiceTodoItem('buy milk', dueDate: '2026-10-02'),
+        const VoiceTodoItem(
+          'pay rent',
+          dueDate: '2026-09-30',
+          dueTime: '09:00',
+        ),
+        const VoiceTodoItem(
+          'buy milk',
+          dueDate: '2026-10-02',
+          dueTime: '09:00',
+        ),
       ]);
     });
 
@@ -838,28 +1029,52 @@ void main() {
     });
 
     test('an unresolvable per-item date stays text', () {
-      final VoiceTodoParse p = parse('add to my to do list pay rent on February 30th');
+      final VoiceTodoParse p = parse(
+        'add to my to do list pay rent on February 30th',
+      );
       expect(p.entries, [const VoiceTodoItem('pay rent on February 30th')]);
     });
 
     test('a phrase that IS the item keeps its text, no date (every form)', () {
-      for (final String phrase in <String>['today', 'on Friday', 'next week', 'tomorrow']) {
-        final VoiceTodoParse p = parse('add to my to do list buy nails, $phrase');
+      for (final String phrase in <String>[
+        'today',
+        'on Friday',
+        'next week',
+        'tomorrow',
+      ]) {
+        final VoiceTodoParse p = parse(
+          'add to my to do list buy nails, $phrase',
+        );
         expect(p.entries.last, VoiceTodoItem(phrase), reason: phrase);
       }
     });
 
     test('parse() strips per-item phrases too', () {
       expect(
-        TodoVoiceParser.parse('Add to my to-do list, call the dentist on Friday.'),
+        TodoVoiceParser.parse(
+          'Add to my to-do list, call the dentist on Friday.',
+        ),
         ['call the dentist'],
       );
     });
 
     test('VoiceTodoItem equality and toString', () {
-      expect(const VoiceTodoItem('a', dueDate: 'x'), const VoiceTodoItem('a', dueDate: 'x'));
-      expect(const VoiceTodoItem('a'), isNot(const VoiceTodoItem('a', dueDate: 'x')));
-      expect(const VoiceTodoItem('a').hashCode, const VoiceTodoItem('a').hashCode);
+      expect(
+        const VoiceTodoItem('a', dueDate: 'x'),
+        const VoiceTodoItem('a', dueDate: 'x'),
+      );
+      expect(
+        const VoiceTodoItem('a'),
+        isNot(const VoiceTodoItem('a', dueDate: 'x')),
+      );
+      expect(
+        const VoiceTodoItem('a', dueDate: 'x', dueTime: '09:00'),
+        isNot(const VoiceTodoItem('a', dueDate: 'x', dueTime: '10:00')),
+      );
+      expect(
+        const VoiceTodoItem('a').hashCode,
+        const VoiceTodoItem('a').hashCode,
+      );
       expect(const VoiceTodoItem('a', dueDate: 'x').toString(), contains('x'));
     });
   });
@@ -878,13 +1093,21 @@ void main() {
         parse('add to my to do list buy nails, may call mom').entries.last,
         const VoiceTodoItem('may call mom'),
       );
-      expect(parse('add to my to do list may 30 call mom').dueDate, '2027-05-30');
+      expect(
+        parse('add to my to do list may 30 call mom').dueDate,
+        '2027-05-30',
+      );
     });
 
     test('short weekday forms inside words are text', () {
       for (final String t in <String>[
-        'buy sun screen', 'call mon ami', 'fix the sat nav', 'the wed ding cake',
-        'thu mbs up', 'fri es', 'tue sday',
+        'buy sun screen',
+        'call mon ami',
+        'fix the sat nav',
+        'the wed ding cake',
+        'thu mbs up',
+        'fri es',
+        'tue sday',
       ]) {
         final VoiceTodoParse p = parse('add to my to do list $t');
         expect(p.entries, [VoiceTodoItem(t)], reason: t);
@@ -908,10 +1131,14 @@ void main() {
     });
 
     test('"in days" needs a number', () {
-      expect(parse('add to my to do list in days like these buy nails').entries, [
-        const VoiceTodoItem('in days like these buy nails'),
-      ]);
-      expect(parse('add to my to do list in a few days buy nails').dueDate, isNull);
+      expect(
+        parse('add to my to do list in days like these buy nails').entries,
+        [const VoiceTodoItem('in days like these buy nails')],
+      );
+      expect(
+        parse('add to my to do list in a few days buy nails').dueDate,
+        isNull,
+      );
       expect(parse('add to my to do list check in days').entries, [
         const VoiceTodoItem('check in days'),
       ]);
@@ -931,70 +1158,140 @@ void main() {
     });
   });
 
-  group('TodoVoiceParser.parseWithDate — follow-ups V1-V5 (fixtures verbatim)', () {
-    // docs/design/2026-09-27-desktop-reminders-and-date-followups.md §Half B
-    final DateTime sunday = DateTime(2026, 9, 27);
+  group(
+    'TodoVoiceParser.parseWithDate — follow-ups V1-V5 (fixtures verbatim)',
+    () {
+      // docs/design/2026-09-27-desktop-reminders-and-date-followups.md §Half B
+      final DateTime sunday = DateTime(2026, 9, 27);
 
-    VoiceTodoParse parse(String t, {DateTime? on}) =>
-        TodoVoiceParser.parseWithDate(t, recordedOn: on ?? sunday);
+      VoiceTodoParse parse(String t, {DateTime? on}) =>
+          TodoVoiceParser.parseWithDate(t, recordedOn: on ?? sunday);
 
-    test('1. V1 time after the date stays, date is taken', () {
-      final VoiceTodoParse p = parse('Add to my to-do list, call mom tomorrow at 3 pm.');
-      expect(p.entries, [const VoiceTodoItem('call mom at 3 pm', dueDate: '2026-09-28')]);
-      expect(p.dueDate, isNull);
-    });
+      test('1. V1 time after the date is parsed with the date', () {
+        final VoiceTodoParse p = parse(
+          'Add to my to-do list, call mom tomorrow at 3 pm.',
+        );
+        expect(p.entries, [
+          const VoiceTodoItem(
+            'call mom',
+            dueDate: '2026-09-28',
+            dueTime: '15:00',
+          ),
+        ]);
+        expect(p.dueDate, isNull);
+      });
 
-    test('2. V1 time before the date stays, date is taken', () {
-      final VoiceTodoParse p = parse('Add to my to-do list, call mom at 3 pm tomorrow.');
-      expect(p.entries, [const VoiceTodoItem('call mom at 3 pm', dueDate: '2026-09-28')]);
-    });
+      test('2. V1 time before the date is parsed with the date', () {
+        final VoiceTodoParse p = parse(
+          'Add to my to-do list, call mom at 3 pm tomorrow.',
+        );
+        expect(p.entries, [
+          const VoiceTodoItem(
+            'call mom',
+            dueDate: '2026-09-28',
+            dueTime: '15:00',
+          ),
+        ]);
+      });
 
-    test('3. V2 this weekend = the coming Saturday', () {
-      final VoiceTodoParse p = parse('Add to my to-do list, mow the lawn this weekend.');
-      expect(p.entries, [const VoiceTodoItem('mow the lawn', dueDate: '2026-10-03')]);
-    });
+      test('3. V2 this weekend = the coming Saturday', () {
+        final VoiceTodoParse p = parse(
+          'Add to my to-do list, mow the lawn this weekend.',
+        );
+        expect(p.entries, [
+          const VoiceTodoItem(
+            'mow the lawn',
+            dueDate: '2026-10-03',
+            dueTime: '09:00',
+          ),
+        ]);
+      });
 
-    test('4. V3 on the 15th → next 15th on or after', () {
-      final VoiceTodoParse p = parse('Add to my to-do list, pay rent on the 15th.');
-      expect(p.entries, [const VoiceTodoItem('pay rent', dueDate: '2026-10-15')]);
-    });
+      test('4. V3 on the 15th → next 15th on or after', () {
+        final VoiceTodoParse p = parse(
+          'Add to my to-do list, pay rent on the 15th.',
+        );
+        expect(p.entries, [
+          const VoiceTodoItem(
+            'pay rent',
+            dueDate: '2026-10-15',
+            dueTime: '09:00',
+          ),
+        ]);
+      });
 
-    test('5. V3 the 31st skips September', () {
-      final VoiceTodoParse p = parse('Add to my to-do list, pay rent on the 31st.');
-      expect(p.entries, [const VoiceTodoItem('pay rent', dueDate: '2026-10-31')]);
-    });
+      test('5. V3 the 31st skips September', () {
+        final VoiceTodoParse p = parse(
+          'Add to my to-do list, pay rent on the 31st.',
+        );
+        expect(p.entries, [
+          const VoiceTodoItem(
+            'pay rent',
+            dueDate: '2026-10-31',
+            dueTime: '09:00',
+          ),
+        ]);
+      });
 
-    test('6. V4 a week from Friday = Friday + 7', () {
-      final VoiceTodoParse p =
-          parse('Add to my to-do list, renew the plates a week from Friday.');
-      expect(p.entries, [const VoiceTodoItem('renew the plates', dueDate: '2026-10-09')]);
-    });
+      test('6. V4 a week from Friday = Friday + 7', () {
+        final VoiceTodoParse p = parse(
+          'Add to my to-do list, renew the plates a week from Friday.',
+        );
+        expect(p.entries, [
+          const VoiceTodoItem(
+            'renew the plates',
+            dueDate: '2026-10-09',
+            dueTime: '09:00',
+          ),
+        ]);
+      });
 
-    test('7. V5 tonight → today, nothing stripped', () {
-      final VoiceTodoParse p = parse('Add to my to-do list, call mom tonight.');
-      expect(p.entries, [const VoiceTodoItem('call mom tonight', dueDate: '2026-09-27')]);
-    });
+      test('7. V5 tonight → today, nothing stripped', () {
+        final VoiceTodoParse p = parse(
+          'Add to my to-do list, call mom tonight.',
+        );
+        expect(p.entries, [
+          const VoiceTodoItem(
+            'call mom tonight',
+            dueDate: '2026-09-27',
+            dueTime: '09:00',
+          ),
+        ]);
+      });
 
-    test('8. a time alone is not a date', () {
-      final VoiceTodoParse p = parse('Add to my to-do list, meet Dana at 3.');
-      expect(p.entries, [const VoiceTodoItem('meet Dana at 3')]);
-      expect(p.dueDate, isNull);
-    });
+      test('8. a time alone receives the next local occurrence', () {
+        final VoiceTodoParse p = parse('Add to my to-do list, meet Dana at 3.');
+        expect(p.entries, [
+          const VoiceTodoItem(
+            'meet Dana',
+            dueDate: '2026-09-27',
+            dueTime: '03:00',
+          ),
+        ]);
+        expect(p.dueDate, isNull);
+      });
 
-    test('9. V3 needs the ordinal suffix', () {
-      final VoiceTodoParse p = parse('Add to my to-do list, pay rent on 15.');
-      expect(p.entries, [const VoiceTodoItem('pay rent on 15')]);
-      expect(p.dueDate, isNull);
-    });
+      test('9. V3 needs the ordinal suffix', () {
+        final VoiceTodoParse p = parse('Add to my to-do list, pay rent on 15.');
+        expect(p.entries, [const VoiceTodoItem('pay rent on 15')]);
+        expect(p.dueDate, isNull);
+      });
 
-    test('10. V2 said on a Saturday → next Saturday (R1)', () {
-      final VoiceTodoParse p = parse(
-        'Add to my to-do list, mow the lawn this weekend.',
-        on: DateTime(2026, 10, 3),
-      );
-      expect(p.entries, [const VoiceTodoItem('mow the lawn', dueDate: '2026-10-10')]);
-    });
-  });
+      test('10. V2 said on a Saturday → next Saturday (R1)', () {
+        final VoiceTodoParse p = parse(
+          'Add to my to-do list, mow the lawn this weekend.',
+          on: DateTime(2026, 10, 3),
+        );
+        expect(p.entries, [
+          const VoiceTodoItem(
+            'mow the lawn',
+            dueDate: '2026-10-10',
+            dueTime: '09:00',
+          ),
+        ]);
+      });
+    },
+  );
 
   group('TodoVoiceParser.parseWithDate — follow-ups V1-V5 (edges)', () {
     final DateTime sunday = DateTime(2026, 9, 27);
@@ -1002,38 +1299,66 @@ void main() {
     VoiceTodoParse parse(String t, {DateTime? on}) =>
         TodoVoiceParser.parseWithDate(t, recordedOn: on ?? sunday);
 
-    test('V1 every time form is kept, the date is taken', () {
-      for (final String time in <String>[
-        'at 3', 'at 3 pm', 'at 3:30', 'at 3:30 pm', 'at noon', 'at midnight',
-        'around 3', "3 o'clock", 'at 9 am', '3 pm',
-      ]) {
-        expect(
-          parse('add to my to do list call mom $time on Friday').entries,
-          [VoiceTodoItem('call mom $time', dueDate: '2026-10-02')],
-          reason: time,
-        );
-        expect(
-          parse('add to my to do list call mom on Friday $time').entries,
-          [VoiceTodoItem('call mom $time', dueDate: '2026-10-02')],
-          reason: time,
-        );
+    test('V1 every time form is parsed with the date', () {
+      const Map<String, String> times = <String, String>{
+        'at 3': '15:00',
+        'at 3 pm': '15:00',
+        'at 3:30': '15:30',
+        'at 3:30 pm': '15:30',
+        'at noon': '12:00',
+        'at midnight': '00:00',
+        'around 3': '15:00',
+        "3 o'clock": '15:00',
+        'at 9 am': '09:00',
+        '3 pm': '15:00',
+      };
+      for (final MapEntry<String, String> entry in times.entries) {
+        for (final String phrase in <String>[
+          'call mom ${entry.key} on Friday',
+          'call mom on Friday ${entry.key}',
+        ]) {
+          final VoiceTodoItem item = parse(
+            'add to my to do list $phrase',
+          ).entries.single;
+          expect(item.text, 'call mom', reason: entry.key);
+          expect(item.dueDate, '2026-10-02', reason: entry.key);
+          expect(item.dueTime, entry.value, reason: entry.key);
+        }
       }
     });
 
-    test('V1 Whisper period after p.m. survives', () {
-      expect(parse('Add to my to-do list, call mom tomorrow at 3 p.m.').entries, [
-        const VoiceTodoItem('call mom at 3 p.m', dueDate: '2026-09-28'),
-      ]);
+    test('V1 Whisper period after p.m. is parsed', () {
+      expect(
+        parse('Add to my to-do list, call mom tomorrow at 3 p.m.').entries,
+        [
+          const VoiceTodoItem(
+            'call mom',
+            dueDate: '2026-09-28',
+            dueTime: '15:00',
+          ),
+        ],
+      );
     });
 
-    test('V1 time is never a value and never a date on its own', () {
-      for (final String t in <String>[
-        'meet Dana at 3 pm', 'meet Dana at noon', 'meet Dana around 3',
-        "meet Dana at 3 o'clock", 'buy 3 apples', 'buy 12 eggs',
-      ]) {
-        final VoiceTodoParse p = parse('add to my to do list $t');
-        expect(p.entries, [VoiceTodoItem(t)], reason: t);
-        expect(p.dueDate, isNull, reason: t);
+    test('V1 a trailing spoken time is a due time, not item text', () {
+      const Map<String, String> timed = <String, String>{
+        'meet Dana at 3 pm': '15:00',
+        'meet Dana at noon': '12:00',
+        'meet Dana around 3': '03:00',
+        "meet Dana at 3 o'clock": '03:00',
+      };
+      for (final MapEntry<String, String> entry in timed.entries) {
+        final VoiceTodoItem item = parse(
+          'add to my to do list ${entry.key}',
+        ).entries.single;
+        expect(item.text, 'meet Dana', reason: entry.key);
+        expect(item.dueDate, '2026-09-27', reason: entry.key);
+        expect(item.dueTime, entry.value, reason: entry.key);
+      }
+      for (final String text in <String>['buy 3 apples', 'buy 12 eggs']) {
+        expect(parse('add to my to do list $text').entries, [
+          VoiceTodoItem(text),
+        ]);
       }
     });
 
@@ -1043,35 +1368,73 @@ void main() {
       );
       expect(p.entries, [
         const VoiceTodoItem('buy milk'),
-        const VoiceTodoItem('call mom at 3 pm', dueDate: '2026-09-28'),
+        const VoiceTodoItem(
+          'call mom',
+          dueDate: '2026-09-28',
+          dueTime: '15:00',
+        ),
         const VoiceTodoItem('mow the lawn'),
       ]);
     });
 
     test('V2 next weekend = the Saturday after the coming one', () {
       expect(parse('add to my to do list mow the lawn next weekend').entries, [
-        const VoiceTodoItem('mow the lawn', dueDate: '2026-10-10'),
+        const VoiceTodoItem(
+          'mow the lawn',
+          dueDate: '2026-10-10',
+          dueTime: '09:00',
+        ),
       ]);
       // From a Friday: this weekend is tomorrow, next weekend +7.
       final DateTime friday = DateTime(2026, 10, 2);
-      expect(parse('add to my to do list mow the lawn this weekend', on: friday).entries, [
-        const VoiceTodoItem('mow the lawn', dueDate: '2026-10-03'),
-      ]);
-      expect(parse('add to my to do list mow the lawn next weekend', on: friday).entries, [
-        const VoiceTodoItem('mow the lawn', dueDate: '2026-10-10'),
-      ]);
+      expect(
+        parse(
+          'add to my to do list mow the lawn this weekend',
+          on: friday,
+        ).entries,
+        [
+          const VoiceTodoItem(
+            'mow the lawn',
+            dueDate: '2026-10-03',
+            dueTime: '09:00',
+          ),
+        ],
+      );
+      expect(
+        parse(
+          'add to my to do list mow the lawn next weekend',
+          on: friday,
+        ).entries,
+        [
+          const VoiceTodoItem(
+            'mow the lawn',
+            dueDate: '2026-10-10',
+            dueTime: '09:00',
+          ),
+        ],
+      );
     });
 
     test('V2 at the sentence head and the item start', () {
-      final VoiceTodoParse head =
-          parse('add to my to do list this weekend, mow the lawn and wash the car');
+      final VoiceTodoParse head = parse(
+        'add to my to do list this weekend, mow the lawn and wash the car',
+      );
       expect(head.dueDate, '2026-10-03');
       expect(head.items, ['mow the lawn', 'wash the car']);
       // Second item's leading phrase is the item's OWN date (R2).
-      expect(parse('add to my to do list buy milk, this weekend mow the lawn').entries, [
-        const VoiceTodoItem('buy milk'),
-        const VoiceTodoItem('mow the lawn', dueDate: '2026-10-03'),
-      ]);
+      expect(
+        parse(
+          'add to my to do list buy milk, this weekend mow the lawn',
+        ).entries,
+        [
+          const VoiceTodoItem('buy milk'),
+          const VoiceTodoItem(
+            'mow the lawn',
+            dueDate: '2026-10-03',
+            dueTime: '09:00',
+          ),
+        ],
+      );
     });
 
     test('V2 "weekend" without this/next is text', () {
@@ -1082,28 +1445,62 @@ void main() {
 
     test('V3 every preposition, on-or-after, year roll', () {
       expect(parse('add to my to do list pay rent by the 1st').entries, [
-        const VoiceTodoItem('pay rent', dueDate: '2026-10-01'),
+        const VoiceTodoItem(
+          'pay rent',
+          dueDate: '2026-10-01',
+          dueTime: '09:00',
+        ),
       ]);
       expect(parse('add to my to do list pay rent the 31st').entries, [
-        const VoiceTodoItem('pay rent', dueDate: '2026-10-31'),
+        const VoiceTodoItem(
+          'pay rent',
+          dueDate: '2026-10-31',
+          dueTime: '09:00',
+        ),
       ]);
       // The recording day itself counts (on or after).
       expect(parse('add to my to do list pay rent on the 27th').entries, [
-        const VoiceTodoItem('pay rent', dueDate: '2026-09-27'),
+        const VoiceTodoItem(
+          'pay rent',
+          dueDate: '2026-09-27',
+          dueTime: '09:00',
+        ),
       ]);
       // Already past this month → next month.
       expect(parse('add to my to do list pay rent on the 2nd').entries, [
-        const VoiceTodoItem('pay rent', dueDate: '2026-10-02'),
+        const VoiceTodoItem(
+          'pay rent',
+          dueDate: '2026-10-02',
+          dueTime: '09:00',
+        ),
       ]);
       // December 28th → the 3rd rolls into January.
       expect(
-        parse('add to my to do list pay rent on the 3rd', on: DateTime(2026, 12, 28)).entries,
-        [const VoiceTodoItem('pay rent', dueDate: '2027-01-03')],
+        parse(
+          'add to my to do list pay rent on the 3rd',
+          on: DateTime(2026, 12, 28),
+        ).entries,
+        [
+          const VoiceTodoItem(
+            'pay rent',
+            dueDate: '2027-01-03',
+            dueTime: '09:00',
+          ),
+        ],
       );
       // Feb 29 recorded 2026-03-01 → the next leap year.
       expect(
-        parse('add to my to do list pay rent on the 29th', on: DateTime(2026, 2, 1)).entries,
-        [const VoiceTodoItem('pay rent', dueDate: '2026-03-29')],
+        parse(
+          'add to my to do list pay rent on the 29th',
+          on: DateTime(2026, 2, 1),
+        ).entries,
+        [
+          const VoiceTodoItem(
+            'pay rent',
+            dueDate: '2026-03-29',
+            dueTime: '09:00',
+          ),
+        ],
       );
       expect(parse('add to my to do list pay rent on the 0th').entries, [
         const VoiceTodoItem('pay rent on the 0th'),
@@ -1114,76 +1511,143 @@ void main() {
     });
 
     test('V3 does not swallow the absolute "the 30th of September"', () {
-      expect(parse('add to my to do list pay rent on the 30th of September').entries, [
-        const VoiceTodoItem('pay rent', dueDate: '2026-09-30'),
-      ]);
+      expect(
+        parse('add to my to do list pay rent on the 30th of September').entries,
+        [
+          const VoiceTodoItem(
+            'pay rent',
+            dueDate: '2026-09-30',
+            dueTime: '09:00',
+          ),
+        ],
+      );
     });
 
     test('V3 at the sentence head', () {
-      final VoiceTodoParse p = parse('add to my to do list on the 15th, pay rent and call mom');
+      final VoiceTodoParse p = parse(
+        'add to my to do list on the 15th, pay rent and call mom',
+      );
       expect(p.dueDate, '2026-10-15');
       expect(p.items, ['pay rent', 'call mom']);
     });
 
     test('V4 a week from today / tomorrow / weekday, N weeks', () {
       expect(parse('add to my to do list call mom a week from today').entries, [
-        const VoiceTodoItem('call mom', dueDate: '2026-10-04'),
+        const VoiceTodoItem(
+          'call mom',
+          dueDate: '2026-10-04',
+          dueTime: '09:00',
+        ),
       ]);
-      expect(parse('add to my to do list call mom a week from tomorrow').entries, [
-        const VoiceTodoItem('call mom', dueDate: '2026-10-05'),
-      ]);
-      expect(parse('add to my to do list call mom one week from Friday').entries, [
-        const VoiceTodoItem('call mom', dueDate: '2026-10-09'),
-      ]);
-      expect(parse('add to my to do list call mom two weeks from Friday').entries, [
-        const VoiceTodoItem('call mom', dueDate: '2026-10-16'),
-      ]);
-      expect(parse('add to my to do list call mom 2 weeks from Friday').entries, [
-        const VoiceTodoItem('call mom', dueDate: '2026-10-16'),
-      ]);
+      expect(
+        parse('add to my to do list call mom a week from tomorrow').entries,
+        [
+          const VoiceTodoItem(
+            'call mom',
+            dueDate: '2026-10-05',
+            dueTime: '09:00',
+          ),
+        ],
+      );
+      expect(
+        parse('add to my to do list call mom one week from Friday').entries,
+        [
+          const VoiceTodoItem(
+            'call mom',
+            dueDate: '2026-10-09',
+            dueTime: '09:00',
+          ),
+        ],
+      );
+      expect(
+        parse('add to my to do list call mom two weeks from Friday').entries,
+        [
+          const VoiceTodoItem(
+            'call mom',
+            dueDate: '2026-10-16',
+            dueTime: '09:00',
+          ),
+        ],
+      );
+      expect(
+        parse('add to my to do list call mom 2 weeks from Friday').entries,
+        [
+          const VoiceTodoItem(
+            'call mom',
+            dueDate: '2026-10-16',
+            dueTime: '09:00',
+          ),
+        ],
+      );
       // A weekday on the recording weekday is next week's (R1), then +7.
-      expect(parse('add to my to do list call mom a week from Sunday').entries, [
-        const VoiceTodoItem('call mom', dueDate: '2026-10-11'),
-      ]);
-      expect(parse('add to my to do list call mom a week from next Friday').entries, [
-        const VoiceTodoItem('call mom', dueDate: '2026-10-09'),
-      ]);
+      expect(
+        parse('add to my to do list call mom a week from Sunday').entries,
+        [
+          const VoiceTodoItem(
+            'call mom',
+            dueDate: '2026-10-11',
+            dueTime: '09:00',
+          ),
+        ],
+      );
+      expect(
+        parse('add to my to do list call mom a week from next Friday').entries,
+        [
+          const VoiceTodoItem(
+            'call mom',
+            dueDate: '2026-10-09',
+            dueTime: '09:00',
+          ),
+        ],
+      );
     });
 
-    test('V4 at the sentence head, and "a week from" without an inner phrase is text', () {
-      final VoiceTodoParse p =
-          parse('add to my to do list a week from Friday, renew the plates');
-      expect(p.dueDate, '2026-10-09');
-      expect(p.items, ['renew the plates']);
-      expect(parse('add to my to do list take a week from work').entries, [
-        const VoiceTodoItem('take a week from work'),
-      ]);
-    });
+    test(
+      'V4 at the sentence head, and "a week from" without an inner phrase is text',
+      () {
+        final VoiceTodoParse p = parse(
+          'add to my to do list a week from Friday, renew the plates',
+        );
+        expect(p.dueDate, '2026-10-09');
+        expect(p.items, ['renew the plates']);
+        expect(parse('add to my to do list take a week from work').entries, [
+          const VoiceTodoItem('take a week from work'),
+        ]);
+      },
+    );
 
     test('V5 every word → today, kept in the text', () {
       for (final String w in <String>[
-        'tonight', 'this morning', 'this afternoon', 'this evening',
-        'end of the day', 'the end of the day', 'by the end of the day', 'by tonight',
+        'tonight',
+        'this morning',
+        'this afternoon',
+        'this evening',
+        'end of the day',
+        'the end of the day',
+        'by the end of the day',
+        'by tonight',
       ]) {
-        expect(
-          parse('add to my to do list call mom $w').entries,
-          [VoiceTodoItem('call mom $w', dueDate: '2026-09-27')],
-          reason: w,
-        );
+        expect(parse('add to my to do list call mom $w').entries, [
+          VoiceTodoItem('call mom $w', dueDate: '2026-09-27', dueTime: '09:00'),
+        ], reason: w);
       }
     });
 
     test('V5 with a time keeps everything', () {
       expect(parse('add to my to do list call mom tonight at 8').entries, [
-        const VoiceTodoItem('call mom tonight at 8', dueDate: '2026-09-27'),
+        const VoiceTodoItem(
+          'call mom tonight at 8',
+          dueDate: '2026-09-27',
+          dueTime: '08:00',
+        ),
       ]);
     });
 
-    test(
-        'V5 at the sentence HEAD is stripped like any head date (no item may '
+    test('V5 at the sentence HEAD is stripped like any head date (no item may '
         'be called "tonight"); the sentence date covers every item', () {
-      final VoiceTodoParse head =
-          parse('add to my to do list tonight, call mom and buy milk');
+      final VoiceTodoParse head = parse(
+        'add to my to do list tonight, call mom and buy milk',
+      );
       // The sentence date is reported on the parse; capture applies it to
       // every item without its own (`entry.dueDate ?? parse.dueDate`).
       expect(head.dueDate, '2026-09-27');
@@ -1198,11 +1662,55 @@ void main() {
 
     test('V5 "end of the week/month" unchanged, "tonights" is text', () {
       expect(parse('add to my to do list call mom end of the week').entries, [
-        const VoiceTodoItem('call mom', dueDate: '2026-09-27'),
+        const VoiceTodoItem(
+          'call mom',
+          dueDate: '2026-09-27',
+          dueTime: '09:00',
+        ),
       ]);
       expect(parse('add to my to do list read tonights paper').entries, [
         const VoiceTodoItem('read tonights paper'),
       ]);
+    });
+  });
+
+  group('spoken due times', () {
+    test('Friday at 3pm resolves the next Friday at 15:00', () {
+      final VoiceTodoItem item = TodoVoiceParser.parseWithDate(
+        'add to my to do list call Dana Friday at 3pm',
+        recordedOn: DateTime(2026, 9, 27, 10),
+      ).entries.single;
+      expect(item.text, 'call Dana');
+      expect(item.dueDate, '2026-10-02');
+      expect(item.dueTime, '15:00');
+    });
+
+    test('noon is 12:00 and a date without time defaults to 09:00', () {
+      final VoiceTodoItem noon = TodoVoiceParser.parseWithDate(
+        'add to my to do list call Dana tomorrow at noon',
+        recordedOn: DateTime(2026, 9, 27, 10),
+      ).entries.single;
+      expect(noon.dueTime, '12:00');
+      final VoiceTodoItem defaulted = TodoVoiceParser.parseWithDate(
+        'add to my to do list call Dana tomorrow',
+        recordedOn: DateTime(2026, 9, 27, 10),
+      ).entries.single;
+      expect(defaulted.dueTime, '09:00');
+    });
+
+    test('by 5 uses the next matching occurrence', () {
+      final VoiceTodoItem today = TodoVoiceParser.parseWithDate(
+        'add to my to do list call Dana by 5',
+        recordedOn: DateTime(2026, 9, 27, 16),
+      ).entries.single;
+      expect(today.dueDate, '2026-09-27');
+      expect(today.dueTime, '17:00');
+      final VoiceTodoItem tomorrow = TodoVoiceParser.parseWithDate(
+        'add to my to do list call Dana by 5',
+        recordedOn: DateTime(2026, 9, 27, 18),
+      ).entries.single;
+      expect(tomorrow.dueDate, '2026-09-28');
+      expect(tomorrow.dueTime, '05:00');
     });
   });
 }

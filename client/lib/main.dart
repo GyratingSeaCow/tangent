@@ -54,11 +54,15 @@ import 'screens/dump/dump_detail_screen.dart';
 import 'services/android_completion_notification_port.dart'
     show dumpIdFromNotificationPayload;
 import 'services/android_due_reminder_port.dart';
+import 'services/android_todo_due_notification_port.dart';
 import 'services/desktop_completion_notification_port.dart';
 import 'services/desktop_due_reminder_port.dart';
+import 'services/desktop_todo_due_notification_port.dart';
 import 'services/due_digest.dart';
 import 'services/background_sync_scheduler.dart';
 import 'services/due_reminder_scheduler.dart';
+import 'services/todo_due_notification_scheduler.dart';
+import 'services/todo_notification_action_handler.dart';
 import 'services/morning_review.dart';
 import 'services/morning_review_scheduler.dart';
 import 'services/close_to_tray.dart';
@@ -112,12 +116,20 @@ void backgroundSyncDispatcher() {
 
       db = LocalDb();
       final LocalDb handle = db;
+      final TodoDueNotificationScheduler todoDueScheduler =
+          TodoDueNotificationScheduler(
+            port: AndroidTodoDueNotificationPort(),
+            loadTodos: () => TodoRepository(db: handle).listTodos(),
+          );
       final DocumentSyncEngine engine = DocumentSyncEngine(
         db: () => handle,
         client: () => TranscriptionClient(baseUrl: url, token: token),
         connectivity: ConnectivityService(),
         deviceLabel: _backgroundDeviceLabel,
         newDeviceId: const Uuid().v4(),
+        // The foreground database watcher does not exist in this isolate.
+        // A pulled due-time edit must therefore re-arm Android here.
+        onTodoChanged: todoDueScheduler.reconcile,
       );
       final SyncReport report = await engine.syncNow();
       engine.dispose();
@@ -202,16 +214,15 @@ Future<bool> _runMorningReviewTask() async {
 /// the two daily notices can never replace or cancel each other.
 AndroidDueReminderPort _androidMorningReviewPort({
   void Function(NotificationResponse response)? onResponse,
-}) =>
-    AndroidDueReminderPort(
-      onResponse: onResponse,
-      notificationId: kMorningReviewNotificationId,
-      channelId: kMorningReviewChannelId,
-      channelName: kMorningReviewChannelName,
-      channelDescription: "Yesterday's captures, each morning.",
-      taskName: kMorningReviewTaskName,
-      payload: kMorningReviewPayload,
-    );
+}) => AndroidDueReminderPort(
+  onResponse: onResponse,
+  notificationId: kMorningReviewNotificationId,
+  channelId: kMorningReviewChannelId,
+  channelName: kMorningReviewChannelName,
+  channelDescription: "Yesterday's captures, each morning.",
+  taskName: kMorningReviewTaskName,
+  payload: kMorningReviewPayload,
+);
 
 /// Reminder tap → the To Do screen, on top of whatever is showing. The
 /// navigator may not exist yet on a cold start; wait a frame and retry.
@@ -227,9 +238,39 @@ void _openTodoScreen() {
 }
 
 void _onNotificationTap(NotificationResponse response) {
+  final String? todoId = todoIdFromNotificationPayload(response.payload);
+  if (todoId != null) {
+    _openTodoScreen();
+    return;
+  }
   if (response.payload == kDueReminderPayload) _openTodoScreen();
   final String? dumpId = dumpIdFromNotificationPayload(response.payload);
   if (dumpId != null) openDumpFromLaunch(dumpId);
+}
+
+/// Android action responses run in a background isolate. Build fresh database
+/// and plugin handles, then route through TodoRepository.toggle so completion
+/// is sync-dirty and files into the rightmost Kanban lane exactly like the UI.
+@pragma('vm:entry-point')
+void onTodoNotificationBackgroundResponse(NotificationResponse response) async {
+  if (response.actionId != kTodoDoneActionId) return;
+  WidgetsFlutterBinding.ensureInitialized();
+  final LocalDb db = LocalDb();
+  try {
+    final AndroidTodoDueNotificationPort port =
+        AndroidTodoDueNotificationPort();
+    final TodoNotificationActionHandler handler = TodoNotificationActionHandler(
+      repository: TodoRepository(db: db),
+      cancelNotification: port.cancelTodo,
+    );
+    await handler.handle(
+      actionId: response.actionId,
+      payload: response.payload,
+      notificationId: response.id ?? -1,
+    );
+  } finally {
+    await db.close();
+  }
 }
 
 /// A completion-notice tap (spec 2026-09-28 N2), any platform: opens that
@@ -240,7 +281,9 @@ void _onNotificationTap(NotificationResponse response) {
 void openDumpFromLaunch(String dumpId) {
   final NavigatorState? nav = TangentApp.navigatorKey.currentState;
   if (nav == null) {
-    WidgetsBinding.instance.addPostFrameCallback((_) => openDumpFromLaunch(dumpId));
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => openDumpFromLaunch(dumpId),
+    );
     return;
   }
   final ProviderContainer container = ProviderScope.containerOf(nav.context);
@@ -310,8 +353,9 @@ Future<void> _runTangent(List<String> args, DebugLogBuffer debugLog) async {
   // shows exactly what ships, from the bundled LICENSE file, never a copy
   // that could drift.
   LicenseRegistry.addLicense(() async* {
-    final String text =
-        await rootBundle.loadString('assets/licenses/AGPL-3.0.txt');
+    final String text = await rootBundle.loadString(
+      'assets/licenses/AGPL-3.0.txt',
+    );
     yield LicenseEntryWithLineBreaks(const <String>['Tangent'], text);
   });
   // Desktop playback backend. Must precede any AudioPlayer construction,
@@ -377,6 +421,8 @@ Future<void> _runTangent(List<String> args, DebugLogBuffer debugLog) async {
   // the app once and never returns still gets background syncs.
   AndroidDueReminderPort? androidReminderPort;
   DesktopDueReminderPort? desktopReminderPort;
+  AndroidTodoDueNotificationPort? androidTodoDuePort;
+  DesktopTodoDueNotificationPort? desktopTodoDuePort;
   AndroidDueReminderPort? androidMorningPort;
   DesktopDueReminderPort? desktopMorningPort;
   if (Platform.isAndroid) {
@@ -386,9 +432,38 @@ Future<void> _runTangent(List<String> args, DebugLogBuffer debugLog) async {
     // Initialised here, with the tap router, BEFORE the transcription
     // notifier can claim the singleton plugin: initialize() replaces the
     // tap callback, and the first caller wins.
-    androidReminderPort = AndroidDueReminderPort(onResponse: _onNotificationTap);
+    late final AndroidTodoDueNotificationPort todoPort;
+    late final TodoNotificationActionHandler todoActionHandler;
+    void onAndroidNotificationResponse(NotificationResponse response) {
+      if (response.actionId == kTodoDoneActionId) {
+        unawaited(
+          todoActionHandler.handle(
+            actionId: response.actionId,
+            payload: response.payload,
+            notificationId: response.id ?? -1,
+          ),
+        );
+        return;
+      }
+      _onNotificationTap(response);
+    }
+
+    androidReminderPort = AndroidDueReminderPort(
+      onResponse: onAndroidNotificationResponse,
+      onBackgroundResponse: onTodoNotificationBackgroundResponse,
+    );
+    todoPort = AndroidTodoDueNotificationPort(
+      onResponse: onAndroidNotificationResponse,
+      onBackgroundResponse: onTodoNotificationBackgroundResponse,
+    );
+    todoActionHandler = TodoNotificationActionHandler(
+      repository: TodoRepository(db: db),
+      cancelNotification: todoPort.cancelTodo,
+    );
+    androidTodoDuePort = todoPort;
     try {
       await androidReminderPort.ensureReady();
+      await androidTodoDuePort.ensureReady();
     } catch (e) {
       debugPrint('tangent.reminders unavailable: $e');
     }
@@ -400,8 +475,9 @@ Future<void> _runTangent(List<String> args, DebugLogBuffer debugLog) async {
     // Desktop reminder (spec 2026-09-27 Half A): in-process timer + system
     // notification; a click raises the window and opens To Do, like the
     // Android warm tap.
-    final LocalNotifierDesktopNotifier notifier =
-        LocalNotifierDesktopNotifier(appName: 'Tangent');
+    final LocalNotifierDesktopNotifier notifier = LocalNotifierDesktopNotifier(
+      appName: 'Tangent',
+    );
     try {
       await notifier.setup();
     } catch (e) {
@@ -409,29 +485,83 @@ Future<void> _runTangent(List<String> args, DebugLogBuffer debugLog) async {
     }
     desktopReminderPort = DesktopDueReminderPort(
       notifier: notifier,
-      loadDigest: () async =>
-          buildDueDigest(await TodoRepository(db: db).listTodos(), DateTime.now()),
+      loadDigest: () async => buildDueDigest(
+        await TodoRepository(db: db).listTodos(),
+        DateTime.now(),
+      ),
       onPosted: settings.setLastReminderShownDay,
       onClick: () {
         unawaited(raiseAppWindow());
         _openTodoScreen();
       },
     );
+    late final DesktopTodoDueNotificationPort todoPort;
+    late final TodoNotificationActionHandler todoActionHandler;
+    final LocalDesktopTodoNotifier todoNotifier = LocalDesktopTodoNotifier(
+      appName: 'Tangent',
+    );
+    todoPort = DesktopTodoDueNotificationPort(
+      notifier: todoNotifier,
+      onClick: (String todoId) {
+        unawaited(raiseAppWindow());
+        _openTodoScreen();
+      },
+      onMarkDone: (String todoId, int notificationId) =>
+          todoActionHandler.handle(
+            actionId: kTodoDoneActionId,
+            payload: todoNotificationPayload(todoId),
+            notificationId: notificationId,
+          ),
+    );
+    todoActionHandler = TodoNotificationActionHandler(
+      repository: TodoRepository(db: db),
+      cancelNotification: todoPort.cancelTodo,
+    );
+    desktopTodoDuePort = todoPort;
+    try {
+      await todoPort.ensureReady();
+    } catch (e) {
+      debugPrint('tangent.todo_due_notifications unavailable: $e');
+    }
     // The morning review rides its own notifier instance so closing one
     // notice never closes the other; a click just raises the window —
     // Home IS the review.
     desktopMorningPort = DesktopDueReminderPort(
       notifier: LocalNotifierDesktopNotifier(appName: 'Tangent'),
       loadDigest: () async {
-        final MorningReview? review =
-            buildMorningReview(await db.listDumps(limit: 500), DateTime.now());
+        final MorningReview? review = buildMorningReview(
+          await db.listDumps(limit: 500),
+          DateTime.now(),
+        );
         return review == null ? null : morningReviewNotification(review);
       },
       onPosted: settings.setLastMorningReviewShownDay,
       onClick: () => unawaited(raiseAppWindow()),
     );
   }
-  final DueReminderPort? reminderPort = androidReminderPort ?? desktopReminderPort;
+  final DueReminderPort? reminderPort =
+      androidReminderPort ?? desktopReminderPort;
+  final TodoDueNotificationPort? todoDuePort =
+      androidTodoDuePort ?? desktopTodoDuePort;
+  final TodoDueNotificationScheduler? todoDueScheduler = todoDuePort == null
+      ? null
+      : TodoDueNotificationScheduler(
+          port: todoDuePort,
+          loadTodos: () => TodoRepository(db: db).listTodos(),
+        );
+  final TodoDueNotificationOwner? todoDueOwner = todoDueScheduler == null
+      ? null
+      : TodoDueNotificationOwner(
+          repository: TodoRepository(db: db),
+          scheduler: todoDueScheduler,
+        );
+  if (todoDueScheduler != null) {
+    try {
+      await todoDueScheduler.reconcile();
+    } catch (e) {
+      debugPrint('tangent.todo_due_reconcile unavailable: $e');
+    }
+  }
   final DueReminderPort? morningPort = androidMorningPort ?? desktopMorningPort;
   // Completion notices on desktop (spec 2026-09-28 N5): the same
   // local_notifier backend as the reminder; a click raises the window and
@@ -445,8 +575,9 @@ Future<void> _runTangent(List<String> args, DebugLogBuffer debugLog) async {
           },
         )
       : null;
-  final backend =
-      Platform.isAndroid ? SafStorageBackend() : FilesystemStorageBackend();
+  final backend = Platform.isAndroid
+      ? SafStorageBackend()
+      : FilesystemStorageBackend();
   final mutations = DefaultRecordingMutationCoordinator(db: db);
   // Heal receipts orphaned by server resurrection BEFORE fences restore:
   // a zombie receipt admitted into the coordinator fences its live row for
@@ -483,8 +614,8 @@ Future<void> _runTangent(List<String> args, DebugLogBuffer debugLog) async {
     platform: Platform.isAndroid
         ? MethodChannelDebugLogExportPlatform(buffer: debugLog)
         : desktop
-            ? DesktopDebugLogExportPlatform()
-            : const UnsupportedDebugLogExportPlatform(),
+        ? DesktopDebugLogExportPlatform()
+        : const UnsupportedDebugLogExportPlatform(),
     loadMetadata: loadDebugLogMetadata,
     writeReport: writeDebugLogReport,
   );
@@ -508,9 +639,16 @@ Future<void> _runTangent(List<String> args, DebugLogBuffer debugLog) async {
           dueReminderPortProvider.overrideWithValue(reminderPort),
         if (morningPort != null)
           morningReviewPortProvider.overrideWithValue(morningPort),
+        if (todoDueScheduler != null && todoDueOwner != null) ...[
+          todoDueNotificationSchedulerProvider.overrideWithValue(
+            todoDueScheduler,
+          ),
+          todoDueNotificationOwnerProvider.overrideWithValue(todoDueOwner),
+        ],
         if (desktopCompletionPort != null)
-          completionNotificationPortProvider
-              .overrideWithValue(desktopCompletionPort),
+          completionNotificationPortProvider.overrideWithValue(
+            desktopCompletionPort,
+          ),
         if (instance != null)
           instanceCommandsProvider.overrideWithValue(instance.commands),
       ],
@@ -537,7 +675,9 @@ Future<void> _runTangent(List<String> args, DebugLogBuffer debugLog) async {
             ),
             now: DateTime.now(),
           );
-          await scheduler.scheduleNext(minuteOfDay: settings.reminderMinuteOfDay);
+          await scheduler.scheduleNext(
+            minuteOfDay: settings.reminderMinuteOfDay,
+          );
         } catch (e) {
           debugPrint('tangent.reminders: desktop start failed: $e');
         }
@@ -579,9 +719,9 @@ Future<void> _runTangent(List<String> args, DebugLogBuffer debugLog) async {
       scheduler
           .scheduleNext(minuteOfDay: settings.morningReviewMinuteOfDay)
           .catchError((Object e) {
-        debugPrint('tangent.morning-review: reschedule failed: $e');
-        return DateTime.now();
-      }),
+            debugPrint('tangent.morning-review: reschedule failed: $e');
+            return DateTime.now();
+          }),
     );
   }
   if (androidReminderPort != null) {
@@ -597,9 +737,9 @@ Future<void> _runTangent(List<String> args, DebugLogBuffer debugLog) async {
         scheduler
             .scheduleNext(minuteOfDay: settings.reminderMinuteOfDay)
             .catchError((Object e) {
-          debugPrint('tangent.reminders: reschedule failed: $e');
-          return DateTime.now();
-        }),
+              debugPrint('tangent.reminders: reschedule failed: $e');
+              return DateTime.now();
+            }),
       );
     }
     // Cold start from a reminder tap: the tap callback never fires for the
@@ -613,6 +753,10 @@ Future<void> _runTangent(List<String> args, DebugLogBuffer debugLog) async {
     // names the recording.
     unawaited(
       port.launchPayload().then((String? payload) {
+        if (todoIdFromNotificationPayload(payload) != null) {
+          _openTodoScreen();
+          return;
+        }
         final String? dumpId = dumpIdFromNotificationPayload(payload);
         if (dumpId != null) openDumpFromLaunch(dumpId);
       }),

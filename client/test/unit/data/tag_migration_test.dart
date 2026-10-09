@@ -68,7 +68,7 @@ void main() {
         addTearDown(db.close);
         await db.listDumps();
 
-        expect(sql.userVersion, 35);
+        expect(sql.userVersion, 36);
         _expectTagSchema(sql);
         expect(
           sql
@@ -112,7 +112,7 @@ void main() {
     addTearDown(db.close);
     await db.listDumps();
 
-    expect(sql.userVersion, 35);
+    expect(sql.userVersion, 36);
     _expectTagSchema(sql);
     final Row notebook = sql
         .select("SELECT title, sync_dirty FROM notebooks WHERE id='n1'")
@@ -139,7 +139,7 @@ void main() {
       addTearDown(db.close);
       await db.listDumps();
 
-      expect(sql.userVersion, 35);
+      expect(sql.userVersion, 36);
       expect(sql.select('SELECT name FROM tags').single['name'], 'Kept');
     },
   );
@@ -149,7 +149,7 @@ void main() {
     final LocalDb db = LocalDb.forTesting(NativeDatabase.opened(sql));
     addTearDown(db.close);
     await db.listDumps();
-    expect(sql.userVersion, 35);
+    expect(sql.userVersion, 36);
     _expectTagSchema(sql);
   });
 }

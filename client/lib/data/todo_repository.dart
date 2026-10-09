@@ -7,6 +7,7 @@ import '../screens/home/home_screen.dart' show localDbProvider;
 import 'local_db.dart';
 
 const String defaultTodoColumnId = 'todo-column-todo';
+const String defaultTodoDueTime = '09:00';
 const String _voiceTodoSource = 'voice';
 const List<(String, String)> defaultTodoColumns = <(String, String)>[
   (defaultTodoColumnId, 'To Do'),
@@ -50,6 +51,8 @@ class TodoRepository {
   /// widget test's fake clock never fires until the tree is pumped, so
   /// `.first` there awaits forever.
   Future<List<TodoRow>> listTodos() => _liveTodosQuery().get();
+
+  Future<TodoRow?> dbTodo(String id) => _db.getTodoRow(id);
 
   Stream<List<TodoColumnRow>> watchColumns() =>
       (_db.select(_db.todoColumns)
@@ -163,10 +166,17 @@ class TodoRepository {
   Future<TodoRow> add(
     String text, {
     String? dueDate,
+    String? dueTime,
     String? source,
     String? sourceRef,
     String? captureFingerprint,
   }) async {
+    if (dueDate == null && dueTime != null) {
+      throw ArgumentError('A due time requires a due date');
+    }
+    final String? storedDueTime = dueDate == null
+        ? null
+        : _validatedDueTime(dueTime ?? defaultTodoDueTime);
     final List<TodoColumnRow> columns = await ensureColumns();
     final String columnId = columns.first.id;
     final int nextOrder = await _nextBoardOrder(columnId);
@@ -181,6 +191,7 @@ class TodoRepository {
             createdAt: timestamp,
             updatedAt: timestamp,
             dueDate: Value(dueDate),
+            dueTime: Value(storedDueTime),
             source: source == null ? const Value.absent() : Value(source),
             sourceRef: Value(sourceRef),
             captureFingerprint: Value(captureFingerprint),
@@ -363,8 +374,31 @@ class TodoRepository {
   /// Sets or clears the due date. A cleared date is a real null on the
   /// row — indistinguishable from never-set in the sections (both read
   /// Someday), but the write still travels so peers converge.
-  Future<void> setDueDate(String id, String? dueDate) async {
-    await _write(id, TodosCompanion(dueDate: Value(dueDate)));
+  Future<void> setDueDate(String id, String? dueDate, {String? dueTime}) async {
+    if (dueDate == null && dueTime != null) {
+      throw ArgumentError('A due time requires a due date');
+    }
+    await _write(
+      id,
+      TodosCompanion(
+        dueDate: Value(dueDate),
+        dueTime: Value(
+          dueDate == null
+              ? null
+              : _validatedDueTime(dueTime ?? defaultTodoDueTime),
+        ),
+      ),
+    );
+  }
+
+  static String _validatedDueTime(String value) {
+    final RegExpMatch? match = RegExp(r'^(\d{2}):(\d{2})$').firstMatch(value);
+    final int? hour = int.tryParse(match?.group(1) ?? '');
+    final int? minute = int.tryParse(match?.group(2) ?? '');
+    if (hour == null || minute == null || hour > 23 || minute > 59) {
+      throw ArgumentError.value(value, 'dueTime', 'Expected HH:MM');
+    }
+    return value;
   }
 
   /// Soft delete: stamps `deleted_at`, keeps the row. The undo snackbar

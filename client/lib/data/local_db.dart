@@ -39,8 +39,8 @@ class Dumps extends Table {
   IntColumn get syncAttempts => integer().withDefault(const Constant(0))();
   TextColumn get lastSyncError => text().nullable()();
   TextColumn get transcriptionStatus => text().withDefault(
-        Constant(TranscriptionStatus.notTranscribed.wireValue),
-      )();
+    Constant(TranscriptionStatus.notTranscribed.wireValue),
+  )();
   TextColumn get transcriptionRequestId => text().nullable()();
   TextColumn get transcriptionJobId => text().nullable()();
   IntColumn get transcriptionAttempt =>
@@ -357,7 +357,7 @@ class InkIndexEntries extends Table {
 /// Timestamps are ISO-8601 TEXT — the wire format verbatim — rather than
 /// epoch integers, so a payload field and its column read identically and
 /// no conversion can drift between push and pull. `due_date` is a bare
-/// `YYYY-MM-DD`: due dates have no time component by design.
+/// `YYYY-MM-DD`; `due_time` is local wall-clock `HH:MM`.
 @DataClassName('TodoRow')
 class Todos extends Table {
   @override
@@ -413,6 +413,12 @@ class Todos extends Table {
 
   /// Stable order within a lane. List mode deliberately ignores it.
   IntColumn get boardOrder => integer().withDefault(const Constant(0))();
+
+  /// v36: local wall-clock `HH:MM`. Every dated row has one; nullable keeps
+  /// the additive wire/schema compatible with old peers and undated rows.
+  /// Declared last so fresh databases match the additive migration order.
+  TextColumn get dueTime => text().nullable()();
+
   @override
   Set<Column> get primaryKey => {id};
 }
@@ -563,8 +569,8 @@ class TagAssignments extends Table {
   Set<Column> get primaryKey => {id};
   @override
   List<Set<Column>> get uniqueKeys => <Set<Column>>[
-        {tagId, targetType, targetId},
-      ];
+    {tagId, targetType, targetId},
+  ];
 }
 
 /// One row of the lightweight assignment projection: which tag sits on which
@@ -611,739 +617,758 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   LocalDb.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 35;
+  int get schemaVersion => 36;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
-        onCreate: (m) async {
-          await m.createAll();
-          await _createFtsInfrastructure();
-          await _createTagIndexes();
-          await initializeStorageCatalogRows();
-        },
-        onUpgrade: (m, from, to) async {
-          if (from < 2) {
-            await _replaceFtsTriggers();
+    onCreate: (m) async {
+      await m.createAll();
+      await _createFtsInfrastructure();
+      await _createTagIndexes();
+      await initializeStorageCatalogRows();
+    },
+    onUpgrade: (m, from, to) async {
+      if (from < 2) {
+        await _replaceFtsTriggers();
+      }
+      if (from < 3) {
+        await m.addColumn(dumps, dumps.meetingNotes);
+        // Migration v2 → v3 promotes meetings to private on-device state.
+        // Already-synced meetings remain synced because the remote copy is
+        // truth and we cannot prove the server has deleted it. Pending,
+        // syncing, and failed meetings are demoted to local_only and have
+        // their stale retry state cleared so the user does not see error
+        // strings on rows that will never retry.
+        await customStatement(
+          'UPDATE dumps SET sync_status = \'local_only\', '
+          'sync_attempts = 0, last_sync_error = NULL '
+          'WHERE mode = \'meeting\' AND sync_status IN (\'pending\', \'syncing\', \'failed\')',
+        );
+      }
+      if (from < 4) {
+        await m.addColumn(dumps, dumps.transcriptionStatus);
+        await m.addColumn(dumps, dumps.transcriptionRequestId);
+        await m.addColumn(dumps, dumps.transcriptionJobId);
+        await m.addColumn(dumps, dumps.transcriptionAttempt);
+        await m.addColumn(dumps, dumps.transcriptionStartedAt);
+        await m.addColumn(dumps, dumps.transcriptionUpdatedAt);
+        await m.addColumn(dumps, dumps.transcriptionCompletedAt);
+        await m.addColumn(dumps, dumps.transcriptionError);
+        await customStatement(
+          'UPDATE dumps SET transcription_status = CASE '
+          "WHEN TRIM(COALESCE(transcript, '')) != '' THEN 'completed' "
+          "ELSE 'not_transcribed' END, "
+          'transcription_completed_at = CASE '
+          "WHEN TRIM(COALESCE(transcript, '')) != '' THEN updated_at "
+          'ELSE NULL END',
+        );
+      }
+      if (from < 5) {
+        await _createStorageCatalog(m);
+      }
+      if (from < 6) {
+        // Notebooks are purely additive: no existing table is altered and
+        // no existing row is touched.
+        await m.createTable(notebooks);
+      }
+      if (from < 7) {
+        // Folders arrive empty and every existing notebook stays unfiled,
+        // so nothing a user already has can move or disappear.
+        await m.createTable(folders);
+        // The v6 step above calls createTable(notebooks), and createTable
+        // builds from the CURRENT definition — which already carries
+        // folder_id. Only a database that genuinely arrived here with a
+        // v6-shaped notebooks table needs the column added; adding it to a
+        // table just created would throw "duplicate column name" and leave
+        // the app unable to open its own database.
+        if (from >= 6) {
+          await m.addColumn(notebooks, notebooks.folderId);
+        }
+      }
+      if (from < 8) {
+        // dumps is created by onCreate/createAll for a brand new database
+        // and by nothing else, so on an upgrade path it may be absent
+        // entirely (a fixture older than the table) or already carry
+        // folder_id (created from the CURRENT definition during this same
+        // upgrade). Both throw: "no such table" and "duplicate column
+        // name". Ask the database what it actually has instead of
+        // inferring it from the version number.
+        final List<QueryRow> dumpsTable = await customSelect(
+          "SELECT name FROM sqlite_master WHERE type='table' "
+          "AND name='dumps'",
+        ).get();
+        if (dumpsTable.isNotEmpty) {
+          final List<QueryRow> columns = await customSelect(
+            'PRAGMA table_info(dumps)',
+          ).get();
+          final bool hasFolderId = columns.any(
+            (QueryRow row) => row.data['name'] == 'folder_id',
+          );
+          if (!hasFolderId) {
+            await m.addColumn(dumps, dumps.folderId);
           }
-          if (from < 3) {
-            await m.addColumn(dumps, dumps.meetingNotes);
-            // Migration v2 → v3 promotes meetings to private on-device state.
-            // Already-synced meetings remain synced because the remote copy is
-            // truth and we cannot prove the server has deleted it. Pending,
-            // syncing, and failed meetings are demoted to local_only and have
-            // their stale retry state cleared so the user does not see error
-            // strings on rows that will never retry.
-            await customStatement(
-              'UPDATE dumps SET sync_status = \'local_only\', '
-              'sync_attempts = 0, last_sync_error = NULL '
-              'WHERE mode = \'meeting\' AND sync_status IN (\'pending\', \'syncing\', \'failed\')',
-            );
+        }
+      }
+      if (from < 9) {
+        // Multi-device sync. Purely additive: two new tables, and two new
+        // columns on notebooks.
+        await m.createTable(syncTombstones);
+        await m.createTable(syncStates);
+        // As with v7/v8: createTable(notebooks) during an upgrade builds
+        // from the CURRENT definition, which already carries these
+        // columns. Only a database that genuinely arrived with an older
+        // notebooks table needs them added, and adding a column twice
+        // throws "duplicate column name" — which would leave the app
+        // unable to open its own database.
+        final List<QueryRow> notebookColumns = await customSelect(
+          'PRAGMA table_info(notebooks)',
+        ).get();
+        final Set<String> present = notebookColumns
+            .map((QueryRow row) => row.data['name'] as String)
+            .toSet();
+        if (notebookColumns.isEmpty) {
+          // No notebooks table at all. A genuine v8 database has one (v6
+          // created it), but the version number is not evidence — ask the
+          // database, the same way the v7 and v8 steps do. createTable
+          // builds from the current definition, so it arrives with both
+          // sync columns already on it.
+          await m.createTable(notebooks);
+        } else {
+          if (!present.contains('sync_dirty')) {
+            await m.addColumn(notebooks, notebooks.syncDirty);
           }
-          if (from < 4) {
-            await m.addColumn(dumps, dumps.transcriptionStatus);
-            await m.addColumn(dumps, dumps.transcriptionRequestId);
-            await m.addColumn(dumps, dumps.transcriptionJobId);
-            await m.addColumn(dumps, dumps.transcriptionAttempt);
-            await m.addColumn(dumps, dumps.transcriptionStartedAt);
-            await m.addColumn(dumps, dumps.transcriptionUpdatedAt);
-            await m.addColumn(dumps, dumps.transcriptionCompletedAt);
-            await m.addColumn(dumps, dumps.transcriptionError);
-            await customStatement(
-              'UPDATE dumps SET transcription_status = CASE '
-              "WHEN TRIM(COALESCE(transcript, '')) != '' THEN 'completed' "
-              "ELSE 'not_transcribed' END, "
-              'transcription_completed_at = CASE '
-              "WHEN TRIM(COALESCE(transcript, '')) != '' THEN updated_at "
-              'ELSE NULL END',
-            );
+          if (!present.contains('synced_seq')) {
+            await m.addColumn(notebooks, notebooks.syncedSeq);
           }
-          if (from < 5) {
-            await _createStorageCatalog(m);
-          }
-          if (from < 6) {
-            // Notebooks are purely additive: no existing table is altered and
-            // no existing row is touched.
-            await m.createTable(notebooks);
-          }
-          if (from < 7) {
-            // Folders arrive empty and every existing notebook stays unfiled,
-            // so nothing a user already has can move or disappear.
-            await m.createTable(folders);
-            // The v6 step above calls createTable(notebooks), and createTable
-            // builds from the CURRENT definition — which already carries
-            // folder_id. Only a database that genuinely arrived here with a
-            // v6-shaped notebooks table needs the column added; adding it to a
-            // table just created would throw "duplicate column name" and leave
-            // the app unable to open its own database.
-            if (from >= 6) {
-              await m.addColumn(notebooks, notebooks.folderId);
-            }
-          }
-          if (from < 8) {
-            // dumps is created by onCreate/createAll for a brand new database
-            // and by nothing else, so on an upgrade path it may be absent
-            // entirely (a fixture older than the table) or already carry
-            // folder_id (created from the CURRENT definition during this same
-            // upgrade). Both throw: "no such table" and "duplicate column
-            // name". Ask the database what it actually has instead of
-            // inferring it from the version number.
-            final List<QueryRow> dumpsTable = await customSelect(
-              "SELECT name FROM sqlite_master WHERE type='table' "
-              "AND name='dumps'",
-            ).get();
-            if (dumpsTable.isNotEmpty) {
-              final List<QueryRow> columns = await customSelect(
-                'PRAGMA table_info(dumps)',
-              ).get();
-              final bool hasFolderId = columns.any(
-                (QueryRow row) => row.data['name'] == 'folder_id',
-              );
-              if (!hasFolderId) {
-                await m.addColumn(dumps, dumps.folderId);
-              }
-            }
-          }
-          if (from < 9) {
-            // Multi-device sync. Purely additive: two new tables, and two new
-            // columns on notebooks.
-            await m.createTable(syncTombstones);
-            await m.createTable(syncStates);
-            // As with v7/v8: createTable(notebooks) during an upgrade builds
-            // from the CURRENT definition, which already carries these
-            // columns. Only a database that genuinely arrived with an older
-            // notebooks table needs them added, and adding a column twice
-            // throws "duplicate column name" — which would leave the app
-            // unable to open its own database.
-            final List<QueryRow> notebookColumns = await customSelect(
-              'PRAGMA table_info(notebooks)',
-            ).get();
-            final Set<String> present = notebookColumns
-                .map((QueryRow row) => row.data['name'] as String)
-                .toSet();
-            if (notebookColumns.isEmpty) {
-              // No notebooks table at all. A genuine v8 database has one (v6
-              // created it), but the version number is not evidence — ask the
-              // database, the same way the v7 and v8 steps do. createTable
-              // builds from the current definition, so it arrives with both
-              // sync columns already on it.
-              await m.createTable(notebooks);
-            } else {
-              if (!present.contains('sync_dirty')) {
-                await m.addColumn(notebooks, notebooks.syncDirty);
-              }
-              if (!present.contains('synced_seq')) {
-                await m.addColumn(notebooks, notebooks.syncedSeq);
-              }
-              // Existing notebooks have never been pushed. addColumn backfills
-              // the default, so this covers any row that somehow arrived NULL:
-              // a notebook wrongly marked clean would stay invisible to the
-              // user's other devices permanently, with nothing on screen to
-              // reveal it.
-              await customStatement(
-                'UPDATE notebooks SET sync_dirty = 1 WHERE sync_dirty IS NULL',
-              );
-            }
-          }
+          // Existing notebooks have never been pushed. addColumn backfills
+          // the default, so this covers any row that somehow arrived NULL:
+          // a notebook wrongly marked clean would stay invisible to the
+          // user's other devices permanently, with nothing on screen to
+          // reveal it.
+          await customStatement(
+            'UPDATE notebooks SET sync_dirty = 1 WHERE sync_dirty IS NULL',
+          );
+        }
+      }
 
-          if (from < 10) {
-            // Page ruling. One nullable column; null reads as blank, which is
-            // how every page has rendered until now, so there is nothing to
-            // backfill and no existing notebook changes appearance.
-            final List<QueryRow> rulingColumns = await customSelect(
-              'PRAGMA table_info(notebooks)',
-            ).get();
-            if (rulingColumns.isEmpty) {
-              // Ask the database rather than trusting the version number —
-              // the same reasoning as v9, which is where "no such table:
-              // notebooks" was caught.
-              await m.createTable(notebooks);
-            } else {
-              final bool present = rulingColumns.any(
-                (QueryRow row) => row.data['name'] == 'ruling',
-              );
-              // Adding a column twice throws "duplicate column name", which
-              // would leave the app unable to open its own database.
-              if (!present) {
-                await m.addColumn(notebooks, notebooks.ruling);
-              }
-            }
+      if (from < 10) {
+        // Page ruling. One nullable column; null reads as blank, which is
+        // how every page has rendered until now, so there is nothing to
+        // backfill and no existing notebook changes appearance.
+        final List<QueryRow> rulingColumns = await customSelect(
+          'PRAGMA table_info(notebooks)',
+        ).get();
+        if (rulingColumns.isEmpty) {
+          // Ask the database rather than trusting the version number —
+          // the same reasoning as v9, which is where "no such table:
+          // notebooks" was caught.
+          await m.createTable(notebooks);
+        } else {
+          final bool present = rulingColumns.any(
+            (QueryRow row) => row.data['name'] == 'ruling',
+          );
+          // Adding a column twice throws "duplicate column name", which
+          // would leave the app unable to open its own database.
+          if (!present) {
+            await m.addColumn(notebooks, notebooks.ruling);
           }
+        }
+      }
 
-          if (from < 11) {
-            // Recording sync. Four additive columns on dumps, each with a
-            // defaulted value, so existing rows keep their exact current
-            // meaning: not dirty, never synced, local (not remote-only),
-            // and no known server-side audio until a sync says otherwise.
-            final List<QueryRow> dumpColumns = await customSelect(
-              'PRAGMA table_info(dumps)',
-            ).get();
-            final Set<String> names = <String>{
+      if (from < 11) {
+        // Recording sync. Four additive columns on dumps, each with a
+        // defaulted value, so existing rows keep their exact current
+        // meaning: not dirty, never synced, local (not remote-only),
+        // and no known server-side audio until a sync says otherwise.
+        final List<QueryRow> dumpColumns = await customSelect(
+          'PRAGMA table_info(dumps)',
+        ).get();
+        final Set<String> names = <String>{
           for (final QueryRow row in dumpColumns) row.data['name'] as String,
-            };
-            // Ask the database, never the version number: adding a column
-            // twice throws "duplicate column name" and bricks app launch for
-            // every existing install.
-            if (!names.contains('sync_dirty')) {
-              await m.addColumn(dumps, dumps.syncDirty);
-            }
-            if (!names.contains('synced_seq')) {
-              await m.addColumn(dumps, dumps.syncedSeq);
-            }
-            if (!names.contains('remote_only')) {
-              await m.addColumn(dumps, dumps.remoteOnly);
-            }
-            if (!names.contains('audio_on_server')) {
-              await m.addColumn(dumps, dumps.audioOnServer);
-            }
-          }
+        };
+        // Ask the database, never the version number: adding a column
+        // twice throws "duplicate column name" and bricks app launch for
+        // every existing install.
+        if (!names.contains('sync_dirty')) {
+          await m.addColumn(dumps, dumps.syncDirty);
+        }
+        if (!names.contains('synced_seq')) {
+          await m.addColumn(dumps, dumps.syncedSeq);
+        }
+        if (!names.contains('remote_only')) {
+          await m.addColumn(dumps, dumps.remoteOnly);
+        }
+        if (!names.contains('audio_on_server')) {
+          await m.addColumn(dumps, dumps.audioOnServer);
+        }
+      }
 
-          if (from < 12) {
-            // One-time repair, not a schema change.
-            //
-            // Before the apply-site fix, `applyRemoteDump` wrote a synced
-            // transcript but left `transcription_status` at its table
-            // default, so a recording carrying its full transcript still
-            // read "Not transcribed". Fixing the apply site does not heal
-            // those rows: their `synced_seq` is already current, so the
-            // change feed never replays them. On Jeff's devices this was 35
-            // rows on the tablet and 37 on the Fold.
-            //
-            // Ask the database for the column first. A very old install
-            // (v6, v9) runs every step in sequence and reaches this one
-            // before `transcription_status` has been added, where a bare
-            // UPDATE throws "no such column" and bricks app launch for the
-            // oldest installs — the exact upgrade-path hazard the v11
-            // PRAGMA checks above exist to avoid. Those databases have no
-            // synced transcripts to repair anyway.
-            final List<QueryRow> repairColumns = await customSelect(
-              'PRAGMA table_info(dumps)',
-            ).get();
-            final bool hasStatus = repairColumns.any(
-              (QueryRow row) => row.data['name'] == 'transcription_status',
-            );
-            final bool hasTranscript = repairColumns.any(
-              (QueryRow row) => row.data['name'] == 'transcript',
-            );
+      if (from < 12) {
+        // One-time repair, not a schema change.
+        //
+        // Before the apply-site fix, `applyRemoteDump` wrote a synced
+        // transcript but left `transcription_status` at its table
+        // default, so a recording carrying its full transcript still
+        // read "Not transcribed". Fixing the apply site does not heal
+        // those rows: their `synced_seq` is already current, so the
+        // change feed never replays them. On Jeff's devices this was 35
+        // rows on the tablet and 37 on the Fold.
+        //
+        // Ask the database for the column first. A very old install
+        // (v6, v9) runs every step in sequence and reaches this one
+        // before `transcription_status` has been added, where a bare
+        // UPDATE throws "no such column" and bricks app launch for the
+        // oldest installs — the exact upgrade-path hazard the v11
+        // PRAGMA checks above exist to avoid. Those databases have no
+        // synced transcripts to repair anyway.
+        final List<QueryRow> repairColumns = await customSelect(
+          'PRAGMA table_info(dumps)',
+        ).get();
+        final bool hasStatus = repairColumns.any(
+          (QueryRow row) => row.data['name'] == 'transcription_status',
+        );
+        final bool hasTranscript = repairColumns.any(
+          (QueryRow row) => row.data['name'] == 'transcript',
+        );
 
-            if (hasStatus && hasTranscript) {
-              // Deliberately narrow. It touches ONLY rows whose status is
-              // exactly 'not_transcribed' while holding non-blank transcript
-              // text — never 'failed' (which would hide a real failure from
-              // the retry path) and never 'not_applicable' (a typed note,
-              // whose transcript column legitimately holds the note body).
-              //
-              // It also leaves updated_at, sync_dirty and synced_seq alone: a
-              // local repair is not a user edit, and marking these dirty would
-              // push dozens of pointless changes per device into the feed.
-              //
-              // TRIM() in SQLite strips SPACES only — not newlines or tabs —
-              // so a transcript of "  \n " would pass a bare TRIM check and
-              // get flipped to completed. Name every whitespace character.
-              await customUpdate(
-                "UPDATE dumps SET transcription_status = 'completed' "
-                "WHERE transcription_status = 'not_transcribed' "
-                "AND COALESCE(TRIM(transcript, ' ' || char(9) || char(10) || "
-                "char(13)), '') <> ''",
-                updates: <TableInfo<Table, dynamic>>{dumps},
-              );
-            }
-          }
+        if (hasStatus && hasTranscript) {
+          // Deliberately narrow. It touches ONLY rows whose status is
+          // exactly 'not_transcribed' while holding non-blank transcript
+          // text — never 'failed' (which would hide a real failure from
+          // the retry path) and never 'not_applicable' (a typed note,
+          // whose transcript column legitimately holds the note body).
+          //
+          // It also leaves updated_at, sync_dirty and synced_seq alone: a
+          // local repair is not a user edit, and marking these dirty would
+          // push dozens of pointless changes per device into the feed.
+          //
+          // TRIM() in SQLite strips SPACES only — not newlines or tabs —
+          // so a transcript of "  \n " would pass a bare TRIM check and
+          // get flipped to completed. Name every whitespace character.
+          await customUpdate(
+            "UPDATE dumps SET transcription_status = 'completed' "
+            "WHERE transcription_status = 'not_transcribed' "
+            "AND COALESCE(TRIM(transcript, ' ' || char(9) || char(10) || "
+            "char(13)), '') <> ''",
+            updates: <TableInfo<Table, dynamic>>{dumps},
+          );
+        }
+      }
 
-          if (from < 13) {
-            // Folder sync. Two additive columns; ask the database, never the
-            // version number — adding a column twice throws "duplicate column
-            // name" and bricks app launch for every existing install.
-            final List<QueryRow> folderColumns = await customSelect(
-              'PRAGMA table_info(folders)',
-            ).get();
-            final Set<String> present = <String>{
+      if (from < 13) {
+        // Folder sync. Two additive columns; ask the database, never the
+        // version number — adding a column twice throws "duplicate column
+        // name" and bricks app launch for every existing install.
+        final List<QueryRow> folderColumns = await customSelect(
+          'PRAGMA table_info(folders)',
+        ).get();
+        final Set<String> present = <String>{
           for (final QueryRow row in folderColumns) row.data['name'] as String,
-            };
-            if (folderColumns.isEmpty) {
-              await m.createTable(folders);
-            } else {
-              if (!present.contains('sync_dirty')) {
-                await m.addColumn(folders, folders.syncDirty);
-              }
-              if (!present.contains('synced_seq')) {
-                await m.addColumn(folders, folders.syncedSeq);
-              }
-            }
-
-            // Notebook trash: soft-deletes live 7 days before purge.
-            final List<QueryRow> nbColumns = await customSelect(
-              'PRAGMA table_info(notebooks)',
-            ).get();
-            final bool hasDeletedAt = nbColumns.any(
-              (QueryRow row) => row.data['name'] == 'deleted_at',
-            );
-            if (!hasDeletedAt) {
-              await m.addColumn(notebooks, notebooks.deletedAt);
-            }
-
-            // Repair: an earlier build wrote a folder id containing the
-            // LITERAL text "folder-${DateTime...}" — a Dart interpolation
-            // that never ran (single-quoted SQL heredoc territory). Any
-            // device carrying it can collide on primary key the next time
-            // that id template is written. Re-key it to a well-formed id
-            // and carry the filing along. Found live on the Fold.
-            final List<QueryRow> corrupt = await customSelect(
-              r"SELECT id FROM folders WHERE id LIKE '%${%'",
-            ).get();
-            for (final QueryRow row in corrupt) {
-              final String bad = row.data['id'] as String;
-              final String good =
-                  'folder-repair-${DateTime.now().microsecondsSinceEpoch}';
-              await customStatement(
-                'UPDATE folders SET id = ?1 WHERE id = ?2',
-                <Object>[good, bad],
-              );
-              await customStatement(
-                'UPDATE notebooks SET folder_id = ?1 WHERE folder_id = ?2',
-                <Object>[good, bad],
-              );
-              await customStatement(
-                'UPDATE dumps SET folder_id = ?1 WHERE folder_id = ?2',
-                <Object>[good, bad],
-              );
-            }
+        };
+        if (folderColumns.isEmpty) {
+          await m.createTable(folders);
+        } else {
+          if (!present.contains('sync_dirty')) {
+            await m.addColumn(folders, folders.syncDirty);
           }
-          if (from < 14) {
-            // One-time filing re-push. Notebooks filed BEFORE folder sync
-            // existed are clean (sync_dirty = 0), so their folder_id never
-            // travels: the peer sees the folder arrive empty. Marking every
-            // filed, live notebook dirty makes the next sync carry its
-            // filing. Harmless on fresh installs (no rows match) and cheap
-            // on upgrades — a re-push of an identical body is idempotent.
-            // Ask the database first: on ancient fixtures the earlier steps
-            // may have built notebooks without these columns yet.
-            final Set<String> nbColumns = <String>{
-              for (final QueryRow row in await customSelect(
-                'PRAGMA table_info(notebooks)',
-              ).get())
-                row.data['name'] as String,
-            };
-            if (nbColumns.containsAll(const <String>[
-              'folder_id',
-              'sync_dirty',
-              'deleted_at',
-            ])) {
-              await customStatement(
-                'UPDATE notebooks SET sync_dirty = 1 '
-                'WHERE folder_id IS NOT NULL AND deleted_at IS NULL',
-              );
-            }
+          if (!present.contains('synced_seq')) {
+            await m.addColumn(folders, folders.syncedSeq);
           }
-          if (from < 15) {
-            // Additive: the handwriting-search index mirror. Guarded because
-            // a fresh install's onCreate already built it — createTable on an
-            // existing table would throw and wedge the upgrade.
-            final bool exists = (await customSelect(
-              "SELECT name FROM sqlite_master WHERE type = 'table' "
-              "AND name = 'ink_index_entries'",
+        }
+
+        // Notebook trash: soft-deletes live 7 days before purge.
+        final List<QueryRow> nbColumns = await customSelect(
+          'PRAGMA table_info(notebooks)',
+        ).get();
+        final bool hasDeletedAt = nbColumns.any(
+          (QueryRow row) => row.data['name'] == 'deleted_at',
+        );
+        if (!hasDeletedAt) {
+          await m.addColumn(notebooks, notebooks.deletedAt);
+        }
+
+        // Repair: an earlier build wrote a folder id containing the
+        // LITERAL text "folder-${DateTime...}" — a Dart interpolation
+        // that never ran (single-quoted SQL heredoc territory). Any
+        // device carrying it can collide on primary key the next time
+        // that id template is written. Re-key it to a well-formed id
+        // and carry the filing along. Found live on the Fold.
+        final List<QueryRow> corrupt = await customSelect(
+          r"SELECT id FROM folders WHERE id LIKE '%${%'",
+        ).get();
+        for (final QueryRow row in corrupt) {
+          final String bad = row.data['id'] as String;
+          final String good =
+              'folder-repair-${DateTime.now().microsecondsSinceEpoch}';
+          await customStatement(
+            'UPDATE folders SET id = ?1 WHERE id = ?2',
+            <Object>[good, bad],
+          );
+          await customStatement(
+            'UPDATE notebooks SET folder_id = ?1 WHERE folder_id = ?2',
+            <Object>[good, bad],
+          );
+          await customStatement(
+            'UPDATE dumps SET folder_id = ?1 WHERE folder_id = ?2',
+            <Object>[good, bad],
+          );
+        }
+      }
+      if (from < 14) {
+        // One-time filing re-push. Notebooks filed BEFORE folder sync
+        // existed are clean (sync_dirty = 0), so their folder_id never
+        // travels: the peer sees the folder arrive empty. Marking every
+        // filed, live notebook dirty makes the next sync carry its
+        // filing. Harmless on fresh installs (no rows match) and cheap
+        // on upgrades — a re-push of an identical body is idempotent.
+        // Ask the database first: on ancient fixtures the earlier steps
+        // may have built notebooks without these columns yet.
+        final Set<String> nbColumns = <String>{
+          for (final QueryRow row in await customSelect(
+            'PRAGMA table_info(notebooks)',
+          ).get())
+            row.data['name'] as String,
+        };
+        if (nbColumns.containsAll(const <String>[
+          'folder_id',
+          'sync_dirty',
+          'deleted_at',
+        ])) {
+          await customStatement(
+            'UPDATE notebooks SET sync_dirty = 1 '
+            'WHERE folder_id IS NOT NULL AND deleted_at IS NULL',
+          );
+        }
+      }
+      if (from < 15) {
+        // Additive: the handwriting-search index mirror. Guarded because
+        // a fresh install's onCreate already built it — createTable on an
+        // existing table would throw and wedge the upgrade.
+        final bool exists = (await customSelect(
+          "SELECT name FROM sqlite_master WHERE type = 'table' "
+          "AND name = 'ink_index_entries'",
         ).get()).isNotEmpty;
-            if (!exists) {
-              await m.createTable(inkIndexEntries);
-            }
+        if (!exists) {
+          await m.createTable(inkIndexEntries);
+        }
+      }
+      if (from < 16) {
+        // Per-notebook pen memory. One nullable column; null reads as
+        // the fountain default, so no backfill and no existing notebook
+        // changes behaviour until its nib is next switched. Same
+        // ask-the-database guard as v10's ruling: adding a column twice
+        // throws "duplicate column name" and wedges the upgrade.
+        final List<QueryRow> penColumns = await customSelect(
+          'PRAGMA table_info(notebooks)',
+        ).get();
+        final bool present = penColumns.any(
+          (QueryRow row) => row.data['name'] == 'last_pen_style',
+        );
+        if (!present) {
+          await m.addColumn(notebooks, notebooks.lastPenStyle);
+        }
+      }
+      if (from < 17) {
+        // AI summaries: three nullable, server-owned columns on dumps.
+        // Null means "no summary yet", which is what every existing row
+        // truthfully has, so there is nothing to backfill. Ask the
+        // database, never the version number — adding a column twice
+        // throws "duplicate column name" and bricks app launch (the
+        // recurring upgrade-path hazard every step above guards against).
+        final Set<String> dumpCols = <String>{
+          for (final QueryRow row in await customSelect(
+            'PRAGMA table_info(dumps)',
+          ).get())
+            row.data['name'] as String,
+        };
+        if (dumpCols.isNotEmpty) {
+          if (!dumpCols.contains('summary')) {
+            await m.addColumn(dumps, dumps.summary);
           }
-          if (from < 16) {
-            // Per-notebook pen memory. One nullable column; null reads as
-            // the fountain default, so no backfill and no existing notebook
-            // changes behaviour until its nib is next switched. Same
-            // ask-the-database guard as v10's ruling: adding a column twice
-            // throws "duplicate column name" and wedges the upgrade.
-            final List<QueryRow> penColumns = await customSelect(
-              'PRAGMA table_info(notebooks)',
-            ).get();
-            final bool present = penColumns.any(
-              (QueryRow row) => row.data['name'] == 'last_pen_style',
-            );
-            if (!present) {
-              await m.addColumn(notebooks, notebooks.lastPenStyle);
-            }
+          if (!dumpCols.contains('summary_model')) {
+            await m.addColumn(dumps, dumps.summaryModel);
           }
-          if (from < 17) {
-            // AI summaries: three nullable, server-owned columns on dumps.
-            // Null means "no summary yet", which is what every existing row
-            // truthfully has, so there is nothing to backfill. Ask the
-            // database, never the version number — adding a column twice
-            // throws "duplicate column name" and bricks app launch (the
-            // recurring upgrade-path hazard every step above guards against).
-            final Set<String> dumpCols = <String>{
-              for (final QueryRow row in await customSelect(
-                'PRAGMA table_info(dumps)',
-              ).get())
-                row.data['name'] as String,
-            };
-            if (dumpCols.isNotEmpty) {
-              if (!dumpCols.contains('summary')) {
-                await m.addColumn(dumps, dumps.summary);
-              }
-              if (!dumpCols.contains('summary_model')) {
-                await m.addColumn(dumps, dumps.summaryModel);
-              }
-              if (!dumpCols.contains('summarized_at')) {
-                await m.addColumn(dumps, dumps.summarizedAt);
-              }
-            }
+          if (!dumpCols.contains('summarized_at')) {
+            await m.addColumn(dumps, dumps.summarizedAt);
           }
-          if (from < 18) {
-            // Tap-to-hear: one nullable, server-owned column on dumps. Same
-            // ask-the-database guard as v17 — a repeat addColumn would
-            // throw "duplicate column name" and brick launch.
-            final Set<String> dumpCols = <String>{
-              for (final QueryRow row in await customSelect(
-                'PRAGMA table_info(dumps)',
-              ).get())
-                row.data['name'] as String,
-            };
+        }
+      }
+      if (from < 18) {
+        // Tap-to-hear: one nullable, server-owned column on dumps. Same
+        // ask-the-database guard as v17 — a repeat addColumn would
+        // throw "duplicate column name" and brick launch.
+        final Set<String> dumpCols = <String>{
+          for (final QueryRow row in await customSelect(
+            'PRAGMA table_info(dumps)',
+          ).get())
+            row.data['name'] as String,
+        };
         if (dumpCols.isNotEmpty && !dumpCols.contains('transcript_timings')) {
-              await m.addColumn(dumps, dumps.transcriptTimings);
-            }
-          }
-          if (from < 19) {
-            // Summary templates: one nullable, server-owned column on dumps.
-            // Null means "mode default", which is what every existing row
-            // truthfully has, so there is nothing to backfill. Same
-            // ask-the-database guard as v17/v18 — a repeat addColumn would
-            // throw "duplicate column name" and brick launch.
-            final Set<String> dumpCols = <String>{
-              for (final QueryRow row in await customSelect(
-                'PRAGMA table_info(dumps)',
-              ).get())
-                row.data['name'] as String,
-            };
-            if (dumpCols.isNotEmpty && !dumpCols.contains('summary_template')) {
-              await m.addColumn(dumps, dumps.summaryTemplate);
-            }
-          }
-          if (from < 20) {
-            // Speaker name map (v1.17.0): one nullable, device-authored
-            // column on dumps plus the client-local settings table, then
-            // the one-time back-fill of the v1.15.0 rewrite-in-place.
-            // Same ask-the-database guards as v17-v19.
-            final Set<String> dumpCols = <String>{
-              for (final QueryRow row in await customSelect(
-                'PRAGMA table_info(dumps)',
-              ).get())
-                row.data['name'] as String,
-            };
-            if (dumpCols.isNotEmpty && !dumpCols.contains('speaker_names')) {
-              await m.addColumn(dumps, dumps.speakerNames);
-            }
-            final List<QueryRow> settingsTable = await customSelect(
-              "SELECT name FROM sqlite_master WHERE type='table' "
-              "AND name='settings'",
-            ).get();
-            if (settingsTable.isEmpty) {
-              await m.createTable(localSettings);
-            }
-            if (dumpCols.contains('transcript')) {
-              await _backfillSpeakerNames();
-            }
-          }
-          if (from < 21) {
-            // Summary-in-progress marker (v1.18.0): one nullable, local-only
-            // column on dumps. Same ask-the-database guard as v17-v20.
-            final Set<String> dumpCols = <String>{
-              for (final QueryRow row in await customSelect(
-                'PRAGMA table_info(dumps)',
-              ).get())
-                row.data['name'] as String,
-            };
+          await m.addColumn(dumps, dumps.transcriptTimings);
+        }
+      }
+      if (from < 19) {
+        // Summary templates: one nullable, server-owned column on dumps.
+        // Null means "mode default", which is what every existing row
+        // truthfully has, so there is nothing to backfill. Same
+        // ask-the-database guard as v17/v18 — a repeat addColumn would
+        // throw "duplicate column name" and brick launch.
+        final Set<String> dumpCols = <String>{
+          for (final QueryRow row in await customSelect(
+            'PRAGMA table_info(dumps)',
+          ).get())
+            row.data['name'] as String,
+        };
+        if (dumpCols.isNotEmpty && !dumpCols.contains('summary_template')) {
+          await m.addColumn(dumps, dumps.summaryTemplate);
+        }
+      }
+      if (from < 20) {
+        // Speaker name map (v1.17.0): one nullable, device-authored
+        // column on dumps plus the client-local settings table, then
+        // the one-time back-fill of the v1.15.0 rewrite-in-place.
+        // Same ask-the-database guards as v17-v19.
+        final Set<String> dumpCols = <String>{
+          for (final QueryRow row in await customSelect(
+            'PRAGMA table_info(dumps)',
+          ).get())
+            row.data['name'] as String,
+        };
+        if (dumpCols.isNotEmpty && !dumpCols.contains('speaker_names')) {
+          await m.addColumn(dumps, dumps.speakerNames);
+        }
+        final List<QueryRow> settingsTable = await customSelect(
+          "SELECT name FROM sqlite_master WHERE type='table' "
+          "AND name='settings'",
+        ).get();
+        if (settingsTable.isEmpty) {
+          await m.createTable(localSettings);
+        }
+        if (dumpCols.contains('transcript')) {
+          await _backfillSpeakerNames();
+        }
+      }
+      if (from < 21) {
+        // Summary-in-progress marker (v1.18.0): one nullable, local-only
+        // column on dumps. Same ask-the-database guard as v17-v20.
+        final Set<String> dumpCols = <String>{
+          for (final QueryRow row in await customSelect(
+            'PRAGMA table_info(dumps)',
+          ).get())
+            row.data['name'] as String,
+        };
         if (dumpCols.isNotEmpty && !dumpCols.contains('summary_requested_at')) {
-              await m.addColumn(dumps, dumps.summaryRequestedAt);
-            }
+          await m.addColumn(dumps, dumps.summaryRequestedAt);
+        }
+      }
+      if (from < 22) {
+        // v1.19.0: translation (language, translated) and summary status
+        // (summary_status, summary_error, summary_queue_position) —
+        // all server-authored, pulled only — plus the local-only
+        // summary_error_dismissed_at. Same ask-the-database guard.
+        final Set<String> dumpCols = <String>{
+          for (final QueryRow row in await customSelect(
+            'PRAGMA table_info(dumps)',
+          ).get())
+            row.data['name'] as String,
+        };
+        if (dumpCols.isNotEmpty) {
+          if (!dumpCols.contains('language')) {
+            await m.addColumn(dumps, dumps.language);
           }
-          if (from < 22) {
-            // v1.19.0: translation (language, translated) and summary status
-            // (summary_status, summary_error, summary_queue_position) —
-            // all server-authored, pulled only — plus the local-only
-            // summary_error_dismissed_at. Same ask-the-database guard.
-            final Set<String> dumpCols = <String>{
-              for (final QueryRow row in await customSelect(
-                'PRAGMA table_info(dumps)',
-              ).get())
-                row.data['name'] as String,
-            };
-            if (dumpCols.isNotEmpty) {
-              if (!dumpCols.contains('language')) {
-                await m.addColumn(dumps, dumps.language);
-              }
-              if (!dumpCols.contains('translated')) {
-                await m.addColumn(dumps, dumps.translated);
-              }
-              if (!dumpCols.contains('summary_status')) {
-                await m.addColumn(dumps, dumps.summaryStatus);
-              }
-              if (!dumpCols.contains('summary_error')) {
-                await m.addColumn(dumps, dumps.summaryError);
-              }
-              if (!dumpCols.contains('summary_queue_position')) {
-                await m.addColumn(dumps, dumps.summaryQueuePosition);
-              }
-              if (!dumpCols.contains('summary_error_dismissed_at')) {
-                await m.addColumn(dumps, dumps.summaryErrorDismissedAt);
-              }
-            }
+          if (!dumpCols.contains('translated')) {
+            await m.addColumn(dumps, dumps.translated);
           }
-          if (from < 23) {
-            // v1.23.0: the todos table (To Do arc Phase 1). Ask-the-database
-            // guard like v15/v20: a fresh install's onCreate already built
-            // it, and createTable on an existing table is a hard failure.
-            final List<QueryRow> todosTable = await customSelect(
-              "SELECT name FROM sqlite_master WHERE type='table' "
-              "AND name='todos'",
-            ).get();
-            if (todosTable.isEmpty) {
-              await m.createTable(todos);
-            }
+          if (!dumpCols.contains('summary_status')) {
+            await m.addColumn(dumps, dumps.summaryStatus);
           }
-          if (from < 24) {
-            // v1.24.0: to-do folders. Ask-the-database guard: the v23 branch
-            // above may have just created the table WITH this column (a
-            // createTable uses the current schema), and addColumn on an
-            // existing column is a hard failure.
-            final List<QueryRow> todoColumns = await customSelect(
-              'PRAGMA table_info(todos)',
-            ).get();
-            final bool hasFolderId = todoColumns.any(
-              (QueryRow row) => row.read<String>('name') == 'folder_id',
-            );
-            if (!hasFolderId) {
-              await m.addColumn(todos, todos.folderId);
-            }
+          if (!dumpCols.contains('summary_error')) {
+            await m.addColumn(dumps, dumps.summaryError);
           }
-          if (from < 25) {
-            // v1.28.0: local-only capture_fingerprint on todos. Same
-            // ask-the-database guard as v24: the v23 createTable branch may
-            // already have built the table with this column.
-            final List<QueryRow> todoColumns = await customSelect(
-              'PRAGMA table_info(todos)',
-            ).get();
-            final bool hasFingerprint = todoColumns.any(
+          if (!dumpCols.contains('summary_queue_position')) {
+            await m.addColumn(dumps, dumps.summaryQueuePosition);
+          }
+          if (!dumpCols.contains('summary_error_dismissed_at')) {
+            await m.addColumn(dumps, dumps.summaryErrorDismissedAt);
+          }
+        }
+      }
+      if (from < 23) {
+        // v1.23.0: the todos table (To Do arc Phase 1). Ask-the-database
+        // guard like v15/v20: a fresh install's onCreate already built
+        // it, and createTable on an existing table is a hard failure.
+        final List<QueryRow> todosTable = await customSelect(
+          "SELECT name FROM sqlite_master WHERE type='table' "
+          "AND name='todos'",
+        ).get();
+        if (todosTable.isEmpty) {
+          await m.createTable(todos);
+        }
+      }
+      if (from < 24) {
+        // v1.24.0: to-do folders. Ask-the-database guard: the v23 branch
+        // above may have just created the table WITH this column (a
+        // createTable uses the current schema), and addColumn on an
+        // existing column is a hard failure.
+        final List<QueryRow> todoColumns = await customSelect(
+          'PRAGMA table_info(todos)',
+        ).get();
+        final bool hasFolderId = todoColumns.any(
+          (QueryRow row) => row.read<String>('name') == 'folder_id',
+        );
+        if (!hasFolderId) {
+          await m.addColumn(todos, todos.folderId);
+        }
+      }
+      if (from < 25) {
+        // v1.28.0: local-only capture_fingerprint on todos. Same
+        // ask-the-database guard as v24: the v23 createTable branch may
+        // already have built the table with this column.
+        final List<QueryRow> todoColumns = await customSelect(
+          'PRAGMA table_info(todos)',
+        ).get();
+        final bool hasFingerprint = todoColumns.any(
           (QueryRow row) => row.read<String>('name') == 'capture_fingerprint',
-            );
-            if (!hasFingerprint) {
-              await m.addColumn(todos, todos.captureFingerprint);
-            }
-          }
-          if (from < 26) {
-            // v1.35.0: voice → Google Calendar events.
-            await m.createTable(calendarEvents);
-          }
-          if (from < 27) {
-            final List<QueryRow> table = await customSelect(
-              "SELECT name FROM sqlite_master WHERE type='table' AND name='ask_messages'",
-            ).get();
-            if (table.isEmpty) await m.createTable(askMessages);
-          }
-          if (from < 28) {
-            // v1.38.0: local-only record of which Ask citations were opened.
-            final List<QueryRow> table = await customSelect(
-              "SELECT name FROM sqlite_master WHERE type='table' AND name='ask_source_visits'",
-            ).get();
-            if (table.isEmpty) await m.createTable(askSourceVisits);
-          }
-          if (from < 29) {
-            // v1.38.0 auto-file: dump filing joins sync, plus the two
-            // server-authored auto-file marker columns. Ask the database,
-            // never the version number (the duplicate-column lesson from
-            // v8/v24).
-            final Set<String> dumpColumns = <String>{
-              for (final QueryRow row in await customSelect(
-                'PRAGMA table_info(dumps)',
-              ).get())
-                row.read<String>('name'),
-            };
-            if (!dumpColumns.contains('auto_filed_at')) {
-              await m.addColumn(dumps, dumps.autoFiledAt);
-            }
-            if (!dumpColumns.contains('auto_file_prev_folder_id')) {
-              await m.addColumn(dumps, dumps.autoFilePrevFolderId);
-            }
-            // One-time filing re-push, the v14 notebook precedent: dumps
-            // filed BEFORE dump-filing sync existed are clean, so their
-            // folder_id never travels — and worse, the first post-upgrade
-            // pull would carry the server's authoritative folder_id: null
-            // and erase the local filing. Marking every filed, live dump
-            // dirty both pushes the filing up and shields it from that
-            // pull (the dirty-row guard). Harmless on fresh installs.
-            if (dumpColumns.contains('folder_id')) {
-              await customStatement(
-                'UPDATE dumps SET sync_dirty = 1 '
-                'WHERE folder_id IS NOT NULL '
-                'AND (remote_only IS NULL OR remote_only = 0)',
-              );
-            }
-          }
-          if (from < 30) {
-            // v30: one nullable pin flag on each pinnable entity (v28 was
-            // Ask citation visits, v29 the auto-file columns). Ask
-            // sqlite_master first, then table_info: an empty PRAGMA is
-            // ambiguous (missing table vs no columns), and a sideways
-            // build may already carry the column.
-            Future<void> addPinnedIfMissing(
-              String tableName,
-              TableInfo<Table, dynamic> table,
-              GeneratedColumn<bool> column,
-            ) async {
-              final bool exists = (await customSelect(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
-                variables: <Variable<Object>>[Variable<String>(tableName)],
+        );
+        if (!hasFingerprint) {
+          await m.addColumn(todos, todos.captureFingerprint);
+        }
+      }
+      if (from < 26) {
+        // v1.35.0: voice → Google Calendar events.
+        await m.createTable(calendarEvents);
+      }
+      if (from < 27) {
+        final List<QueryRow> table = await customSelect(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name='ask_messages'",
+        ).get();
+        if (table.isEmpty) await m.createTable(askMessages);
+      }
+      if (from < 28) {
+        // v1.38.0: local-only record of which Ask citations were opened.
+        final List<QueryRow> table = await customSelect(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name='ask_source_visits'",
+        ).get();
+        if (table.isEmpty) await m.createTable(askSourceVisits);
+      }
+      if (from < 29) {
+        // v1.38.0 auto-file: dump filing joins sync, plus the two
+        // server-authored auto-file marker columns. Ask the database,
+        // never the version number (the duplicate-column lesson from
+        // v8/v24).
+        final Set<String> dumpColumns = <String>{
+          for (final QueryRow row in await customSelect(
+            'PRAGMA table_info(dumps)',
+          ).get())
+            row.read<String>('name'),
+        };
+        if (!dumpColumns.contains('auto_filed_at')) {
+          await m.addColumn(dumps, dumps.autoFiledAt);
+        }
+        if (!dumpColumns.contains('auto_file_prev_folder_id')) {
+          await m.addColumn(dumps, dumps.autoFilePrevFolderId);
+        }
+        // One-time filing re-push, the v14 notebook precedent: dumps
+        // filed BEFORE dump-filing sync existed are clean, so their
+        // folder_id never travels — and worse, the first post-upgrade
+        // pull would carry the server's authoritative folder_id: null
+        // and erase the local filing. Marking every filed, live dump
+        // dirty both pushes the filing up and shields it from that
+        // pull (the dirty-row guard). Harmless on fresh installs.
+        if (dumpColumns.contains('folder_id')) {
+          await customStatement(
+            'UPDATE dumps SET sync_dirty = 1 '
+            'WHERE folder_id IS NOT NULL '
+            'AND (remote_only IS NULL OR remote_only = 0)',
+          );
+        }
+      }
+      if (from < 30) {
+        // v30: one nullable pin flag on each pinnable entity (v28 was
+        // Ask citation visits, v29 the auto-file columns). Ask
+        // sqlite_master first, then table_info: an empty PRAGMA is
+        // ambiguous (missing table vs no columns), and a sideways
+        // build may already carry the column.
+        Future<void> addPinnedIfMissing(
+          String tableName,
+          TableInfo<Table, dynamic> table,
+          GeneratedColumn<bool> column,
+        ) async {
+          final bool exists = (await customSelect(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+            variables: <Variable<Object>>[Variable<String>(tableName)],
           ).get()).isNotEmpty;
-              if (!exists) return;
-              final List<QueryRow> columns = await customSelect(
-                'PRAGMA table_info($tableName)',
-              ).get();
-              final bool hasPinned = columns.any(
-                (QueryRow row) => row.data['name'] == 'pinned',
-              );
-              if (!hasPinned) await m.addColumn(table, column);
-            }
+          if (!exists) return;
+          final List<QueryRow> columns = await customSelect(
+            'PRAGMA table_info($tableName)',
+          ).get();
+          final bool hasPinned = columns.any(
+            (QueryRow row) => row.data['name'] == 'pinned',
+          );
+          if (!hasPinned) await m.addColumn(table, column);
+        }
 
-            await addPinnedIfMissing('dumps', dumps, dumps.pinned);
-            await addPinnedIfMissing('notebooks', notebooks, notebooks.pinned);
-            await addPinnedIfMissing('todos', todos, todos.pinned);
-          }
-          if (from < 31) {
-            // Three nullable verifier columns. Existing rows remain unlocked.
-            // The v6 createTable step may already have used today's shape, so
-            // introspect before every add to avoid duplicate-column failures.
-            final List<QueryRow> notebookColumns = await customSelect(
-              'PRAGMA table_info(notebooks)',
-            ).get();
-            final Set<String> names = <String>{
+        await addPinnedIfMissing('dumps', dumps, dumps.pinned);
+        await addPinnedIfMissing('notebooks', notebooks, notebooks.pinned);
+        await addPinnedIfMissing('todos', todos, todos.pinned);
+      }
+      if (from < 31) {
+        // Three nullable verifier columns. Existing rows remain unlocked.
+        // The v6 createTable step may already have used today's shape, so
+        // introspect before every add to avoid duplicate-column failures.
+        final List<QueryRow> notebookColumns = await customSelect(
+          'PRAGMA table_info(notebooks)',
+        ).get();
+        final Set<String> names = <String>{
           for (final QueryRow row in notebookColumns) row.read<String>('name'),
-            };
-            if (notebookColumns.isNotEmpty) {
-              if (!names.contains('password_hash')) {
-                await m.addColumn(notebooks, notebooks.passwordHash);
-              }
-              if (!names.contains('password_salt')) {
-                await m.addColumn(notebooks, notebooks.passwordSalt);
-              }
-              if (!names.contains('password_iterations')) {
-                await m.addColumn(notebooks, notebooks.passwordIterations);
-              }
-            }
+        };
+        if (notebookColumns.isNotEmpty) {
+          if (!names.contains('password_hash')) {
+            await m.addColumn(notebooks, notebooks.passwordHash);
           }
-          if (from < 32) {
-            final List<QueryRow> notebookColumns = await customSelect(
-              'PRAGMA table_info(notebooks)',
-            ).get();
-            final bool hasPrevious = notebookColumns.any(
+          if (!names.contains('password_salt')) {
+            await m.addColumn(notebooks, notebooks.passwordSalt);
+          }
+          if (!names.contains('password_iterations')) {
+            await m.addColumn(notebooks, notebooks.passwordIterations);
+          }
+        }
+      }
+      if (from < 32) {
+        final List<QueryRow> notebookColumns = await customSelect(
+          'PRAGMA table_info(notebooks)',
+        ).get();
+        final bool hasPrevious = notebookColumns.any(
           (QueryRow row) => row.read<String>('name') == 'password_hash_prev',
-            );
-            if (notebookColumns.isNotEmpty && !hasPrevious) {
-              await m.addColumn(notebooks, notebooks.passwordHashPrev);
-            }
-          }
-          if (from < 33) {
-            // v33 shared tags: two brand-new tables, no existing row is
-            // touched. Ask sqlite_master first (the v27/v28 rule) so a
-            // sideways build that already created them cannot fail the
-            // upgrade on a duplicate table.
-            Future<bool> tableExists(String name) async => (await customSelect(
-                  "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
-                  variables: <Variable<Object>>[Variable<String>(name)],
-                ).get())
-                    .isNotEmpty;
-            if (!await tableExists('tags')) await m.createTable(tags);
-            if (!await tableExists('tag_assignments')) {
-              await m.createTable(tagAssignments);
-            }
-            await _createTagIndexes();
-          }
-          if (from < 34) {
-            final bool columnsExist = (await customSelect(
-              "SELECT name FROM sqlite_master WHERE type='table' "
-              "AND name='todo_columns'",
-            ).get()).isNotEmpty;
-            if (!columnsExist) await m.createTable(todoColumns);
+        );
+        if (notebookColumns.isNotEmpty && !hasPrevious) {
+          await m.addColumn(notebooks, notebooks.passwordHashPrev);
+        }
+      }
+      if (from < 33) {
+        // v33 shared tags: two brand-new tables, no existing row is
+        // touched. Ask sqlite_master first (the v27/v28 rule) so a
+        // sideways build that already created them cannot fail the
+        // upgrade on a duplicate table.
+        Future<bool> tableExists(String name) async => (await customSelect(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+          variables: <Variable<Object>>[Variable<String>(name)],
+        ).get()).isNotEmpty;
+        if (!await tableExists('tags')) await m.createTable(tags);
+        if (!await tableExists('tag_assignments')) {
+          await m.createTable(tagAssignments);
+        }
+        await _createTagIndexes();
+      }
+      if (from < 34) {
+        final bool columnsExist = (await customSelect(
+          "SELECT name FROM sqlite_master WHERE type='table' "
+          "AND name='todo_columns'",
+        ).get()).isNotEmpty;
+        if (!columnsExist) await m.createTable(todoColumns);
 
-            final List<QueryRow> todoInfo = await customSelect(
-              'PRAGMA table_info(todos)',
-            ).get();
-            final Set<String> todoNames = <String>{
-              for (final QueryRow row in todoInfo) row.read<String>('name'),
-            };
-            if (todoInfo.isNotEmpty && !todoNames.contains('column_id')) {
-              await m.addColumn(todos, todos.columnId);
-            }
-            if (todoInfo.isNotEmpty && !todoNames.contains('board_order')) {
-              await m.addColumn(todos, todos.boardOrder);
-            }
+        final List<QueryRow> todoInfo = await customSelect(
+          'PRAGMA table_info(todos)',
+        ).get();
+        final Set<String> todoNames = <String>{
+          for (final QueryRow row in todoInfo) row.read<String>('name'),
+        };
+        if (todoInfo.isNotEmpty && !todoNames.contains('column_id')) {
+          await m.addColumn(todos, todos.columnId);
+        }
+        if (todoInfo.isNotEmpty && !todoNames.contains('board_order')) {
+          await m.addColumn(todos, todos.boardOrder);
+        }
 
-            // Seed values are deliberately older than any real user edit. A peer
-            // may already have renamed or retired one of these fixed ids; its
-            // canonical row must beat this placeholder during the first sync.
-            const String stamp = '1970-01-01T00:00:00.000Z';
-            await customStatement(
-              'INSERT OR IGNORE INTO todo_columns '
-              '(id,name,sort_order,created_at,updated_at,sync_dirty) VALUES '
-              "('todo-column-todo','To Do',0,?1,?1,1),"
-              "('todo-column-progress','In Progress',1,?1,?1,1),"
-              "('todo-column-done','Done',2,?1,?1,1)",
-              <Object>[stamp],
-            );
-            if (todoInfo.isNotEmpty) {
-              // Synthetic/sideways old schemas may predate the settings table even
-              // when their user_version is newer. The marker is local metadata, so
-              // create its table defensively before recording any rows.
-              final bool settingsExist = (await customSelect(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='settings'",
-              ).get()).isNotEmpty;
-              if (!settingsExist) await m.createTable(localSettings);
-              // Remember exactly which formerly-clean rows owe only the new board
-              // placement. Pull runs before push; sync can accept a newer remote
-              // body, then re-apply just this placement with a fresh stamp.
-              await customStatement(
-                'INSERT OR REPLACE INTO settings(key,value) '
-                'SELECT \'todo_kanban_backfill:\' || id, CAST(rowid AS TEXT) '
-                'FROM todos WHERE column_id IS NULL AND sync_dirty=0',
-              );
-              await customStatement(
-                "UPDATE todos SET column_id='todo-column-todo', "
-                'board_order=rowid, sync_dirty=1 '
-                'WHERE column_id IS NULL',
-              );
-            }
-          }
-          if (from < 35) {
-            // Content-derived ink row ids repeat when notebook conflict copies
-            // duplicate the same strokes. The mirror key is therefore scoped
-            // to its notebook. Rebuild just this table so every existing mirror
-            // row survives; no user-authored table participates in the copy.
-            final List<QueryRow> tableInfo = await customSelect(
-              'PRAGMA table_info(ink_index_entries)',
-            ).get();
-            if (tableInfo.isEmpty) {
-              // Defensive sideways-schema guard. A genuine v34 database has
-              // this table, but creating it is safer than bricking launch.
-              await m.createTable(inkIndexEntries);
-            } else {
-              final List<QueryRow> primaryKey = tableInfo
+        // Seed values are deliberately older than any real user edit. A peer
+        // may already have renamed or retired one of these fixed ids; its
+        // canonical row must beat this placeholder during the first sync.
+        const String stamp = '1970-01-01T00:00:00.000Z';
+        await customStatement(
+          'INSERT OR IGNORE INTO todo_columns '
+          '(id,name,sort_order,created_at,updated_at,sync_dirty) VALUES '
+          "('todo-column-todo','To Do',0,?1,?1,1),"
+          "('todo-column-progress','In Progress',1,?1,?1,1),"
+          "('todo-column-done','Done',2,?1,?1,1)",
+          <Object>[stamp],
+        );
+        if (todoInfo.isNotEmpty) {
+          // Synthetic/sideways old schemas may predate the settings table even
+          // when their user_version is newer. The marker is local metadata, so
+          // create its table defensively before recording any rows.
+          final bool settingsExist = (await customSelect(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='settings'",
+          ).get()).isNotEmpty;
+          if (!settingsExist) await m.createTable(localSettings);
+          // Remember exactly which formerly-clean rows owe only the new board
+          // placement. Pull runs before push; sync can accept a newer remote
+          // body, then re-apply just this placement with a fresh stamp.
+          await customStatement(
+            'INSERT OR REPLACE INTO settings(key,value) '
+            'SELECT \'todo_kanban_backfill:\' || id, CAST(rowid AS TEXT) '
+            'FROM todos WHERE column_id IS NULL AND sync_dirty=0',
+          );
+          await customStatement(
+            "UPDATE todos SET column_id='todo-column-todo', "
+            'board_order=rowid, sync_dirty=1 '
+            'WHERE column_id IS NULL',
+          );
+        }
+      }
+      if (from < 35) {
+        // Content-derived ink row ids repeat when notebook conflict copies
+        // duplicate the same strokes. The mirror key is therefore scoped
+        // to its notebook. Rebuild just this table so every existing mirror
+        // row survives; no user-authored table participates in the copy.
+        final List<QueryRow> tableInfo = await customSelect(
+          'PRAGMA table_info(ink_index_entries)',
+        ).get();
+        if (tableInfo.isEmpty) {
+          // Defensive sideways-schema guard. A genuine v34 database has
+          // this table, but creating it is safer than bricking launch.
+          await m.createTable(inkIndexEntries);
+        } else {
+          final List<QueryRow> primaryKey =
+              tableInfo
                   .where((QueryRow row) => row.read<int>('pk') > 0)
                   .toList()
                 ..sort(
                   (QueryRow a, QueryRow b) =>
                       a.read<int>('pk').compareTo(b.read<int>('pk')),
                 );
-              final List<String> primaryKeyNames = primaryKey
-                  .map((QueryRow row) => row.read<String>('name'))
-                  .toList();
-              final bool alreadyNotebookScoped =
-                  primaryKeyNames.length == 2 &&
-                      primaryKeyNames[0] == 'notebook_id' &&
-                      primaryKeyNames[1] == 'id';
-              if (!alreadyNotebookScoped) {
-                await m.alterTable(TableMigration(inkIndexEntries));
-              }
-            }
+          final List<String> primaryKeyNames = primaryKey
+              .map((QueryRow row) => row.read<String>('name'))
+              .toList();
+          final bool alreadyNotebookScoped =
+              primaryKeyNames.length == 2 &&
+              primaryKeyNames[0] == 'notebook_id' &&
+              primaryKeyNames[1] == 'id';
+          if (!alreadyNotebookScoped) {
+            await m.alterTable(TableMigration(inkIndexEntries));
           }
-        },
-      );
+        }
+      }
+      if (from < 36) {
+        // Additive due time. A guarded add keeps interrupted/sideways
+        // upgrades safe; old dated rows inherit 09:00 local.
+        final List<QueryRow> todoInfo = await customSelect(
+          'PRAGMA table_info(todos)',
+        ).get();
+        final bool hasDueTime = todoInfo.any(
+          (QueryRow row) => row.read<String>('name') == 'due_time',
+        );
+        if (todoInfo.isNotEmpty && !hasDueTime) {
+          await m.addColumn(todos, todos.dueTime);
+        }
+        if (todoInfo.isNotEmpty) {
+          await customStatement(
+            "UPDATE todos SET due_time='09:00' "
+            'WHERE due_date IS NOT NULL AND due_time IS NULL',
+          );
+        }
+      }
+    },
+  );
 
   /// Lookup indexes for the assignment projection: by target (the list
   /// screens) and by tag (the delete cascade and the filter). Idempotent.
@@ -1526,17 +1551,17 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   /// Watches server-authored Ask history in stable conversational order.
   Stream<List<AskMessageRow>> watchAskHistory() =>
       (select(askMessages)..orderBy(<OrderingTerm Function($AskMessagesTable)>[
-          (t) => OrderingTerm.asc(t.createdAt),
-          (t) => OrderingTerm.asc(t.serverSeq),
-        ]))
-      .watch();
+            (t) => OrderingTerm.asc(t.createdAt),
+            (t) => OrderingTerm.asc(t.serverSeq),
+          ]))
+          .watch();
 
   Future<List<AskMessageRow>> askHistory() =>
       (select(askMessages)..orderBy(<OrderingTerm Function($AskMessagesTable)>[
-          (t) => OrderingTerm.asc(t.createdAt),
-          (t) => OrderingTerm.asc(t.serverSeq),
-        ]))
-      .get();
+            (t) => OrderingTerm.asc(t.createdAt),
+            (t) => OrderingTerm.asc(t.serverSeq),
+          ]))
+          .get();
 
   /// Watches the set of opened citations as `<messageId>#<sourceIndex>` keys.
   Stream<Set<String>> watchAskSourceVisits() =>
@@ -1546,9 +1571,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
       _visitKeys(await select(askSourceVisits).get());
 
   static Set<String> _visitKeys(List<AskSourceVisitRow> rows) => <String>{
-        for (final AskSourceVisitRow row in rows)
-          '${row.messageId}#${row.sourceIndex}',
-      };
+    for (final AskSourceVisitRow row in rows)
+      '${row.messageId}#${row.sourceIndex}',
+  };
 
   /// Records that a citation was opened. Idempotent: reopening a source keeps
   /// the row visited rather than toggling it off.
@@ -1556,12 +1581,12 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     required String messageId,
     required int sourceIndex,
   }) => into(askSourceVisits).insertOnConflictUpdate(
-        AskSourceVisitsCompanion.insert(
-          messageId: messageId,
-          sourceIndex: sourceIndex,
-          visitedAt: DateTime.now().toUtc().millisecondsSinceEpoch ~/ 1000,
-        ),
-      );
+    AskSourceVisitsCompanion.insert(
+      messageId: messageId,
+      sourceIndex: sourceIndex,
+      visitedAt: DateTime.now().toUtc().millisecondsSinceEpoch ~/ 1000,
+    ),
+  );
 
   Future<void> applyRemoteAskMessage({
     required String id,
@@ -1571,15 +1596,15 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     required int createdAt,
     required int seq,
   }) => into(askMessages).insertOnConflictUpdate(
-        AskMessagesCompanion.insert(
-          id: id,
-          role: role,
-          body: text,
-          sourcesJson: Value<String>(sourcesJson),
-          createdAt: createdAt,
-          serverSeq: seq,
-        ),
-      );
+    AskMessagesCompanion.insert(
+      id: id,
+      role: role,
+      body: text,
+      sourcesJson: Value<String>(sourcesJson),
+      createdAt: createdAt,
+      serverSeq: seq,
+    ),
+  );
 
   /// Replaces a notebook's mirrored index rows with a freshly pulled set.
   ///
@@ -1612,7 +1637,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   /// stay out: their tombstone travels instead, and pushing a trashed body
   /// would resurrect it on the peer.
   Future<List<NotebookRow>> notebooksNeedingPush() => (select(
-        notebooks,
+    notebooks,
   )..where((t) => t.syncDirty.equals(true) & t.deletedAt.isNull())).get();
 
   /// Marks a notebook as accepted by the server at [seq].
@@ -1629,11 +1654,11 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     await (update(notebooks)
           ..where((t) => t.id.equals(id) & t.updatedAt.equals(pushedUpdatedAt)))
         .write(
-      NotebooksCompanion(
-        syncDirty: const Value(false),
-        syncedSeq: Value(seq),
-      ),
-    );
+          NotebooksCompanion(
+            syncDirty: const Value(false),
+            syncedSeq: Value(seq),
+          ),
+        );
   }
 
   /// Replaces only a rejected notebook's malformed verifier tuple with the
@@ -1685,10 +1710,10 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   /// Clean remote-only rows still never push back a peer's own change.
   Future<List<DumpRow>> dumpsNeedingMetadataPush() =>
       (select(dumps)..where(
-          // Null means "never touched by sync" => not dirty.
-          (d) => d.syncDirty.equals(true),
-        ))
-      .get();
+            // Null means "never touched by sync" => not dirty.
+            (d) => d.syncDirty.equals(true),
+          ))
+          .get();
 
   /// Marks a recording's metadata as accepted by the server at [seq].
   ///
@@ -1703,11 +1728,11 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     await (update(dumps)
           ..where((d) => d.id.equals(id) & d.updatedAt.equals(pushedUpdatedAt)))
         .write(
-      DumpsCompanion(
-        syncDirty: const Value<bool?>(false),
-        syncedSeq: Value(seq),
-      ),
-    );
+          DumpsCompanion(
+            syncDirty: const Value<bool?>(false),
+            syncedSeq: Value(seq),
+          ),
+        );
   }
 
   /// Marks a recording's metadata dirty. Every local metadata edit funnels
@@ -1784,54 +1809,54 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
         : Value<String?>(folderId as String?);
     final Value<int?> autoFiledAtValue =
         identical(autoFiledAt, absentSummaryField)
-            ? const Value<int?>.absent()
-            : Value<int?>(autoFiledAt as int?);
+        ? const Value<int?>.absent()
+        : Value<int?>(autoFiledAt as int?);
     final Value<String?> autoFilePrevFolderIdValue =
         identical(autoFilePrevFolderId, absentSummaryField)
-            ? const Value<String?>.absent()
-            : Value<String?>(autoFilePrevFolderId as String?);
+        ? const Value<String?>.absent()
+        : Value<String?>(autoFilePrevFolderId as String?);
     final Value<String?> languageValue = identical(language, absentSummaryField)
         ? const Value<String?>.absent()
         : Value<String?>(language as String?);
     final Value<bool?> translatedValue =
         identical(translated, absentSummaryField)
-            ? const Value<bool?>.absent()
-            : Value<bool?>(_wireBool(translated));
+        ? const Value<bool?>.absent()
+        : Value<bool?>(_wireBool(translated));
     final Value<String?> summaryStatusValue =
         identical(summaryStatus, absentSummaryField)
-            ? const Value<String?>.absent()
-            : Value<String?>(summaryStatus as String?);
+        ? const Value<String?>.absent()
+        : Value<String?>(summaryStatus as String?);
     final Value<String?> summaryErrorValue =
         identical(summaryError, absentSummaryField)
-            ? const Value<String?>.absent()
-            : Value<String?>(summaryError as String?);
+        ? const Value<String?>.absent()
+        : Value<String?>(summaryError as String?);
     final Value<int?> summaryQueuePositionValue =
         identical(summaryQueuePosition, absentSummaryField)
-            ? const Value<int?>.absent()
-            : Value<int?>(summaryQueuePosition as int?);
+        ? const Value<int?>.absent()
+        : Value<int?>(summaryQueuePosition as int?);
     final Value<String?> speakerNamesValue =
         identical(speakerNames, absentSpeakerNamesField)
-            ? const Value<String?>.absent()
-            : Value<String?>(speakerNames as String?);
+        ? const Value<String?>.absent()
+        : Value<String?>(speakerNames as String?);
     final Value<String?> timingsValue =
         identical(transcriptTimings, absentSummaryField)
-            ? const Value<String?>.absent()
-            : Value<String?>(transcriptTimings as String?);
+        ? const Value<String?>.absent()
+        : Value<String?>(transcriptTimings as String?);
     final Value<String?> templateValue =
         identical(summaryTemplate, absentSummaryField)
-            ? const Value<String?>.absent()
-            : Value<String?>(summaryTemplate as String?);
+        ? const Value<String?>.absent()
+        : Value<String?>(summaryTemplate as String?);
     final Value<String?> summaryValue = identical(summary, absentSummaryField)
         ? const Value<String?>.absent()
         : Value<String?>(summary as String?);
     final Value<String?> summaryModelValue =
         identical(summaryModel, absentSummaryField)
-            ? const Value<String?>.absent()
-            : Value<String?>(summaryModel as String?);
+        ? const Value<String?>.absent()
+        : Value<String?>(summaryModel as String?);
     final Value<int?> summarizedAtValue =
         identical(summarizedAt, absentSummaryField)
-            ? const Value<int?>.absent()
-            : Value<int?>(summarizedAt as int?);
+        ? const Value<int?>.absent()
+        : Value<int?>(summarizedAt as int?);
     final Value<bool?> pinnedValue = identical(pinned, absentPinnedField)
         ? const Value<bool?>.absent()
         : Value<bool?>(_wireBool(pinned));
@@ -1857,8 +1882,8 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
         summaryStatusValue.present && summaryStatusValue.value == 'failed';
     final Value<int?> summaryRequestedAtValue =
         summaryAnswered || summaryFailedNow
-            ? const Value<int?>(null)
-            : const Value<int?>.absent();
+        ? const Value<int?>(null)
+        : const Value<int?>.absent();
     // A successful summary (status null, summarized_at advanced past what we
     // hold) also spends the local 'dismissed' marker, so the red line comes
     // back on the NEXT failure rather than staying hidden forever.
@@ -1876,8 +1901,8 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
             summaryStatusValue.value == 'running');
     final Value<int?> summaryErrorDismissedAtValue =
         summarySucceeded || summaryAnswered || summaryAttemptStarted
-            ? const Value<int?>(null)
-            : const Value<int?>.absent();
+        ? const Value<int?>(null)
+        : const Value<int?>.absent();
     if (existing == null) {
       // Re-creating a row the server still holds. If a COMPLETED local
       // deletion receipt is parked on this id, the server's copy has
@@ -2019,11 +2044,11 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     return transaction(() async {
       final int count = await (update(dumps)..where((d) => d.id.equals(id)))
           .write(
-        DumpsCompanion(
-          speakerNames: Value<String?>(names?.encode()),
-          updatedAt: Value((now ?? DateTime.now()).toUtc()),
-        ),
-      );
+            DumpsCompanion(
+              speakerNames: Value<String?>(names?.encode()),
+              updatedAt: Value((now ?? DateTime.now()).toUtc()),
+            ),
+          );
       if (count != 1) throw StateError('Dump not found: $id');
       await markDumpDirty(id);
       return (await getDump(id))!;
@@ -2144,7 +2169,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   }) async {
     await (delete(syncTombstones)..where(
           (t) => t.entityType.equals(entityType) & t.entityId.equals(entityId),
-          ))
+        ))
         .go();
   }
 
@@ -2199,13 +2224,13 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     final String? effectivePasswordSalt = preservePassword
         ? existing?.passwordSalt
         : effectivePasswordHash == null
-            ? null
-            : passwordSalt;
+        ? null
+        : passwordSalt;
     final int? effectivePasswordIterations = preservePassword
         ? existing?.passwordIterations
         : effectivePasswordHash == null
-            ? null
-            : passwordIterations;
+        ? null
+        : passwordIterations;
     final String? effectivePasswordHashPrev = preservePassword
         ? existing?.passwordHashPrev
         : passwordHashPrev;
@@ -2324,8 +2349,8 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     await (update(todos)
           ..where((t) => t.id.equals(id) & t.updatedAt.equals(pushedUpdatedAt)))
         .write(
-      TodosCompanion(syncDirty: const Value(false), syncedSeq: Value(seq)),
-    );
+          TodosCompanion(syncDirty: const Value(false), syncedSeq: Value(seq)),
+        );
   }
 
   /// Applies a todo the server sent us.
@@ -2342,6 +2367,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     String? source,
     Object? doneAt = absentTodoField,
     Object? dueDate = absentTodoField,
+    Object? dueTime = absentTodoField,
     Object? sourceRef = absentTodoField,
     Object? deletedAt = absentTodoField,
     Object? folderId = absentTodoField,
@@ -2361,6 +2387,15 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
         source: Value(source ?? existing?.source ?? 'manual'),
         doneAt: Value(resolve(doneAt, existing?.doneAt)),
         dueDate: Value(resolve(dueDate, existing?.dueDate)),
+        dueTime: Value(
+          identical(dueTime, absentTodoField)
+              ? (identical(dueDate, absentTodoField)
+                    ? existing?.dueTime
+                    : dueDate == null
+                    ? null
+                    : existing?.dueTime ?? '09:00')
+              : dueTime as String?,
+        ),
         sourceRef: Value(resolve(sourceRef, existing?.sourceRef)),
         deletedAt: Value(resolve(deletedAt, existing?.deletedAt)),
         folderId: Value(resolve(folderId, existing?.folderId)),
@@ -2452,11 +2487,11 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     await (update(calendarEvents)
           ..where((t) => t.id.equals(id) & t.updatedAt.equals(pushedUpdatedAt)))
         .write(
-      CalendarEventsCompanion(
-        syncDirty: const Value(false),
-        syncedSeq: Value(seq),
-      ),
-    );
+          CalendarEventsCompanion(
+            syncDirty: const Value(false),
+            syncedSeq: Value(seq),
+          ),
+        );
   }
 
   /// Applies a calendar event the server sent us — clean, not dirty (same
@@ -2570,14 +2605,14 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   }) async {
     final int count = await (update(notebooks)..where((t) => t.id.equals(id)))
         .write(
-      NotebooksCompanion(
-        pinned: Value<bool?>(pinned),
-        updatedAt: Value(
-          (now ?? DateTime.now()).toUtc().millisecondsSinceEpoch,
-        ),
-        syncDirty: const Value(true),
-      ),
-    );
+          NotebooksCompanion(
+            pinned: Value<bool?>(pinned),
+            updatedAt: Value(
+              (now ?? DateTime.now()).toUtc().millisecondsSinceEpoch,
+            ),
+            syncDirty: const Value(true),
+          ),
+        );
     if (count != 1) throw StateError('Notebook not found: $id');
   }
 
@@ -2626,11 +2661,11 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     await transaction(() async {
       final int count = await (update(dumps)..where((t) => t.id.equals(id)))
           .write(
-        DumpsCompanion(
-          pinned: Value<bool?>(pinned),
-          updatedAt: Value((now ?? DateTime.now()).toUtc()),
-        ),
-      );
+            DumpsCompanion(
+              pinned: Value<bool?>(pinned),
+              updatedAt: Value((now ?? DateTime.now()).toUtc()),
+            ),
+          );
       if (count != 1) throw StateError('Dump not found: $id');
       await markDumpDirty(id);
     });
@@ -2690,7 +2725,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   /// Folders with local changes the server has not confirmed. Null reads as
   /// dirty: a folder that predates folder sync has never been pushed.
   Future<List<Folder>> foldersNeedingPush() => (select(
-        folders,
+    folders,
   )..where((t) => t.syncDirty.equals(true) | t.syncDirty.isNull())).get();
 
   /// Marks a folder accepted by the server at [seq].
@@ -2788,11 +2823,11 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
 
   /// Every tag, alphabetical (case-insensitive). The tag table is a short
   /// vocabulary, so streaming it whole is the lightweight projection.
-  Stream<List<TagRow>> watchTags() => (select(tags)
-        ..orderBy(<OrderClauseGenerator<$TagsTable>>[
-          (t) => OrderingTerm.asc(t.name.collate(Collate.noCase)),
-        ]))
-      .watch();
+  Stream<List<TagRow>> watchTags() =>
+      (select(tags)..orderBy(<OrderClauseGenerator<$TagsTable>>[
+            (t) => OrderingTerm.asc(t.name.collate(Collate.noCase)),
+          ]))
+          .watch();
 
   Future<List<TagRow>> allTags() => select(tags).get();
 
@@ -2811,14 +2846,14 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
         tags,
       },
     ).watch().map(
-          (List<QueryRow> rows) => <TagLink>[
-            for (final QueryRow row in rows)
-              (
-                targetId: row.read<String>('target_id'),
-                tagId: row.read<String>('tag_id'),
-              ),
-          ],
-        );
+      (List<QueryRow> rows) => <TagLink>[
+        for (final QueryRow row in rows)
+          (
+            targetId: row.read<String>('target_id'),
+            tagId: row.read<String>('tag_id'),
+          ),
+      ],
+    );
   }
 
   /// How many items (notebooks and recordings together) carry [tagId]. The
@@ -2881,15 +2916,16 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
       if (await _tagByName(name, exceptId: id) != null) {
         throw TagNameException('A tag named “$name” already exists');
       }
-      final int count =
-          await (update(tags)..where((t) => t.id.equals(id))).write(
-        TagsCompanion(
-          name: Value<String>(name),
-          updatedAt:
-              Value((now ?? DateTime.now()).toUtc().millisecondsSinceEpoch),
-          syncDirty: const Value<bool?>(true),
-        ),
-      );
+      final int count = await (update(tags)..where((t) => t.id.equals(id)))
+          .write(
+            TagsCompanion(
+              name: Value<String>(name),
+              updatedAt: Value(
+                (now ?? DateTime.now()).toUtc().millisecondsSinceEpoch,
+              ),
+              syncDirty: const Value<bool?>(true),
+            ),
+          );
       if (count != 1) throw StateError('Tag not found: $id');
     });
   }
@@ -2903,7 +2939,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   Future<void> deleteTag(String id) async {
     await transaction(() async {
       await (delete(tagAssignments)..where((t) => t.tagId.equals(id))).go();
-      final int count = await (delete(tags)..where((t) => t.id.equals(id))).go();
+      final int count = await (delete(
+        tags,
+      )..where((t) => t.id.equals(id))).go();
       if (count == 0) return;
       await recordTombstone(entityType: 'tag', entityId: id);
     });
@@ -2919,8 +2957,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     _checkTagTarget(targetType);
     final String id = tagAssignmentId(tagId, targetType, targetId);
     await transaction(() async {
-      final TagRow? tag = await (select(tags)..where((t) => t.id.equals(tagId)))
-          .getSingleOrNull();
+      final TagRow? tag = await (select(
+        tags,
+      )..where((t) => t.id.equals(tagId))).getSingleOrNull();
       if (tag == null) throw StateError('Tag not found: $tagId');
       await into(tagAssignments).insert(
         TagAssignmentsCompanion.insert(
@@ -2948,8 +2987,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     _checkTagTarget(targetType);
     final String id = tagAssignmentId(tagId, targetType, targetId);
     await transaction(() async {
-      final int count =
-          await (delete(tagAssignments)..where((t) => t.id.equals(id))).go();
+      final int count = await (delete(
+        tagAssignments,
+      )..where((t) => t.id.equals(id))).go();
       if (count > 0) {
         await recordTombstone(entityType: 'tag_assignment', entityId: id);
       }
@@ -2960,9 +3000,8 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
 
   /// Tags with local changes the server has not confirmed (null = dirty).
   Future<List<TagRow>> tagsNeedingPush() => (select(
-        tags,
-      )..where((t) => t.syncDirty.equals(true) | t.syncDirty.isNull()))
-          .get();
+    tags,
+  )..where((t) => t.syncDirty.equals(true) | t.syncDirty.isNull())).get();
 
   /// Marks a pushed tag clean — only if it was not renamed again while the
   /// push was in flight (same guard as notebooks).
@@ -2972,30 +3011,26 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     required int pushedUpdatedAt,
   }) async {
     await (update(tags)
-          ..where(
-            (t) => t.id.equals(id) & t.updatedAt.equals(pushedUpdatedAt),
-          ))
+          ..where((t) => t.id.equals(id) & t.updatedAt.equals(pushedUpdatedAt)))
         .write(
-      TagsCompanion(
-        syncDirty: const Value<bool?>(false),
-        syncedSeq: Value<int?>(seq),
-      ),
-    );
+          TagsCompanion(
+            syncDirty: const Value<bool?>(false),
+            syncedSeq: Value<int?>(seq),
+          ),
+        );
   }
 
   /// Dirty assignments whose tag still exists here. An assignment orphaned
   /// by a tag deletion is never pushed; the tag tombstone covers it.
   Future<List<TagAssignmentRow>> tagAssignmentsNeedingPush() {
-    final query = select(tagAssignments).join(<Join<HasResultSet, dynamic>>[
-      innerJoin(tags, tags.id.equalsExp(tagAssignments.tagId)),
-    ])
-      ..where(
-        tagAssignments.syncDirty.equals(true) |
-            tagAssignments.syncDirty.isNull(),
-      );
-    return query
-        .map((TypedResult row) => row.readTable(tagAssignments))
-        .get();
+    final query =
+        select(tagAssignments).join(<Join<HasResultSet, dynamic>>[
+          innerJoin(tags, tags.id.equalsExp(tagAssignments.tagId)),
+        ])..where(
+          tagAssignments.syncDirty.equals(true) |
+              tagAssignments.syncDirty.isNull(),
+        );
+    return query.map((TypedResult row) => row.readTable(tagAssignments)).get();
   }
 
   Future<void> markTagAssignmentSynced(String id, {required int seq}) async {
@@ -3008,13 +3043,11 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   }
 
   Future<bool> _hasPendingTombstone(String entityType, String entityId) async =>
-      (await (select(syncTombstones)
-                ..where(
-                  (t) =>
-                      t.entityType.equals(entityType) &
-                      t.entityId.equals(entityId),
-                ))
-              .getSingleOrNull()) !=
+      (await (select(syncTombstones)..where(
+            (t) =>
+                t.entityType.equals(entityType) & t.entityId.equals(entityId),
+          ))
+          .getSingleOrNull()) !=
       null;
 
   /// Applies a tag the server sent. Clean, never dirty (no echo). A local
@@ -3029,8 +3062,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   }) async {
     await transaction(() async {
       if (await _hasPendingTombstone('tag', id)) return;
-      final TagRow? local =
-          await (select(tags)..where((t) => t.id.equals(id))).getSingleOrNull();
+      final TagRow? local = await (select(
+        tags,
+      )..where((t) => t.id.equals(id))).getSingleOrNull();
       if (local != null && local.syncDirty != false) return;
       await into(tags).insert(
         TagsCompanion.insert(
@@ -3072,9 +3106,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     if (!tagTargetTypes.contains(targetType)) return;
     await transaction(() async {
       if (await _hasPendingTombstone('tag_assignment', id)) return;
-      final TagRow? tag = await (select(tags)
-            ..where((t) => t.id.equals(tagId)))
-          .getSingleOrNull();
+      final TagRow? tag = await (select(
+        tags,
+      )..where((t) => t.id.equals(tagId))).getSingleOrNull();
       if (tag == null) return;
       await into(tagAssignments).insert(
         TagAssignmentsCompanion.insert(
@@ -3093,13 +3127,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
 
   /// A peer removed an assignment. A local unpushed re-add wins.
   Future<void> applyRemoteTagAssignmentDeletion(String id) async {
-    await (delete(tagAssignments)
-          ..where(
-            (t) =>
-                t.id.equals(id) &
-                (t.syncDirty.equals(false)),
-          ))
-        .go();
+    await (delete(
+      tagAssignments,
+    )..where((t) => t.id.equals(id) & (t.syncDirty.equals(false)))).go();
   }
 
   // ---- notebook trash ----------------------------------------------------
@@ -3140,9 +3170,9 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   /// Everything currently in the trash, newest deletion first.
   Future<List<NotebookRow>> trashedNotebooks() =>
       (select(notebooks)
-        ..where((t) => t.deletedAt.isNotNull())
-        ..orderBy([(t) => OrderingTerm.desc(t.deletedAt)]))
-      .get();
+            ..where((t) => t.deletedAt.isNotNull())
+            ..orderBy([(t) => OrderingTerm.desc(t.deletedAt)]))
+          .get();
 
   /// Drops every trashed notebook older than [trashRetention]. Returns how
   /// many were purged. Called at startup; the Settings screen states the
@@ -3152,10 +3182,10 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
         .subtract(trashRetention)
         .millisecondsSinceEpoch;
     return (delete(notebooks)..where(
-            (t) =>
-                t.deletedAt.isNotNull() &
-                t.deletedAt.isSmallerOrEqualValue(cutoff),
-          ))
+          (t) =>
+              t.deletedAt.isNotNull() &
+              t.deletedAt.isSmallerOrEqualValue(cutoff),
+        ))
         .go();
   }
 
@@ -3222,15 +3252,15 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   /// acknowledgement; the candidate in memory is never durable authority.
   Future<void> freezeLegacyAnchor(String anchorJson) => transaction(() async {
     await (update(storageCatalogStates)..where(
-                (s) =>
-                    s.id.equals(1) &
-                    s.legacyAnchorJson.isNull() &
-                    s.bootstrapVersion.equals(0),
-              ))
-            .write(
+          (s) =>
+              s.id.equals(1) &
+              s.legacyAnchorJson.isNull() &
+              s.bootstrapVersion.equals(0),
+        ))
+        .write(
           StorageCatalogStatesCompanion(legacyAnchorJson: Value(anchorJson)),
         );
-      });
+  });
 
   /// Spend a storage location's one-shot legacy-restore authorization.
   ///
@@ -3241,41 +3271,41 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   /// Callers must only reach here after a fully settled sweep — a partial
   /// success has to stay authorized so the next launch retries.
   Future<void> completeLegacyRestore(String locationId) => transaction(
-        () async {
+    () async {
       await (update(storageLocations)..where((l) => l.id.equals(locationId)))
           .write(const StorageLocationsCompanion(legacyRestore: Value(false)));
-        },
-      );
+    },
+  );
 
   /// Resolve only persisted original ownership, never a current default.
   @override
   Future<BoundRecording?> boundRecording(String id) => transaction(() async {
-        final row = await (select(
-          recordingBindings,
+    final row = await (select(
+      recordingBindings,
     )..where((b) => b.dumpId.equals(id))).getSingleOrNull();
-        if (row == null || !row.resolved || row.locationId == null) return null;
-        final location = await (select(
-          storageLocations,
+    if (row == null || !row.resolved || row.locationId == null) return null;
+    final location = await (select(
+      storageLocations,
     )..where((l) => l.id.equals(row.locationId!))).getSingleOrNull();
-        if (location == null) return null;
-        final binding = (
-          key: (dumpId: row.dumpId, incarnation: row.incarnation),
-          location: (
-            id: location.id,
-            label: location.label,
-            directory: StorageCodec.decodeDirectory(location.directoryJson),
-          ),
-          audio: StorageCodec.decodeAudio(row.audioJson),
-          metadataName: row.metadataName,
-        );
-        StorageCodec.encodeBinding(binding);
-        return binding;
-      });
+    if (location == null) return null;
+    final binding = (
+      key: (dumpId: row.dumpId, incarnation: row.incarnation),
+      location: (
+        id: location.id,
+        label: location.label,
+        directory: StorageCodec.decodeDirectory(location.directoryJson),
+      ),
+      audio: StorageCodec.decodeAudio(row.audioJson),
+      metadataName: row.metadataName,
+    );
+    StorageCodec.encodeBinding(binding);
+    return binding;
+  });
 
   Never _storageFault(ProblemCode code, String message) =>
       throw StorageFault((code: code, message: message));
   Future<LocalDeletionTicketRow?> _deletionFence(String id) => (select(
-        localDeletionTickets,
+    localDeletionTickets,
   )..where((t) => t.dumpId.equals(id))).getSingleOrNull();
 
   /// One-time heal for receipts orphaned by the resurrection bug.
@@ -3289,91 +3319,91 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   /// row. Pending (non-completed) tickets are live work and are never
   /// touched. Idempotent by construction; returns the number healed.
   Future<int> repairResurrectedRetirements() => transaction(() async {
-        final stale = await customSelect(
-          'SELECT t.dump_id AS dump_id FROM local_deletion_tickets t '
-          "WHERE t.state = 'completed' "
-          'AND EXISTS (SELECT 1 FROM dumps d WHERE d.id = t.dump_id)',
-          readsFrom: {localDeletionTickets, dumps},
-        ).get();
-        for (final row in stale) {
+    final stale = await customSelect(
+      'SELECT t.dump_id AS dump_id FROM local_deletion_tickets t '
+      "WHERE t.state = 'completed' "
+      'AND EXISTS (SELECT 1 FROM dumps d WHERE d.id = t.dump_id)',
+      readsFrom: {localDeletionTickets, dumps},
+    ).get();
+    for (final row in stale) {
       await (delete(localDeletionTickets)..where(
-                  (t) =>
-                      t.dumpId.equals(row.data['dump_id'] as String) &
-                      t.state.equals('completed'),
-                ))
-              .go();
-        }
-        return stale.length;
-      });
+            (t) =>
+                t.dumpId.equals(row.data['dump_id'] as String) &
+                t.state.equals('completed'),
+          ))
+          .go();
+    }
+    return stale.length;
+  });
   @override
   Future<bool> isRetired(String id) async =>
       (await _deletionFence(id))?.state == 'completed';
   @override
   Future<bool> mutationAllowed(RecordingKey key) => transaction(() async {
-        StorageCodec.encodeKey(key);
-        if (await _deletionFence(key.dumpId) != null) return false;
-        return await getDump(key.dumpId) != null &&
-            (await boundRecording(key.dumpId))?.key == key;
-      });
+    StorageCodec.encodeKey(key);
+    if (await _deletionFence(key.dumpId) != null) return false;
+    return await getDump(key.dumpId) != null &&
+        (await boundRecording(key.dumpId))?.key == key;
+  });
   @override
   Future<void> bindRecording(BoundRecording binding) => transaction(() async {
-        StorageCodec.encodeBinding(binding);
-        final id = binding.key.dumpId;
-        final fence = await _deletionFence(id);
-        if (fence != null) {
-          _storageFault(
+    StorageCodec.encodeBinding(binding);
+    final id = binding.key.dumpId;
+    final fence = await _deletionFence(id);
+    if (fence != null) {
+      _storageFault(
         fence.state == 'completed' ? ProblemCode.retired : ProblemCode.fenced,
-            'Recording identity is fenced',
-          );
-        }
-        final row = await getDump(id);
-        if (row == null || row.audioPath != binding.audio.value) {
+        'Recording identity is fenced',
+      );
+    }
+    final row = await getDump(id);
+    if (row == null || row.audioPath != binding.audio.value) {
       _storageFault(ProblemCode.conflict, 'Original audio identity differs');
-        }
-        final location = await (select(
-          storageLocations,
+    }
+    final location = await (select(
+      storageLocations,
     )..where((l) => l.id.equals(binding.location.id))).getSingleOrNull();
-        if (location == null ||
-            location.directoryJson !=
-                StorageCodec.encodeDirectory(binding.location.directory) ||
-            location.label != binding.location.label) {
-          _storageFault(
-            ProblemCode.conflict,
-            'Location is not the persisted capability',
-          );
-        }
-        final prior = await (select(
-          recordingBindings,
+    if (location == null ||
+        location.directoryJson !=
+            StorageCodec.encodeDirectory(binding.location.directory) ||
+        location.label != binding.location.label) {
+      _storageFault(
+        ProblemCode.conflict,
+        'Location is not the persisted capability',
+      );
+    }
+    final prior = await (select(
+      recordingBindings,
     )..where((b) => b.dumpId.equals(id))).getSingleOrNull();
-        if (prior != null) {
-          if (prior.incarnation != binding.key.incarnation ||
-              StorageCodec.decodeAudio(prior.audioJson) != binding.audio ||
-              prior.metadataName != binding.metadataName ||
-              (prior.resolved && await boundRecording(id) != binding)) {
-            _storageFault(ProblemCode.conflict, 'Binding is immutable');
-          }
-          if (prior.resolved) return;
-          await (update(
-            recordingBindings,
+    if (prior != null) {
+      if (prior.incarnation != binding.key.incarnation ||
+          StorageCodec.decodeAudio(prior.audioJson) != binding.audio ||
+          prior.metadataName != binding.metadataName ||
+          (prior.resolved && await boundRecording(id) != binding)) {
+        _storageFault(ProblemCode.conflict, 'Binding is immutable');
+      }
+      if (prior.resolved) return;
+      await (update(
+        recordingBindings,
       )..where((b) => b.dumpId.equals(id))).write(
-            RecordingBindingsCompanion(
-              locationId: Value(binding.location.id),
-              resolved: const Value(true),
-            ),
-          );
-        } else {
-          await into(recordingBindings).insert(
-            RecordingBindingsCompanion.insert(
-              dumpId: id,
-              incarnation: binding.key.incarnation,
-              locationId: Value(binding.location.id),
-              audioJson: StorageCodec.encodeAudio(binding.audio),
-              metadataName: binding.metadataName,
-              resolved: const Value(true),
-            ),
-          );
-        }
-      });
+        RecordingBindingsCompanion(
+          locationId: Value(binding.location.id),
+          resolved: const Value(true),
+        ),
+      );
+    } else {
+      await into(recordingBindings).insert(
+        RecordingBindingsCompanion.insert(
+          dumpId: id,
+          incarnation: binding.key.incarnation,
+          locationId: Value(binding.location.id),
+          audioJson: StorageCodec.encodeAudio(binding.audio),
+          metadataName: binding.metadataName,
+          resolved: const Value(true),
+        ),
+      );
+    }
+  });
   DeletionTicket _decodeTicket(LocalDeletionTicketRow row) {
     final problems = row.problemJson == null
         ? <String, dynamic>{}
@@ -3421,89 +3451,89 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     String operationId,
     DeleteTarget target,
   ) => transaction(() async {
-        StorageCodec.validateLiteralId(operationId);
-        final binding = target.binding;
-        if (binding == null) {
-          return const Fail((
-            code: ProblemCode.unresolved,
-            message: 'No confirmed binding',
-          ));
-        }
-        final encoded = StorageCodec.encodeBinding(binding);
-        if (target.id != binding.key.dumpId) {
-          return const Fail((
-            code: ProblemCode.invalid,
-            message: 'Target identity differs',
-          ));
-        }
-        final prior = await _deletionFence(target.id);
-        if (prior != null) {
-          if (prior.bindingJson != encoded ||
-              (prior.operationId != operationId &&
-                  (target.retryTicketId != prior.ticketId ||
-                      prior.state == 'completed'))) {
-            return const Fail((
-              code: ProblemCode.conflict,
-              message: 'Different deletion already owns this identity',
-            ));
-          }
-          if (prior.state == 'completed') return Ok(_decodeTicket(prior));
-        }
-        if (prior == null && target.retryTicketId != null) {
-          return const Fail((
-            code: ProblemCode.conflict,
-            message: 'Retry ticket missing',
-          ));
-        }
-        if (await hasCaptureJournal(target.id)) {
-          return const Fail((
-            code: ProblemCode.busy,
-            message: 'Owned staging cleanup is pending',
-          ));
-        }
-        final row = await getDump(target.id);
-        if (row == null) {
-          return const Fail((
-            code: ProblemCode.absent,
-            message: 'Recording missing',
-          ));
-        }
-        if (await boundRecording(target.id) != binding) {
-          return const Fail((
-            code: ProblemCode.wrongIncarnation,
-            message: 'Confirmed binding changed',
-          ));
-        }
-        if (![
-              'not_transcribed',
-              'completed',
-              'failed',
-              'not_applicable',
-            ].contains(row.transcriptionStatus) ||
-            row.syncStatus == 'syncing' ||
-            (row.transcriptionError?.startsWith('sidecar_sync_pending:') ??
-                false)) {
-          return const Fail((
-            code: ProblemCode.busy,
-            message: 'Recording has durable pending work',
-          ));
-        }
-        if (prior != null) return Ok(_decodeTicket(prior));
-        final id = const Uuid().v4();
-        await into(localDeletionTickets).insert(
-          LocalDeletionTicketsCompanion.insert(
-            dumpId: target.id,
-            incarnation: binding.key.incarnation,
-            ticketId: id,
-            operationId: operationId,
-            bindingJson: encoded,
-            audioState: 'pending',
-            metadataState: 'pending',
-            state: 'pending',
-          ),
-        );
-        return Ok(_decodeTicket((await _deletionFence(target.id))!));
-      });
+    StorageCodec.validateLiteralId(operationId);
+    final binding = target.binding;
+    if (binding == null) {
+      return const Fail((
+        code: ProblemCode.unresolved,
+        message: 'No confirmed binding',
+      ));
+    }
+    final encoded = StorageCodec.encodeBinding(binding);
+    if (target.id != binding.key.dumpId) {
+      return const Fail((
+        code: ProblemCode.invalid,
+        message: 'Target identity differs',
+      ));
+    }
+    final prior = await _deletionFence(target.id);
+    if (prior != null) {
+      if (prior.bindingJson != encoded ||
+          (prior.operationId != operationId &&
+              (target.retryTicketId != prior.ticketId ||
+                  prior.state == 'completed'))) {
+        return const Fail((
+          code: ProblemCode.conflict,
+          message: 'Different deletion already owns this identity',
+        ));
+      }
+      if (prior.state == 'completed') return Ok(_decodeTicket(prior));
+    }
+    if (prior == null && target.retryTicketId != null) {
+      return const Fail((
+        code: ProblemCode.conflict,
+        message: 'Retry ticket missing',
+      ));
+    }
+    if (await hasCaptureJournal(target.id)) {
+      return const Fail((
+        code: ProblemCode.busy,
+        message: 'Owned staging cleanup is pending',
+      ));
+    }
+    final row = await getDump(target.id);
+    if (row == null) {
+      return const Fail((
+        code: ProblemCode.absent,
+        message: 'Recording missing',
+      ));
+    }
+    if (await boundRecording(target.id) != binding) {
+      return const Fail((
+        code: ProblemCode.wrongIncarnation,
+        message: 'Confirmed binding changed',
+      ));
+    }
+    if (![
+          'not_transcribed',
+          'completed',
+          'failed',
+          'not_applicable',
+        ].contains(row.transcriptionStatus) ||
+        row.syncStatus == 'syncing' ||
+        (row.transcriptionError?.startsWith('sidecar_sync_pending:') ??
+            false)) {
+      return const Fail((
+        code: ProblemCode.busy,
+        message: 'Recording has durable pending work',
+      ));
+    }
+    if (prior != null) return Ok(_decodeTicket(prior));
+    final id = const Uuid().v4();
+    await into(localDeletionTickets).insert(
+      LocalDeletionTicketsCompanion.insert(
+        dumpId: target.id,
+        incarnation: binding.key.incarnation,
+        ticketId: id,
+        operationId: operationId,
+        bindingJson: encoded,
+        audioState: 'pending',
+        metadataState: 'pending',
+        state: 'pending',
+      ),
+    );
+    return Ok(_decodeTicket((await _deletionFence(target.id))!));
+  });
   Future<LocalDeletionTicketRow> _ticketById(String id) async {
     final row = await (select(
       localDeletionTickets,
@@ -3521,80 +3551,80 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     RecordingComponent component,
     ComponentResult result,
   ) => transaction(() async {
-        final row = await _ticketById(ticketId);
-        if (row.state == 'completed') return;
-        final previous = component == RecordingComponent.audio
-            ? row.audioState
-            : row.metadataState;
-        if (_gone(previous)) return;
-        final problems = row.problemJson == null
-            ? <String, dynamic>{}
-            : jsonDecode(row.problemJson!) as Map<String, dynamic>;
-        if (result.problem == null) {
-          problems.remove(component.name);
-        } else {
-          problems[component.name] = {
-            'code': result.problem!.code.name,
-            'message': result.problem!.message,
-          };
-        }
-        final audio = component == RecordingComponent.audio
-            ? result.state.name
-            : row.audioState;
-        final metadata = component == RecordingComponent.metadata
-            ? result.state.name
-            : row.metadataState;
-        await (update(
-          localDeletionTickets,
+    final row = await _ticketById(ticketId);
+    if (row.state == 'completed') return;
+    final previous = component == RecordingComponent.audio
+        ? row.audioState
+        : row.metadataState;
+    if (_gone(previous)) return;
+    final problems = row.problemJson == null
+        ? <String, dynamic>{}
+        : jsonDecode(row.problemJson!) as Map<String, dynamic>;
+    if (result.problem == null) {
+      problems.remove(component.name);
+    } else {
+      problems[component.name] = {
+        'code': result.problem!.code.name,
+        'message': result.problem!.message,
+      };
+    }
+    final audio = component == RecordingComponent.audio
+        ? result.state.name
+        : row.audioState;
+    final metadata = component == RecordingComponent.metadata
+        ? result.state.name
+        : row.metadataState;
+    await (update(
+      localDeletionTickets,
     )..where((t) => t.ticketId.equals(ticketId))).write(
-          LocalDeletionTicketsCompanion(
-            audioState: Value(audio),
-            metadataState: Value(metadata),
-            state: Value(
-              [audio, metadata].any((s) => s == 'failed' || s == 'unknown')
-                  ? 'failed'
-                  : 'pending',
-            ),
-            problemJson: Value(problems.isEmpty ? null : jsonEncode(problems)),
-          ),
-        );
-      });
+      LocalDeletionTicketsCompanion(
+        audioState: Value(audio),
+        metadataState: Value(metadata),
+        state: Value(
+          [audio, metadata].any((s) => s == 'failed' || s == 'unknown')
+              ? 'failed'
+              : 'pending',
+        ),
+        problemJson: Value(problems.isEmpty ? null : jsonEncode(problems)),
+      ),
+    );
+  });
   @override
   Future<void> finishLocalDeletion(String ticketId) => transaction(() async {
-        final ticket = await _ticketById(ticketId);
-        if (ticket.state == 'completed') return;
-        if (!_gone(ticket.audioState) || !_gone(ticket.metadataState)) {
+    final ticket = await _ticketById(ticketId);
+    if (ticket.state == 'completed') return;
+    if (!_gone(ticket.audioState) || !_gone(ticket.metadataState)) {
       _storageFault(ProblemCode.busy, 'Both components must be proven gone');
-        }
-        if (await hasCaptureJournal(ticket.dumpId)) {
-          _storageFault(ProblemCode.busy, 'Owned staging cleanup is pending');
-        }
-        final binding = StorageCodec.decodeBinding(ticket.bindingJson);
-        if (await boundRecording(ticket.dumpId) != binding) {
-          _storageFault(
-            ProblemCode.wrongIncarnation,
-            'Ticket no longer owns binding',
-          );
-        }
-        await (delete(
-          syncQueue,
+    }
+    if (await hasCaptureJournal(ticket.dumpId)) {
+      _storageFault(ProblemCode.busy, 'Owned staging cleanup is pending');
+    }
+    final binding = StorageCodec.decodeBinding(ticket.bindingJson);
+    if (await boundRecording(ticket.dumpId) != binding) {
+      _storageFault(
+        ProblemCode.wrongIncarnation,
+        'Ticket no longer owns binding',
+      );
+    }
+    await (delete(
+      syncQueue,
     )..where((q) => q.dumpId.equals(ticket.dumpId))).go();
     await (delete(recordingBindings)..where(
-                (b) =>
-                    b.dumpId.equals(ticket.dumpId) &
-                    b.incarnation.equals(ticket.incarnation),
-              ))
-            .go();
-        await (delete(dumps)..where((d) => d.id.equals(ticket.dumpId))).go();
-        await (update(
-          localDeletionTickets,
+          (b) =>
+              b.dumpId.equals(ticket.dumpId) &
+              b.incarnation.equals(ticket.incarnation),
+        ))
+        .go();
+    await (delete(dumps)..where((d) => d.id.equals(ticket.dumpId))).go();
+    await (update(
+      localDeletionTickets,
     )..where((t) => t.ticketId.equals(ticketId))).write(
-          const LocalDeletionTicketsCompanion(
-            state: Value('completed'),
-            problemJson: Value(null),
-          ),
-        );
-      });
+      const LocalDeletionTicketsCompanion(
+        state: Value('completed'),
+        problemJson: Value(null),
+      ),
+    );
+  });
 
   /// Read immutable deletion ownership, including completed replay receipts.
   Future<DeletionTicket?> deletionTicketById(String ticketId) async {
@@ -3607,7 +3637,7 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
   @override
   Future<List<DeletionTicket>> pendingLocalDeletions() async =>
       (await (select(
-        localDeletionTickets,
+            localDeletionTickets,
           )..where((t) => t.state.isNotValue('completed'))).get())
           .map(_decodeTicket)
           .toList();
@@ -3799,25 +3829,25 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
       await _requireMutationKey(id, storageKey);
       final count =
           await (update(dumps)..where((d) {
-              final requestIdMatches = expectedTranscriptionRequestId == null
-                  ? d.transcriptionRequestId.isNull()
-                  : d.transcriptionRequestId.equals(
-                      expectedTranscriptionRequestId,
-                    );
-              return d.id.equals(id) &
-                  d.title.equals(expectedTitle) &
-                  d.transcript.equals(expectedTranscript) &
-                  d.transcriptionAttempt.equals(
-                    expectedTranscriptionAttempt,
-                  ) &
-                  requestIdMatches;
-            }))
-          .write(
-        DumpsCompanion(
-          meetingNotes: Value(meetingNotes),
-          updatedAt: Value(now.toUtc()),
-        ),
-      );
+                final requestIdMatches = expectedTranscriptionRequestId == null
+                    ? d.transcriptionRequestId.isNull()
+                    : d.transcriptionRequestId.equals(
+                        expectedTranscriptionRequestId,
+                      );
+                return d.id.equals(id) &
+                    d.title.equals(expectedTitle) &
+                    d.transcript.equals(expectedTranscript) &
+                    d.transcriptionAttempt.equals(
+                      expectedTranscriptionAttempt,
+                    ) &
+                    requestIdMatches;
+              }))
+              .write(
+                DumpsCompanion(
+                  meetingNotes: Value(meetingNotes),
+                  updatedAt: Value(now.toUtc()),
+                ),
+              );
       if (count != 1) {
         throw StateError(
           'Dump title or transcript revision changed while editing notes: $id',
@@ -3848,34 +3878,34 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
       final priorError = errorAfterSidecarSync(current?.transcriptionError);
       final count =
           await (update(dumps)..where((d) {
-              final requestIdMatches = expectedTranscriptionRequestId == null
-                  ? d.transcriptionRequestId.isNull()
-                  : d.transcriptionRequestId.equals(
-                      expectedTranscriptionRequestId,
-                    );
-              return d.id.equals(id) &
-                  d.transcriptionStatus.isIn([
-                    TranscriptionStatus.completed.wireValue,
-                    TranscriptionStatus.failed.wireValue,
-                    // Text notes never transcribe; their body edits go
-                    // through the same guarded manual-edit path.
-                    TranscriptionStatus.notApplicable.wireValue,
-                  ]) &
-                  d.transcript.equals(expectedTranscript) &
-                  d.transcriptionAttempt.equals(
-                    expectedTranscriptionAttempt,
-                  ) &
-                  requestIdMatches;
-            }))
-          .write(
-        DumpsCompanion(
-          transcript: Value(transcript),
-          transcriptionError: Value(
+                final requestIdMatches = expectedTranscriptionRequestId == null
+                    ? d.transcriptionRequestId.isNull()
+                    : d.transcriptionRequestId.equals(
+                        expectedTranscriptionRequestId,
+                      );
+                return d.id.equals(id) &
+                    d.transcriptionStatus.isIn([
+                      TranscriptionStatus.completed.wireValue,
+                      TranscriptionStatus.failed.wireValue,
+                      // Text notes never transcribe; their body edits go
+                      // through the same guarded manual-edit path.
+                      TranscriptionStatus.notApplicable.wireValue,
+                    ]) &
+                    d.transcript.equals(expectedTranscript) &
+                    d.transcriptionAttempt.equals(
+                      expectedTranscriptionAttempt,
+                    ) &
+                    requestIdMatches;
+              }))
+              .write(
+                DumpsCompanion(
+                  transcript: Value(transcript),
+                  transcriptionError: Value(
                     'sidecar_sync_pending: manual_edit:${jsonEncode({'error': priorError, 'revision': const Uuid().v4()})}',
-          ),
-          updatedAt: Value(now.toUtc()),
-        ),
-      );
+                  ),
+                  updatedAt: Value(now.toUtc()),
+                ),
+              );
       if (count != 1) {
         throw StateError('Transcript revision changed while editing: $id');
       }
@@ -3948,53 +3978,53 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     String? jobId,
     String? error,
   }) => transaction(() async {
-        await _requireMutationKey(id, storageKey);
-        final timestamp = now.toUtc();
-        final allowedSourceStatuses = switch (status) {
-          TranscriptionStatus.notTranscribed ||
+    await _requireMutationKey(id, storageKey);
+    final timestamp = now.toUtc();
+    final allowedSourceStatuses = switch (status) {
+      TranscriptionStatus.notTranscribed ||
       TranscriptionStatus.notApplicable => const <String>['__never__'],
-          TranscriptionStatus.uploading => <String>[
-              TranscriptionStatus.uploading.wireValue,
-            ],
-          TranscriptionStatus.queued => <String>[
-              TranscriptionStatus.uploading.wireValue,
-              TranscriptionStatus.queued.wireValue,
-            ],
-          TranscriptionStatus.running => <String>[
-              TranscriptionStatus.uploading.wireValue,
-              TranscriptionStatus.queued.wireValue,
-              TranscriptionStatus.running.wireValue,
-            ],
+      TranscriptionStatus.uploading => <String>[
+        TranscriptionStatus.uploading.wireValue,
+      ],
+      TranscriptionStatus.queued => <String>[
+        TranscriptionStatus.uploading.wireValue,
+        TranscriptionStatus.queued.wireValue,
+      ],
+      TranscriptionStatus.running => <String>[
+        TranscriptionStatus.uploading.wireValue,
+        TranscriptionStatus.queued.wireValue,
+        TranscriptionStatus.running.wireValue,
+      ],
       TranscriptionStatus.completed || TranscriptionStatus.failed => <String>[
-              TranscriptionStatus.uploading.wireValue,
-              TranscriptionStatus.queued.wireValue,
-              TranscriptionStatus.running.wireValue,
-            ],
-        };
+        TranscriptionStatus.uploading.wireValue,
+        TranscriptionStatus.queued.wireValue,
+        TranscriptionStatus.running.wireValue,
+      ],
+    };
     final count =
         await (update(dumps)..where(
-                (d) =>
-                    d.id.equals(id) &
-                    d.transcriptionAttempt.equals(attempt) &
-                    d.transcriptionRequestId.equals(requestId) &
-                    d.transcriptionStatus.isIn(allowedSourceStatuses),
-              ))
+              (d) =>
+                  d.id.equals(id) &
+                  d.transcriptionAttempt.equals(attempt) &
+                  d.transcriptionRequestId.equals(requestId) &
+                  d.transcriptionStatus.isIn(allowedSourceStatuses),
+            ))
             .write(
-          DumpsCompanion(
-            updatedAt: Value(timestamp),
-            transcriptionStatus: Value(status.wireValue),
+              DumpsCompanion(
+                updatedAt: Value(timestamp),
+                transcriptionStatus: Value(status.wireValue),
                 transcriptionJobId: jobId == null
                     ? const Value.absent()
                     : Value(jobId),
-            transcriptionUpdatedAt: Value(timestamp),
+                transcriptionUpdatedAt: Value(timestamp),
                 transcriptionCompletedAt: status.isTerminal
                     ? Value(timestamp)
                     : const Value.absent(),
-            transcriptionError: Value(error),
-          ),
-        );
-        return count == 1;
-      });
+                transcriptionError: Value(error),
+              ),
+            );
+    return count == 1;
+  });
 
   /// Commits transcript output only for the current attempt.
   Future<bool> completeTranscriptionAttempt(
@@ -4007,45 +4037,45 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     required DateTime now,
     String? sidecarError,
   }) => transaction(() async {
-        // Read and mutate under the same SQLite transaction. A replacement must
-        // never write a snapshot of notes over an explicit regeneration.
-        await _requireMutationKey(id, storageKey);
-        final current = await getDump(id);
-        final preserveNotes = current?.transcript?.trim().isNotEmpty ?? false;
-        final timestamp = now.toUtc();
+    // Read and mutate under the same SQLite transaction. A replacement must
+    // never write a snapshot of notes over an explicit regeneration.
+    await _requireMutationKey(id, storageKey);
+    final current = await getDump(id);
+    final preserveNotes = current?.transcript?.trim().isNotEmpty ?? false;
+    final timestamp = now.toUtc();
     final count =
         await (update(dumps)..where(
-                (d) =>
-                    d.id.equals(id) &
-                    d.transcriptionAttempt.equals(attempt) &
-                    d.transcriptionRequestId.equals(requestId) &
-                    (d.transcriptionStatus.equals(
-                          TranscriptionStatus.uploading.wireValue,
-                        ) |
-                        d.transcriptionStatus.equals(
-                          TranscriptionStatus.queued.wireValue,
-                        ) |
-                        d.transcriptionStatus.equals(
-                          TranscriptionStatus.running.wireValue,
-                        )),
-              ))
+              (d) =>
+                  d.id.equals(id) &
+                  d.transcriptionAttempt.equals(attempt) &
+                  d.transcriptionRequestId.equals(requestId) &
+                  (d.transcriptionStatus.equals(
+                        TranscriptionStatus.uploading.wireValue,
+                      ) |
+                      d.transcriptionStatus.equals(
+                        TranscriptionStatus.queued.wireValue,
+                      ) |
+                      d.transcriptionStatus.equals(
+                        TranscriptionStatus.running.wireValue,
+                      )),
+            ))
             .write(
-          DumpsCompanion(
-            updatedAt: Value(timestamp),
-            transcript: Value(transcript),
+              DumpsCompanion(
+                updatedAt: Value(timestamp),
+                transcript: Value(transcript),
                 meetingNotes: preserveNotes
                     ? const Value.absent()
                     : Value(meetingNotes),
-            transcriptionStatus: Value(
-              TranscriptionStatus.completed.wireValue,
-            ),
-            transcriptionUpdatedAt: Value(timestamp),
-            transcriptionCompletedAt: Value(timestamp),
-            transcriptionError: Value(sidecarError),
-          ),
-        );
-        return count == 1;
-      });
+                transcriptionStatus: Value(
+                  TranscriptionStatus.completed.wireValue,
+                ),
+                transcriptionUpdatedAt: Value(timestamp),
+                transcriptionCompletedAt: Value(timestamp),
+                transcriptionError: Value(sidecarError),
+              ),
+            );
+    return count == 1;
+  });
 
   /// Updates the sidecar repair marker only for the winning completed attempt.
   Future<bool> updateTranscriptionSidecarError(
@@ -4058,37 +4088,37 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     String? expectedTranscript,
     String? expectedError,
   }) => transaction(() async {
-        await _requireMutationKey(id, storageKey);
-        final timestamp = now.toUtc();
+    await _requireMutationKey(id, storageKey);
+    final timestamp = now.toUtc();
     final count =
         await (update(dumps)..where(
-                (d) =>
-                    d.id.equals(id) &
-                    d.transcriptionAttempt.equals(attempt) &
-                    (requestId == null
-                        ? d.transcriptionRequestId.isNull()
-                        : d.transcriptionRequestId.equals(requestId)) &
-                    d.transcriptionStatus.isIn([
-                      'completed',
-                      'failed',
-                      'not_applicable',
-                    ]) &
-                    (expectedTranscript == null
-                        ? const Constant(true)
-                        : d.transcript.equals(expectedTranscript)) &
-                    (expectedError == null
-                        ? const Constant(true)
-                        : d.transcriptionError.equals(expectedError)),
-              ))
+              (d) =>
+                  d.id.equals(id) &
+                  d.transcriptionAttempt.equals(attempt) &
+                  (requestId == null
+                      ? d.transcriptionRequestId.isNull()
+                      : d.transcriptionRequestId.equals(requestId)) &
+                  d.transcriptionStatus.isIn([
+                    'completed',
+                    'failed',
+                    'not_applicable',
+                  ]) &
+                  (expectedTranscript == null
+                      ? const Constant(true)
+                      : d.transcript.equals(expectedTranscript)) &
+                  (expectedError == null
+                      ? const Constant(true)
+                      : d.transcriptionError.equals(expectedError)),
+            ))
             .write(
-          DumpsCompanion(
-            updatedAt: Value(timestamp),
-            transcriptionUpdatedAt: Value(timestamp),
-            transcriptionError: Value(error),
-          ),
-        );
-        return count == 1;
-      });
+              DumpsCompanion(
+                updatedAt: Value(timestamp),
+                transcriptionUpdatedAt: Value(timestamp),
+                transcriptionError: Value(error),
+              ),
+            );
+    return count == 1;
+  });
 
   /// Rows whose latest attempt needs network or sidecar reconciliation.
   Future<List<DumpRow>> dumpsNeedingTranscriptionRecovery() =>
@@ -4125,18 +4155,18 @@ class LocalDb extends _$LocalDb implements StorageDatabaseOperations {
     int? attempts,
     String? lastError,
   }) => transaction(() async {
-        await _requireMutationKey(id, storageKey);
-        await (update(dumps)..where((d) => d.id.equals(id))).write(
-          DumpsCompanion(
-            syncStatus: Value(status.wireValue),
+    await _requireMutationKey(id, storageKey);
+    await (update(dumps)..where((d) => d.id.equals(id))).write(
+      DumpsCompanion(
+        syncStatus: Value(status.wireValue),
         syncAttempts: attempts != null ? Value(attempts) : const Value.absent(),
         lastSyncError: lastError != null
             ? Value(lastError)
             : const Value.absent(),
-            updatedAt: Value(DateTime.now().toUtc()),
-          ),
-        );
-      });
+        updatedAt: Value(DateTime.now().toUtc()),
+      ),
+    );
+  });
 
   /// Find all dumps that need uploading. Excludes synced rows, local-only
   /// rows, and meeting recordings, which are intentionally kept private.

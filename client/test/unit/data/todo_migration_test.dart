@@ -32,21 +32,23 @@ const _todoColumns = [
   // v34: synced Kanban placement.
   'column_id',
   'board_order',
+  // v36: required local wall-clock time for every dated todo.
+  'due_time',
 ];
 
 List<Object?> _columnNames(Database db, String table) =>
     db.select('PRAGMA table_info($table)').map((r) => r['name']).toList();
 
 void main() {
-  test('a fresh database is created at v34 with todos and columns', () async {
+  test('a fresh database is created at v36 with todos and columns', () async {
     final sql = sqlite3.openInMemory();
     final db = LocalDb.forTesting(NativeDatabase.opened(sql));
     addTearDown(db.close);
 
     await db.listDumps();
 
-    expect(db.schemaVersion, 35);
-    expect(sql.userVersion, 35);
+    expect(db.schemaVersion, 36);
+    expect(sql.userVersion, 36);
     expect(_columnNames(sql, 'todos'), _todoColumns);
     expect(_columnNames(sql, 'todo_columns'), <String>[
       'id',
@@ -79,27 +81,27 @@ void main() {
 
   test(
     'upgrading an old database gains todos and preserves every dump row',
-      () async {
-    final sql = oldStorageDatabase(4);
-    final before = sqlRows(sql, 'dumps');
-    final db = LocalDb.forTesting(NativeDatabase.opened(sql));
-    addTearDown(db.close);
-    expect(sql.userVersion, 4);
+    () async {
+      final sql = oldStorageDatabase(4);
+      final before = sqlRows(sql, 'dumps');
+      final db = LocalDb.forTesting(NativeDatabase.opened(sql));
+      addTearDown(db.close);
+      expect(sql.userVersion, 4);
 
-    await db.listDumps();
+      await db.listDumps();
 
-    expect(sql.userVersion, 35);
-    expect(_columnNames(sql, 'todos'), _todoColumns);
-    expect(
-      sqlRows(sql, 'dumps')
-          .map(
-            (Map<String, Object?> row) => <String, Object?>{
-              for (final String name in before.first.keys) name: row[name],
-            },
-          )
-          .toList(),
-      before,
-    );
+      expect(sql.userVersion, 36);
+      expect(_columnNames(sql, 'todos'), _todoColumns);
+      expect(
+        sqlRows(sql, 'dumps')
+            .map(
+              (Map<String, Object?> row) => <String, Object?>{
+                for (final String name in before.first.keys) name: row[name],
+              },
+            )
+            .toList(),
+        before,
+      );
     },
   );
 
@@ -134,7 +136,7 @@ void main() {
 
     await db.listDumps();
 
-    expect(sql.userVersion, 35);
+    expect(sql.userVersion, 36);
     expect(_columnNames(sql, 'todos'), _todoColumns);
     expect(
       sql.select("SELECT text FROM todos WHERE id='kept'").single['text'],
@@ -173,7 +175,7 @@ void main() {
 
     await db.listDumps();
 
-    expect(sql.userVersion, 35);
+    expect(sql.userVersion, 36);
     expect(_columnNames(sql, 'todos'), _todoColumns);
     final rows = sql.select(
       'SELECT id, text, due_date, folder_id FROM todos '
@@ -189,11 +191,11 @@ void main() {
 
   test(
     'v24 -> v25 adds a null capture_fingerprint and changes no data',
-      () async {
-    final sql = oldStorageDatabase(4);
-    // A v24 todos table exactly as v1.24.0 left it (folder_id, no
-    // capture_fingerprint).
-    sql.execute('''
+    () async {
+      final sql = oldStorageDatabase(4);
+      // A v24 todos table exactly as v1.24.0 left it (folder_id, no
+      // capture_fingerprint).
+      sql.execute('''
       CREATE TABLE todos (
         id TEXT NOT NULL,
         text TEXT NOT NULL,
@@ -210,37 +212,37 @@ void main() {
         PRIMARY KEY (id)
       );
     ''');
-    sql.execute(
-      'INSERT INTO todos(id,text,due_date,source,source_ref,created_at,'
-      'updated_at,sync_dirty,folder_id) '
-      "VALUES('a','milk','2026-10-01','voice','dump-1',"
-      "'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',0,'f1'),"
-      "('b','eggs',NULL,'manual',NULL,'2026-01-02T00:00:00Z',"
-      "'2026-01-02T00:00:00Z',1,NULL)",
-    );
-    sql.userVersion = 24;
-    final before = sqlRows(sql, 'todos');
-    final db = LocalDb.forTesting(NativeDatabase.opened(sql));
-    addTearDown(db.close);
+      sql.execute(
+        'INSERT INTO todos(id,text,due_date,source,source_ref,created_at,'
+        'updated_at,sync_dirty,folder_id) '
+        "VALUES('a','milk','2026-10-01','voice','dump-1',"
+        "'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',0,'f1'),"
+        "('b','eggs',NULL,'manual',NULL,'2026-01-02T00:00:00Z',"
+        "'2026-01-02T00:00:00Z',1,NULL)",
+      );
+      sql.userVersion = 24;
+      final before = sqlRows(sql, 'todos');
+      final db = LocalDb.forTesting(NativeDatabase.opened(sql));
+      addTearDown(db.close);
 
-    await db.listDumps();
+      await db.listDumps();
 
-    expect(sql.userVersion, 35);
-    expect(_columnNames(sql, 'todos'), _todoColumns);
-    final rows = sqlRows(sql, 'todos');
-    expect(rows.length, 2, reason: 'no row is lost by the upgrade');
-    for (final Map<String, Object?> row in rows) {
-      expect(row['capture_fingerprint'], isNull);
-    }
-    expect(
-      rows
-          .map(
-            (Map<String, Object?> row) => <String, Object?>{
+      expect(sql.userVersion, 36);
+      expect(_columnNames(sql, 'todos'), _todoColumns);
+      final rows = sqlRows(sql, 'todos');
+      expect(rows.length, 2, reason: 'no row is lost by the upgrade');
+      for (final Map<String, Object?> row in rows) {
+        expect(row['capture_fingerprint'], isNull);
+      }
+      expect(
+        rows
+            .map(
+              (Map<String, Object?> row) => <String, Object?>{
                 for (final String name in before.first.keys)
                   if (name != 'sync_dirty') name: row[name],
-            },
-          )
-          .toList(),
+              },
+            )
+            .toList(),
         before
             .map(
               (Map<String, Object?> row) => <String, Object?>{
@@ -257,7 +259,7 @@ void main() {
         reason: 'the newly assigned column reference must sync',
       );
     },
-    );
+  );
 
   test('v24 -> v25 is guarded when the column already exists', () async {
     final sql = oldStorageDatabase(4);
@@ -285,8 +287,83 @@ void main() {
 
     await expectLater(db.listDumps(), completes);
 
-    expect(sql.userVersion, 35);
+    expect(sql.userVersion, 36);
     expect(_columnNames(sql, 'todos'), _todoColumns);
+  });
+
+  test('v35 -> v36 adds due_time and backfills dated rows to 09:00', () async {
+    final Database sql = sqlite3.openInMemory();
+    final LocalDb seed = LocalDb.forTesting(
+      NativeDatabase.opened(sql, closeUnderlyingOnClose: false),
+    );
+    await seed.listDumps();
+    await seed.close();
+    sql.execute('ALTER TABLE todos DROP COLUMN due_time');
+    sql.execute(
+      'INSERT INTO todos(id,text,due_date,created_at,updated_at) VALUES '
+      "('dated','dated','2026-10-10','2026-01-01','2026-01-01'),"
+      "('open','open',NULL,'2026-01-01','2026-01-01')",
+    );
+    sql.userVersion = 35;
+
+    final LocalDb db = LocalDb.forTesting(
+      NativeDatabase.opened(sql, closeUnderlyingOnClose: false),
+    );
+    addTearDown(() async {
+      await db.close();
+      sql.close();
+    });
+    await db.listDumps();
+
+    expect(sql.userVersion, 36);
+    expect(
+      sql
+          .select("SELECT due_time FROM todos WHERE id='dated'")
+          .single['due_time'],
+      '09:00',
+    );
+    expect(
+      sql
+          .select("SELECT due_time FROM todos WHERE id='open'")
+          .single['due_time'],
+      isNull,
+    );
+  });
+
+  test('v35 -> v36 wedge tolerates due_time already present', () async {
+    final Database sql = sqlite3.openInMemory();
+    final LocalDb seed = LocalDb.forTesting(
+      NativeDatabase.opened(sql, closeUnderlyingOnClose: false),
+    );
+    await seed.listDumps();
+    await seed.close();
+    sql.execute(
+      'INSERT INTO todos(id,text,due_date,due_time,created_at,updated_at) VALUES '
+      "('kept','kept','2026-10-10','15:45','2026-01-01','2026-01-01'),"
+      "('backfill','backfill','2026-10-11',NULL,'2026-01-01','2026-01-01')",
+    );
+    sql.userVersion = 35;
+
+    final LocalDb db = LocalDb.forTesting(
+      NativeDatabase.opened(sql, closeUnderlyingOnClose: false),
+    );
+    addTearDown(() async {
+      await db.close();
+      sql.close();
+    });
+    await expectLater(db.listDumps(), completes);
+
+    expect(sql.userVersion, 36);
+    expect(
+      sql
+          .select('SELECT id,due_time FROM todos ORDER BY id')
+          .map((Row row) => <Object?>[row['id'], row['due_time']])
+          .toList(),
+      <List<Object?>>[
+        <Object?>['backfill', '09:00'],
+        <Object?>['kept', '15:45'],
+      ],
+    );
   });
 
   test(
@@ -318,7 +395,7 @@ void main() {
 
       await db.listDumps();
 
-      expect(sql.userVersion, 35);
+      expect(sql.userVersion, 36);
       expect(
         sql
             .select(
